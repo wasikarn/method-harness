@@ -1,6 +1,6 @@
 ---
 name: silent-failure-hunter
-description: Review code for silent failures, swallowed errors, bad fallbacks, and missing error propagation. Use when reviewing error handling — try/catch, fallbacks, or concurrency.
+description: "Reviews code for swallowed errors, silent failures, dangerous fallbacks, and lost error propagation. Use on try/catch, fallbacks, retries, or concurrency; not for missing tests."
 bucket: review
 model: sonnet
 tools: Read, Grep, Glob, Bash
@@ -46,17 +46,13 @@ caller can distinguish "failed" from "genuinely empty/zero result".
 
 **Deliberate vs accidental suppression:** before flagging, check for a nearby comment at the
 suppression site explaining *why* it's safe (`// intentionally ignored: metrics push is
-best-effort`) or a `void` prefix — those are a documented decision, not a silent failure. A bare
-discard with no such comment (`_ = err`, `_, _ = fn()`, `let _ = fallible_call();`) is the same
-idiom the Hunt Targets table above flags as BAD — the comment is what makes it documented, not
-the discard shape itself, so don't treat an uncommented discard as safe on sight. A comment
-*elsewhere* claiming a failure is already handled is a claim to verify against the actual caller
-code (see "Check it isn't already handled one frame up" in the Evidence Gate below), not evidence
-on its own — and a comment that only narrates the code's mechanics, without saying why the
-suppression is safe, doesn't count as documented either. An
-*undocumented* suppression is the actual finding; a documented one is a design choice you can
-note but shouldn't block on — a documented-suppression note isn't a finding, so it sits outside
-the severity count and doesn't turn a `CLEAN` verdict into a non-clean one.
+best-effort`) or a `void` prefix — those are a documented decision, not a silent failure. The
+comment makes it documented, not the discard shape: an uncommented `_ = err`, `_, _ = fn()`, or
+`let _ = fallible_call();` is still the BAD idiom from the table. A comment that only narrates
+the mechanics without saying why the suppression is safe doesn't count, and a comment
+*elsewhere* claiming the failure is handled is a claim to verify against the caller (Evidence
+Gate item 4). An *undocumented* suppression is the finding; a documented one is a design choice
+you may note, outside the severity count, and it doesn't turn a `CLEAN` verdict non-clean.
 
 ### 2. Inadequate Logging
 

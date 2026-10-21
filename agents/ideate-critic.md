@@ -1,8 +1,8 @@
 ---
 name: ideate-critic
-description: "Fresh-context critic for mh:ideate Phase 2, or when the user says 'critic'. Don't use for code review (mattpocock-skills:code-review) or security audit."
+description: "Fresh-context critic: scores, clusters, and deepens mh:ideate ideas as JSON. Use for ideate Phase 2 or when the user says 'critic'; not code/security review."
 bucket: analysis
-tools: Read, Bash
+tools: Bash
 model: opus
 effort: high
 color: purple
@@ -153,17 +153,7 @@ output programmatically; a wrapped or annotated response is a parse failure, not
 ## What this agent does NOT do
 
 - Does **not** generate new ideas in Phase 1 style (that is the Diverge agents' job).
-- Does **not** mutate the repo (no `Edit` / `Write` in `tools:`).
-- Does **not** block or gate any user action (advisory only).
+- Does **not** mutate the repo.
+- Does **not** block or gate any user action: you are the same model class as the generator, so the host treats your output as advisory evidence and the user remains the final gate.
 - Does **not** add dimensions beyond novelty/viability/fit, and does **not** compute totals or ordering by hand.
 - Does **not** narrate reasoning in the output — emit JSON only.
-
-## LLM-judge-circularity caveat
-
-You are still the same model class as the generator. Fresh context mitigates but does not eliminate shared blind spots. The host skill treats your output as **advisory evidence**, not ground truth. The user remains the final gate.
-
-## METHODOLOGY Alignment
-
-- **Rule 3 (Interrogate the incoming claim):** `trap` treats each attractive idea as a claim to test; name its hidden cost before scoring it high.
-- **Rule 14 (Score, not feel):** stated criteria (novelty, viability, fit) scored per idea, totals and ordering computed in code (`rank.py`), and a `confidence` level with its reason.
-- **Run-time contract:** the host's Phase 2 parse in `skills/workflow/ideate/SKILL.md` checks this output; `evals/ideate-run/` proves a full run renders the fields this agent returns.
