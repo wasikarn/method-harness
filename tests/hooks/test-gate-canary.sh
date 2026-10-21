@@ -26,6 +26,15 @@ bash "$CANARY" "$tmp" >/dev/null 2>&1; rc=$?
 [ "$rc" -ne 0 ]; check "injected NameError in irrecoverable.py fails the canary" $?
 
 fresh
+# The Write/Edit wrappers skip python on a benign payload (_silent_fastpath.sh); the canary must
+# still run it, or a slip in secret-scan.py ships past pre-commit.
+python3 -c "
+import sys; p = sys.argv[1]; s = open(p).read()
+open(p, 'w').write('undefined_name_xyz()\n' + s)" "$tmp/secret-scan.py"
+bash "$CANARY" "$tmp" secret-scan.sh >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ]; check "injected NameError in secret-scan.py fails the canary despite the fast path" $?
+
+fresh
 # Synthetic fixture, not a real shipped gate: every gate that used to embed
 # `python3 -c '...'` has been extracted to a sibling .py (irrecoverable,
 # test-integrity, config-write-guard, subagent-git-guard,

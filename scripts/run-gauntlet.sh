@@ -25,6 +25,7 @@ cd "$ROOT" || exit 1
 # in its env, which hijacks those git-init calls onto the real repo instead
 # of the fixture dir. Clear them before the test layer runs.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+unset MH_GATE_NO_FASTPATH  # canary-only switch; exported, it would hide fast-path regressions from the gate tests
 # GAUNTLET_SHARD=i/N (GH #400): N copies of this script can run, one per runner,
 # each with 1/N of the test files; validate and lint run only in shard 1. Unset
 # runs everything, as before. Read into a plain var and unset, so the test files

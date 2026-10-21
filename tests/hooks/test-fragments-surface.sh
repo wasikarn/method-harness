@@ -282,5 +282,21 @@ else
   bad "no-record sweep failed: lock_exists=$([ -e "$ARM_BASE9/sidZ.lock" ] && echo yes || echo no)"
 fi
 
+# --- fast-path glob must see a project whose root dir starts with a dot (slug keeps the dot) ---
+T=$(fresh_tmpdir)
+DOTPARENT=$(fresh_tmpdir)
+REPO10="$DOTPARENT/.dotrepo"
+mkdir "$REPO10" && (cd "$REPO10" && git init -q && git config user.email t@t.com && git config user.name t) >/dev/null 2>&1
+printf '# Dot title\n\nfrag\n' > "$REPO10/frags.md"
+SAVED_HOME="$FAKE_HOME"; FAKE_HOME=$(mktemp -d); track_trash "$FAKE_HOME" # no other record, so only the dot dir can open the fast path
+write_record "$(docs_dir_for "$REPO10")" "dot1" "$REPO10/frags.md" "2020-01-01T00:00:00Z" "null"
+OUT10=$(run_surface "$REPO10" "$T")
+FAKE_HOME="$SAVED_HOME"
+if echo "$OUT10" | grep -q 'Dot title'; then
+  ok "a record under a dot-named project dir still surfaces"
+else
+  bad "dot-named project dir skipped by the fast-path glob: out='$OUT10'"
+fi
+
 echo "hooks/fragments-surface: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -163,7 +163,7 @@ cross-references, not a system-level review — so `backend-architect` must not 
 (`file-blueprint-misroute`). Needs `--allow-tools Bash,Read,Grep,Glob,Agent`.
 
 Six for `ideate-critic` (tag `ideate-critic`, agent — `mh:ideate`'s fresh-context Phase 2 critic,
-strict JSON-in/JSON-out contract with `tools: Read, Bash` only, no Edit/Write). `evals/ideate-run/`
+strict JSON-in/JSON-out contract with `tools: Bash` only, no Edit/Write). `evals/ideate-run/`
 already exercises it end-to-end via the full skill; these dispatch it directly with a hand-crafted
 Phase-1-style idea envelope to probe its own specific failure modes. Five fire cases, four as plain
 `prompt.md` + `graders/` (the envelope is inline JSON in the prompt, no fixture files needed): the

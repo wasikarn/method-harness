@@ -30,7 +30,7 @@ turns "checked and cleared" and "never looked" into different, citable strings.
 intentionally left unchanged: it backs many unrelated Rule-13 validator dispatches. This skill's
 `check-verdict.py` validates both paths against the unconditional 6-key contract, so a fallback
 agent following the 4-field shape is rejected:
-`echo '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}' | python3 scripts/check-verdict.py`
+`echo '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}' | python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py"`
 exits 1 on `missing=['checked', 'contract_version']`.
 
 ## Step 3: how check-verdict.py parses a raw message

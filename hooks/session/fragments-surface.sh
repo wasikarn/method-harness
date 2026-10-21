@@ -29,9 +29,9 @@ ARM_BASE="${TMPDIR:-/tmp}/mh-fragments-arm"
 # none exists anywhere, skip the git/sha256/mkdir chain below (~60 ms, and it
 # created an empty state dir for every project ever opened). A match only
 # means "take the full, checked path", so this never trusts what it finds.
-shopt -s nullglob
+shopt -s nullglob dotglob
 _ANY_RECORD=("${HOME:-/nonexistent}"/.claude/state/mh-fragments/*/documents/*.json)
-shopt -u nullglob
+shopt -u nullglob dotglob
 if [ "${#_ANY_RECORD[@]}" -eq 0 ] && [ ! -d "$ARM_BASE" ]; then
   exit 0
 fi

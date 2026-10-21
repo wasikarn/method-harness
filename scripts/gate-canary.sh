@@ -13,7 +13,7 @@ if [ "${1:-}" = --one ]; then
            '{"tool_name":"Edit","tool_input":{"file_path":"src/app.ts","old_string":"a","new_string":"b"}}' \
            '{"tool_name":"Write","tool_input":{"file_path":"src/app.ts","content":"x"}}' \
            '{"tool_name":"TaskUpdate","tool_input":{"taskId":"1","status":"in_progress"}}'; do
-    err=$(printf '%s' "$p" | bash "$g" 2>&1 >/dev/null); rc=$?
+    err=$(printf '%s' "$p" | MH_GATE_NO_FASTPATH=1 bash "$g" 2>&1 >/dev/null); rc=$?
     if [ "$rc" -ne 0 ] || printf '%s' "$err" | /usr/bin/grep -qiE 'Traceback|internal error|Error:'; then
       echo "gate canary failed: $g rc=$rc on $p" >&2
       printf '%s\n' "$err" | head -5 >&2

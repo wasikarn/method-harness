@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 idx="$(mktemp -d)"
 trap 'trash "$idx" 2>/dev/null' EXIT
 mkdir -p "$idx/hooks/gates"
-touch "$idx/hooks/gates/irrecoverable.sh" "$idx/hooks/gates/secret-scan.sh" "$idx/hooks/gates/_silent_fastpath.sh"
+touch "$idx/hooks/gates/irrecoverable.sh" "$idx/hooks/gates/secret-scan.sh" "$idx/hooks/gates/_silent_fastpath.sh" "$idx/hooks/gates/new-gate.sh"
 body=$(sed -n '/^  only=()/,/^  done <<</p' "$ROOT/git-hooks/pre-commit")
 [ -n "$body" ] || { echo "FAIL: narrowing loop not found in git-hooks/pre-commit"; exit 1; }
 
@@ -28,7 +28,7 @@ t ALL hooks/gates/_journal.py
 t ALL hooks/gates/_silent_fastpath.sh
 t ALL hooks/gates/secret-scan.sh hooks/gates/_silent_fastpath.sh
 t ALL hooks/gates/brace-route.awk
-t ALL hooks/gates/new-gate.sh
+t new-gate.sh hooks/gates/new-gate.sh
 t ALL hooks/gates/sub/x.sh
 
 [ "$fail" -eq 0 ] && echo "precommit-canary-narrow: all passed" || { echo "precommit-canary-narrow: FAILED"; exit 1; }
