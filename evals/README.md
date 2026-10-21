@@ -265,6 +265,12 @@ bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_tru
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 ```
 
+Cost and time: the last full run (2026-09-13, 76 cases, `-j 1`) took 34,801 s and $119.40; the
+30 `runs: 3` cases were 66% of that, the without-plugin arm 31%, LLM graders 6%. Graders already
+use the cheapest judge (`--judge-model` defaults to haiku), so do not raise it. Add `-j 4` to any
+line above to run cases in parallel (same cost, roughly a quarter of the wall time; runs share one
+rate limit), and `--max-cost-usd` to cap a run.
+
 `--scaffold` is required: the fixtures live in each case's `scaffold_script`, which must be a
 relative path to an external `.sh` file in the case directory — never inline YAML block content
 (see the defect note above).

@@ -91,6 +91,8 @@ SPELLING_MAP = {
     "optimise": "optimize", "optimised": "optimized", "recognise": "recognize",
     "utilise": "utilize", "customise": "customize", "cancelled": "canceled",
 }
+# One pass per sentence instead of one regex search per map entry (the hot spot).
+SPELLING_RE = re.compile(r"\b(" + "|".join(SPELLING_MAP) + r")\b", re.IGNORECASE)
 IMPERATIVE_STARTS = {
     "run", "use", "check", "add", "remove", "delete", "create", "write",
     "read", "verify", "confirm", "never", "always", "do", "don't", "ensure",
@@ -138,19 +140,20 @@ def analyze_sentence(text):
     working = PAREN_RE.sub(paren_sub, working)
 
     tokens = working.split()
+    norm = [normalize_tok(t) for t in tokens]  # once per token, not twice
     merged = []
     i = 0
     while i < len(tokens):
         t = tokens[i]
-        nt = normalize_tok(t)
+        nt = norm[i]
         if i + 1 < len(tokens):
-            nt1 = normalize_tok(tokens[i + 1])
+            nt1 = norm[i + 1]
             if NUMBER_RE.match(nt) and nt1 in UNIT_TOKENS:  # Rule 8.6: number+unit = 1 word
                 merged.append(t + " " + tokens[i + 1]); i += 2; continue
             if nt in ABBREV_PREFIX_TOKENS and NUMBER_RE.match(nt1):  # Rule 8.6: alphanumeric identifier
                 merged.append(t + " " + tokens[i + 1]); i += 2; continue
             if NUMBER_RE.match(nt) and nt1 == "degrees" and i + 2 < len(tokens):
-                nt2 = normalize_tok(tokens[i + 2])
+                nt2 = norm[i + 2]
                 if nt2 in DEGREE_UNIT_WORDS:
                     merged.append(" ".join(tokens[i:i + 3])); i += 3; continue
         merged.append(t)
@@ -219,7 +222,8 @@ def check_text_block(text, base_line, mode, source, is_list_item=False, paragrap
         scan_text = strip_protected_spans(sentence)
         if ";" in scan_text:
             confirmed.append(dict(base, rule="8.1", message="semicolon"))
-        cm = CONTRACTION_RE.search(scan_text)
+        # Every CONTRACTION_RE branch needs an apostrophe; skip the costly scan without one.
+        cm = CONTRACTION_RE.search(scan_text) if ("'" in scan_text or "’" in scan_text) else None
         if cm:
             confirmed.append(dict(base, rule="4.2", message="contraction: " + cm.group(0)))
         if PASSIVE_RE.search(scan_text):
@@ -230,8 +234,9 @@ def check_text_block(text, base_line, mode, source, is_list_item=False, paragrap
             advisory.append(dict(base, rule="3.4", message="stacked auxiliary verbs"))
         if NOUN_RUN_RE.search(scan_text):
             advisory.append(dict(base, rule="2.1", message="long noun run"))
+        found = {w.lower() for w in SPELLING_RE.findall(scan_text)}
         for wrong, right in SPELLING_MAP.items():
-            if re.search(r"\b" + wrong + r"\b", scan_text, re.IGNORECASE):
+            if wrong in found:
                 advisory.append(dict(base, rule="1.14", message=f"non-American spelling: {wrong} -> {right}"))
 
     if paragraph_check and not is_list_item and len(sentences) > MAX_PARAGRAPH_SENTENCES:
