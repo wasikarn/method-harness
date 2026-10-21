@@ -74,7 +74,7 @@ No sample: the Grit Gate default. Opinionated where the genre allows, varied rhy
 
 ## Pattern cue-sheet
 
-Thirty universal tells, all languages; Thai-only tells (§31–§42) are in `patterns-thai.md`. One line per cluster here; the 30-row table (pattern / EN+TH cue / fix) is `cue-sheet.md`. **Read it before scanning**; scans without it miss the cues. `patterns-universal.md` holds the worked before/after per pattern; open it for a tell you cannot fix, not for every scan.
+Thirty universal tells, all languages, one line per cluster; the full table is `cue-sheet.md` (**read it before scanning**; scans without it miss the cues). Thai-only tells (§31–§42): `patterns-thai.md`.
 
 - **Content (§1-6)**: significance puffery, notability name-drops, -ing pseudo-depth tails, promo language, weasel attribution and vague association ("linked to", "associated with"), "challenges and future" formula.
 - **Language and grammar (§7-13)**: AI-vocab words, copula avoidance, negative parallelism, rule of three, elegant variation (historical: older models, weak on current ones), false ranges, passive and subjectless fragments.
@@ -95,5 +95,3 @@ Each says when to load it; one level deep; read fully.
 - `patterns-thai.md`: §31–§42 Thai-specific rules (terminology and calque, anti-fabrication tiers, connectives, register matrix, code-switching tells, AI-leaked closers). **Load when:** the draft has Thai. **Skip for monolingual English.**
 - `examples.md`: worked examples A (TH chat), B (TH standup), C (TH UI), D (TH prose), E (EN UI), F (EN standup), G (EN prose), and the Grit Gate soulless-vs-alive pair. **Load when:** stuck, or to show the process.
 - `references.md`: external sources (RTGS, Mozilla Thai Style Guide, W3C Thai Layout, PyThaiNLP, Conventional Commits Thai), Thai-tech glossary, calque and typography cheat sheet. **Load when:** verifying transliteration or citations.
-
-> Bilingual (EN + TH). Universal patterns (§1–§30) apply to both; Thai patterns apply only when Thai is present. No separate `patterns-en.md`: the universal catalog plus EN examples cover the EN side.
