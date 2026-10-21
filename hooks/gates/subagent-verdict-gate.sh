@@ -24,4 +24,4 @@ if [ ! -r "$_py" ]; then
   exit 0
 fi
 
-exec python3 "$_py"
+exec python3 -S "$_py"  # -S: skip site import (stdlib-only gate)

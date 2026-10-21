@@ -30,5 +30,5 @@ if [ ! -r "$_py" ]; then
   exit 0
 fi
 
-printf '%s' "$_input" | python3 "$_py"
+printf '%s' "$_input" | python3 -S "$_py"  # -S: skip site import (stdlib-only gate)
 exit $?
