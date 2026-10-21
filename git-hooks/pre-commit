@@ -68,7 +68,7 @@ if [ -n "$gates_staged" ]; then
   only=()
   while IFS= read -r f; do
     b="${f#hooks/gates/}" n="${b%.*}"
-    case "$b" in */*) only=(); break ;; esac
+    case "$b" in */*|_*) only=(); break ;; esac # a _* helper is sourced by several gates: canary all
     # shortcut: assumes a gate's X.py is imported only by X.sh (shared code lives in _*.py or
     # brace-route.awk); if a gate starts importing another gate's .py, canary every gate.
     case " ${only[*]-} " in *" $n.sh "*) continue ;; esac
