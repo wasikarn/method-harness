@@ -91,13 +91,28 @@ if [ "$rc" -eq 2 ] && printf '%s' "$out" | /usr/bin/grep -q 'refusing'; then
 else bad "--slug traversal (rc=$rc): $out"; fi
 
 echo "=== fuzz ==="
-out=$(bash "$SCRIPT" --fuzz-seed 7 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+# A small --cases corpus: fuzz still draws its 200 mutations, but the run no longer replays the
+# whole irrecoverable fixture set twice (~560 gate spawns, ~60 s). Gate verdicts on that set are
+# tests/hooks' job; this file covers the harness, and fixture parsing is checked directly below.
+printf 'rm -rf build\ngit reset --hard\n' > "$T/deny.txt"
+out=$(bash "$SCRIPT" --cases "$T/deny.txt" --fuzz-seed 7 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | /usr/bin/grep -Eq 'fuzz=[1-9][0-9]*\)'; then
   ok "fuzz adds seeded cases, 0 diffs on identical copies"
 else bad "fuzz (rc=$rc): $out"; fi
 
+echo "=== fixture parsing ==="
+# The default corpus (no --cases) is the committed fixtures; parse them without running the gate.
+n=$(python3 - "$ROOT/scripts/_lib/gate-differential.py" "$ROOT/tests/hooks/fixtures" <<'PY' 2>&1
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+print(len(gd.fixture_cases(sys.argv[2], "irrecoverable")))
+PY
+)
+if [ "$n" -ge 50 ] 2>/dev/null; then ok "fixture corpus parses ($n irrecoverable cases)"
+else bad "fixture corpus did not parse (want >=50 cases): $n"; fi
+
 echo "=== real journal untouched ==="
-printf 'rm -rf build\ngit reset --hard\n' > "$T/deny.txt"
 out=$(bash "$SCRIPT" --cases "$T/deny.txt" "$T/old" "$T/same" irrecoverable 2>&1)
 n=$(wc -l < "$JOURNAL" | tr -d ' ')
 if [ "$n" -eq 3 ]; then ok "real journal still 3 lines after the deny runs"
