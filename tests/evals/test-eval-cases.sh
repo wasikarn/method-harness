@@ -54,6 +54,31 @@ sys.exit(1 if hits else 0)
 PY
 }
 
+# One node process compiles every regex grader's pattern up front (one spawn per pattern was
+# ~half this test's runtime). The per-case check below reads this cache and still spawns node
+# itself for any pattern the cache lacks, so a parse mismatch here can never skip a check.
+JS_CACHE="$TMP/js-regex-cache.json"
+python3 - "$EVALS" <<'PY' | node -e '
+let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+  const out = {};
+  for (const [p, f] of JSON.parse(s)) {
+    try { new RegExp(p, f); out[p + "\u0000" + f] = null; } catch (e) { out[p + "\u0000" + f] = String(e); }
+  }
+  process.stdout.write(JSON.stringify(out));
+});' > "$JS_CACHE" || echo '{}' > "$JS_CACHE"
+import glob, json, os, re, sys
+pairs = []
+for f in glob.glob(os.path.join(sys.argv[1], "*", "graders", "*.md")):
+    m = re.match(r"---\n([\s\S]*?)\n---\n", open(f).read())
+    if not m or "type: regex" not in m.group(1):
+        continue
+    p = re.search(r"^pattern: '(.*)'$", m.group(1), re.M) or re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
+    if p:
+        fl = re.search(r"^flags: (\w+)$", m.group(1), re.M)
+        pairs.append([p.group(1), fl.group(1) if fl else ""])
+json.dump(pairs, sys.stdout)
+PY
+
 n=0
 for d in "$EVALS"/*/; do
   c=$(basename "$d"); n=$((n + 1))
@@ -196,11 +221,15 @@ echo "a;b"
     ste-lint-planted)         wrong='status.md: no confirmed findings, file is clean.' ;;
     ste-lint-file-prose-only) wrong='mixed.md line 6: rule 8.1 semicolon inside the code block' ;;
   esac
-  if ! python3 - "$d/graders" "$sample" "$wrong" <<'PY'
-import sys, os, re, subprocess
+  if ! python3 - "$d/graders" "$sample" "$wrong" "$JS_CACHE" <<'PY'
+import sys, os, re, subprocess, json
 bad = 0
 sample = sys.argv[2]
-wrong = sys.argv[3] if len(sys.argv) > 3 else ""
+wrong = sys.argv[3]
+try:
+    js_cache = json.load(open(sys.argv[4]))
+except (OSError, ValueError):
+    js_cache = {}
 for f in sorted(os.listdir(sys.argv[1])):
     s = open(os.path.join(sys.argv[1], f)).read()
     m = re.match(r"---\n([\s\S]*?)\n---\n", s)
@@ -218,13 +247,18 @@ for f in sorted(os.listdir(sys.argv[1])):
     fl = re.search(r"^flags: (\w+)$", m.group(1), re.M)
     js_flags = fl.group(1) if fl else ""
     flags = re.I if fl and "i" in fl.group(1) else 0
-    js = subprocess.run(
-        ["node", "-e", "new RegExp(process.argv[1], process.argv[2])", "--", p.group(1), js_flags],
-        capture_output=True, text=True,
-    )
-    if js.returncode != 0:
+    key = p.group(1) + "\0" + js_flags
+    if key in js_cache:
+        reason = js_cache[key]
+    else:
+        js = subprocess.run(
+            ["node", "-e", "new RegExp(process.argv[1], process.argv[2])", "--", p.group(1), js_flags],
+            capture_output=True, text=True,
+        )
         err_lines = js.stderr.strip().splitlines()
-        reason = next((l for l in err_lines if "Error" in l), err_lines[-1] if err_lines else "compile failed")
+        reason = None if js.returncode == 0 else next(
+            (l for l in err_lines if "Error" in l), err_lines[-1] if err_lines else "compile failed")
+    if reason is not None:
         print(f"  bad JS regex in {f} (real eval runtime uses JS, not Python re): {reason}")
         bad = 1; continue
     if not sample:
