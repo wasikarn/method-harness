@@ -14,7 +14,7 @@ desc_inj_issues=0
 for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
   case "$f" in */skills/_*) continue ;; esac
-  case "$f" in */agents/*.md) skill_name="agent ${f##*/}" ;; *) skill_name=$(basename "$(dirname "$f")") ;; esac
+  case "$f" in */agents/*.md) skill_name="agent ${f##*/}" ;; *) _t=${f%/*}; skill_name=${_t##*/} ;; esac
   desc=$(fm_get "$f" "description" --block)
   [ -z "$desc" ] && continue
   if printf '%s' "$desc" | /usr/bin/grep -iEq "$INJECTION_PATTERNS"; then

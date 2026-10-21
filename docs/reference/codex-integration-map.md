@@ -73,17 +73,20 @@ rate-limit prompts that ask before switching.
 
 **Slugs re-verified 2026-09-26** against this account's own catalog (`codex debug models`, CLI
 0.156.1): `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra` and `gpt-5.6-terra` are listed, and
-`gpt-5.6-sol`/`gpt-5.6-luna` are still listed, so the GPT-6 rollout for Sol and Luna is not a
-hard break. `gpt-5.5` carries an upgrade to `gpt-5.6-sol` and retires 2026-10-14. Terra has no
-GPT-6 variant yet. **Re-checked 2026-10-04** (`models_cache.json`, CLI 0.160.0): `gpt-6.1-sol`
-now leads the Sol tier (`priority` 1, ahead of `gpt-6-astra` 2 and `gpt-6-sol` 3), lists `medium`
-effort but defaults to `low` (`gpt-6-sol` defaults to `medium`), and is now the `gpt-5.5`
-upgrade target. The catalog has no price field; the pricing page (fetched 2026-10-04) lists
-`gpt-6.1-sol` at 50/2.5/250, the same as `gpt-6-sol` except cached input at half (2.5 vs 5), so
-the switch costs no more per token (it says nothing about how many tokens a run uses). Credit rates (public docs, 2026-09-23): `gpt-6-sol` and `gpt-6-luna` cost
-roughly half the prior rate on input and cached-input tokens (exactly half for Sol on every
-column; Luna's output-token rate is cut further, to ~0.42x — see the exact numbers below).
-Re-verify this note the next time this table is touched.
+`gpt-5.6-sol`/`gpt-5.6-luna` were still listed, so the GPT-6 rollout for Sol and Luna was not a
+hard break. Then, `gpt-5.5` carried an upgrade to `gpt-5.6-sol` and was set to retire 2026-10-14.
+**Re-checked 2026-10-04** (`models_cache.json`, CLI 0.160.0): `gpt-6.1-sol` led the Sol tier
+(`priority` 1, ahead of `gpt-6-astra` 2 and `gpt-6-sol` 3), listed `medium` effort but defaulted
+to `low` (`gpt-6-sol` defaults to `medium`), and was the `gpt-5.5` upgrade target.
+**Re-checked 2026-10-21** (`models_cache.json` fetched that day, CLI 0.163.0): `gpt-5.5` is gone
+from the catalog. Listed: `gpt-6.1-sol` (priority 1), `gpt-6-astra` (2), `gpt-6-sol` (4),
+`gpt-6-luna` (5), `gpt-5.6-sol` (6), `gpt-5.6-terra` (8), `gpt-5.6-luna` (9); none carries an
+upgrade. Terra still has no GPT-6 variant. `codex-resolve-model.py <tier> --effort medium` resolves
+Luna `gpt-6-luna`, Terra `gpt-5.6-terra`, Sol `gpt-6.1-sol`, Astra `gpt-6-astra`. The catalog has
+no price field; on the pricing page `gpt-6.1-sol` is 50/2.5/250, the same as `gpt-6-sol` except
+cached input at half (2.5 vs 5), so the switch costs no more per token (it says nothing about how
+many tokens a run uses). Versus the GPT-5.6 rates, `gpt-6-sol` is exactly half on every column and
+`gpt-6-luna` half on input and cached input, ~0.42x on output (exact numbers below).
 
 The table names a **tier**, not a slug. Resolve a tier to the best visible catalog entry whose
 slug ends in it (lowest integer `priority`, `visibility: list`, not retiring: `upgrade.model` is
@@ -132,10 +135,10 @@ The plugin accepts up to `xhigh`, not `max`/`ultra`.
 Plus consumes included usage before purchased credits; API dollar rates are not the account's
 invoice. Published credit rates per 1M input/cached-input/output tokens, fetched live from
 `learn.chatgpt.com/docs/pricing` 2026-09-23: `gpt-6-luna` 2.5/0.25/12.5, `gpt-5.6-terra`
-50/5/300, `gpt-6-sol` 50/5/250, `gpt-6.1-sol` 50/2.5/250 (re-fetched 2026-10-04, all rows above
-unchanged), `gpt-6-astra` 250/25/1250. The superseded `gpt-5.6-sol` and
+50/5/300, `gpt-6-sol` 50/5/250, `gpt-6.1-sol` 50/2.5/250, `gpt-6-astra` 250/25/1250
+(re-fetched 2026-10-04 and 2026-10-21, every row unchanged). The superseded `gpt-5.6-sol` and
 `gpt-5.6-luna` rates (100/10/500 and 5/0.5/30, unchanged since 2026-09-14) still apply if a
-dispatch falls back to either during the rollout. These compare credit usage; they do not price
+dispatch falls back to either; both are still listed. These compare credit usage; they do not price
 included quota or prove actual spend. Recheck current pricing when the account, plan, or catalog
 changes. Avoid optional fast/priority service and speculative fan-out as cost defaults; neither
 is required by this policy.

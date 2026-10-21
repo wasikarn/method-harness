@@ -16,5 +16,11 @@ if [ ! -r "$_py" ]; then
   exit 0
 fi
 
-python3 "$_py" "$@"
+# Fast path: python's _CODEX_RE is case-sensitive and needs the literal
+# "codex" in the command, so a payload without it can never be recorded.
+# Skips a ~30 ms python spawn on every ordinary Bash failure.
+payload=$(cat)
+[[ "$payload" == *codex* ]] || exit 0
+
+python3 "$_py" "$@" <<<"$payload"
 exit 0

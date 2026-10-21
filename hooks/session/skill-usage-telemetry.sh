@@ -51,19 +51,31 @@ mkdir -p "$log_dir"
 # name ("grilling") that the tool result keeps short too, so a colon-free
 # name is mapped by scripts/_lib/skill-namespace.py when exactly one
 # installed plugin ships it; an ambiguous or unknown name stays as-is.
-case "$(jq -r '.hook_event_name // "" | tostring' <<<"$payload" 2>/dev/null)" in
+# One jq pass for event, expansion type and short name (was three spawns),
+# NUL-separated so a name with a newline or tab can't shift the fields.
+event="" exptype="" short=""
+{
+  IFS= read -r -d '' event
+  IFS= read -r -d '' exptype
+  IFS= read -r -d '' short
+} < <(jq -j '
+  (.hook_event_name // "" | tostring) + "\u0000" +
+  (.expansion_type // "" | tostring) + "\u0000" +
+  ((if .hook_event_name == "UserPromptExpansion" then "" else (.tool_input.skill? // "") end | if type == "string" then . else "" end) // "") + "\u0000"
+' <<<"$payload" 2>/dev/null)
+case "$event" in
   UserPromptExpansion)
-    [ "$(jq -r '.expansion_type // "" | tostring' <<<"$payload" 2>/dev/null)" = "slash_command" ] || exit 0
+    [ "$exptype" = "slash_command" ] || exit 0
     source=typed ;;
   *) source=tool ;;
 esac
 mapped=""
-short=$(jq -r 'if .hook_event_name == "UserPromptExpansion" then "" else (.tool_input.skill? // "") end | if type == "string" then . else "" end' <<<"$payload" 2>/dev/null)
 resolver="$(dirname "$0")/../../scripts/_lib/skill-namespace.py"
 if [ -n "$short" ] && [[ "$short" != *:* ]] && command -v python3 >/dev/null 2>&1 && [ -r "$resolver" ]; then
   mapped=$(python3 "$resolver" "$short" 2>/dev/null) || mapped=""
 fi
-jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg src "$source" --arg mapped "$mapped" '
+jq -c --arg src "$source" --arg mapped "$mapped" '
+  (now | strftime("%Y-%m-%dT%H:%M:%SZ")) as $ts |
   (if $src == "typed" then .command_name? else .tool_input.skill? end // null) as $raw |
   (if $mapped != "" then $mapped
    elif ($raw | type) == "string" and ($raw | length) > 0

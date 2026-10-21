@@ -34,9 +34,8 @@ reference), and a live probe showed it beating `modelSettings.<model>.effortLeve
 `CLAUDE_CODE_EFFORT_LEVEL` outranks it ("overriding the session level but not the environment
 variable"), and `maxEffortLevel` or an org cap still clamps it.
 Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded review or
-mutation; `effort: xhigh` for adversarial second-pass surfaces (`plan-reviewer`,
-`blind-spot-hunter`), `high` for normal judgment, `medium`/`low` for mechanical work. The opus
-pins: `requirement-analyst` (readiness verdict), `plan-reviewer` and `blind-spot-hunter`
+mutation; `effort: xhigh` for adversarial second-pass surfaces (`plan-reviewer`), `high` for normal judgment, `medium`/`low` for mechanical work. The opus
+pins: `requirement-analyst` (readiness verdict), `plan-reviewer`, `blind-spot-hunter` and `ideate-critic`
 (adversarial), `code-architect` and `backend-architect` (design trade-offs). Never pin `fable`
 in an agent (Fable can bill usage credits depending on plan and seat tier, and `-p`/eval runs
 bill them without asking; it also loses model independence from a fable main session); never pin
@@ -98,7 +97,7 @@ vocabulary fixed at authoring time prevents that.
 A flat, prose-style report's bottom line goes first in a document read top-down (an audit
 artifact, a `docs/research/*.md` file) and last when it's read as one narrative in a scrolling
 terminal or chat stream, where the final line is what the reader's eye lands on first.
-`skills/review/deep-audit/SKILL.md:243`'s "Final Verdict" on line one and this fleet's "End with
+`skills/review/deep-audit/SKILL.md:260`'s "Final Verdict" on line one and this fleet's "End with
 a one-line verdict" (`agents/type-design-analyzer.md`, `agents/blind-spot-hunter.md`,
 `agents/test-gap-analyzer.md`, `agents/silent-failure-hunter.md`) are the same principle applied
 to two different media, not a contradiction between them.
@@ -106,7 +105,7 @@ to two different media, not a contradiction between them.
 This item doesn't cover a structured, multi-field report (`agents/requirement-analyst.md`,
 `agents/plan-reviewer.md`): a caller reads or parses the whole block there, not just its last
 line, so field order follows the analysis's own workflow instead.
-`agents/requirement-analyst.md:139`'s `verdict:` leads its block; `agents/plan-reviewer.md:183`'s
+`agents/requirement-analyst.md:137`'s `verdict:` leads its block; `agents/plan-reviewer.md:168`'s
 sits mid-block, before `confidence`/`not_reviewed`/`verdict_movers`/`revisit_if`. Neither
 violates this item — a multi-field report was never in its scope.
 

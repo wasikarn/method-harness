@@ -82,29 +82,16 @@ assumptions, regressions, missing checks, consistency between files (doc versus 
 disagreeing), and drift between intent and code; every finding cites one checkable fact (a
 `path:line`, or a backticked command). **Withhold step 1's own per-file claims/notes and step 2's rubric scores** —
 the checker re-derives its own read of the diff from the artifact itself, never from the
-orchestrator's already-formed opinion of it. Handing the checker the maker's own claims is the
-CoVe "joint" failure mode: a same-session check that shares the generator's own trace tends to
-inherit its blind spots (`docs/research/
-adversarial-attacker-dispatch-patterns-2026-09-19.md` §1, CoVe's factored-vs-joint ablation:
-"the verification questions might hallucinate similarly to the original baseline response, which
-defeats the purpose"). Add one line to the brief itself: this run is investigation-only —
-reading files and running read-only commands (`git log`, `git diff`, `cat`, `rg`) is expected
-and required.
+orchestrator's already-formed opinion of it (the CoVe "joint" failure mode; why each step-3 rule
+exists: `references/rationale.md`, not needed to run). Add one line to the brief itself: this run
+is investigation-only — reading files and running read-only commands (`git log`, `git diff`,
+`cat`, `rg`) is expected and required.
 
-**Priming the checker with a specific, already-suspected item is different from leaking an
-opinion — but only if the checker's answer is structurally distinguishable from silence.** If
-you already have direct evidence pointing at something specific (not a vague "check everything
-harder" — a concrete claim you can name), it's fine to name it in the brief and ask the checker
-to verify or refute it. But "find what it missed" framing alone makes confirming a named item
-indistinguishable from never having looked: a primed item that's real reads exactly like one the
-checker didn't check. A checker primed with 3 specific known findings can return several new
-ones while addressing none of the primed 3 anywhere in its output — priming doesn't guarantee
-coverage of the primed items. **When the brief primes
-any item, require one `findings[]` entry per primed item, `summary` starting `CONFIRMED:` or
-`DISPUTED:`** — this fits the existing schema (`references/checker-output-schema.json`'s
-`findings[]` items are already free-text `summary`/`evidence`, no schema change needed) and
-makes "checked and cleared" and "never looked" different, citable strings instead of the same
-silence.
+**Priming:** when you already have direct evidence pointing at something specific (a concrete
+claim you can name, not "check everything harder"), you may name it in the brief and ask the
+checker to verify or refute it. **When the brief primes any item, require one `findings[]` entry
+per primed item, `summary` starting `CONFIRMED:` or `DISPUTED:`** — otherwise "checked and
+cleared" reads the same as "never looked".
 
 **Fingerprint scope before dispatch.** For every path step 1 put in scope (committed-diff files,
 any staged/untracked/uncommitted files, any named out-of-git file — memory store, settings),
@@ -128,10 +115,8 @@ for this adversarial checker. Resolve the tier to a slug, never type one:
 report. Check availability and remaining quota before a substantial run.
 Raise effort only for a concrete reasoning need; acceptance criteria below never weaken.
 `<schema-file>` is `references/checker-output-schema.json` (this skill's own JSON Schema for
-`{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}`). This is sandboxed against
-model-generated shell commands (`codex exec --help`'s own wording) plus the brief's no-mutation
-line above — not an unqualified "read-only, guaranteed," since neither layer alone covers every
-tool an environment might load.
+`{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}`). The sandbox plus
+the brief's no-mutation line is not an unqualified "read-only, guaranteed".
 
 **Accept the result only if all of:** `codex exec` exits 0; the output-last-message file's raw
 text validates through the same `scripts/check-verdict.py` the fallback path uses (all six fields,
@@ -152,50 +137,24 @@ a failure, never a fallback trigger.
 
 **On any other outcome** — non-zero exit, empty or malformed output, a schema mismatch, timeout,
 auth failure, or a semantic refusal — fall back to a Claude `Explore`/review agent (same brief;
-its return contract is `docs/reference/spawn-brief.md`'s `Validator/re-validator:` shape **plus
-the `checked[]` and `contract_version` fields this skill requires** — `{contract_version, pass,
-findings[], checked[], scope_ok, unexpected_files[]}`, not the bare 4-field spawn-brief.md line
-verbatim: `check-verdict.py` below validates both paths against the same unconditional 6-key
-contract, so a fallback agent following the generic 4-field shape gets a valid response rejected —
-verify with `echo '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}' |
-python3 scripts/check-verdict.py`, which exits 1 on "missing=['checked', 'contract_version']".
-`docs/reference/spawn-brief.md`'s
-generic shape is intentionally left unchanged — it backs many unrelated Rule-13 validator
-dispatches that don't need this guard) and note "independence reduced for this pass" in the final
-report.
+its return contract is the full 6-key `{contract_version, pass, findings[], checked[], scope_ok,
+unexpected_files[]}`, **not** `docs/reference/spawn-brief.md`'s bare 4-field
+`Validator/re-validator:` line, which `check-verdict.py` rejects) and note "independence reduced
+for this pass" in the final report.
 
-On this fallback path there is no `--output-last-message` file and no `--output-schema`, so
-the agent's raw final message is what goes to `check-verdict.py` instead. A live
-run of this path (2026-09-18) returned a schema-valid object followed by unrequested trailing
-prose after the closing code fence — a plain "strip a leading/trailing fence" rule doesn't
-survive that, since the trailing prose sits after the fence, not inside it. Pipe the agent's raw
-final message to `scripts/check-verdict.py`:
+On this fallback path there is no `--output-last-message` file and no `--output-schema`; pipe the
+agent's raw final message (never a fence-stripped copy) to the same script:
 ```
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
 ```
-A literal `NEEDS-DECISION` anywhere in the text is checked first and always wins over any JSON
-found nearby — the contract is either a verdict object or an escalation, never both, so a
-hedged/hypothetical object quoted ahead of a real escalation can't override it, and unrelated
-JSON-shaped prose after the escalation (an example, a config snippet) can't get misclassified as
-a malformed verdict. Otherwise it scans every `{` in the text (trying every byte in order, not
-just the first — narration before the real JSON can itself contain a brace, e.g. the agent
-echoing this skill's own `{contract_version, pass, findings[], checked[], scope_ok,
-unexpected_files[]}` return-contract line) and keeps every candidate that fully validates against
-the contract: exact key-set equality (not merely all six keys present — an extra invented field
-is rejected too), `pass`/`scope_ok` as real booleans, every `findings[]` item as exactly
-`{summary, evidence}` with string values, **`checked[]` non-empty, every item exactly `{claim,
-evidence}` with string values** — required even on a clean pass, closing the same vacuous-accept
-gap the Codex path's schema now closes — every `evidence` in citation shape (a backticked command
-or `path:line`, the regex idea-audit's `check-citations.py` uses), `unexpected_files[]` as a list of strings. Exactly one
-valid candidate is required — two or more *distinct* schema-valid objects (a decoy example quoted
-ahead of the agent's real, differently-valued verdict) reject as ambiguous rather than silently
-picking the first or last. Exit 0 with the validated JSON on stdout means accept; exit 1 with a
-reason on stderr means reject (a malformed or ambiguous verdict must never reach a fixer brief);
-**exit 2 means the agent correctly returned `NEEDS-DECISION` instead of guessing**
-(`spawn-brief.md:39`'s escalation return) — that is a valid non-guess, not a rejected verdict,
-and surfaces to the operator as an open question, not a broken checker. The substance rule is
-unchanged regardless of exit code: schema-valid JSON that still refuses in prose is not review
-evidence.
+The script checks a literal `NEEDS-DECISION` first, then requires exactly one candidate object
+that fully validates (exact keys, booleans, non-empty `checked[]`, citation-shaped `evidence`);
+its docstring has the parsing detail. Exit 0 with the validated JSON on stdout means accept;
+exit 1 with a reason on stderr means reject (a malformed or ambiguous verdict must never reach a
+fixer brief); **exit 2 means the agent correctly returned `NEEDS-DECISION` instead of guessing**
+(`spawn-brief.md:39`'s escalation return) — a valid non-guess, surfaced to the operator as an open
+question, not a broken checker. Regardless of exit code, schema-valid JSON that still refuses in
+prose is not review evidence.
 
 **Re-fingerprint after the checker returns:**
 ```
@@ -211,8 +170,7 @@ re-run the checker once.
 **If the fallback also fails to produce a valid result, or the manifest is still unstable after
 that retry**, this is not a soft note: it hard-forces the Final Verdict below to **fail,
 reason "verification incomplete"** — overriding whatever step 2's rubric total would otherwise
-say, since its "insufficient evidence, left out of the total" allowance would otherwise let a
-checker-less run still pass on its remaining dimensions. Say plainly this means the audit
+say. Say plainly this means the audit
 couldn't verify the work, not that the work is wrong — the two are different claims.
 
 The checker returns `{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}` — its own
@@ -259,12 +217,8 @@ path, return value, or emitted string that other code, a test, or an out-of-scop
 — a single fix can interact with code already sitting in the file exactly the way two fixes
 interact with each other, and a bare fix-count alone doesn't distinguish these. Skip only when
 step 4 applied 0 fixes, or its 1 fix was fully local (nothing else reads what it changed) — step
-3's checker already covers a fully-local single fix point-by-point. A single fix can silently
-disable an unrelated feature when it shares an early-exit path with pre-existing code — passing
-its own point-by-point verification isn't enough, which is why a strict "2+ fixes" gate would
-skip exactly the case this step exists for. The 2-fix trigger can also hold only by coincidence:
-a finding can come from a peer commit consuming the fixed function as a black box, unrelated to
-whether the two fixes share any surface with each other.
+3's checker already covers a fully-local single fix point-by-point. Why the trigger is not a bare
+fix count: `references/rationale.md`.
 
 Dispatch `mh:blind-spot-hunter` (`Agent` tool, reuse — do not write a new agent for this) against
 the **combined delta**: every file step 1 put in scope, unioned with every fix commit from step

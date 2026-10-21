@@ -30,6 +30,9 @@ fi
 
 # A rewrite the old line grep missed: next( split across lines, or an object passed by name.
 # The temp dir has no manifest, so only the static rows are asserted, not the exit code.
+# static: run the check with a failing `claude` stub (an exported function, found by command -v),
+# skipping a ~0.7 s `claude plugin validate` whose result these rows never read.
+static() ( claude() { return 1; }; export -f claude; bash "$CHECK" "$1" 2>&1 )
 T=$(mktemp -d) || exit 1
 trap 'trash "$T"' EXIT
 mkdir -p "$T/multi/hooks/mod" "$T/var/hooks/mod"
@@ -49,9 +52,9 @@ export default (on) => {
   })
 }
 EOF
-out="$(bash "$CHECK" "$T/multi" 2>&1)"
+out="$(static "$T/multi")"
 case "$out" in *"rewrite in source: L3: next({ ...e, prompt:"*) ok "multi-line object arg flagged" ;; *) bad "multi-line object arg not flagged: $out" ;; esac
-out="$(bash "$CHECK" "$T/var" 2>&1)"
+out="$(static "$T/var")"
 case "$out" in *"rewrite in source: L3: next(r)"*) ok "variable arg flagged" ;; *) bad "variable arg not flagged: $out" ;; esac
 
 # Deep-audit: a next() call inside a template literal's ${...} is code, not string text.
@@ -70,9 +73,9 @@ export default (on) => {
   })
 }
 EOF
-out="$(bash "$CHECK" "$T/tpl" 2>&1)"
+out="$(static "$T/tpl")"
 case "$out" in *"rewrite in source: L3: next({ ...e, text:"*) ok "next() inside a template interpolation flagged" ;; *) bad "template interpolation not flagged: $out" ;; esac
-out="$(bash "$CHECK" "$T/tplok" 2>&1)"
+out="$(static "$T/tplok")"
 case "$out" in *"in source"*) bad "template text (not an interpolation) flagged: $out" ;; *) ok "next() named in template text is not flagged" ;; esac
 
 echo "  ($pass passed, $fail failed)"

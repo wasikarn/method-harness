@@ -10,7 +10,7 @@
 # tier; loses model independence from a fable main session).
 for f in "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
-  name=$(basename "$f" .md)
+  name=${f##*/}; name=${name%.md}
   model=$(fm_get "$f" "model" --block)
   [ -n "$model" ] || continue
   case "$model" in

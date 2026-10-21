@@ -173,12 +173,20 @@ MANIFEST_EXPECTED_EXCLUDED="ste-lint"
 # hook_wired_transitively <basename>: true if a script hooks.json names invokes
 # <basename> (comment text stripped so a prose mention does not count). Shared by
 # checks 03 and 11.
+# The comment-stripped text of every referenced script is built once and cached in
+# _HWT_TEXT (was: jq + sed + grep per call); a fixed-string grep -qF on any one file
+# equals a substring test on the newline-joined set, since a name holds no newline.
 hook_wired_transitively() {
-  local name="$1" hooks_json="$CLAUDE_DIR/hooks/hooks.json" ref_file
+  local name="$1"
+  [ -n "${_HWT_TEXT+set}" ] || _HWT_TEXT=$(_hwt_build; :)
+  [[ "$_HWT_TEXT" == *"$name"* ]]
+}
+_hwt_build() {
+  local hooks_json="$CLAUDE_DIR/hooks/hooks.json" ref_file
   if command -v jq >/dev/null 2>&1; then
     while IFS= read -r ref_file; do
       [ -n "$ref_file" ] && [ -f "$ref_file" ] || continue
-      sed 's/#.*$//' "$ref_file" 2>/dev/null | grep -qF "$name" && return 0
+      sed 's/#.*$//' "$ref_file" 2>/dev/null; echo
     done < <(jq -r '
         .hooks | to_entries[]? | .value[]? | .hooks[]? |
         ([.command // empty] + (.args // [])) | .[] | select(type=="string")
@@ -189,12 +197,11 @@ hook_wired_transitively() {
   else
     while IFS= read -r ref_file; do
       [ -n "$ref_file" ] && [ -f "$ref_file" ] || continue
-      sed 's/#.*$//' "$ref_file" 2>/dev/null | grep -qF "$name" && return 0
+      sed 's/#.*$//' "$ref_file" 2>/dev/null; echo
     done < <(grep -oE '[A-Za-z0-9_./${}-]+\.(sh|py)' "$hooks_json" 2>/dev/null \
         | sed "s|\${CLAUDE_PLUGIN_ROOT}|$CLAUDE_DIR|g; s|\$CLAUDE_PLUGIN_ROOT\b|$CLAUDE_DIR|g" \
         | sort -u)
   fi
-  return 1
 }
 
 # Counters increment in the same shell as the echo (no $(...) subshell) so IDs stay unique.

@@ -18,8 +18,8 @@ not the guarantee described below.
 **Raw Messages API (a script with `ANTHROPIC_API_KEY`):** the structural guarantee. Force a
 single tool call with a narrow enum `input_schema`, `strict: true`, no manual `thinking`, and a tight
 `max_tokens` (a forced tool call on Haiku 5.5 starts with the tool call and has no `thinking` block,
-so a tight `max_tokens` is safe). No script in this repo makes such a call today (`hooks/`, `skills/**/scripts`
-grep clean for `api.anthropic.com`/`tool_choice`), so the first consumer also adds the API-key
+so a tight `max_tokens` is safe). No script in this repo makes such a call today (`hooks/`, `scripts/` and `skills/`
+grep clean for `api.anthropic.com`/`tool_choice`, 2026-10-21), so the first consumer also adds the API-key
 path — a separate decision, not a detail.
 
 ```json

@@ -74,12 +74,15 @@ if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && ! printf '%s' "$out" | /usr/b
 reset
 
 # 6. queueing: a waiter gets the lock after the holder releases, and says it waited.
-bash -c ". '$LIB'; GAUNTLET_LOCK_DIR='$L' gauntlet_lock_acquire; sleep 2; GAUNTLET_LOCK_DIR='$L' gauntlet_lock_release" >/dev/null 2>&1 &
+# Handshake, not a fixed hold: the holder keeps the lock until the waiter has said "waiting"
+# (a fixed 2 s hold could end before a loaded machine had started the waiter's bash).
+bash -c ". '$LIB'; GAUNTLET_LOCK_DIR='$L' gauntlet_lock_acquire; i=0; while [ ! -e '$T/go' ] && [ \$i -lt 300 ]; do sleep 0.05; i=\$((i+1)); done; GAUNTLET_LOCK_DIR='$L' gauntlet_lock_release" >/dev/null 2>&1 &
 BG=$!
-# Start the waiter only once the holder really holds the lock (a loaded machine can be slow to
-# start its bash), or the waiter could win the race and never wait.
+# Start the waiter only once the holder really holds the lock, or it could win the race and never wait.
 for _ in $(seq 1 100); do [ -f "$L/pid" ] && break; sleep 0.1; done
-out=$(WAIT=30 run 'gauntlet_lock_acquire; echo "mine=$$ pid=$(cat "$GAUNTLET_LOCK_DIR/pid")"; gauntlet_lock_release')
+WAIT=30 run 'gauntlet_lock_acquire; echo "mine=$$ pid=$(cat "$GAUNTLET_LOCK_DIR/pid")"; gauntlet_lock_release' >"$T/q.out" & W=$!
+for _ in $(seq 1 300); do /usr/bin/grep -q 'waiting' "$T/q.out" 2>/dev/null && break; sleep 0.05; done
+touch "$T/go"; wait $W; out=$(cat "$T/q.out")
 mine=$(printf '%s\n' "$out" | sed -n 's/^mine=\([0-9]*\) pid=.*/\1/p')
 pidf=$(printf '%s\n' "$out" | sed -n 's/^mine=[0-9]* pid=\([0-9]*\)$/\1/p')
 if [ -n "$mine" ] && [ "$mine" = "$pidf" ] && printf '%s' "$out" | /usr/bin/grep -q 'waiting'; then
@@ -161,7 +164,7 @@ if [ "$overlaps" -eq 0 ]; then ok "six racers on a stale lock never overlap (8 r
 # non-numeric cap or max-age must not break the wait or let a waiter take a live holder's lock.
 mkdir "$L"; echo 999999 >"$L/pid"; mkdir "$L/sub"
 start=$(date +%s)
-out=$(WAIT=2 run 'gauntlet_lock_acquire; echo rc=$?')
+out=$(WAIT=1 run 'gauntlet_lock_acquire; echo rc=$?')
 elapsed=$(( $(date +%s) - start ))
 if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && [ "$elapsed" -le 6 ]; then
   ok "a lock that cannot be removed still fails open at the cap (${elapsed}s)"
@@ -170,7 +173,7 @@ rm -f "$L/pid"; rmdir "$L/sub" "$L" 2>/dev/null; reset
 
 sleep 30 & BG=$!
 mkdir "$L"; echo "$BG" > "$L/pid"
-out=$(GAUNTLET_LOCK_MAX_AGE=1h GAUNTLET_LOCK_WAIT_SECS=2 GAUNTLET_LOCK_DIR="$L" GAUNTLET_LOCK_POLL=0.1 \
+out=$(GAUNTLET_LOCK_MAX_AGE=1h GAUNTLET_LOCK_WAIT_SECS=1 GAUNTLET_LOCK_DIR="$L" GAUNTLET_LOCK_POLL=0.1 \
   bash -c ". '$LIB'; gauntlet_lock_acquire; echo owner=\$(cat '$L/pid')" 2>&1)
 if printf '%s' "$out" | /usr/bin/grep -q "owner=$BG"; then ok "a non-numeric MAX_AGE does not let a waiter take a live lock"
 else bad "live lock taken with MAX_AGE=1h: $out"; fi

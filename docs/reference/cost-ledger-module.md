@@ -80,12 +80,12 @@ Names verified against the `claude-code.d.ts` that CLI 2.1.289 writes, and liste
 `$.plugin.name`, `$.session.root()`, `$.session.version()` (`SessionVersion.version`),
 `$.fs.read(path)`, `$.ui.status(text)`, `$.ui.toast(text, { timeoutMs })`.
 
-**Live probe: not run.** A dispatched subagent cannot start `claude -p` (mh's
-`gate:bash:irrecoverable` blocks nested sessions), so three things rest on the d.ts alone: that
-`$.plugin.root` is the folder above `.claude-plugin/` (the d.ts example
-`${$.plugin.root}/hooks/weights.bin` implies it; if wrong, every read misses and the module shows
-nothing, marker `mh` field absent), whether `skill.prompt`'s `skill` carries the `mh:` prefix
-(both forms are handled), and that `session.start` fires under `-p`. To probe from a main
+**Live evidence.** `$.plugin.root` is the folder above `.claude-plugin/`: all 297 load markers in
+the operator's `cost-ledger.jsonl` (2026-10-04 to 2026-10-21, CLI up to 2.1.306) carry the `mh`
+field, which is read through it. **Live probe: not run** for the other two, which rest on the
+d.ts alone, because a dispatched subagent cannot start `claude -p` (mh's
+`gate:bash:irrecoverable` blocks nested sessions): whether `skill.prompt`'s `skill` carries the
+`mh:` prefix (both forms are handled), and that `session.start` fires under `-p`. To probe from a main
 session: copy the repo to a scratch folder, set its `plugin.json` version to `0.0.1` and edit one
 `SKILL.md`, run `claude -p "/mh:cost-report" --plugin-dir <copy> --debug-file <log>` from the
 repo, then check for a `loaded` row in `cost-ledger.jsonl` with `mh: "0.0.1"` and the status and

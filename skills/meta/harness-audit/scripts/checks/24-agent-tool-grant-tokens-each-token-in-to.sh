@@ -13,7 +13,7 @@ while IFS= read -r badtok; do
 done < <(
   for f in "$CLAUDE_DIR/agents"/*.md; do
     [ -f "$f" ] || continue
-    name=$(basename "$f" .md)
+    name=${f##*/}; name=${name%.md}
     tv=$(fm_get "$f" "tools" --block)
     [ -n "$tv" ] || continue
     for tok in $(echo "$tv" | tr ',' ' '); do

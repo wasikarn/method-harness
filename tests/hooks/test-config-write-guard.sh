@@ -148,6 +148,21 @@ ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
 check "Write edit changes env key -> ask" "$ok"
 rm -f "$FIXTURE/.claude/settings.json"
 
+# --- the bash fast path (_silent_fastpath.sh) must defer every payload python could ask on ---
+# "~" expands to $HOME, which can supply the basename the raw payload never spells out.
+out=$(payload_write "~" | HOME="$FIXTURE/home/.claude/settings.json" bash "$GUARD" 2>/dev/null)
+ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "file_path \"~\" with HOME ending in .claude/settings.json -> ask (fast path defers on ~)" "$ok"
+
+# A \u escape can spell settings.json without the raw text containing it.
+out=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s/.claude/se\\u0074tings.json","content":""}}' "$FIXTURE" | bash "$GUARD" 2>/dev/null)
+ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "\\u-escaped settings.json basename -> ask (fast path defers on \\u)" "$ok"
+
+out=$(payload_edit "$FIXTURE/src/app.py" 'x = 1' 'x = 2' | bash "$GUARD" 2>&1); rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
+check "ordinary Edit elsewhere -> exit 0, no output, no stderr" "$ok"
+
 
 echo ""
 total=$((pass + fail))

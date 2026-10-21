@@ -38,10 +38,21 @@ fi
 # deep-audit finding), so without them it falls back to a bash-only `pwd -P`
 # ENC: right for a main checkout, it can only under-report from a worktree or
 # under autoMemoryDirectory. The lint pass below runs only on the resolver ENC.
-ENC=""
+ENC="" MEMDIR=""
 _MEMDIR_RESOLVER="${CLAUDE_PLUGIN_ROOT:-}/scripts/_lib/memory-dir.py"
 if command -v python3 >/dev/null 2>&1 && [ -r "$_MEMDIR_RESOLVER" ]; then
-  ENC="$(python3 "$_MEMDIR_RESOLVER" --enc 2>/dev/null)" || ENC=""
+  # One python spawn for both values (was two, ~35 ms each): load the shared
+  # resolver by file path (-I: no cwd-shadow import), NUL-separated output.
+  {
+    IFS= read -r -d '' ENC
+    IFS= read -r -d '' MEMDIR
+  } < <(python3 -I -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("memory_dir", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sys.stdout.write(m.resolve_enc() + "\0" + m.resolve_memory_dir() + "\0")
+' "$_MEMDIR_RESOLVER" 2>/dev/null)
 fi
 _MARKER_ENC="$ENC"
 if [ -z "$_MARKER_ENC" ]; then
@@ -68,9 +79,8 @@ if [ "${#FAILMARKERS[@]}" -gt 0 ]; then
 fi
 
 [ -n "$ENC" ] || exit 0
-# The resolver's full path, as memory-audit-commit.sh uses: a hand-built
-# projects/$ENC/memory misses a configured autoMemoryDirectory.
-MEMDIR="$(python3 "$_MEMDIR_RESOLVER" 2>/dev/null)" || exit 0
+# MEMDIR is the resolver's full path (read above), as memory-audit-commit.sh
+# uses: a hand-built projects/$ENC/memory misses a configured autoMemoryDirectory.
 [ -n "$MEMDIR" ] && [ -d "$MEMDIR" ] || exit 0
 
 LINT="${CLAUDE_PLUGIN_ROOT:-}/skills/meta/memory-lint/scripts/memory-lint.py"
