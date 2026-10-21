@@ -1,6 +1,6 @@
 ---
 name: backend-architect
-description: Backend systems architect — API contracts, service boundaries, data ownership, consistency, caching, reliability, scale. Cross-language; not for file-level feature blueprints (code-architect) or framework/DB syntax (context7).
+description: "Reviews backend system design: API contracts, service boundaries, data ownership, consistency, caching, reliability, scale. Not for file-level feature blueprints (code-architect) or framework syntax (context7)."
 bucket: design
 model: opus
 tools: Read, Grep, Glob, Bash
@@ -135,10 +135,7 @@ attempt now re-checks `status` after the first transaction's commit, sees `'char
 [Confidence in the recommended design, tied to what was actually traced vs taken on the requirements' word — plus the 1-2 assumptions that, if wrong, would change the recommendation]
 ```
 
-## Reference
+## Handoffs
 
-Framework/DB implementation detail: context7 library docs. Vulnerability-level
-security: hand off to native `/security-review`. Code-level error-handling audit backing the
-Reliability Posture checklist above: `silent-failure-hunter`. Tactical fix once a scalability
-bottleneck is identified here: `performance-optimizer`. General (non-backend-systems) feature
-blueprinting: `code-architect`.
+Code-level error-handling audit behind the Reliability Posture checklist: `silent-failure-hunter`.
+Tactical fix once a scalability bottleneck is identified: `performance-optimizer`.

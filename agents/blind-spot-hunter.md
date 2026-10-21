@@ -1,6 +1,6 @@
 ---
 name: blind-spot-hunter
-description: Post-review adversarial hunter for emergent/interaction defects that survived normal review (cross-file, framework-behavior, data-flow-asymmetry blind spots). Use after code review.
+description: "Hunts emergent cross-file, framework-behavior, and data-flow defects that survived code review of a diff. Use after review, not as a first pass."
 bucket: review
 model: opus
 tools: Read, Grep, Glob, Bash
@@ -45,11 +45,8 @@ already passed it. That independence is the mechanism; protect it.
 
 ## What you hunt — the shapes, highest-yield first
 
-Full 7-shape catalog (cross-file/interaction, framework/library auto-behavior, data-flow
-asymmetry, identity assumption, scope/glob breadth mismatch, emitted-string contradiction,
-vacuous test) in the Reference section below. Walk the
-delta's data path end to end and hunt each shape — the bug is always specific, the shapes
-generalize, and these seven are the seed, not the ceiling.
+Walk the delta's data path end to end and hunt each of the 7 shapes in the Reference section
+below.
 
 ## Techniques (verify against reality, not memory or a summary)
 
@@ -75,12 +72,10 @@ Run yourself (all read-only):
   proved *which URLs match*, never the resulting `Location` string. A prior green check can be
   adjacent-but-not-covering; read what it literally tested.
 
-Name for the operator (you must not run these) — this holds wherever you'd reconstruct the
-action, not just inside the repo under review: writing a scratch copy with the guard removed (or
-the mutation otherwise applied) and running it from `$TMPDIR` or any other scratch location is
-still running the mutation. Relocating it outside the tracked files doesn't turn a forbidden
-action into an empirical check you're cleared to perform yourself — the fixture repo not showing
-a diff afterward isn't the bar; not having performed the mutation at all is:
+Name for the operator (you must not run these). This holds wherever you'd reconstruct the
+action: a scratch copy with the guard removed, run from `$TMPDIR` or any other location, is
+still running the mutation. The bar is not having performed the mutation at all, not a clean
+diff afterward:
 - **The mutation** that would prove a test vacuous or a guard load-bearing (delete the guard →
   the test must fail).
 - **The query** that would confirm a state you're reasoning about (a `SELECT` on *staging* for a
