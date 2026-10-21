@@ -34,8 +34,8 @@ reference), and a live probe showed it beating `modelSettings.<model>.effortLeve
 `CLAUDE_CODE_EFFORT_LEVEL` outranks it ("overriding the session level but not the environment
 variable"), and `maxEffortLevel` or an org cap still clamps it.
 Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded review or
-mutation; `effort: xhigh` for adversarial second-pass surfaces (`plan-reviewer`), `high` for normal judgment, `medium`/`low` for mechanical work. The opus
-pins: `requirement-analyst` (readiness verdict), `plan-reviewer`, `blind-spot-hunter` and `ideate-critic`
+mutation; `effort: high` for judgment and adversarial surfaces, `medium`/`low` for mechanical work or bounded review (`test-gap-analyzer`, `type-design-analyzer`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
+pins: `requirement-analyst` (readiness verdict), `plan-reviewer` and `blind-spot-hunter`
 (adversarial), `code-architect` and `backend-architect` (design trade-offs). Never pin `fable`
 in an agent (Fable can bill usage credits depending on plan and seat tier, and `-p`/eval runs
 bill them without asking; it also loses model independence from a fable main session); never pin

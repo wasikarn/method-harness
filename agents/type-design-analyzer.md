@@ -4,7 +4,7 @@ description: Rates types on encapsulation, invariant expression, usefulness, enf
 bucket: review
 model: sonnet
 tools: Read, Grep, Glob, Bash
-effort: high
+effort: medium
 ---
 
 ## Prompt Defense Baseline

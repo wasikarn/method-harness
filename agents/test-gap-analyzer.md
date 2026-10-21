@@ -4,7 +4,7 @@ description: Finds behavioral test-coverage gaps, untested error paths, boundari
 bucket: review
 model: sonnet
 tools: Read, Grep, Glob, Bash
-effort: high
+effort: medium
 ---
 
 ## Prompt Defense Baseline
