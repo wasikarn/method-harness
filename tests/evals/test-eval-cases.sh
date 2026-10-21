@@ -54,31 +54,6 @@ sys.exit(1 if hits else 0)
 PY
 }
 
-# One node process compiles every regex grader's pattern up front (one spawn per pattern was
-# ~half this test's runtime). The per-case check below reads this cache and still spawns node
-# itself for any pattern the cache lacks, so a parse mismatch here can never skip a check.
-JS_CACHE="$TMP/js-regex-cache.json"
-python3 - "$EVALS" <<'PY' | node -e '
-let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
-  const out = {};
-  for (const [p, f] of JSON.parse(s)) {
-    try { new RegExp(p, f); out[p + "\u0000" + f] = null; } catch (e) { out[p + "\u0000" + f] = String(e); }
-  }
-  process.stdout.write(JSON.stringify(out));
-});' > "$JS_CACHE" || echo '{}' > "$JS_CACHE"
-import glob, json, os, re, sys
-pairs = []
-for f in glob.glob(os.path.join(sys.argv[1], "*", "graders", "*.md")):
-    m = re.match(r"---\n([\s\S]*?)\n---\n", open(f).read())
-    if not m or "type: regex" not in m.group(1):
-        continue
-    p = re.search(r"^pattern: '(.*)'$", m.group(1), re.M) or re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
-    if p:
-        fl = re.search(r"^flags: (\w+)$", m.group(1), re.M)
-        pairs.append([p.group(1), fl.group(1) if fl else ""])
-json.dump(pairs, sys.stdout)
-PY
-
 n=0
 for d in "$EVALS"/*/; do
   c=$(basename "$d"); n=$((n + 1))
@@ -221,62 +196,80 @@ echo "a;b"
     ste-lint-planted)         wrong='status.md: no confirmed findings, file is clean.' ;;
     ste-lint-file-prose-only) wrong='mixed.md line 6: rule 8.1 semicolon inside the code block' ;;
   esac
-  if ! python3 - "$d/graders" "$sample" "$wrong" "$JS_CACHE" <<'PY'
-import sys, os, re, subprocess, json
-bad = 0
-sample = sys.argv[2]
-wrong = sys.argv[3]
-try:
-    js_cache = json.load(open(sys.argv[4]))
-except (OSError, ValueError):
-    js_cache = {}
-for f in sorted(os.listdir(sys.argv[1])):
-    s = open(os.path.join(sys.argv[1], f)).read()
-    m = re.match(r"---\n([\s\S]*?)\n---\n", s)
-    if not m or not re.search(r"^type: (regex|tool_used|tool_order|file_exists|llm|baseline)$", m.group(1), re.M):
-        print(f"  {f}: no column-0 frontmatter with a known type"); bad = 1; continue
-    if "type: regex" not in m.group(1):
-        continue
-    p = re.search(r"^pattern: '(.*)'$", m.group(1), re.M) or re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
-    if not p:
-        print(f"  no pattern in {f}"); bad = 1; continue
-    try:
-        rx = re.compile(p.group(1))
-    except re.error as e:
-        print(f"  bad regex in {f}: {e}"); bad = 1; continue
-    fl = re.search(r"^flags: (\w+)$", m.group(1), re.M)
-    js_flags = fl.group(1) if fl else ""
-    flags = re.I if fl and "i" in fl.group(1) else 0
-    key = p.group(1) + "\0" + js_flags
-    if key in js_cache:
-        reason = js_cache[key]
-    else:
-        js = subprocess.run(
-            ["node", "-e", "new RegExp(process.argv[1], process.argv[2])", "--", p.group(1), js_flags],
-            capture_output=True, text=True,
-        )
-        err_lines = js.stderr.strip().splitlines()
-        reason = None if js.returncode == 0 else next(
-            (l for l in err_lines if "Error" in l), err_lines[-1] if err_lines else "compile failed")
-    if reason is not None:
-        print(f"  bad JS regex in {f} (real eval runtime uses JS, not Python re): {reason}")
-        bad = 1; continue
-    if not sample:
-        continue  # no verdict/fixture sample for this case's output shape; compile check above already ran
-    if f in ("contract.md", "clean.md"):
-        want = "match: not_contains" not in m.group(1)
-        if bool(re.search(p.group(1), sample, flags)) != want:
-            print(f"  {f}: pattern {'rejects' if want else 'matches'} the verdict sample {sample!r}"); bad = 1
-    elif os.path.basename(os.path.dirname(sys.argv[1])).startswith(("tech-humanize-", "ste-lint-")):
-        if not re.search(p.group(1), sample, flags | re.M):
-            print(f"  {f}: pattern does not match the scaffolded fixture, so it cannot discriminate"); bad = 1
-        if wrong and "target: last_message" in m.group(1) and re.search(p.group(1), wrong, flags | re.M):
-            print(f"  {f}: pattern matches a deliberately wrong report, so it cannot discriminate"); bad = 1
-sys.exit(bad)
-PY
-  then bad "$c: a grader is malformed"; continue; fi
-  ok "$c"
+  # The grader checks for every case run in one python + one node process after the loop
+  # (one `node` spawn per regex grader was most of this file's run time).
+  printf '%s' "$sample" >"$TMP/$c.sample"; printf '%s' "$wrong" >"$TMP/$c.wrong"
+  printf '%s\t%s\n' "$c" "$d/graders" >>"$TMP/graders.tsv"
 done
+[ -f "$TMP/graders.tsv" ] || : >"$TMP/graders.tsv"
+# Prints a case's problems indented, then `bad <case>` or `ok <case>`.
+python3 - "$TMP/graders.tsv" "$TMP" <<'PY' >"$TMP/graders.out"
+import sys, os, re, json, subprocess
+cases = [l.split("\t", 1) for l in open(sys.argv[1]).read().splitlines() if l]
+# Pass 1: parse every grader; collect regex patterns for one batched JS compile.
+parsed, js_in = [], []
+for c, gdir in cases:
+    items = []
+    for f in sorted(os.listdir(gdir)):
+        s = open(os.path.join(gdir, f)).read()
+        m = re.match(r"---\n([\s\S]*?)\n---\n", s)
+        if not m or not re.search(r"^type: (regex|tool_used|tool_order|file_exists|llm|baseline)$", m.group(1), re.M):
+            items.append((f, "  %s: no column-0 frontmatter with a known type" % f, None)); continue
+        if "type: regex" not in m.group(1):
+            continue
+        p = re.search(r"^pattern: '(.*)'$", m.group(1), re.M) or re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
+        if not p:
+            items.append((f, "  no pattern in %s" % f, None)); continue
+        try:
+            re.compile(p.group(1))
+        except re.error as e:
+            items.append((f, "  bad regex in %s: %s" % (f, e), None)); continue
+        fl = re.search(r"^flags: (\w+)$", m.group(1), re.M)
+        items.append((f, None, (m.group(1), p.group(1), fl.group(1) if fl else "", len(js_in))))
+        js_in.append([p.group(1), fl.group(1) if fl else ""])
+    parsed.append((c, gdir, items))
+# Same call the eval runtime makes, `new RegExp(pattern, flags)`, once per pattern, one process.
+js = subprocess.run(["node", "-e", """
+const xs = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+console.log(JSON.stringify(xs.map(([p, f]) => { try { new RegExp(p, f); return null; } catch (e) { return `${e.name}: ${e.message}`; } })));
+"""], input=json.dumps(js_in), capture_output=True, text=True)
+if js.returncode != 0:
+    print("  node batch compile failed: %s" % js.stderr.strip()); sys.exit(1)
+js_err = json.loads(js.stdout)
+# Pass 2: per case, the same checks as before, in grader order.
+for c, gdir, items in parsed:
+    bad = 0
+    sample = open(os.path.join(sys.argv[2], c + ".sample")).read()
+    wrong = open(os.path.join(sys.argv[2], c + ".wrong")).read()
+    for f, err, rx in items:
+        if err:
+            print(err); bad = 1; continue
+        fm, pat, js_flags, i = rx
+        if js_err[i]:
+            print(f"  bad JS regex in {f} (real eval runtime uses JS, not Python re): {js_err[i]}")
+            bad = 1; continue
+        flags = re.I if "i" in js_flags else 0
+        if not sample:
+            continue  # no verdict/fixture sample for this case's output shape; compile check above already ran
+        if f in ("contract.md", "clean.md"):
+            want = "match: not_contains" not in fm
+            if bool(re.search(pat, sample, flags)) != want:
+                print(f"  {f}: pattern {'rejects' if want else 'matches'} the verdict sample {sample!r}"); bad = 1
+        elif os.path.basename(os.path.dirname(gdir)).startswith(("tech-humanize-", "ste-lint-")):
+            if not re.search(pat, sample, flags | re.M):
+                print(f"  {f}: pattern does not match the scaffolded fixture, so it cannot discriminate"); bad = 1
+            if wrong and "target: last_message" in fm and re.search(pat, wrong, flags | re.M):
+                print(f"  {f}: pattern matches a deliberately wrong report, so it cannot discriminate"); bad = 1
+    print(("bad " if bad else "ok ") + c)
+PY
+[ $? -eq 0 ] || bad "grader batch check crashed: $(cat "$TMP/graders.out")"
+while IFS= read -r line; do
+  case "$line" in
+    "ok "*) ok "${line#ok }" ;;
+    "bad "*) bad "${line#bad }: a grader is malformed" ;;
+    *) echo "$line" ;;
+  esac
+done <"$TMP/graders.out"
 # Not an exact literal (harness gap-audit 2026-09-20 already fixed this same
 # anti-pattern in README.md/operating-model.md below) -- the count legitimately
 # drifts up as cases are added. A floor instead catches the real failure mode:

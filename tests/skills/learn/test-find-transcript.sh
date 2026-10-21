@@ -26,8 +26,10 @@ mkdir -p "$DIR"
 CURRENT_ID="11111111-1111-1111-1111-111111111111"
 OTHER_ID="22222222-2222-2222-2222-222222222222"
 printf 'current session content\n' > "$DIR/$CURRENT_ID.jsonl"
-sleep 1.1
-printf 'other, newer session content\n' > "$DIR/$OTHER_ID.jsonl"   # newer mtime than current
+printf 'other, newer session content\n' > "$DIR/$OTHER_ID.jsonl"
+# Explicit mtimes instead of a 1.1 s sleep: other is a minute newer than current.
+touch -t 202601010000 "$DIR/$CURRENT_ID.jsonl"
+touch -t 202601010001 "$DIR/$OTHER_ID.jsonl"
 
 out=$(HOME="$FAKE_HOME" CLAUDE_CODE_SESSION_ID="$CURRENT_ID" bash "$SCRIPT" "$CWD" 2>/dev/null)
 rc=$?

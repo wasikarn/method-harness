@@ -24,6 +24,21 @@ new_sandbox() {
   echo "$dir"
 }
 
+# A wrapped command that is an external child (so bash defers the trapped signal until it exits,
+# as with the old `sleep 3`): it touches $1 once running (flip and traps are already in place),
+# then exits once $2 appears. Polling replaces a fixed 3 s sleep and the racy 0.3 s head start.
+# Capped at ~10 s and stops when the sandbox is gone, so a broken wrapper leaves no orphan behind.
+HOLD='sh -c '"'"'touch "$1"; i=0; while [ ! -e "$2" ] && [ -d "${2%/*}" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done'"'"' hold'
+# signal_and_release <sig> <pid> <sandbox>: wait for the child to run, signal the wrapper, then
+# let the child exit so the deferred trap fires.
+signal_and_release() {
+  local _
+  for _ in $(seq 1 200); do [ -e "$3/ready" ] && break; sleep 0.05; done
+  kill -"$1" "$2"
+  touch "$3/go"
+  wait "$2" 2>/dev/null
+}
+
 # --- normal flip + restore on success ---
 sandbox="$(new_sandbox '{"defaultEnabled": false}')"
 during=$(bash -c "
@@ -71,12 +86,10 @@ rm -rf "$sandbox"
 sandbox="$(new_sandbox '{"defaultEnabled": false}')"
 bash -c "
 source '$sandbox/scripts/_lib/eval-default-enabled.sh'
-with_default_enabled_true sleep 3
+with_default_enabled_true $HOLD '$sandbox/ready' '$sandbox/go'
 " &
 runner_pid=$!
-sleep 0.3
-kill -TERM "$runner_pid"
-wait "$runner_pid" 2>/dev/null
+signal_and_release TERM "$runner_pid" "$sandbox"
 status=$?
 after=$(cat "$sandbox/.claude-plugin/plugin.json")
 [[ "$after" == *'"defaultEnabled": false'* ]] && ok "restores false once a SIGTERM'd wrapped command exits" \
@@ -89,12 +102,10 @@ rm -rf "$sandbox"
 sandbox="$(new_sandbox '{"defaultEnabled": false}')"
 bash -c "
 source '$sandbox/scripts/_lib/eval-default-enabled.sh'
-with_default_enabled_true sleep 3
+with_default_enabled_true $HOLD '$sandbox/ready' '$sandbox/go'
 " &
 runner_pid=$!
-sleep 0.3
-kill -HUP "$runner_pid"
-wait "$runner_pid" 2>/dev/null
+signal_and_release HUP "$runner_pid" "$sandbox"
 after=$(cat "$sandbox/.claude-plugin/plugin.json")
 [[ "$after" == *'"defaultEnabled": false'* ]] && ok "restores false once a SIGHUP'd wrapped command exits" \
   || bad "left defaultEnabled true after SIGHUP (got: $after)"
@@ -262,15 +273,13 @@ sandbox="$(new_sandbox '{"defaultEnabled": false}')"
 bash -c "
 wrapped() {
   local manifest=/nonexistent flipped=0 prev_term=''
-  sleep 3
+  $HOLD '$sandbox/ready' '$sandbox/go'
 }
 source '$sandbox/scripts/_lib/eval-default-enabled.sh'
 with_default_enabled_true wrapped
 " &
 runner_pid=$!
-sleep 0.3
-kill -TERM "$runner_pid"
-wait "$runner_pid" 2>/dev/null
+signal_and_release TERM "$runner_pid" "$sandbox"
 after=$(cat "$sandbox/.claude-plugin/plugin.json")
 [[ "$after" == *'"defaultEnabled": false'* ]] && ok "restore is immune to a wrapped function's own same-named locals" \
   || bad "a wrapped function's own locals shadowed the real values (got: $after)"
