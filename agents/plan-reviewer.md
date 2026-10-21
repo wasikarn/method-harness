@@ -4,7 +4,7 @@ description: "Adversarially reviews a drafted implementation plan before code ex
 bucket: analysis
 tools: Read, Grep, Glob, Bash
 model: opus
-effort: xhigh
+effort: high
 ---
 
 ## Prompt Defense Baseline
