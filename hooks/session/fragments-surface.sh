@@ -23,17 +23,34 @@ REINJECT=0
 
 command -v python3 >/dev/null 2>&1 || exit 0
 
+ARM_BASE="${TMPDIR:-/tmp}/mh-fragments-arm"
+
+# Fast path: a record can only exist under some project's documents/ dir. If
+# none exists anywhere, skip the git/sha256/mkdir chain below (~60 ms, and it
+# created an empty state dir for every project ever opened). A match only
+# means "take the full, checked path", so this never trusts what it finds.
+shopt -s nullglob
+_ANY_RECORD=("${HOME:-/nonexistent}"/.claude/state/mh-fragments/*/documents/*.json)
+shopt -u nullglob
+if [ "${#_ANY_RECORD[@]}" -eq 0 ] && [ ! -d "$ARM_BASE" ]; then
+  exit 0
+fi
+
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../scripts/_lib/fragments-state.sh" 2>/dev/null || exit 0
 
-ROOT=$(hook_repo_root) || exit 0
+RECORDS=()
+DOCS_DIR=""
+if [ "${#_ANY_RECORD[@]}" -gt 0 ]; then
+  ROOT=$(hook_repo_root) || exit 0
 
-DOCS_DIR=$(fragments_docs_dir "$ROOT" 2>/dev/null) || exit 0
-[ -d "$DOCS_DIR" ] || exit 0
+  DOCS_DIR=$(fragments_docs_dir "$ROOT" 2>/dev/null) || exit 0
+  [ -d "$DOCS_DIR" ] || exit 0
 
-shopt -s nullglob
-RECORDS=("$DOCS_DIR"/*.json)
-shopt -u nullglob
+  shopt -s nullglob
+  RECORDS=("$DOCS_DIR"/*.json)
+  shopt -u nullglob
+fi
 
 SELECTED=""
 if [ "${#RECORDS[@]}" -gt 0 ]; then
@@ -184,7 +201,6 @@ fi
 # section that takes it is a handful of syscalls), so a stale .lock is
 # unowned by definition and safe to rmdir unconditionally; nobody can mkdir
 # a lock that still exists, so this can never race a live holder.
-ARM_BASE="${TMPDIR:-/tmp}/mh-fragments-arm"
 if [ -d "$ARM_BASE" ] && [ ! -L "$ARM_BASE" ]; then
   NOW=$(date +%s)
   WINDOW=1800

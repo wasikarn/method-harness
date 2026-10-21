@@ -259,5 +259,28 @@ else
   bad "stale entries survived a normal (non-stat-failing) sweep: $(for p in "$ARM_BASE8/sidA.marker1" "$ARM_BASE8/sidB.marker2.claimed" "$ARM_BASE8/sidC.lock" "$ARM_BASE8/sidD.marker4.candidate" "$ARM_BASE8/sidE.current" "$ARM_BASE8/.ptr.orphan1"; do [ -e "$p" ] && printf '%s ' "STILL-HERE:$p"; done)"
 fi
 
+# --- fast path: no record anywhere under HOME skips the state-dir chain
+# (no mkdir side effect), but a present ARM_BASE is still swept ---
+EMPTY_HOME=$(mktemp -d)
+track_trash "$EMPTY_HOME"
+T=$(fresh_tmpdir)
+REPO9=$(fresh_repo)
+OUT9=$(cd "$REPO9" && HOME="$EMPTY_HOME" TMPDIR="$T" bash "$HOOK"; echo "rc=$?")
+if [ "$OUT9" = "rc=0" ] && [ ! -e "$EMPTY_HOME/.claude/state/mh-fragments" ]; then
+  ok "no records anywhere and no arm base: silent exit 0, no mh-fragments dir created"
+else
+  bad "fast path created state or printed: out='$OUT9' state_exists=$([ -e "$EMPTY_HOME/.claude/state/mh-fragments" ] && echo yes || echo no)"
+fi
+ARM_BASE9="$T/mh-fragments-arm"
+mkdir -p "$ARM_BASE9/sidZ.lock"
+OLD_STAMP9=$(date -r "$(( $(date +%s) - 3600 ))" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$(( $(date +%s) - 3600 ))" +%Y%m%d%H%M.%S)
+touch -t "$OLD_STAMP9" "$ARM_BASE9/sidZ.lock" 2>/dev/null
+(cd "$REPO9" && HOME="$EMPTY_HOME" TMPDIR="$T" bash "$HOOK") >/dev/null 2>&1
+if [ ! -e "$ARM_BASE9/sidZ.lock" ] && [ ! -e "$EMPTY_HOME/.claude/state/mh-fragments" ]; then
+  ok "no records but an arm base: stale entry still swept, still no mh-fragments dir"
+else
+  bad "no-record sweep failed: lock_exists=$([ -e "$ARM_BASE9/sidZ.lock" ] && echo yes || echo no)"
+fi
+
 echo "hooks/fragments-surface: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
