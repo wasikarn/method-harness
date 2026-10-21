@@ -11,7 +11,7 @@ set -uo pipefail
 _input="$(cat)"
 # A JSON-escaped backslash (two backslashes) is a literal backslash, not the start of a \n or \t
 # escape, so mark the pair first; the shell reads backslash-t as a plain t (fuzz sweep 2026-10-01).
-_bs="$(printf '\001')"
+_bs=$'\001'
 _norm="$(printf '%s' "$_input" | sed "s/\\\\\\\\/$_bs/g; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"'$_bs\\")"
 _norm_nows="$(printf '%s' "$_norm" | tr -d '[:space:]')"
 _has_subst=0
@@ -31,7 +31,7 @@ if { [ "${#_input}" -gt 100000 ] && case "$_input" in *'{'*) true ;; *) false ;;
   _has_subst=1
 else
   if _nbrace="$(printf '%s' "$_input" | awk -f "$_awk")" && [ -n "$_nbrace" ]; then
-    [ -n "$(printf '%s' "$_nbrace" | tr -d '0\n')" ] && _has_subst=1
+    case $_nbrace in *[!0$'\n']*) _has_subst=1 ;; esac  # any count but 0 (awk prints digits only)
   else
     _has_subst=1
   fi
@@ -47,7 +47,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-_py="$(dirname "$0")/irrecoverable.py"
+_py="$_gdir/irrecoverable.py"
 # Missing sibling: same fail-closed exit 2 python3 would give, cleaner diagnostic.
 if [ ! -r "$_py" ]; then
   echo "[mh:gate] internal error: sibling script irrecoverable.py missing or unreadable — failing closed" >&2
