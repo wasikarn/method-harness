@@ -15,8 +15,9 @@ Tokens are `bytes / 4`, an estimate, not a tokenizer count.
 | Agent listing, 10 agents (`- mh:<name>: <description>` lines; the per-agent tools suffix Claude Code adds is not counted) | 2064 | 516 | agents/*.md frontmatter |
 | **Total** | **7415** | **~1854** | |
 
-Not in context (0 B): `ste-lint` (897 B for all five hidden skills together) is absent because its
-folder is not in `plugin.json`'s `skills` list; `gate-report`, `model-bench`, `compliance-audit`
+Not in context (0 B; 897 B of listing lines for the five together): `ste-lint` is deliberately
+unshipped (outside every `plugin.json` `skills` entry; `MANIFEST_EXPECTED_EXCLUDED` in the
+audit); `gate-report`, `model-bench`, `compliance-audit`
 and `post-mortem` carry `disable-model-invocation: true`.
 
 ## Per compaction
