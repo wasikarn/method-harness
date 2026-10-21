@@ -53,10 +53,8 @@ verifier budget.
 1. Check whether the user supplied a plan path, PR number, or commit range. If not, prefer the
    plan already in this conversation's context — it survives even if the file on disk changes
    later. **Don't trust the plan file on disk as a fallback**: a later plan-mode entry in the
-   same session has repeatedly been observed to overwrite the existing plan file in place, same
-   filename, prior content gone — confirmed across four separate sessions (2026-07-07, 08-23,
-   09-08, 09-10, spanning CC 2.1.263-267); not every entry gets a fresh file, so mtime-newest can
-   still be a stale re-approval of content that no longer matches what's on disk. If neither
+   same session can overwrite it in place, same filename (seen in four sessions, CC
+   2.1.263-267), so mtime-newest can be stale. If neither
    conversation context nor the user's own words give a clear source, ask explicitly which plan
    to audit rather than guessing from a file on disk.
 2. Extract every discrete requirement from the plan — numbered findings, phases, explicit "must"
@@ -74,10 +72,8 @@ verifier budget.
 5. Present the requirement checklist in prose, plus any deviation you're already aware of. Gate
    with `AskUserQuestion` **only when the plan source is genuinely ambiguous** (multi-repo, no
    conversation context, no user-named path) — otherwise proceed; a wrong scope with one verifier
-   is a cheap re-run, not wasted fan-out budget. **Never enter plan mode for this**: it can
-   overwrite the very plan file this audit exists to verify against (step 1), and separately,
-   plan mode is read-only and blocks step 4's `git worktree add --detach` and the Phase 2
-   gauntlet run this audit needs to actually execute.
+   is a cheap re-run. **Never enter plan mode for this**: it can overwrite the plan file being
+   audited (step 1), and its read-only mode blocks step 4's worktree pin and the Phase 2 gauntlet.
 
 ---
 
@@ -109,28 +105,22 @@ must discover independently, then get an independent answer from a different mod
      `--output-last-message` file's contents on the Codex path; the agent's final message text on
      the Claude-fallback path) through `scripts/check-verdict.py <pinned-sha>` — the pinned SHA
      generated in step 1.4 is the script's *only* source of truth for cross-checking
-     `gauntlet.sha` (the script never derives one itself; it runs on the host tree, not inside
-     the pinned worktree, so a `git rev-parse HEAD` there would be the wrong ref). A verifier
-     reporting a different SHA (stale worktree, wrong checkout) is rejected even if its object is
+     `gauntlet.sha` (the script never derives one; it runs on the host tree, where `HEAD` is the
+     wrong ref). A verifier reporting a different SHA is rejected even if its object is
      otherwise schema-valid. Exit 0 = exactly one schema-valid verdict at the right SHA, with
-     `pass` computed by the script itself (never read from the verifier's own claim — this
-     repeats deep-audit's "no hand sum ever reaches the output" guarantee for this skill's own
-     `pass` rule in Core Principles). Exit 2 = the verifier returned `NEEDS-DECISION` instead of
+     `pass` computed by the script itself, never read from the verifier's own claim. Exit 2 = the verifier returned `NEEDS-DECISION` instead of
      guessing — a valid non-guess, surface it to the operator. Exit 1 = malformed, ambiguous, or
      SHA-mismatched output; retry the dispatch once before treating it as "cannot verify"
      (`scope_ok: false`) — a rejected verdict must never reach Phase 3's report as if it were
      ground truth.
    - **Sandbox contract**: `workspace-write`, scoped *only* to the disposable worktree — never
-     the session's own worktree it was pinned from. This repo's own gauntlet writes (`python3 -m py_compile` leaves
-     `__pycache__` next to tracked `.py` files, plus its own log dir) — `read-only` would be
-     wrong here. Before/after the run, diff the worktree's tracked files against the pinned SHA;
+     the session's own worktree it was pinned from (the gauntlet writes `__pycache__` and logs, so
+     `read-only` is wrong). Before/after the run, diff the worktree's tracked files against the pinned SHA;
      any tracked-file change beyond expected build artifacts is itself a finding ("verifier
      modified source"), never a silent pass. The worktree is discarded after, so leftover
      untracked artifacts don't matter.
-   - **A gauntlet failure can be caused by the sandbox itself, not the diff.** The bullet above
-     only covers a too-permissive sandbox; a too-restrictive one produces false failures too
-     (tests that write scratch state via `mktemp "${TMPDIR:-/tmp}/..."`, outside the worktree,
-     fail under `--sandbox workspace-write` and pass unsandboxed at the same SHA). On any
+   - **A gauntlet failure can be caused by the sandbox itself, not the diff** (tests writing
+     scratch state via `mktemp` outside the worktree fail under `workspace-write`). On any
      non-zero gauntlet exit, before reporting it as a finding: **the verifier itself** (never
      main, per the re-run rule below) re-runs the identical gauntlet command at the plan's base
      SHA, in the same sandbox, **in a second, separate detached worktree pinned at the base SHA
@@ -143,12 +133,9 @@ must discover independently, then get an independent answer from a different mod
      either a silent pass or an unexplained `DEVIATED`. Base SHA passes cleanly in the same
      sandbox → the failure is real, report it as a genuine gauntlet failure, no exception.
    - **Don't redirect `TMPDIR`/scratch I/O into the worktree to "confine" it further** — the
-     before/after tracked-diff check above is the enforcement mechanism, not where temp files
-     happen to live. Forcing all scratch I/O inside the worktree makes it a git repo's
-     subdirectory, which breaks any test elsewhere in the gauntlet that assumes its own temp dir
-     is never inside a git repo (hit live, repeatedly: `tests/skills/memory-lint/
-     test_memory_lint.py`'s not-a-git-repo fallback test fails this way). Let the OS/language
-     runtime's normal temp-file defaults apply; only repo writes need to stay inside the worktree.
+     before/after tracked-diff check is the enforcement, and a temp dir inside a git repo breaks
+     tests that assume otherwise (`tests/skills/memory-lint/test_memory_lint.py`'s not-a-git-repo
+     test). Keep the normal temp-file defaults; only repo writes stay inside the worktree.
    - The verifier receives **only** its slice of the plan's requirements plus the pinned SHA —
      **not** your Phase 2 deviation list, **not** your narrative of what you did, and **never** a
      plan-file path (it may already hold this audit's own scope by the time the verifier reads it).
@@ -196,10 +183,8 @@ fix.
    Verifier found one you didn't list, or one you listed but couldn't sanction
    with plan text or citable sign-off → an unflagged/unaccepted gap; `accepted: false` (or leave
    `MISSING` as-is). This reconciliation step is the only hand judgment in Phase 3. Then **re-run
-   `check-verdict.py` on the object with these `accepted` values applied** — Phase 2's run used
-   the verifier's own `accepted` claims (near-always `false`, since the brief withholds the
-   pre-declared list from it); this second run is the one whose `pass` is authoritative, since
-   only it reflects Phase 3's reconciliation. Everything after this re-run (`pass`, the
+   `check-verdict.py` on the object with these `accepted` values applied** — this second run's
+   `pass` is authoritative, since only it reflects Phase 3's reconciliation. Everything after this re-run (`pass`, the
    per-requirement table) comes from the script's output, not a second eyeball pass.
 2. Report, in this order:
    - One-line verdict headline: N/N conform, open-item count.
@@ -207,10 +192,8 @@ fix.
      **MISSING** / **UNVERIFIABLE**. No blended percentage.
    - The gauntlet run's exact command, SHA, exit code, and verbatim/tail output.
    - `scope_ok` and any `unexpected_files[]` (diff touched something the plan never named).
-3. **No automated fixer, no re-verify-only-the-touched-item in this version.** A fixer that
-   re-verifies only what it touched risks missing a regression the fix caused elsewhere; not
-   building that path is simpler than trying to bound it correctly. If real gaps are found, the
-   report hands them back — fixing and re-running `/mh:compliance-audit` again is a separate,
+3. **No automated fixer, no re-verify-only-the-touched-item in this version** (it could miss a
+   regression the fix caused elsewhere). If real gaps are found, the report hands them back — fixing and re-running `/mh:compliance-audit` again is a separate,
    later invocation, not an automatic loop.
 4. **Suggested next step**, read straight from step 1's Phase-3 re-run of `check-verdict.py`'s
    computed `pass` — never re-derived by eye here:
@@ -237,11 +220,3 @@ fix.
 - Declaring done with an open MISSING or unaccepted DEVIATED still on the table.
 - Entering plan mode to gate audit scope — risks overwriting the plan being audited, and its read-only mode blocks the worktree pin and gauntlet run (Phase 1).
 - Running the verifier against the session's own live worktree instead of a pinned detached one.
-
-## Named Model
-
-Phase 2's fresh-context, Codex-primary dispatch is the verifier-separation / maker≠checker
-principle — `docs/reference/operating-model.md`'s "The maker never grades its own work": an LLM judging its own output
-is circular, and a different model family is a stronger separation than a fresh context window
-alone. Phase 3's falsify-don't-rubber-stamp step is the scientific-method lens: a claim survives
-by surviving an attempt to disprove it, not by being asserted twice.
