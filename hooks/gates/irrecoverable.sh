@@ -54,7 +54,7 @@ if [ ! -r "$_py" ]; then
   exit 2
 fi
 
-printf '%s' "$_input" | python3 "$_py"
+printf '%s' "$_input" | python3 -S "$_py"  # -S: no site import, ~6 ms per call; the gates use the stdlib only
 rc=$?
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
   echo "[mh:gate] internal error (rc=$rc) — failing closed" >&2

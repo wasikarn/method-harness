@@ -36,5 +36,5 @@ if [ ! -r "$_py" ]; then
   exit 0
 fi
 
-python3 "$_py"
+python3 -S "$_py"  # -S: skip site import (stdlib-only gate)
 exit $?
