@@ -10,63 +10,9 @@ effort: low
 
 # Model Bench
 
-Run this repo's own eval suite twice, once per subject model, and diff the scores. Reuses the
-rubric machinery, judge panel, and grader files that already exist under `evals/` — this adds no
-new judging logic, only a labeled side-by-side comparison of two `claude plugin eval` runs.
-
-Invoke explicitly: `/mh:model-bench`. Not model-invoked — this spends real judge-token cost, so
-the user decides when to run it, not the model.
-
-## Scope: this compares models only cleanly on skill/prompt-driven cases
-
-Cases whose `prompt.md` dispatches a subagent (`subagent_type:` in the prompt, or a
-`graders/agent-fired.md` in the case dir) run that subagent at its `agents/*.md`
-frontmatter-pinned model regardless of `--model`, except that per the sub-agents docs a
-same-family arm moves a family-alias pin (`model: opus` runs the arm's exact Opus, e.g.
-`claude-opus-5`; `model: sonnet` likewise for a Sonnet arm). Whether `--model` reaches subagent dispatch
-inside the eval sandbox is **unverified** — no live eval has been run to check it, since doing so
-spends judge cost. The report prints how many compared cases are agent-dispatch cases so this
-caveat reaches the output itself, not just this doc.
-
-Arms on a model with safety classifiers (Fable, Opus 5.5, Opus 5, and the `opus`/`fable`/`best`/
-`default` aliases) can also be scored on the wrong model. A flagged request re-runs on Opus 4.8 or
-Opus 5; on an Opus 5 arm a biology flag ends in a refusal instead, which skews the score too
-(`code.claude.com/docs/en/model-config#automatic-model-fallback`). Eval runs load no user
-settings (`.../plugin-evals#how-runs-are-isolated`), so the user's `switchModelsOnFlag` can't stop
-it (a managed one still applies inside a run, and `false` ends the flagged request as an error),
-and `aggregate-result.json` records no model. The report prints a caveat for such an arm. To check a
-suspicious case, re-run it with `--keep-temp` and read the child transcript's assistant-turn
-model, the same place the effort probe below reads `effort`.
-
-**The CLI `--effort` flag never reaches the eval child; `CLAUDE_CODE_EFFORT_LEVEL` does.** Checked
-2026-09-25 on `code-architect-trivial-no-dispatch` with `--keep-temp`, reading the child's own
-`config/projects/**/*.jsonl` session transcript, which records `effort`/`perTurnEffort` on every
-assistant turn:
-- `--model opus` with parent `--effort xhigh`: the child resolves `effort: "medium"`, Opus 5.5's
-  own default. The parent's `--effort` reaches the child under neither model.
-- `--model sonnet` with `CLAUDE_CODE_EFFORT_LEVEL=low` in the invoking shell: every turn resolves
-  to `effort: "low"` (sonnet's default is otherwise "high").
-
-**Arm syntax: `<model>[@effort]`.** A bare model touches no env var, so the child inherits the
-invoking shell's own `CLAUDE_CODE_EFFORT_LEVEL` (usually unset). `model@effort` sets
-`CLAUDE_CODE_EFFORT_LEVEL=<effort>` for that one arm's `claude plugin eval` call only (never the
-CLI's own `--effort`, which does nothing here).
-`effort` must be one of `low|medium|high|xhigh|max`; a bare `@`, `model@`, `@effort`, or a second
-`@` is rejected with a usage error before any `claude` invocation. The full `model@effort` string
-is kept as the report's label (`aggregate-result.json` itself never records model or effort).
-Each arm's output dir also gets an `arm-meta.txt` (arm spec, effective command, `claude --version`,
-timestamp) as a paper trail independent of the report.
-
-For a case whose `prompt.md` *does* dispatch a subagent (see the scope caveat above):
-`CLAUDE_CODE_EFFORT_LEVEL` outranks frontmatter `effort:` (`code.claude.com/docs/en/model-config`:
-"overriding the session level but not the environment variable"), so an `@effort` arm should set
-every dispatched agent's and skill's effort too, unlike `--model`, which a pinned agent overrides.
-This is not yet probed inside an eval child; check it with the `--keep-temp` method above before
-trusting an effort sweep on an agent-dispatch case.
-
-Re-verify propagation with the same `--keep-temp` + child-transcript method (never the outer
-`--debug-file`, which only shows the parent's own startup log) before trusting a future claim
-about what an eval child resolved.
+Run this repo's eval suite once per subject model and diff the scores. It reuses the existing
+graders and judge panel under `evals/`; it adds only a labeled side-by-side of two
+`claude plugin eval` runs. Invoked as `/mh:model-bench` only, because it spends judge-token cost.
 
 ## Run
 
@@ -74,26 +20,19 @@ about what an eval child resolved.
 bash "${CLAUDE_SKILL_DIR}/scripts/model-bench.sh" <model-a>[@effort] <model-b>[@effort] [-- <claude plugin eval args>]
 ```
 
-Runs `claude plugin eval` twice — once per model — then prints a labeled comparison. Any
-`claude plugin eval` flags after `--` pass straight through to both runs (`--tag`, `--case`,
-`--scaffold`, `--allow-tools`, etc.). Unless already present in those passthrough args, the
-wrapper adds three defaults:
+Flags after `--` pass through to both runs (`--tag`, `--case`, `--scaffold`, `--allow-tools`, …).
+Unless already passed, the wrapper adds:
 
-- `--ablation none` — the default `with-without` doubles cost and, if the plugin is
-  `defaultEnabled: false`, can silently compare a disabled-plugin baseline instead of the models.
-- `--threshold 0` — the CLI default (1.0) makes `claude plugin eval` exit 1 on any normal run;
-  the wrapper treats exit 1/2 as "ran, proceed to diff" regardless, but this avoids the noise.
-- `--max-cost-usd 5` — a conservative ceiling per arm. Override with your own `--max-cost-usd` in
-  the passthrough args.
+- `--ablation none`: the default `with-without` doubles cost and can compare a disabled-plugin
+  baseline instead of the models.
+- `--threshold 0`: avoids the CLI's exit 1 on a normal run (exit 1/2 still proceed to the diff).
+- `--max-cost-usd 5` per arm; pass your own to override.
 
-Separately, the wrapper also auto-flips `defaultEnabled` in `.claude-plugin/plugin.json` for the
-run's duration (always restored on exit, even on failure): eval sandboxes load no user settings,
-so this repo's own `defaultEnabled: false` means the sandbox never loads mh's agents/skills at
-all, silently scoring a no-plugin fallback with no error (confirmed 2026-09-26 — identical
-with/without scores, plus the CLI's own runtime warning). No flag needed; nothing left to
-remember by hand.
+It also flips `defaultEnabled` in `.claude-plugin/plugin.json` for the run and always restores it:
+eval sandboxes load no user settings, so `defaultEnabled: false` would silently score a
+no-plugin fallback.
 
-To diff two already-completed runs without spending anything new:
+Diff two finished runs without spending anything:
 
 ```bash
 bash "${CLAUDE_SKILL_DIR}/scripts/model-bench.sh" --diff-only \
@@ -101,20 +40,40 @@ bash "${CLAUDE_SKILL_DIR}/scripts/model-bench.sh" --diff-only \
   <result-a>/aggregate-result.json <result-b>/aggregate-result.json
 ```
 
+## Arm syntax: `<model>[@effort]`
+
+`model@effort` sets `CLAUDE_CODE_EFFORT_LEVEL=<effort>` for that arm's eval call only; a bare model
+inherits the shell's value (usually unset). The CLI's `--effort` flag never reaches the eval child,
+so the wrapper never uses it. `effort` is one of `low|medium|high|xhigh|max`; a bare `@`, `model@`,
+`@effort` or a second `@` is a usage error before any `claude` call. The full arm string is the
+report label, and each arm's output dir gets an `arm-meta.txt` (arm spec, command,
+`claude --version`, timestamp).
+
+## Scope caveats
+
+- **Agent-dispatch cases.** A case whose `prompt.md` dispatches a subagent (`subagent_type:`, or a
+  `graders/agent-fired.md`) runs that agent at its frontmatter-pinned model regardless of
+  `--model`, except that a same-family arm moves a family-alias pin (`model: opus` follows an Opus
+  arm). Whether `--model` reaches subagent dispatch in the sandbox is unverified. The report
+  prints how many compared cases are agent-dispatch. `CLAUDE_CODE_EFFORT_LEVEL` outranks
+  frontmatter `effort:`, so an `@effort` arm should reach dispatched agents too; also unprobed.
+- **Safety-classifier fallback.** Arms on Fable, Opus 5.5, Opus 5 or the `opus`/`fable`/`best`/
+  `default` aliases can be scored on the wrong model: a flagged request re-runs on Opus 4.8 or
+  Opus 5 (on an Opus 5 arm a biology flag ends in a refusal). Eval runs ignore the user's
+  `switchModelsOnFlag`, and `aggregate-result.json` records no model. The report prints a caveat
+  for such an arm.
+- **How to verify** any claim about what a child resolved (model, effort): re-run the case with
+  `--keep-temp` and read the child's own `config/projects/**/*.jsonl` transcript, whose assistant
+  turns record `model` and `effort`. Never the outer `--debug-file`, which shows only the parent.
+
 ## Reading the report
 
-- **Hard-fail** (no comparison printed): either side has a `suite.plugins[].problem` (plugin
-  didn't load as expected), or either side has `partial: true` (a cost/turn ceiling cut the run
-  short — its score covers a different, smaller case set and isn't comparable).
-- **WARN, but still compared**: a mismatch in judge model, case filter, ablation mode, Claude
-  Code version, or plugin version between the two sides. Read the warning before trusting the
-  delta — it means the two runs aren't apples-to-apples on that axis. It also warns when an arm's
-  model family (from its label) matches its own run's judge family, since a judge may favor its
-  own family.
-- **Not comparable section**: any case name present on only one side (different `--tag`/`--case`
-  filters between the two arms, most often).
+- **Hard-fail, no comparison:** either side has a `suite.plugins[].problem` (plugin didn't load) or
+  `partial: true` (a ceiling cut the run short, so its case set differs).
+- **WARN, still compared:** judge model, case filter, ablation mode, Claude Code version or plugin
+  version differ between sides, or an arm's model family matches its own judge's family. Read the
+  warning before trusting the delta.
+- **Not comparable:** cases present on only one side (usually different `--tag`/`--case` filters).
 
-Never re-derive scores by hand from the raw JSON; the script's numbers are the source of truth for
-this comparison. `aggregate-result.json` never records which model produced a run — the label the
-script prints is the only place that information exists, so always pass real model names, not
-placeholders.
+Never re-derive scores by hand from the JSON. `aggregate-result.json` never records the model, so
+the printed label is the only record: always pass real model names.
