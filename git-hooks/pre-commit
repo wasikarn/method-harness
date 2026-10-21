@@ -69,6 +69,9 @@ if [ -n "$gates_staged" ]; then
   while IFS= read -r f; do
     b="${f#hooks/gates/}" n="${b%.*}"
     case "$b" in */*) only=(); break ;; esac
+    # shortcut: assumes a gate's X.py is imported only by X.sh (shared code lives in _*.py or
+    # brace-route.awk); if a gate starts importing another gate's .py, canary every gate.
+    case " ${only[*]-} " in *" $n.sh "*) continue ;; esac
     case "$b" in *.sh|*.py) [ -f "$idx/hooks/gates/$n.sh" ] && { only+=("$n.sh"); continue; } ;; esac
     only=(); break
   done <<<"$gates_staged"
