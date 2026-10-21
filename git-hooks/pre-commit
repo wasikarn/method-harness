@@ -60,7 +60,8 @@ fi
 # INDEX copy of hooks/gates, not the working tree, so a partial stage on a
 # shared tree tests what is actually being committed.
 # Narrowed: a staged gate X.sh or its X.py canaries X.sh alone; any other staged file under
-# hooks/gates (a shared helper such as _journal.py, or a new file) canaries every gate.
+# hooks/gates (a shared helper such as _journal.py, or a file with no sibling X.sh) canaries every gate;
+# a newly added X.sh is in the index copy, so it canaries itself.
 gates_staged=$(staged 'hooks/gates/*')
 if [ -n "$gates_staged" ]; then
   idx="$tmp/idx"

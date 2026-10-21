@@ -16,7 +16,7 @@ mh_gate_run() {
   local _input
   _input=$(LC_ALL=C tr '\0' '\001'; printf x)
   _input=${_input%x}  # the x keeps trailing newlines byte-exact
-  _mh_silent "$2" && exit 0
+  [ "${MH_GATE_NO_FASTPATH-}" = 1 ] || { _mh_silent "$2" && exit 0; }  # the gate canary sets it so python runs
   printf '%s' "$_input" | python3 -S "$1"
   exit "${PIPESTATUS[1]}"
 }
