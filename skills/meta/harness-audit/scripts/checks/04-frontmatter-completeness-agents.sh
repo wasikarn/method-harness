@@ -2,7 +2,7 @@
 # 4. Frontmatter completeness — agents
 for f in "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
-  name=$(basename "$f" .md)
+  name=${f##*/}; name=${name%.md}
   if ! grep -q '^---' "$f"; then
     crit "agent '$name' missing frontmatter"
   fi

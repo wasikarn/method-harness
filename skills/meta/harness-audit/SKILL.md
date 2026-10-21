@@ -35,21 +35,19 @@ WARN, not CRIT: vendor docs lag features, so an unrecognized value is flagged fo
 
 ## Plugin delivery
 
-When `mh@wasikarn` is installed, components load from
-`~/.claude/plugins/cache/<marketplace>/mh/<version>/` with no symlink; the audit picks the
-highest installed version automatically. `--plugin-cache <path>` overrides it (used by the
-fixtures under `tests/skills/harness-audit/known-bad/`); `MH_CACHE_DIR` overrides the cache root.
+Components load from `~/.claude/plugins/cache/<marketplace>/mh/<version>/`; the audit picks the
+highest installed version. `--plugin-cache <path>` overrides it (the `known-bad/` fixtures use
+it); `MH_CACHE_DIR` overrides the cache root.
 
 ## Extending checks
 
-Add `scripts/checks/NN-slug.sh` (two-digit prefix, hyphen, slug; the loader globs
-`checks/[0-9][0-9]-*.sh`) with a `# NN. <title>` header line. Call `crit`, `warn`, or `info`
-with a message; never print your own summary line. Then add `NN` to `_exp_ids` near the end of
-`audit.sh` in the same commit: the integrity guard fails closed on any lost, duplicated, or
-unlisted fragment. Pair a new check with a defect in `tests/skills/harness-audit/known-bad/fleet-bad/` (at least one
-per check; `fleet-good/` must stay silent) and an assertion in `test-harness-audit.sh`; a check that
-needs its own tree gets a `check-NN-*` fixture pair instead. Every check has a fires/silent
-proof; a new one without it is the gap the integrity guard cannot see.
+Add `scripts/checks/NN-slug.sh` with a `# NN. <title>` header line. Call `crit`, `warn` or `info`;
+never print your own summary. Add `NN` to `_exp_ids` in `audit.sh` in the same commit (the
+integrity guard fails closed on a lost, duplicated or unlisted fragment). Pair it with a defect in
+`tests/skills/harness-audit/known-bad/fleet-bad/` (`fleet-good/` stays silent) and an assertion in
+`test-harness-audit.sh`, or a `check-NN-*` fixture pair when it needs its own tree. Avoid a
+process spawn per file in a loop (`$(basename …)`, `| grep`): the audit runs on every commit, so
+use parameter expansion or one batched call.
 
 ```bash
 bash tests/skills/harness-audit/test-harness-audit.sh   # self-test, every check fires and stays silent
@@ -64,8 +62,6 @@ re-running is not done.
 ## Failure modes
 
 - **Fixing without re-running.** A typo in the fix only shows up on the re-run.
-- **Stale `--plugin-cache`.** A hand-passed old version reintroduces the loadability CRITs the
-  auto-detection exists to avoid.
-- **Green because empty.** A check that globs a directory that no longer exists passes vacuously.
-  A full run WARNs when `agents/`, `skills/`, or `hooks/` is missing; when a surface type is
-  removed on purpose, remove or retarget its checks and the guard together.
+- **Stale `--plugin-cache`.** A hand-passed old version brings back loadability CRITs.
+- **Green because empty.** A check over a missing directory passes vacuously; a full run WARNs
+  when `agents/`, `skills/` or `hooks/` is missing.

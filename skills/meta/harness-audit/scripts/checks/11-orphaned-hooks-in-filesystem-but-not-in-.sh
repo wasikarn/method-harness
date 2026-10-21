@@ -13,7 +13,7 @@
 for f in "$CLAUDE_DIR/hooks"/**/*; do
   [ -f "$f" ] || continue
   case "${f#"$CLAUDE_DIR"/hooks/}" in tests/*|*__pycache__*) continue;; esac
-  hook_name=$(basename "$f")
+  hook_name=${f##*/}
   # Skip hook libraries (sourced by hooks, not registered as hooks themselves).
   # The _lib.sh prefix matches the existing project scaffold convention used
   # in skills/ and agents/; install.sh's hooks glob *.{sh,py} symlinks it so

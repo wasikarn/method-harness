@@ -3,7 +3,7 @@
 for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md; do
   [ -f "$f" ] || continue
   case "$f" in */skills/_*) continue ;; esac  # skip _-prefixed scaffolds (e.g. _template), per the _* convention
-  name=$(basename "$(dirname "$f")")
+  _t=${f%/*}; name=${_t##*/}
   if ! grep -q '^---' "$f"; then
     crit "skill '$name' missing frontmatter"
   fi
@@ -18,7 +18,7 @@ for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md; do
   # unrecognized bucket dir is outside plugin.json's globs: CRIT.
   case "$f" in
     "$CLAUDE_DIR"/skills/*/*/SKILL.md)
-      _bucket=$(basename "$(dirname "$(dirname "$f")")")
+      _t=${f%/*/*}; _bucket=${_t##*/}
       case "$_bucket" in
         meta|review|workflow|design) : ;;
         *) crit "skill '$name' is under unrecognized bucket dir '$_bucket' — plugin.json only covers meta/review and the listed workflow/design skills, so this skill is not discoverable" ;;

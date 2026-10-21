@@ -17,7 +17,7 @@
 # missing) and this check must still fire for an agent that omits it.
 for f in "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
-  name=$(basename "$f" .md)
+  name=${f##*/}; name=${name%.md}
   # Same trim+casefold as check 04's bucket enum check, so an untrimmed or
   # differently-cased value doesn't silently fall through either branch here.
   _bucket=$(fm_get "$f" "bucket")
