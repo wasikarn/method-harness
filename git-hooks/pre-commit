@@ -11,6 +11,16 @@ staged() { git diff --cached --name-only --diff-filter=ACMR -- "$@"; }
 # Syntax layers skip the audit's known-bad fixtures: they are invalid on purpose (checks 17,
 # 18, 19 must fire on them). The home-path ban still covers them.
 staged_lint() { staged "$@" ':(exclude)tests/skills/harness-audit/known-bad'; }
+tmp=$(mktemp -d) && [ -d "$tmp" ] || { echo "pre-commit: mktemp -d failed" >&2; exit 1; }
+trap '[ -n "$tmp" ] && trash "$tmp" 2>/dev/null; true' EXIT
+
+# 6 (started first). harness-audit is the slowest step and reads the whole tree, so it runs
+# in the background beside the staged-file checks; its verdict is read at step 6 below.
+AUDIT="skills/meta/harness-audit/scripts/audit.sh"
+audit_pid=""
+if [ -f "$AUDIT" ]; then
+  bash "$AUDIT" . >"$tmp/audit" 2>&1 & audit_pid=$!
+fi
 
 # 1. shell syntax
 while IFS= read -r f; do
@@ -23,17 +33,11 @@ if command -v shellcheck >/dev/null; then
   [ -z "$files" ] || shellcheck -S warning $files || fail=1
 fi
 
-# 2. python
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  python3 -m py_compile "$f" || fail=1
-done < <(staged_lint '*.py')
-
-# 3. JSON
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  python3 -m json.tool "$f" >/dev/null || { echo "pre-commit: invalid JSON: $f" >&2; fail=1; }
-done < <(staged_lint '*.json')
+# 2+3. py_compile + JSON parse, one python process for all staged files
+files=$(staged_lint '*.py' '*.json')
+if [ -n "$files" ]; then
+  printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 python3 scripts/_lib/lint-files.py --prefix 'pre-commit: ' || fail=1
+fi
 
 # 4. hardcoded home paths (repo is public); frozen history dirs are exempt from wording passes,
 #    never from this (CLAUDE.md, repo-gotchas.md: a 2026-08-26 purge missed 29 hits there)
@@ -55,17 +59,31 @@ fi
 # gate blocks every Bash call machine-wide (2026-09-05 incident). Runs on the
 # INDEX copy of hooks/gates, not the working tree, so a partial stage on a
 # shared tree tests what is actually being committed.
-if staged 'hooks/gates/*' | /usr/bin/grep -q .; then
-  idx=$(mktemp -d)
+# Narrowed: a staged gate X.sh or its X.py canaries X.sh alone; any other staged file under
+# hooks/gates (a shared helper such as _journal.py, or a new file) canaries every gate.
+gates_staged=$(staged 'hooks/gates/*')
+if [ -n "$gates_staged" ]; then
+  idx="$tmp/idx"
   git ls-files -z hooks/gates | xargs -0 git checkout-index --prefix="$idx/" --
-  bash scripts/gate-canary.sh "$idx/hooks/gates" || { echo "pre-commit: gate canary blocked (see above)" >&2; fail=1; }
-  [ -n "$idx" ] && trash "$idx" 2>/dev/null || true
+  only=()
+  while IFS= read -r f; do
+    b="${f#hooks/gates/}" n="${b%.*}"
+    case "$b" in */*) only=(); break ;; esac
+    # shortcut: assumes a gate's X.py is imported only by X.sh (shared code lives in _*.py or
+    # brace-route.awk); if a gate starts importing another gate's .py, canary every gate.
+    case " ${only[*]-} " in *" $n.sh "*) continue ;; esac
+    case "$b" in *.sh|*.py) [ -f "$idx/hooks/gates/$n.sh" ] && { only+=("$n.sh"); continue; } ;; esac
+    only=(); break
+  done <<<"$gates_staged"
+  # Empty $only = every gate; the +-guard keeps bash 3.2 quiet about an empty array under set -u.
+  bash scripts/gate-canary.sh "$idx/hooks/gates" ${only[@]+"${only[@]}"} || { echo "pre-commit: gate canary blocked (see above)" >&2; fail=1; }
 fi
 
-# 6. harness-audit: zero CRITICAL
-AUDIT="skills/meta/harness-audit/scripts/audit.sh"
-if [ -f "$AUDIT" ]; then
-  if ! out=$(bash "$AUDIT" . 2>&1); then
+# 6. harness-audit: zero CRITICAL (started in the background at the top)
+if [ -n "$audit_pid" ]; then
+  wait "$audit_pid"; audit_rc=$?
+  out=$(cat "$tmp/audit")
+  if [ "$audit_rc" -ne 0 ]; then
     echo "pre-commit: harness-audit CRIT findings:" >&2
     printf '%s\n' "$out" | /usr/bin/grep 'CRIT F' >&2
     fail=1

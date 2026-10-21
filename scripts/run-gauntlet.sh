@@ -10,6 +10,7 @@
 #             true and intentional, since METHODOLOGY.md is what ships via hooks)
 #   lint      bash -n (+shellcheck if installed) on tracked .sh,
 #             py_compile on tracked .py, JSON parse on tracked .json
+#             (2 jobs at a time; py+json in one python process)
 #   tests     every tests/hooks/*.sh on disk + tests/skills/**/test*.sh
 #             + tests/scripts/*.sh + tests/evals/*.sh + tests/skills/memory-lint python tests;
 #             tests/mods/*.test.ts run via tests/hooks/test-cost-ledger-module.sh
@@ -75,19 +76,16 @@ existing() { local f; while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"
 lintable() { git ls-files "$@" ':(exclude)tests/skills/harness-audit/known-bad' | existing; }
 
 run_lint() {
-  local rc=0 f
-  while IFS= read -r f; do
-    bash -n "$f" || rc=1
-  done < <(lintable '*.sh' 'git-hooks/*')
+  local rc=0
+  # Lint runs beside 4 test jobs; P stays low because GH #158 timing rows flake under load.
+  # Without -x or a .shellcheckrc, shellcheck checks each file alone, so batching keeps its verdicts.
+  # bash -n stays one file per call: `bash -n a b` checks only a (b is its $1).
+  lintable '*.sh' 'git-hooks/*' | tr '\n' '\0' | xargs -0 -n 1 -P 2 bash -n || rc=1
   if command -v shellcheck >/dev/null; then
-    lintable '*.sh' 'git-hooks/*' | xargs shellcheck -S warning || rc=1
+    lintable '*.sh' 'git-hooks/*' | tr '\n' '\0' | xargs -0 -n 60 -P 2 shellcheck -S warning || rc=1
   fi
-  while IFS= read -r f; do
-    python3 -m py_compile "$f" || rc=1
-  done < <(lintable '*.py')
-  while IFS= read -r f; do
-    python3 -m json.tool "$f" >/dev/null || { echo "invalid JSON: $f"; rc=1; }
-  done < <(lintable '*.json')
+  # One python process for every .py and .json, instead of one per file.
+  lintable '*.py' '*.json' | tr '\n' '\0' | xargs -0 python3 scripts/_lib/lint-files.py || rc=1
   # Whole-tree home-path ban (pre-commit only sees staged blobs).
   # Env goes on xargs, not after it: BSD xargs treats `LC_ALL=C` as the command (exit 127,
   # once swallowed by 2>/dev/null). Hits are captured because xargs exits 123 on any batch
