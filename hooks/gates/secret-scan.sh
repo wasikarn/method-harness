@@ -33,10 +33,17 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-_py="$(dirname "$0")/secret-scan.py"
+case $0 in */*) _gdir="${0%/*}" ;; *) _gdir=. ;; esac  # not $(dirname): saves a fork
+_py="$_gdir/secret-scan.py"
 if [ ! -r "$_py" ]; then
   echo "[mh:gate] internal error: sibling script secret-scan.py missing or unreadable -- allowing (secret-scan is ask-only, fails open)" >&2
   exit 0
 fi
 
-python3 "$_py"
+# Fast path (_silent_fastpath.sh): every PATTERNS entry in secret-scan.py needs one of these
+# case-sensitive literals, so a payload with none of them cannot match, ask or journal.
+# Keep this list in step with PATTERNS (tests/hooks/test-secret-scan.sh checks one hit per pattern).
+if [ -r "$_gdir/_silent_fastpath.sh" ] && . "$_gdir/_silent_fastpath.sh"; then
+  mh_gate_run "$_py" 'AKIA|ASIA|sk-ant-|T3BlbkFJ|gh[pousr]_|github_pat_|glpat-|hf_|xox[baprs]-|[sr]k_(test|live|prod)_|AIza|npm_|pypi-AgEIcHlwaS5vcmc|PRIVATE KEY'
+fi
+python3 -S "$_py"

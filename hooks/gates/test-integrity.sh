@@ -56,10 +56,17 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-_py="$(dirname "$0")/test-integrity.py"
+case $0 in */*) _gdir="${0%/*}" ;; *) _gdir=. ;; esac  # not $(dirname): saves a fork
+_py="$_gdir/test-integrity.py"
 if [ ! -r "$_py" ]; then
   echo "[mh:gate] internal error: sibling script test-integrity.py missing or unreadable — allowing (test-integrity is ask-only, fails open)" >&2
   exit 0
 fi
 
-python3 "$_py"
+# Fast path (_silent_fastpath.sh): every PATH_RE branch needs "test" or "spec" in some case, and
+# a "file_path" key with a non-string value (true, 5) makes PATH_RE.search raise, which asks, so
+# both defer to python; anything else is a path PATH_RE cannot match, and python exits silently.
+if [ -r "$_gdir/_silent_fastpath.sh" ] && . "$_gdir/_silent_fastpath.sh"; then
+  mh_gate_run "$_py" $'[tT][eE][sS][tT]|[sS][pP][eE][cC]|"file_path"[ \t\n\r]*:[ \t\n\r]*[^"]'
+fi
+python3 -S "$_py"
