@@ -354,6 +354,23 @@ err=$(bash "$NOSIBLING/secret-scan.sh" <<<"$noSiblingPayload" 2>&1 >/dev/null); 
 ok=1; [ "$rc" -eq 0 ] && echo "$err" | /usr/bin/grep -qi "allowing" && ok=0
 check "missing sibling .py -> allow with a stderr note" "$ok"
 
+# --- the bash fast path (_silent_fastpath.sh) must defer every payload python could ask on ---
+# A \u escape can spell a vendor prefix without the raw text containing it.
+out=$(printf '{"tool_name":"Write","tool_input":{"file_path":"/a/b.py","content":"k = \\u0041KIA%s"}}' "$(rnd 16 "$UPPER36" 7)" | bash "$GATE" 2>/dev/null)
+ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "\\u-escaped AKIA prefix -> ask (fast path defers on \\u)" "$ok"
+
+# Over the fast path's size cap, a secret in the tail still reaches python.
+big="$(python3 -c 'print("x = 1\n" * 7000)')"$'\n'"AKIA$(rnd 16 "$UPPER36" 8)"
+out=$(asks "$big"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "secret at the end of a 42 KB Write -> ask" "$ok"
+
+# Drift guard: secret-scan.sh's fast path lists one literal per PATTERNS entry. A new pattern
+# needs its literal added there, or the fast path skips python for it; then bump this count.
+n=$(python3 -c 'import ast,sys; t=ast.parse(open(sys.argv[1]).read()); print([len(a.value.elts) for a in t.body if isinstance(a, ast.Assign) and getattr(a.targets[0], "id", "") == "PATTERNS"][0])' "$ROOT/hooks/gates/secret-scan.py")
+ok=1; [ "$n" = 13 ] && ok=0
+check "secret-scan.py has 13 PATTERNS (got $n): on a change, update the literal list in secret-scan.sh" "$ok"
+
 echo ""
 total=$((pass + fail))
 echo "=== $pass/$total passed ==="

@@ -31,7 +31,7 @@ _mh_re="^${_mh_w}[{]${_mh_w}(${_mh_s}${_mh_w}:${_mh_w}${_mh_v}${_mh_w}(,${_mh_w}
 _mh_silent() {
   local LC_ALL=C  # byte-wise: the regex ranges are ASCII, non-ASCII bytes fail
   [ "${#_input}" -le 32768 ] || return 1  # the regex costs ~0.35 ms/KB; past this python is cheaper
-  case $_input in *'\u'*) return 1 ;; esac
+  case $_input in *'\u'*) return 1 ;; esac  # early reject only: _mh_s refuses \u as well
   [[ $_input =~ $1 ]]
   [ $? -eq 1 ] || return 1  # a match (0) or a regex error (2) defers
   [[ $_input =~ $_mh_re ]]

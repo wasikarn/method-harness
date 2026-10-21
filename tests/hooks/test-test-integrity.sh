@@ -351,6 +351,26 @@ out=$(payload_edit "$WORK/skills/review/test-coverage/SKILL.md" 'assert nothing 
 ok=1; is_ask "$out" || ok=0
 check "Edit to a path merely containing 'test' as a substring -> noask" "$ok"
 
+# --- the bash fast path (_silent_fastpath.sh) must defer every payload python could ask on ---
+# A non-string file_path makes PATH_RE.search raise, which asks, though no "test" is in the text.
+out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":true,"old_string":"a","new_string":"b"}}' | bash "$GATE" 2>/dev/null)
+ok=1; is_ask "$out" && ok=0
+check "file_path true (non-string, no test/spec text) -> ask" "$ok"
+
+# A raw NUL makes the JSON invalid, which asks; bash must not strip it into a valid payload.
+out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"/a/b.py","old_string":"a\000","new_string":"b"}}' | bash "$GATE" 2>/dev/null)
+ok=1; is_ask "$out" && ok=0
+check "raw NUL byte inside a string (invalid JSON) -> ask" "$ok"
+
+# A \u escape can spell the test path without the raw text containing "test".
+out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/\\u0074ests/x.sh","old_string":"check \\"one\\" \\"$ok\\"","new_string":""}}' "$WORK" | bash "$GATE" 2>/dev/null)
+ok=1; is_ask "$out" && ok=0
+check "\\u-escaped tests/ path removing a check() -> ask" "$ok"
+
+out=$(payload_edit "$WORK/src/app.py" 'x = 1' 'x = 2' | bash "$GATE" 2>&1); rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
+check "ordinary Edit to a non-test path -> exit 0, no output, no stderr" "$ok"
+
 
 echo ""
 echo "=== $pass passed, $fail failed ==="
