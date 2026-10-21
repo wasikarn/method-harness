@@ -14,7 +14,7 @@ PRON_PATTERN='\b(I|I'\''m|I'\''ve|me|myself|my|mine|we|we'\''re|we'\''ve|our|our
 for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
   case "$f" in */skills/_*) continue ;; esac
-  label=$(basename "$f" .md); [ "$label" = "SKILL" ] && label=$(basename "$(dirname "$f")")
+  label=${f##*/}; label=${label%.md}; [ "$label" = "SKILL" ] && { _t=${f%/*}; label=${_t##*/}; }
   desc=$(fm_get "$f" "description" --block)
   [ -z "$desc" ] && continue
   words=$(printf '%s' "$desc" | wc -w | tr -d ' ')

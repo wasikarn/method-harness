@@ -14,7 +14,7 @@
 for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
   case "$f" in */skills/_*) continue ;; esac
-  label=$(basename "$f" .md); [ "$label" = "SKILL" ] && label=$(basename "$(dirname "$f")")
+  label=${f##*/}; label=${label%.md}; [ "$label" = "SKILL" ] && { _t=${f%/*}; label=${_t##*/}; }
   nm=$(fm_get "$f" "name" --block)
   [ -n "$nm" ] || continue
   if ! printf '%s' "$nm" | grep -qE '^[a-z0-9-]{1,64}$'; then

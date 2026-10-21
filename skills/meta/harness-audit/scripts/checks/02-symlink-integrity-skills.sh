@@ -19,7 +19,7 @@ if [ "${PLUGIN_ACTIVE:-0}" -eq 0 ] && [ ! -d "$HOME/.claude/skills" ]; then
 else
 for d in "$CLAUDE_DIR/skills"/*/ "$CLAUDE_DIR/skills"/*/*/; do
   [ -d "$d" ] || continue
-  name=$(basename "$d")
+  _t=${d%/}; name=${_t##*/}
   # Skip self during bootstrap; skip _-prefixed scaffolds (not deployed skills —
   # install.sh applies the same `_*` rule so the two never disagree). Skip
   # *-workspace dirs too — skill-creator eval workspaces, gitignored under

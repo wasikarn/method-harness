@@ -18,7 +18,7 @@
 # symlinked script resolves and executes fine, so it counts as existing too.
 declare -A _known_scripts37=()
 while IFS= read -r _path; do
-  _known_scripts37["$(basename "$_path")"]=1
+  _known_scripts37["${_path##*/}"]=1  # find never yields a trailing slash; no basename spawn
 done < <(find "$CLAUDE_DIR" \( -name '*.sh' -o -name '*.py' -o -name '*.js' \) \
             -not -path '*/.git/*' -not -path '*/.scratch/*' 2>/dev/null)
 

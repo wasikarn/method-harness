@@ -10,7 +10,7 @@ _leak_candidates=("$CLAUDE_DIR"/skills/*/references/*.md "$CLAUDE_DIR"/skills/*/
 shopt -u nullglob
 for _f in "${_leak_candidates[@]}"; do
   [ -f "$_f" ] || continue
-  case "$(basename "$_f")" in SKILL.md) continue ;; esac
+  case "${_f##*/}" in SKILL.md) continue ;; esac
   grep -q '^---' "$_f" || continue
   if [ -n "$(fm_get "$_f" "description" --block)" ]; then
     warn "reference file ${_f#"$CLAUDE_DIR"/} carries frontmatter with a description: — Claude Code loads it as an independent command/skill, not inert supporting material (strip the frontmatter, matching skills/workflow/ideate/references/frames.md's shape, or move the file outside skills/)"

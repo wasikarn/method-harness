@@ -15,7 +15,7 @@ if [ "${PLUGIN_ACTIVE:-0}" -eq 0 ] && [ ! -d "$HOME/.claude/agents" ]; then
 else
 for f in "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
-  name=$(basename "$f")
+  name=${f##*/}
   if [ ! -L "$HOME/.claude/agents/$name" ] && ! is_plugin_delivered agents "${name%.md}"; then
     if new_vs_base "$f"; then
       info "agent '$name' is new vs ${NEW_VS_BASE:-base}; not in the plugin cache until a bumped version is merged and installed"

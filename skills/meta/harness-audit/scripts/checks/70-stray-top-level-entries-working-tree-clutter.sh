@@ -13,7 +13,7 @@ if [ "$CLAUDE_DIR" = "$REPO_ROOT" ]; then
   _allow=" .git .github .claude .claude-plugin .code-review-graph .gitattributes .gitignore .DS_Store .in_use AGENTS.md CHANGELOG.md CLAUDE.md GLOSSARY.md LICENSE NOTICE PONYTAIL-DEBT.md README.md agents docs evals git-hooks hooks pyrightconfig.json scripts skills tests "
   for _e in "$REPO_ROOT"/* "$REPO_ROOT"/.*; do
     [ -e "$_e" ] || continue
-    _b=$(basename "$_e")
+    _b=${_e##*/}
     case "$_b" in .|..) continue ;; esac
     case "$_allow" in *" $_b "*) continue ;; esac
     warn "stray top-level entry '$_b' — not in the v1 keep list; Claude Code globs it every session. trash it, or add it to check 70's allowlist if it belongs"
