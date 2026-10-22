@@ -173,6 +173,10 @@ check "JSON depth 1e6, Write to a non-settings path -> ask (payload not checked)
 out=$(payload_write "$FIXTURE/src/app.py" | deepen 500 | bash "$GUARD" 2>/dev/null); rc=$?
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
 check "JSON depth 500, Write to a non-settings path -> still parses, exit 0, no output" "$ok"
+. "$ROOT/tests/_lib/memerr.sh"
+out=$(payload_write "$FIXTURE/src/app.py" | memerr "$GUARD" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "json.load MemoryError, Write to a non-settings path -> ask (payload not checked)" "$ok"
 err=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GUARD" 2>&1 >/dev/null); rc=$?
 out=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GUARD" 2>/dev/null)
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && echo "$err" | /usr/bin/grep -q "internal error, allowing" && ok=0

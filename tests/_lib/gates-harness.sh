@@ -217,12 +217,15 @@ deepen() {
   python3 -c 'import sys; s = sys.stdin.read().rstrip(); n = int(sys.argv[1]); print(s[:-1] + ", \"x\": " + "[" * n + "]" * n + "}")' "$1"
 }
 
+# GATE_RUNNER=memerr (tests/_lib/memerr.sh) runs test_deny_deep/test_ask with json.load raising MemoryError.
+. "$(dirname "${BASH_SOURCE[0]}")/memerr.sh"
+
 # Expect the depth-overflow fail-closed deny: exit 2 AND the "nested too deep" stderr line, so neither a
 # crash nor the gate's ordinary rule can pass the row.
 test_deny_deep() {
   local gate="$1" desc="$2" payload="$3"
   local rc
-  rc=$(echo "$payload" | bash "$gate" 2>"$_ERRF"; echo $?)
+  rc=$(echo "$payload" | ${GATE_RUNNER:-bash} "$gate" 2>"$_ERRF"; echo $?)
   if [[ "$rc" == "2" ]] && /usr/bin/grep -q 'nested too deep' "$_ERRF"; then
     echo "  ✅ DENY (too deep): $desc"
     pass=$((pass + 1))
@@ -254,7 +257,7 @@ test_allow() {
 test_ask() {
   local gate="$1" desc="$2" payload="$3"
   local out rc
-  out=$(echo "$payload" | bash "$gate" 2>/dev/null); rc=$?
+  out=$(echo "$payload" | ${GATE_RUNNER:-bash} "$gate" 2>/dev/null); rc=$?
   # stdout must be exactly ONE JSON object: two concatenated objects are not valid JSON (GH #254 validator).
   if [[ "$rc" == "0" ]] && printf '%s' "$out" | python3 -c 'import json,sys; assert json.loads(sys.stdin.read())["hookSpecificOutput"]["permissionDecision"] == "ask"' 2>/dev/null; then
     echo "  ✅ ASK: $desc"

@@ -1738,6 +1738,10 @@ rc=$(deep_rc 'git status' agent-x 140000); ok=1; [ "$rc" = "2" ] && ok=0
 check "JSON depth 140000, subagent git status: denied, fail-closed on the error type (rc $rc)" "$ok"
 rc=$(deep_rc 'git status' '' 140000); ok=1; [ "$rc" = "2" ] && ok=0
 check "JSON depth 140000, no agent_id: denied, main session too (rc $rc)" "$ok"
+. "$ROOT/tests/_lib/memerr.sh"
+rc=$(echo '{"tool_name":"Bash","tool_input":{"command":"git stash"},"agent_id":"agent-x"}' | memerr "$GATE" 2>"$_deep_file.err"; echo $?); ok=1
+[ "$rc" = "2" ] && /usr/bin/grep -q "nested too deep" "$_deep_file.err" && ok=0
+check "json.load MemoryError, subagent git stash: denied with 'nested too deep' (rc $rc)" "$ok"
 # depth 500, not 1000: Python <=3.11 counts json nesting against sys.getrecursionlimit() (overflow at ~986).
 rc=$(deep_rc 'git status' agent-x 500); ok=1; [ "$rc" = "0" ] && ok=0
 check "JSON depth 500, subagent git status: still parses and allows (rc $rc)" "$ok"

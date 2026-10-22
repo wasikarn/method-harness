@@ -375,6 +375,10 @@ check "JSON depth 1e6, clean Write -> ask (payload not checked)" "$ok"
 out=$(payload_write_content "$FIXTURE/scratch.txt" "x = 1" | deepen 500 | bash "$GATE" 2>/dev/null); rc=$?
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
 check "JSON depth 500, clean Write -> still parses, exit 0, no output" "$ok"
+. "$ROOT/tests/_lib/memerr.sh"
+out=$(payload_write_content "$FIXTURE/scratch.txt" "x = 1" | memerr "$GATE" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "json.load MemoryError, clean Write -> ask (payload not checked)" "$ok"
 err=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GATE" 2>&1 >/dev/null); rc=$?
 out=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GATE" 2>/dev/null)
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && echo "$err" | /usr/bin/grep -q "internal error, allowing" && ok=0
