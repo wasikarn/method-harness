@@ -26,7 +26,7 @@ GATE_ID = "gate:bash:subagent-git-guard"
 try:
     d = json.load(sys.stdin)
 except (RecursionError, MemoryError):
-    # Fail-closed: an extra key nested ~130k deep overflows the decoder (RecursionError "Stack overflow ...
+    # Fail-closed: an extra key nested deep enough (~130k on Python 3.15, ~990 on <=3.11) overflows the decoder (RecursionError "Stack overflow ...
     # while decoding a JSON array") and would otherwise allow a subagent git stash below. Claude Code never
     # sends such a payload, so denying it for every session (main included) costs nothing real. _err is not
     # defined yet and os._exit(2) skips a shutdown flush, so a closed stderr cannot turn this into rc 1.

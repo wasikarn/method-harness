@@ -1738,10 +1738,11 @@ rc=$(deep_rc 'git status' agent-x 140000); ok=1; [ "$rc" = "2" ] && ok=0
 check "JSON depth 140000, subagent git status: denied, fail-closed on the error type (rc $rc)" "$ok"
 rc=$(deep_rc 'git status' '' 140000); ok=1; [ "$rc" = "2" ] && ok=0
 check "JSON depth 140000, no agent_id: denied, main session too (rc $rc)" "$ok"
-rc=$(deep_rc 'git status' agent-x 1000); ok=1; [ "$rc" = "0" ] && ok=0
-check "JSON depth 1000, subagent git status: still parses and allows (rc $rc)" "$ok"
-rc=$(deep_rc 'git stash' agent-x 1000); ok=1; [ "$rc" = "2" ] && ok=0
-check "JSON depth 1000, subagent git stash: still parses and denies (rc $rc)" "$ok"
+# depth 500, not 1000: Python <=3.11 counts json nesting against sys.getrecursionlimit() (overflow at ~986).
+rc=$(deep_rc 'git status' agent-x 500); ok=1; [ "$rc" = "0" ] && ok=0
+check "JSON depth 500, subagent git status: still parses and allows (rc $rc)" "$ok"
+rc=$(deep_rc 'git stash' agent-x 500); ok=1; [ "$rc" = "2" ] && /usr/bin/grep -q "may not run" "$_deep_file.err" && ok=0
+check "JSON depth 500, subagent git stash: parses, denied by the git scan not the depth branch (rc $rc)" "$ok"
 printf '%s' '{"tool_name": "Bash", "agent_id": "agent-x", "tool_input": {"command": "git sta' > "$_deep_file"
 bash "$GATE" < "$_deep_file" 2> "$_deep_file.err"; rc=$?; ok=1
 [ "$rc" = "0" ] && /usr/bin/grep -q "unparseable stdin, allowing" "$_deep_file.err" && ok=0
