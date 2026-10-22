@@ -1928,6 +1928,8 @@ def _gh_api_write(args):
                     fields.append(val)
                 elif name == "--input":
                     has_input = True
+                elif name == "--header" and "method-override" in val.lower():
+                    has_input = True
         elif t.startswith("-") and len(t) > 1:
             for j, ch in enumerate(t[1:], 1):
                 if ch in _GH_API_SHORT_VALUE:
@@ -1941,13 +1943,18 @@ def _gh_api_write(args):
                         method = val
                     elif ch in "fF":
                         fields.append(val)
+                    elif ch == "H" and "method-override" in val.lower():
+                        has_input = True  # an override header turns a GET into a write
                     break
         elif endpoint is None:
             endpoint = t
         i += 1
     if endpoint == "graphql":
-        queries = [f.split("=", 1)[1] for f in fields if f.split("=", 1)[0] == "query" and "=" in f]
-        return has_input or any(q.startswith("@") or "mutation" in q.lower() for q in queries)
+        # A read is a query the gate can see: text starting with "query" or "{". A $(...) or variable
+        # arrives empty (its placeholder is stripped), and a file (@path) is unseen: both count as writes.
+        queries = [f.split("=", 1)[1].strip() for f in fields if f.split("=", 1)[0] == "query" and "=" in f]
+        return has_input or not queries or any(
+            not q.lower().startswith(("query", "{")) or "mutation" in q.lower() for q in queries)
     if method is not None:
         write = method.upper() not in ("GET", "HEAD")
     else:
@@ -2147,6 +2154,14 @@ def _check_window(_wi, w):
             if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
+        else:
+            # gh only as the command xargs runs (past its flags and their values), since "gh" is also a
+            # common grep pattern: `xargs grep -l gh src` must not read as gh.
+            j = 0
+            while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
+                j += 2 if rest[j].replace(PH, "") in ("-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a") else 1
+            if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
+                argv0, rest = "gh", rest[j + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
         # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
         # inner command so the SQL check fires on a containerized client.
