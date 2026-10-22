@@ -103,7 +103,7 @@
     "PostToolUse": [
       {
         "id": "sensor:bash:output-redact",
-        "description": "After a Bash call, replace vendor-specific credential-shaped tokens (secret-scan.py's PATTERNS) in stdout/stderr with a [REDACTED:kind] marker via PostToolUse updatedToolOutput. Bash only (Read output was not rewritable, probed 2026-10-22, GH #534); best-effort; fails open, never denies.",
+        "description": "After a Bash or MCP tool call, replace vendor-specific credential-shaped tokens (secret-scan.py's PATTERNS) in Bash stdout/stderr (updatedToolOutput) or MCP text blocks (updatedMCPToolOutput) with a [REDACTED:kind] marker. Read output is not rewritable (probed 2026-10-22, GH #534); best-effort; fails open, never denies.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/bash-output-redact.sh\""
       },
       {

@@ -53,21 +53,43 @@ try:
     d = json.load(sys.stdin)
     if not isinstance(d, dict):
         sys.exit(0)
-    if d.get("tool_name") != "Bash":
+    name = d.get("tool_name")
+    is_mcp = isinstance(name, str) and name.startswith("mcp__")
+    if name != "Bash" and not is_mcp:
         sys.exit(0)
     tr = d.get("tool_response")
-    if not isinstance(tr, dict):
+    # Bash: {stdout, stderr, ...}. MCP: a list of content blocks (probed 2026-10-22);
+    # only text blocks are rewritten, any other shape passes through untouched.
+    if not (isinstance(tr, list) if is_mcp else isinstance(tr, dict)):
         sys.exit(0)
     patterns, is_placeholder = load_secret_scan()
-    out, total = dict(tr), 0
-    for key in ("stdout", "stderr"):
-        val = tr.get(key)
-        if isinstance(val, str) and val:
-            out[key], n = redact(val, patterns, is_placeholder)
-            total += n
+    total = 0
+    if isinstance(tr, list):
+        out = []
+        for blk in tr:
+            if isinstance(blk, dict):
+                blk = dict(blk)
+                # text blocks carry "text"; an embedded resource block carries "resource": {"text": ...}
+                holders = [blk]
+                if isinstance(blk.get("resource"), dict):
+                    blk["resource"] = dict(blk["resource"])
+                    holders.append(blk["resource"])
+                for h in holders:
+                    if isinstance(h.get("text"), str) and h["text"]:
+                        h["text"], n = redact(h["text"], patterns, is_placeholder)
+                        total += n
+            out.append(blk)
+        field = "updatedMCPToolOutput"
+    else:
+        out = dict(tr)
+        for key in ("stdout", "stderr"):
+            val = tr.get(key)
+            if isinstance(val, str) and val:
+                out[key], n = redact(val, patterns, is_placeholder)
+                total += n
+        field = "updatedToolOutput"
     if total:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                                 "updatedToolOutput": out}}))
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", field: out}}))
     sys.exit(0)
 except SystemExit:
     raise

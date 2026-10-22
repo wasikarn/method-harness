@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Sensor: after a Bash call, replace vendor-specific credential-shaped tokens in
-# stdout/stderr with a [REDACTED:<kind>] marker before the model sees them
+# Sensor: after a Bash or MCP tool call, replace vendor-specific credential-shaped tokens in
+# Bash stdout/stderr or MCP text blocks with a [REDACTED:<kind>] marker before the model sees them
 # (PostToolUse hookSpecificOutput.updatedToolOutput; probed 2026-10-22 on CC
-# 2.1.307, GH #534). Bash only: Read output was not rewritable in the same probe.
+# 2.1.307, GH #534). Bash and MCP text blocks; Read output was not rewritable in the same probe.
 # Best-effort, not a guarantee: it reuses secret-scan.py's vendor-prefix
 # PATTERNS, so a secret outside those shapes passes through.
 #
