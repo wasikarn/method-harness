@@ -1714,6 +1714,41 @@ _c="$(_pad 'A="x y" ' 1500)git status"
 rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #520 1500 quoted assignments before git status decided inside 8 s as allow (rc $rc, ${#_c} bytes)" "$ok"
 
+# JSON nesting depth: an extra key nested ~140,000 deep makes json.load raise RecursionError ("Stack
+# overflow ... while decoding a JSON array"); that used to hit the parse-error allow, so a subagent
+# git stash ran. Depth overflow now fails closed for every payload; plain malformed JSON still allows.
+_deep_file="$_JOURNAL_TMP/deep.json"
+deep_rc() { # deep_rc <command> <agent_id or ""> <depth>; writes stderr to $_deep_file.err
+  python3 -c '
+import json, sys
+cmd, aid, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+d = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+if aid:
+    d["agent_id"] = aid
+s = json.dumps(d)
+print(s[:-1] + ", \"x\": " + "[" * n + "]" * n + "}")
+' "$1" "$2" "$3" > "$_deep_file"
+  bash "$GATE" < "$_deep_file" 2> "$_deep_file.err"
+  echo $?
+}
+rc=$(deep_rc 'git stash' agent-x 140000); ok=1
+[ "$rc" = "2" ] && /usr/bin/grep -q "nested too deep" "$_deep_file.err" && ok=0
+check "JSON depth 140000, subagent git stash: denied with 'nested too deep' (rc $rc)" "$ok"
+rc=$(deep_rc 'git status' agent-x 140000); ok=1; [ "$rc" = "2" ] && ok=0
+check "JSON depth 140000, subagent git status: denied, fail-closed on the error type (rc $rc)" "$ok"
+rc=$(deep_rc 'git status' '' 140000); ok=1; [ "$rc" = "2" ] && ok=0
+check "JSON depth 140000, no agent_id: denied, main session too (rc $rc)" "$ok"
+rc=$(deep_rc 'git status' agent-x 1000); ok=1; [ "$rc" = "0" ] && ok=0
+check "JSON depth 1000, subagent git status: still parses and allows (rc $rc)" "$ok"
+rc=$(deep_rc 'git stash' agent-x 1000); ok=1; [ "$rc" = "2" ] && ok=0
+check "JSON depth 1000, subagent git stash: still parses and denies (rc $rc)" "$ok"
+printf '%s' '{"tool_name": "Bash", "agent_id": "agent-x", "tool_input": {"command": "git sta' > "$_deep_file"
+bash "$GATE" < "$_deep_file" 2> "$_deep_file.err"; rc=$?; ok=1
+[ "$rc" = "0" ] && /usr/bin/grep -q "unparseable stdin, allowing" "$_deep_file.err" && ok=0
+check "truncated JSON with agent_id: still allows with 'unparseable stdin, allowing' (rc $rc)" "$ok"
+rc=$(deep_rc 'git stash' agent-x 1); ok=1; [ "$rc" = "2" ] && ok=0
+check "shallow subagent git stash with an empty extra array: denied (rc $rc)" "$ok"
+
 echo ""
 echo "=== $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]

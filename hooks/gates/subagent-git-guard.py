@@ -25,8 +25,21 @@ GATE_ID = "gate:bash:subagent-git-guard"
 
 try:
     d = json.load(sys.stdin)
+except (RecursionError, MemoryError):
+    # Fail-closed: an extra key nested ~130k deep overflows the decoder (RecursionError "Stack overflow ...
+    # while decoding a JSON array") and would otherwise allow a subagent git stash below. Claude Code never
+    # sends such a payload, so denying it for every session (main included) costs nothing real. _err is not
+    # defined yet and os._exit(2) skips a shutdown flush, so a closed stderr cannot turn this into rc 1.
+    try:
+        print("[mh:gate] BLOCKED: PreToolUse payload nested too deep to parse -- failing closed",
+              file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+    journal(GATE_ID, None, "deny", None)
+    os._exit(2)
 except Exception as e:
-    # Fail-safe = ALLOW: a parse error must not stall every subagent Bash call.
+    # Fail-safe = ALLOW for every other parse error (truncated or malformed JSON): it must not stall
+    # every subagent Bash call. Depth overflow above is the one exception and denies.
     print(f"[mh:gate] subagent-git-guard: unparseable stdin, allowing ({e})", file=sys.stderr)
     sys.exit(0)
 
