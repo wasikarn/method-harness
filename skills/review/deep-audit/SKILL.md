@@ -205,7 +205,8 @@ quality rationale; a change that only moves the score is left out.
 - Check each fix's own mechanism for a new regression before scoring its dimension resolved: a
   fix for one problem can reopen another, and a test that only documents the new behaviour
   hides that. Close a self-inflicted regression in the same pass when it is cheap.
-- A fix touching 2+ files or a test gets the fresh-context validator again (Rule 13).
+- When any fix touched 2+ files or a test, re-run step 3's checker once over the union of all
+  fixes (Rule 13), not one dispatch per fix.
 - A fix in a hook, gate, or plugin file is correct in the repo before it protects a session: the
   running copy (plugin cache version, restarted session) is a separate claim; say which one the
   evidence covers.

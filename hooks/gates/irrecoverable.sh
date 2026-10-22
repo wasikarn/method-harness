@@ -54,7 +54,12 @@ if [ ! -r "$_py" ]; then
   exit 2
 fi
 
-printf '%s' "$_input" | python3 -S "$_py"  # -S: no site import, ~6 ms per call; the gates use the stdlib only
+_run="$_gdir/_run.py"  # imports the gate so its bytecode comes from __pycache__ (a script is recompiled every run)
+if [ ! -r "$_run" ]; then
+  echo "[mh:gate] internal error: sibling script _run.py missing or unreadable — failing closed" >&2
+  exit 2
+fi
+printf '%s' "$_input" | python3 -S "$_run" irrecoverable  # -S: no site import, ~6 ms per call; the gates use the stdlib only
 rc=$?
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
   echo "[mh:gate] internal error (rc=$rc) — failing closed" >&2

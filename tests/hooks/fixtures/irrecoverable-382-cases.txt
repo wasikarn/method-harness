@@ -1,4 +1,4 @@
-# GH #382 cases for hooks/gates/irrecoverable.sh, replayed by tests/hooks/test-gates.sh.
+# GH #382 cases for hooks/gates/irrecoverable.sh, replayed by tests/hooks/test-gates-other.sh.
 # DENY <cmd>: exit 2. ALLOW <cmd>: exit 0, empty stdout, no journal row.
 # shlex splits one shell word at a character outside its word characters ($, :, @), and an empty word
 # ("") dropped out, so every walk that skips one token for a value (a wrapper's flag value, timeout's

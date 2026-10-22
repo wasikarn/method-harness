@@ -1,7 +1,7 @@
 # GH #349: an ANSI-C ($'..') or locale ($"..") quoted word inside a substitution body, next to an
 # ambiguity shape, where the narrow verb check is the only defense. One case per line: DENY or ALLOW,
 # a blank, then the command. DENY = at least one real shell (sh, bash 3.2, bash 5, dash, zsh, ksh)
-# ran the destructive form; ALLOW = none did. Replayed by tests/hooks/test-gates.sh.
+# ran the destructive form; ALLOW = none did. Replayed by tests/hooks/test-gates-other.sh.
 DENY echo $(echo `git push $'-f' origin main`)
 DENY echo $(echo `git push origin main $'-f'`)
 DENY echo $(echo `git push -$'f' origin main`)

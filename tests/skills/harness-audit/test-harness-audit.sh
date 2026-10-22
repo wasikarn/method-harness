@@ -40,7 +40,7 @@ run_check() {
   # expect_silent pass on a fixture that never actually ran (mh:deep-audit F2, 2026-09-24).
   # -1 fails every expect_* function's own condition (silent needs ==0, warn/crit need >=1),
   # so one guard here covers every caller instead of touching each expect_* individually.
-  if ! printf '%s\n' "$out" | /usr/bin/grep -q '^=== Summary'; then
+  if ! /usr/bin/grep -q '^=== Summary' <<<"$out"; then
     bad "run_check $id $root: audit produced no '=== Summary' block (missing fixture, crash, or bad args) -- forcing failure"
     CRIT_FOUND=-1; WARN_FOUND=-1; INFO_FOUND=-1
     return
@@ -62,7 +62,7 @@ expect_silent() {
 # path/name confound as expect_warn_match if matched against the whole $OUT (see that comment).
 expect_silent_match() {
   run_check "$1" "$FIX/$2"
-  if [ "$CRIT_FOUND" -eq 0 ] && [ "$WARN_FOUND" -eq 0 ] && printf '%s\n' "$OUT" | /usr/bin/grep -E '^ *INFO ' | /usr/bin/grep -qE "$3"; then ok "check-$1 $2 silent and reports '$3'"
+  if [ "$CRIT_FOUND" -eq 0 ] && [ "$WARN_FOUND" -eq 0 ] && /usr/bin/grep -E '^ *INFO ' <<<"$OUT" | /usr/bin/grep -E "$3" >/dev/null; then ok "check-$1 $2 silent and reports '$3'"
   else bad "check-$1 $2 not silent or missing '$3' (crit=$CRIT_FOUND warn=$WARN_FOUND)"; fi
 }
 # expect_info_only <id> <fixture> <regex>: fails open as INFO AND names the specific branch, not
@@ -70,7 +70,7 @@ expect_silent_match() {
 # decorative label only, never actually grepped -- any INFO firing at all made this pass).
 expect_info_only() {
   run_check "$1" "$FIX/$2"
-  if [ "$CRIT_FOUND" -eq 0 ] && [ "$WARN_FOUND" -eq 0 ] && [ "$INFO_FOUND" -ge 1 ] && printf '%s\n' "$OUT" | /usr/bin/grep -E '^ *INFO ' | /usr/bin/grep -qE "$3"; then ok "check-$1 $2 fails open as INFO ($3)"
+  if [ "$CRIT_FOUND" -eq 0 ] && [ "$WARN_FOUND" -eq 0 ] && [ "$INFO_FOUND" -ge 1 ] && /usr/bin/grep -E '^ *INFO ' <<<"$OUT" | /usr/bin/grep -E "$3" >/dev/null; then ok "check-$1 $2 fails open as INFO ($3)"
   else bad "check-$1 $2 did not fail open as INFO ($3) (crit=$CRIT_FOUND warn=$WARN_FOUND info=$INFO_FOUND)"; fi
 }
 expect_warn() {
@@ -84,7 +84,7 @@ expect_warn() {
 # dir's own name (e.g. check-21-bad-fable-pin) into the output regardless of the WARN text itself.
 expect_warn_match() {
   run_check "$1" "$FIX/$2"
-  if [ "$WARN_FOUND" -ge 1 ] && [ "$CRIT_FOUND" -eq 0 ] && printf '%s\n' "$OUT" | /usr/bin/grep -E '^ *WARN ' | /usr/bin/grep -qE "$3"; then ok "check-$1 $2 fires WARN and reports '$3'"
+  if [ "$WARN_FOUND" -ge 1 ] && [ "$CRIT_FOUND" -eq 0 ] && /usr/bin/grep -E '^ *WARN ' <<<"$OUT" | /usr/bin/grep -E "$3" >/dev/null; then ok "check-$1 $2 fires WARN and reports '$3'"
   else bad "check-$1 $2 did not fire WARN or missing '$3' (crit=$CRIT_FOUND warn=$WARN_FOUND)"; fi
 }
 expect_crit() {
@@ -386,7 +386,7 @@ mk_f1_repo() {
 }
 F1_NEW="$CODEX_TMP/f1-new"; mk_f1_repo "$F1_NEW" 0 1
 HOME="$EMPTY_HOME" run_check 02 "$F1_NEW" --plugin-cache "$DECOY"
-if [ "$CRIT_FOUND" -eq 0 ] && printf '%s\n' "$OUT" | /usr/bin/grep -E '^ *INFO ' | /usr/bin/grep -q 'newskill'; then ok "check-02 skill new vs base ref passes as INFO (no symlink needed)"
+if [ "$CRIT_FOUND" -eq 0 ] && /usr/bin/grep -E '^ *INFO ' <<<"$OUT" | /usr/bin/grep 'newskill' >/dev/null; then ok "check-02 skill new vs base ref passes as INFO (no symlink needed)"
 else bad "check-02 skill new vs base ref did not pass as INFO (crit=$CRIT_FOUND info=$INFO_FOUND)"; fi
 F1_OLD="$CODEX_TMP/f1-old"; mk_f1_repo "$F1_OLD" 1 1
 HOME="$EMPTY_HOME" run_check 02 "$F1_OLD" --plugin-cache "$DECOY"
@@ -468,7 +468,7 @@ mk_a3_repo() { # <dir> <agent-on-base:0|1> <base-ref:0|1>
 }
 A3_NEW="$CODEX_TMP/a3-new"; mk_a3_repo "$A3_NEW" 0 1
 HOME="$EMPTY_HOME" run_check 03 "$A3_NEW" --plugin-cache "$DECOY"
-if [ "$CRIT_FOUND" -eq 0 ] && printf '%s\n' "$OUT" | /usr/bin/grep -E '^ *INFO ' | /usr/bin/grep -q 'newagent'; then ok "check-03 agent new vs base ref passes as INFO"
+if [ "$CRIT_FOUND" -eq 0 ] && /usr/bin/grep -E '^ *INFO ' <<<"$OUT" | /usr/bin/grep 'newagent' >/dev/null; then ok "check-03 agent new vs base ref passes as INFO"
 else bad "check-03 agent new vs base ref did not pass as INFO (crit=$CRIT_FOUND info=$INFO_FOUND)"; fi
 A3_OLD="$CODEX_TMP/a3-old"; mk_a3_repo "$A3_OLD" 1 1
 HOME="$EMPTY_HOME" run_check 03 "$A3_OLD" --plugin-cache "$DECOY"
@@ -495,7 +495,7 @@ HOME="$TINY_HOME" expect_silent 43 fleet-good
 # Full run on the clean fleet: proves the fixture is a whole fleet, not just silent per check,
 # and that the vacuous-surface guard stays quiet when agents/, skills/, hooks/ all exist.
 full=$(bash "$AUDIT" "$GOOD" --plugin-cache "$CACHE" 2>/dev/null || true)
-if printf '%s\n' "$full" | /usr/bin/grep -q '^Critical: 0$' && printf '%s\n' "$full" | /usr/bin/grep -q '^Warnings: 0$'; then
+if /usr/bin/grep -q '^Critical: 0$' <<<"$full" && /usr/bin/grep -q '^Warnings: 0$' <<<"$full"; then
   ok "fleet-good full run: 0 CRIT, 0 WARN"
 else
   bad "fleet-good full run not clean: $(printf '%s\n' "$full" | /usr/bin/grep -E 'CRIT|WARN' | head -3)"
@@ -505,7 +505,7 @@ NOHOOKS="$CODEX_TMP/nohooks"
 mkdir -p "$NOHOOKS" && cp -R "$GOOD/agents" "$GOOD/skills" "$NOHOOKS/"
 # Capture first: under pipefail, grep -q closing the pipe early hands the audit a SIGPIPE.
 nohooks_out=$(bash "$AUDIT" "$NOHOOKS" --plugin-cache "$CACHE" 2>/dev/null || true)
-if printf '%s\n' "$nohooks_out" | /usr/bin/grep -q "no hooks/ dir"; then
+if /usr/bin/grep -q "no hooks/ dir" <<<"$nohooks_out"; then
   ok "vacuous-surface guard names the missing hooks/ dir"
 else
   bad "vacuous-surface guard silent on a fleet with no hooks/ dir"

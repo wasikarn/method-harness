@@ -36,9 +36,10 @@ reason to reject the whole attacker run by itself.
 import json
 import re
 import sys
+import os
 
-CITATION_RE = re.compile(r"`[^`]+`|(?=[^\s:`]*[A-Za-z])[^\s:`]*[./][^\s:`]*:\d+")
-
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "scripts", "_lib"))
+from verdict_json import CITATION_RE  # noqa: E402
 
 def has_citation(evidence):
     return bool(CITATION_RE.search(evidence))

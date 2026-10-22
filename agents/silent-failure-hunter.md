@@ -19,10 +19,6 @@ Report every silent failure that clears the Evidence Gate below. A false-positiv
 a form of silent failure at the review layer (real issues get lost in noise), so the gate, not how
 alarming a pattern looks, is the bar.
 
-## Scope vs mattpocock-skills:code-review
-
-`mattpocock-skills:code-review` doesn't hunt swallowed errors or silent failures. A clean `mattpocock-skills:code-review` pass is not evidence this class of bug was checked — this agent covers what it doesn't.
-
 `Bash` is for read-only inspection (`git diff`, `git log`, a bounded search); never use it to modify files or touch a database, so the review stays independent of the code it reviews.
 
 ## Hunt Targets

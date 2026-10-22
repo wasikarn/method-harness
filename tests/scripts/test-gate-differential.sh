@@ -42,7 +42,7 @@ printf 'plain text, no token\nkey=%s\n' "$tok" > "$T/cases.txt"
 
 echo "=== identical copies ==="
 out=$(bash "$SCRIPT" --cases "$T/cases.txt" "$T/old" "$T/same" secret-scan 2>&1); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | /usr/bin/grep -q 'diffs=0 '; then
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
   ok "identical copies: exit 0, diffs=0"
 else bad "identical copies (rc=$rc): $out"; fi
 
@@ -50,7 +50,7 @@ echo "=== planted one-rule change ==="
 out=$(bash "$SCRIPT" --cases "$T/cases.txt" "$T/old" "$T/planted" secret-scan 2>&1); rc=$?
 classes=$(printf '%s\n' "$out" | /usr/bin/grep -c '^  \[')
 if [ "$rc" -eq 1 ] && [ "$classes" -eq 1 ] \
-   && printf '%s' "$out" | /usr/bin/grep -q '^  \[1\] stdout | journal ask->none$'; then
+   && /usr/bin/grep -q '^  \[1\] stdout | journal ask->none$' <<<"$out"; then
   ok "planted change: exactly one class, 'stdout | journal ask->none', count 1"
 else bad "planted change (rc=$rc, classes=$classes): $out"; fi
 case "$out" in
@@ -66,7 +66,7 @@ else bad "git ref OLD (rc=$rc): $out"; fi
 
 echo "=== slug outside the project ==="
 out=$(bash "$SCRIPT" --replay 3 --slug -home-someone-else "$T/old" irrecoverable 2>&1); rc=$?
-if [ "$rc" -eq 2 ] && printf '%s' "$out" | /usr/bin/grep -q 'refusing'; then
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'refusing' <<<"$out"; then
   ok "foreign --slug refused with exit 2"
 else bad "foreign --slug (rc=$rc): $out"; fi
 
@@ -80,13 +80,13 @@ use 'ls -la' > "$CLAUDE_CONFIG_DIR/projects/$slug/s1/subagents/agent-1.jsonl"
 { use 'echo other1'; use 'echo other2'; } > "$CLAUDE_CONFIG_DIR/projects/${slug}x/b.jsonl"
 : > "$T/empty.txt"
 out=$(bash "$SCRIPT" --cases "$T/empty.txt" --replay 50 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | /usr/bin/grep -q 'replay=2 '; then
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'replay=2 ' <<<"$out"; then
   ok "replay sampled the 2 commands of this project, none from a sibling-named project"
 else bad "replay (rc=$rc): $out"; fi
 
 echo "=== slug traversal out of a worktree prefix ==="
 out=$(bash "$SCRIPT" --replay 3 --slug "$slug--claude-worktrees-probe/../foreign" "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
-if [ "$rc" -eq 2 ] && printf '%s' "$out" | /usr/bin/grep -q 'refusing'; then
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'refusing' <<<"$out"; then
   ok "--slug with ../ refused with exit 2"
 else bad "--slug traversal (rc=$rc): $out"; fi
 
@@ -96,7 +96,7 @@ echo "=== fuzz ==="
 # tests/hooks' job; this file covers the harness, and fixture parsing is checked directly below.
 printf 'rm -rf build\ngit reset --hard\n' > "$T/deny.txt"
 out=$(bash "$SCRIPT" --cases "$T/deny.txt" --fuzz-seed 7 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | /usr/bin/grep -Eq 'fuzz=[1-9][0-9]*\)'; then
+if [ "$rc" -eq 0 ] && /usr/bin/grep -Eq 'fuzz=[1-9][0-9]*\)' <<<"$out"; then
   ok "fuzz adds seeded cases, 0 diffs on identical copies"
 else bad "fuzz (rc=$rc): $out"; fi
 

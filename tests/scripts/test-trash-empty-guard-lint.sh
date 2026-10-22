@@ -15,7 +15,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 
 # Owned by other work in flight; each still holds the pattern and is tracked for a follow-up.
 # The lint fails once a listed file is clean, so the entry gets dropped.
-PENDING=" tests/hooks/test-gates.sh "
+PENDING=" tests/hooks/test-gates-irrecoverable-2.sh "
 
 # Prints "line: var" for each trash call that names a template-mktemp variable as a whole argument.
 # A trash call is `trash` in command position (line start, after ; & | ( { or a quote opening a trap

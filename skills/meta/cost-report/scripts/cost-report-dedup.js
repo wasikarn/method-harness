@@ -13,7 +13,16 @@ const f=process.env.MH_COSTS_FILE||path.join(os.homedir(),".local","share","kbg"
 
 if(process.argv[2]==="csv"){
   if(!fs.existsSync(f)){console.error("no data");process.exit(0);}
-  const rows=fs.readFileSync(f,"utf8").split(/\r?\n/).filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(Boolean).slice(-100);
+  // Tail-read: double the window until it holds 100 parsable rows or the whole file (was: read
+  // the whole log). The window's first line may be cut mid-row, so it is dropped unless len==size.
+  const size=fs.statSync(f).size,fd=fs.openSync(f,"r");let n=256*1024,rows;
+  for(;;){
+    const len=Math.min(n,size),buf=Buffer.alloc(len);fs.readSync(fd,buf,0,len,size-len);
+    const lines=buf.toString("utf8").split(/\r?\n/);if(len<size)lines.shift();
+    rows=lines.filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(Boolean);
+    if(rows.length>=100||len>=size)break;n*=2;
+  }
+  fs.closeSync(fd);rows=rows.slice(-100);
   console.log("timestamp,session_id,model,model_scoped,stream,agent_type,turns,input_tokens,output_tokens,cache_write_tokens,cache_write_tokens_1h,cache_read_tokens,cache_read_per_turn,estimated_cost_usd");
   for(const r of rows)console.log([r.timestamp,r.session_id,r.model,r.model_scoped===true,r.stream||"",r.agent_type||"",r.turns||"",r.input_tokens,r.output_tokens,r.cache_write_tokens,r.cache_write_tokens_1h,r.cache_read_tokens,r.cache_read_per_turn||"",r.estimated_cost_usd].join(","));
   process.exit(0);

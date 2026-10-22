@@ -25,5 +25,5 @@ if [ -n "${HOME+set}" ] && [ ! -e "${1-${MH_CODEX_QUOTA_STATE_FILE:-$HOME/.cache
   exit 0
 fi
 
-python3 "$_py" "$@"
+python3 -S "$_py" "$@"
 exit 0

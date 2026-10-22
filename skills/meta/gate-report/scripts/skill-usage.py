@@ -67,11 +67,8 @@ def main():
         return 0
     rows.sort()
 
-    order = []  # session ids, oldest first by last use
-    for _, sid, _ in rows:
-        if sid in order:
-            order.remove(sid)
-        order.append(sid)
+    # Session ids, oldest first by last use: dedup newest-first, then flip (was O(n^2) list.remove).
+    order = list(dict.fromkeys(sid for _, sid, _ in reversed(rows)))[::-1]
     window = set(order[-args.sessions:])
     in_window = {name for _, sid, name in rows if sid in window}
     last_use = {}

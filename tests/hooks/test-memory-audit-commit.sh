@@ -137,16 +137,16 @@ ok=1; [ -z "$OUT" ] && ok=0
 check "clean tree (nothing to commit) -> silent no-op" "$ok"
 
 echo ""
-echo "--- GH #379: not opted in -> the resolver runs once (memory dir), never for --enc ---"
-# A logging stub stands in for the resolver: it records each call's args, then runs the real one.
+echo "--- GH #379: the resolver is loaded once per Stop, opted in or not ---"
+# A logging stub stands in for the resolver: it records each load, then exposes the real one's functions.
 STUB_ROOT="$TMP/stub-root"
 RESOLVER_LOG="$TMP/resolver-calls.log"
 mkdir -p "$STUB_ROOT/scripts/_lib"
 cat > "$STUB_ROOT/scripts/_lib/memory-dir.py" <<EOF
 import runpy, sys
 with open("$RESOLVER_LOG", "a") as f:
-    f.write(" ".join(["call"] + sys.argv[1:]) + "\n")
-runpy.run_path("$ROOT/scripts/_lib/memory-dir.py", run_name="__main__")
+    f.write("call\n")
+globals().update(runpy.run_path("$ROOT/scripts/_lib/memory-dir.py"))
 EOF
 run_hook_stub() {
   : > "$RESOLVER_LOG"
@@ -156,13 +156,13 @@ trash "$MEMDIR/.git" 2>/dev/null || true
 clear_state
 run_hook_stub
 ok=1; [ "$(cat "$RESOLVER_LOG")" = "call" ] && ok=0
-check "store without .git: one resolver call, no --enc call (log: $(tr '\n' '|' < "$RESOLVER_LOG"))" "$ok"
+check "store without .git: one resolver load (log: $(tr '\n' '|' < "$RESOLVER_LOG"))" "$ok"
 init_memdir
 echo "n/a" > "$MEMDIR/stub-case.md"
 run_hook_stub
-ok=1; [ "$(cat "$RESOLVER_LOG")" = "call"$'\n'"call --enc" ] \
+ok=1; [ "$(cat "$RESOLVER_LOG")" = "call" ] \
   && [ -z "$(git -C "$MEMDIR" status --porcelain)" ] && ok=0
-check "opted-in store: resolver called for the dir then --enc, and the commit lands" "$ok"
+check "opted-in store: one resolver load for dir and enc, and the commit lands" "$ok"
 
 echo ""
 echo "--- a fabricated OLD marker is swept by a later successful invocation ---"
@@ -324,6 +324,20 @@ ok=1; [ -z "$(git -C "$MAIN_MEMDIR" status --porcelain)" ] && ok=0
 check "a Stop hook run from inside a linked worktree commits to the MAIN tree's memory store" "$ok"
 git -C "$GITREPO" worktree remove -f "$WT" 2>/dev/null || true
 trash "$GITREPO" "$MAIN_MEMDIR" 2>/dev/null || true
+
+# One python launch per Stop for an opted-in store: memory dir, enc and the
+# acquisition timestamp come from one call (was 3 launches, 2026-10-22).
+clear_state
+init_memdir
+echo "py-count" > "$MEMDIR/py-count.md"
+PY_SHIM="$TMP/pyshim"; mkdir -p "$PY_SHIM"
+printf '#!/bin/sh\necho spawn >> "%s/py.log"\nexec "%s" "$@"\n' "$TMP" "$(command -v python3)" > "$PY_SHIM/python3"
+chmod +x "$PY_SHIM/python3"
+: > "$TMP/py.log"
+( cd "$PROJECT_DIR" && PATH="$PY_SHIM:$PATH" HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT="$ROOT" bash "$HOOK" )
+spawns=$(wc -l < "$TMP/py.log" | tr -d ' ')
+ok=1; [ "$spawns" = "1" ] && [ -z "$(git -C "$MEMDIR" status --porcelain)" ] && ok=0
+check "an opted-in store costs exactly one python launch per Stop and still commits (got $spawns)" "$ok"
 
 echo ""
 total=$((pass + fail))

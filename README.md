@@ -42,18 +42,20 @@ The plugin ships `defaultEnabled: false`; add `"mh@wasikarn": true` to `settings
 
 ## The gates (`hooks/hooks.json`)
 
+One clause per gate; full scope and exceptions: `docs/reference/operating-model.md` §1.
+
 | gate | effect |
 |---|---|
-| `gate:bash:irrecoverable` | denies `rm -rf`, `find -delete`, `--no-verify`, `core.hooksPath` edits, `push --force`, `reset --hard`, `clean -f`, discarding `restore`/`checkout`, `branch -D` (a plain `git branch -D <names>` without main/master/develop is allowed), `stash drop/clear`, `commit --amend`, `dd`, SQL `DROP`, `git add -A` outside a merge, nested `claude` spawns from a subagent |
+| `gate:bash:irrecoverable` | denies irrecoverable commands (`rm -rf`, `push --force`, `reset --hard`, `--no-verify`, and more) |
 | `gate:bash:subagent-git-guard` | denies `git stash`/`reset`/`clean` from a dispatched subagent |
-| `gate:agent:subagent-spawn-guard` | denies a subagent calling the Agent tool to spawn its own reviewer/validator |
+| `gate:agent:subagent-spawn-guard` | denies a subagent spawning its own reviewer/validator |
 | `gate:task:complete-separation` | denies a subagent marking its own task complete |
 | `gate:write:test-integrity` | asks before a write that weakens a test |
 | `gate:write:config-guard` | asks before a write to Claude Code settings `hooks`/`enabledPlugins` |
-| `gate:write:secret-scan` | asks when a Write/Edit introduces a new vendor-specific live-credential-shaped token (AWS, Anthropic, OpenAI, GitHub, GitLab, HuggingFace, Slack, Stripe, Google, npm, PyPI, PEM) not already a canonical placeholder or same-line-suppressed |
-| `gate:skill:codex-setup-guard` | asks before a model-invoked `--enable-review-gate` call to the paired Codex plugin's `/codex:setup` |
-| `gate:tool:routine-trigger-guard` | asks before `RemoteTrigger`'s `create`/`update`/`run`/`create_webhook_trigger` actions create, modify, or fire a Routine (a cloud session); its `list`/`get`/`list_runs`/`get_run_log` reads and `CronCreate` are out of scope. Interactive-session-only: it cannot constrain a Routine already running outside this session (ADR 0004) |
-| `gate:agent:subagent-verdict-check` | `SubagentStop`, plus a `PreToolUse` twin on `SubagentHandback` (`gate:agent:subagent-verdict-check-handback`, same check on `tool_input.message` for auto mode on CC >= 2.1.271): blocks a subagent's Stop and re-prompts it once when its final message carries a vacuous or self-contradictory Rule 13 `{pass, findings[], checked[], scope_ok, unexpected_files[]}` verdict; allows on `stop_hook_active:true`, `NEEDS-DECISION`, or no verdict-shaped output |
+| `gate:write:secret-scan` | asks when a Write/Edit adds a live-credential-shaped token |
+| `gate:skill:codex-setup-guard` | asks before a model-invoked `/codex:setup --enable-review-gate` |
+| `gate:tool:routine-trigger-guard` | asks before `RemoteTrigger` creates, modifies, or fires a Routine (ADR 0004) |
+| `gate:agent:subagent-verdict-check` | `SubagentStop` (plus a `SubagentHandback` twin): re-prompts once on a vacuous or self-contradictory Rule 13 verdict |
 
 Each PreToolUse gate is its own entry with an 8 s timeout (the SubagentStop entry has the same
 timeout). Claude Code runs matching hooks in parallel and merges deny > ask > allow (verified

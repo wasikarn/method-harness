@@ -23,11 +23,6 @@ skills/*/workspace/
 # Machine-specific caches (never ship a stale local blob)
 .code-review-graph/
 
-# Eval harness generated artifacts
-eval/results/
-
-# R4 cumulative-ceiling runtime state (design §5 R4) — per-machine, never ship a
-
 # Owner's per-repo autonomy arming — self-contained in-repo (not leaning on the
 # owner's global ~/.config/git/ignore). A foreign clone never inherits an armed
 # state, and `git add -A` never stages a local settings file.
@@ -35,7 +30,7 @@ eval/results/
 
 # graphify: generated architecture-graph snapshot. Goes stale within hours of any
 # commit (nothing auto-rebuilds it) — regenerate on demand with `/graphify .`
-# rather than trusting a checked-in copy. See CLAUDE.md's "graphify" section.
+# rather than trusting a checked-in copy.
 graphify-out/
 
 # claude plugin eval runs (evals/README.md)

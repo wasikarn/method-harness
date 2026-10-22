@@ -1,4 +1,4 @@
-# GH #336 cases for hooks/gates/irrecoverable.sh, replayed by tests/hooks/test-gates.sh.
+# GH #336 cases for hooks/gates/irrecoverable.sh, replayed by tests/hooks/test-gates-other.sh.
 # DENY <cmd>: exit 2. ALLOW <cmd>: exit 0, empty stdout, no would_* row.
 # WOULD_DENY <rule> <cmd> / WOULD_ASK <rule> <cmd>: a shadow rule (SHADOW_RULES) matches: exit 0,
 # empty stdout, one would_* row naming <rule>. The test also runs every WOULD_* line against a copy

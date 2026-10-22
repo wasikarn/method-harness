@@ -14,4 +14,13 @@ for bad_k in -1 0 null true; do
   [ "$k_code" -eq 1 ] || { echo "FAIL: expected exit 1 on topK=$bad_k, got $k_code"; exit 1; }
   [ -z "$k_out" ] || { echo "FAIL: expected empty stdout on topK=$bad_k, got: $k_out"; exit 1; }
 done
+# Malformed shapes and a duplicate idea ID fail closed: rc 1, a rank.py: reason, no traceback.
+X='{"novelty":7,"viability":6,"fit":8,"trap":null}'
+for bad in '[]' '{"scores":[]}' '{"scores":{"a":5}}' "{\"scores\":{\"a\":$X,\"a\":$X}}"; do
+  err=$(printf '%s' "$bad" | python3 "$ROOT/skills/workflow/ideate/scripts/rank.py" 2>&1 >/dev/null)
+  code=$?
+  [ "$code" -eq 1 ] || { echo "FAIL: expected exit 1 on $bad, got $code"; exit 1; }
+  case "$err" in *Traceback*) echo "FAIL: traceback on $bad: $err"; exit 1;; esac
+  case "$err" in "rank.py: "*) ;; *) echo "FAIL: no rank.py: reason on $bad: $err"; exit 1;; esac
+done
 echo "PASS: test-ideate-rank"

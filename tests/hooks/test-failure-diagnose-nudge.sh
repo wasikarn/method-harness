@@ -337,5 +337,34 @@ else
   bad "locked() failed to serialize -- two holders' intervals overlapped ($(cat "$LOCK_TEST_LOG" 2>/dev/null))"
 fi
 
+# --- from the second nudge on in one counter scope, the short text goes out
+# (2026-10-22); the first is the full one. Only the tag is pinned, so wording
+# can change; "shorter" is the observable contract. ---
+SHORT_STATE="$STATE_DIR/short.json"
+ctx() { python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])'; }
+first=$(posttoolusefailure_payload "false one" "exit 1" | bash "$SENSOR" "$SHORT_STATE" | ctx)
+second=$(posttoolusefailure_payload "false two" "exit 1" | bash "$SENSOR" "$SHORT_STATE" | ctx)
+case "$first$second" in
+  *"<mh-failure-diagnose-nudge>"*"</mh-failure-diagnose-nudge>"*"<mh-failure-diagnose-nudge>"*"</mh-failure-diagnose-nudge>"*)
+    if [ "${#second}" -lt "${#first}" ]; then
+      ok "first nudge is the full text, the second distinct failure gets the shorter one (${#first} -> ${#second} chars)"
+    else
+      bad "second nudge should be shorter: first=${#first} second=${#second}"
+    fi ;;
+  *) bad "both nudges must carry the tag: first='$first' second='$second'" ;;
+esac
+
+# --- with no counter file (a session_id that is not a safe file name) every
+# nudge is the full text: there is no record that the full one went out ---
+sid_run "uncapped full one" '"../x"' ""
+u1=$(printf '%s' "$out" | ctx)
+sid_run "uncapped full two" '"../x"' ""
+u2=$(printf '%s' "$out" | ctx)
+if [ -n "$first" ] && [ "$u1" = "$first" ] && [ "$u2" = "$first" ]; then
+  ok "uncapped path (no state file) sends the full text every time (${#u1} chars)"
+else
+  bad "uncapped nudges should equal the full text (${#first} chars): got ${#u1} and ${#u2}"
+fi
+
 echo "failure-diagnose-nudge: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

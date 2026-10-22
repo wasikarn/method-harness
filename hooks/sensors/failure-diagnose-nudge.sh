@@ -10,11 +10,12 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-_py="$(dirname "$0")/failure-diagnose-nudge.py"
+# ${0%/*}, not $(dirname), saves a fork on every call.
+case $0 in */*) _py="${0%/*}/failure-diagnose-nudge.py" ;; *) _py=failure-diagnose-nudge.py ;; esac
 if [ ! -r "$_py" ]; then
   echo "[mh:sensor] internal error: sibling script failure-diagnose-nudge.py missing or unreadable — allowing (fail-safe = allow, same posture as this sensor's own parse-error path)" >&2
   exit 0
 fi
 
-python3 "$_py" "$@"
+python3 -S "$_py" "$@"
 exit 0

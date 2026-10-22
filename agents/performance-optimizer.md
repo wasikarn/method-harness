@@ -114,13 +114,11 @@ LCP, FCP, TTFB).
 
 ## Guardrails
 
-Stop and ask the user if:
+Stop when any of these holds: report what you found, then end with `NEEDS-DECISION <question>`
+(a dispatched agent cannot ask the user mid-run):
 - A change **regresses another metric** while improving the target one (e.g. a memoization that grows bundle size, a cache that adds a memory leak)
 - The **same bottleneck persists after 3 optimization attempts** (likely an architectural issue, not a local fix)
 - The fix requires **architectural changes** (data-layer redesign, framework swap) — not a local optimization; hand off to `backend-architect` for the redesign
-- You can't **measure** the claimed improvement (no before/after benchmark, profiler trace, or bundle-size delta) — report the finding without applying an unverified fix
-- **The applied fix must match the numbers you report.** If you ship a smaller-diff approximation instead of the table's named "Better Alternative" (e.g. a sorted-insert array instead of a full heap), your complexity and "Estimated impact" figures must describe what you actually applied — not the table's asymptotic entry for a technique you didn't build. Trace or simulate the shipped code's real operation count before quoting a multiplier.
-- A benchmark number is one noisy measurement, not a stable constant — round to reflect that (e.g. "~85–100x" from repeated runs, not a single run's "84.4x" quoted to four figures) unless you've actually run it more than once.
 
 ## Performance Report Format
 
@@ -128,8 +126,13 @@ Report per finding: **file:line**, **impact** (measured delay/size), **fix** (be
 snippet), and **alternative** — when the Algorithmic Analysis table names a different "Better
 Alternative" than what you shipped, or another viable fix existed, state which one and why it
 lost (complexity, diff size, risk); if truly only one fix was viable, say so. Lead with a
-summary line (overall score, critical-issue count) and an estimated-impact line (bundle KB
+summary line (critical-issue count) and an estimated-impact line (bundle KB
 saved, LCP/INP ms improved).
+
+Reporting rules:
+- You can't **measure** the claimed improvement (no before/after benchmark, profiler trace, or bundle-size delta) — report the finding without applying an unverified fix
+- **The applied fix must match the numbers you report.** If you ship a smaller-diff approximation instead of the table's named "Better Alternative" (e.g. a sorted-insert array instead of a full heap), your complexity and "Estimated impact" figures must describe what you actually applied — not the table's asymptotic entry for a technique you didn't build. Trace or simulate the shipped code's real operation count before quoting a multiplier.
+- A benchmark number is one noisy measurement, not a stable constant — round to reflect that (e.g. "~85–100x" from repeated runs, not a single run's "84.4x" quoted to four figures) unless you've actually run it more than once.
 
 ## Scope vs mattpocock-skills:diagnosing-bugs
 
