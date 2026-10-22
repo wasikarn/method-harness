@@ -1,8 +1,12 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Operator-authorized Routine self-launch (narrow reversal of the no-model-self-launch invariant)
+
+> **Status note (2026-10-22):** accepted; the `gate:tool:routine-trigger-guard` gate this ADR justifies ships. CI checks
+> and `validate.yml` were removed 2026-10-03, so every premise below that relies on them is historical, and the
+> "`status: proposed`" text below records the draft stage, not the current status.
 
 `docs/adr/` restarted numbering below the legacy pre-rebuild set: `ADR 0006` (deleted, `git`-only —
 see §1's `[R1 fix]` for the retrieval command), and `docs/research/adr-0009-bounded-review-fix-

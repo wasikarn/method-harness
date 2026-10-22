@@ -105,7 +105,7 @@ to two different media, not a contradiction between them.
 This item doesn't cover a structured, multi-field report (`agents/requirement-analyst.md`,
 `agents/plan-reviewer.md`): a caller reads or parses the whole block there, not just its last
 line, so field order follows the analysis's own workflow instead.
-`agents/requirement-analyst.md:137`'s `verdict:` leads its block; `agents/plan-reviewer.md:168`'s
+`agents/requirement-analyst.md:110`'s `verdict:` leads its block; `agents/plan-reviewer.md:166`'s
 sits mid-block, before `confidence`/`not_reviewed`/`verdict_movers`/`revisit_if`. Neither
 violates this item — a multi-field report was never in its scope.
 

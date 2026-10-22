@@ -280,4 +280,5 @@ produce the fixture files, regex graders compile, and each `contract.md` / `clea
 a verdict sample in the shape the agent actually emits: bare, bold, or after a `Verdict:` label —
 skipped for agent-dispatch suites with no fixed verdict token, whose content was verified via real
 ablation pilots instead) so the suite stays loadable while the runner is gated. Results land in
-`evals/results/`, gitignored.
+`evals/results/`, gitignored. Keep the newest 5 runs; archive older runs as
+`$HOME/.cache/mh/eval-results-<date>.tgz`.

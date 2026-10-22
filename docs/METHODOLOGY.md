@@ -1,6 +1,6 @@
 # Staff-Engineer Methodology
 
-Injected whole at session start. Match rigor to stakes: minimal for a reversible act, the full triad for a one-way door. Overthinking a reversible act wastes time; underthinking a one-way door is how incidents happen. Rule numbers are non-contiguous by design.
+Match rigor to stakes: minimal for a reversible act, the full triad for a one-way door. Rule numbers are non-contiguous by design.
 
 ## Rule 1: Decision-sizing triad
 
@@ -31,4 +31,4 @@ Brief shape: `docs/reference/spawn-brief.md`.
 
 ## Rule 14: Score, not feel
 
-An important decision (one Rule 1 flags, or one the user asked to rank, recommend, or compare) carries stated criteria, weights, a numeric result, a pass/fail reason, and a confidence band (high/medium/low) with its reason. Everything else gets a one-line answer with the reason. If data is insufficient to score a criterion, mark **ข้อมูลไม่เพียงพอ** and block on the operator; never guess the score. Each criterion needs one worked example per level, not a bare label; anchoring raises judge consistency, not proven correctness (`docs/reference/rubric-anchoring-evidence.md`).
+An important decision (one Rule 1 flags, or one the user asked to rank, recommend, or compare) carries stated criteria, weights, a numeric result, a pass/fail reason, and a confidence band (high/medium/low) with its reason. Everything else gets a one-line answer with the reason. If data is insufficient to score a criterion, mark **ข้อมูลไม่เพียงพอ** and block on the operator; never guess the score. Each criterion needs one worked example per level, not a bare label (`docs/reference/rubric-anchoring-evidence.md`).
