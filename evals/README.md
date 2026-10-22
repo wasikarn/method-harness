@@ -41,7 +41,10 @@ proves the same thing on the file's bytes).
 The scaffolded repo is its own plugin cache (`--plugin-cache .`). Bash is not granted by
 default: run these with `--allow-tools Bash` (the prompt frontmatter also lists it).
 Two for `ideate` (tag `ideate`): a full run on an open design problem, bounded on Agent calls
-(`fanout.md`, `tool_used: Agent` min 6 max 8: 8 on the host path, 6 when the critic deepens) and
+(`fanout.md`, `tool_used: Agent` min 6 max 6: 5 Diverge + 1 critic, the default path; the
+opt-in host path's 8 is out of scope), required to dispatch `mh:ideate-critic`
+(`critic-dispatched.md`, `tool_used: Agent` with `input_match`; `agent-fired.md` rules out the
+generic fallback) and
 graded on the rendered output shape (score chips, ★ pick, provocation line); the isolation
 invariant and wave shape are not observable from these graders; and an abort control, a
 "quick"/"canonical" question that must fail the pre-flight gate and get a direct answer with no
@@ -250,10 +253,9 @@ claude plugin eval . --scaffold --runs 1 --no-publish
 claude plugin eval . --scaffold --tag silent-failure-hunter --runs 1 --no-publish
 claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 --no-publish
 claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish
-claude plugin eval . --scaffold --tag ideate --runs 1 --no-publish     # the run case spawns 6-8 agents
 claude plugin eval . --scaffold --tag deep-audit --allow-tools Bash,Edit,Write --runs 1 --no-publish
 claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --no-publish
-# These four dispatch a subagent (subagent_type:), which needs mh's agents actually loaded in
+# These five dispatch a subagent (subagent_type:), which needs mh's agents actually loaded in
 # the eval sandbox -- sandboxes load no user settings, so defaultEnabled: false never loads
 # them (silent no-plugin fallback, no error). The helper needs bash specifically (it relies on
 # BASH_SOURCE) -- it silently does nothing under zsh/sh, so run each line through `bash -c`
@@ -263,6 +265,7 @@ bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_tru
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate --allow-tools Agent,Bash,Read,Glob,Grep,Skill --runs 1 --no-publish'  # the run case spawns 6 agents (5 + mh:ideate-critic)
 ```
 
 Cost and time: the last full run (2026-09-13, 76 cases, `-j 1`) took 34,801 s and $119.40; the
