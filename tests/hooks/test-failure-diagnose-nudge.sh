@@ -354,5 +354,17 @@ case "$first$second" in
   *) bad "both nudges must carry the tag: first='$first' second='$second'" ;;
 esac
 
+# --- with no counter file (a session_id that is not a safe file name) every
+# nudge is the full text: there is no record that the full one went out ---
+sid_run "uncapped full one" '"../x"' ""
+u1=$(printf '%s' "$out" | ctx)
+sid_run "uncapped full two" '"../x"' ""
+u2=$(printf '%s' "$out" | ctx)
+if [ -n "$first" ] && [ "$u1" = "$first" ] && [ "$u2" = "$first" ]; then
+  ok "uncapped path (no state file) sends the full text every time (${#u1} chars)"
+else
+  bad "uncapped nudges should equal the full text (${#first} chars): got ${#u1} and ${#u2}"
+fi
+
 echo "failure-diagnose-nudge: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

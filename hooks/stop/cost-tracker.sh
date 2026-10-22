@@ -132,7 +132,7 @@ build_type_map() {
 # `v` sums input + cache_write + output (cache_write IS fresh input under prompt
 # caching; raw input_tokens is ~2/turn), `c` keeps cache_read separate — the rent,
 # not the work. Same-message.id duplicate lines count once per line, matching
-# emit_rows' `turns`. Output: {"<agent-id>": [{v,c}, ...]} — one entry per return
+# the usage rows' `turns`. Output: {"<agent-id>": [{v,c}, ...]} — one entry per return
 # (the same agent can notify more than once).
 #
 # 2026-09-20 restore note: reapplied from commit 6603c384 (removed alongside the
@@ -175,7 +175,7 @@ build_type_map() {
 # per line. Rows carry `dedup_usage: true` + `usage_pick: "last"` from then on.
 # Record extraction (the subagent jq read):
 # Extracts + dedups per-API-response usage records (one per (file, message.id),
-# last-line-wins — see emit_rows' original 2026-09-04 comment, unchanged) from
+# last-line-wins, the 2026-09-04 finding, unchanged) from
 # one or more transcript files. Stops BEFORE grouping/pricing so the orchestrator
 # path (scan_transcript below) can produce the same record shape from an
 # already-parsed in-memory line set instead of re-reading the file here.
@@ -402,7 +402,7 @@ group_and_price() {
 # All four sub-computations are wrapped in their own try/catch, matching each
 # original function's own independent fallback ({} for verify_map/parent_map/
 # codex, the {__error:true} marker for usages -- the caller's signal to emit
-# the same jq_failed sentinel emit_rows always has). This preserves the
+# the same jq_failed sentinel the subagent read does). This preserves the
 # original code's independent-failure-domain behavior: one malformed line
 # breaks only the sub-computation that actually touches the field it's
 # malformed on, never the other three. Getting this wrong is not
@@ -565,8 +565,8 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
   # (defense in depth -- every sub-expression inside scan_transcript is now
   # individually try/caught, so this shouldn't fire, but a silently-dropped
   # orchestrator row on ANY failure mode would defeat the exact guarantee H7
-  # exists for). Either way: emit the same jq_failed sentinel emit_rows
-  # always has for this failure, never fail silently.
+  # exists for). Either way: emit the same jq_failed sentinel the subagent
+  # read does for this failure, never fail silently.
   usages_failed=0
   if [[ $scan_rc -ne 0 || -z "$scan" ]]; then
     usages_failed=1
@@ -598,11 +598,13 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
       sub_typemap=$(build_type_map "$parent_map" "$verify_map" "${sub_files[@]}")
       # One jq read of every subagent file prints two lines: the usage records
       # and the codex tally. Subagent transcripts are not small (p90 24 MB), so
-      # the old second pass over them (emit_codex_invocations) doubled the cost.
+      # a second pass over them doubled the cost. Each half has its own try, so a
+      # usage error (H7) still leaves the codex tally, as the separate pass did.
+      # jq's stderr is not silenced: an uncaught error prints its own text there.
       both=$(jq -nRc --argjson typemap "$sub_typemap" --argjson seen "$adv_seen" "$adv_def$usage_def"'
         ($seen | map({(.): true}) | add // {}) as $s
         | [ inputs | try fromjson | select(.type == "assistant") | . + {__f: input_filename} ] as $a
-        | ( [ $a[] | select((.message // {}).usage != null)
+        | try ( [ $a[] | select((.message // {}).usage != null)
               | select((.message.model // "") | ascii_downcase | test("^claude"))
               | .__f as $f | adv_recs($typemap[$f].t // null; $f), usage_rec($typemap[$f].t // null; $f) ]
             | reduce .[] as $x ({byid: {}, out: []};
@@ -610,7 +612,7 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
                 elif $x.adv then .byid[$x.id] = $x
                 else .byid[$x.f + "\u0000" + $x.id] = $x end)
             | .out + (.byid | [.[]])
-            | map(select(.adv != true or ($s[.id // ""] | not))) ),
+            | map(select(.adv != true or ($s[.id // ""] | not))) ) catch {__error: true, msg: .},
           ( try ( [ $a[] | { c: (.message.content // []), id: (.message.id // null), f: .__f } ]
             | reduce .[] as $x ({byid: {}, out: []};
                 if $x.id == null then .out += [$x] else .byid[$x.f + "::" + $x.id] = $x end)
@@ -619,13 +621,16 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
                   elif .name == "Agent" and ((.input.subagent_type // "") | startswith("codex:")) then .input.subagent_type
                   else empty end)
             | group_by(.) | map({(.[0]): length}) | add // {} ) catch {} )
-      ' "${sub_files[@]}" 2>/dev/null)
+      ' "${sub_files[@]}")
       both_rc=$?
-      if [[ $both_rc -ne 0 ]]; then
-        echo "[mh:cost-tracker] emit_rows(subagent): jq failed rc=$both_rc on: ${sub_files[*]}" >&2
+      { IFS= read -r sub_records; IFS= read -r sub_codex_pre; } <<< "$both"
+      # Records are an array; an object is the catch marker above.
+      if [[ $both_rc -ne 0 || "$sub_records" == "{"* ]]; then
+        (( both_rc )) && sub_codex_pre=''
+        sub_msg=$(printf '%s' "$sub_records" | jq -r 'objects | .msg // empty' 2>/dev/null)
+        echo "[mh:cost-tracker] emit_rows(subagent): jq failed rc=$both_rc on: ${sub_files[*]}${sub_msg:+ -- $sub_msg}" >&2
         sub_rows=$(jq_failed_row subagent "${sub_files[*]}")
       else
-        { IFS= read -r sub_records; IFS= read -r sub_codex_pre; } <<< "$both"
         sub_rows=$(group_and_price "$sub_typemap" subagent "$sub_records")
       fi
       [[ -n "$sub_rows" ]] && rows="${rows:+$rows$'\n'}$sub_rows"

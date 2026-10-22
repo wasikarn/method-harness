@@ -391,5 +391,25 @@ else
   bad "expiry left entries: $(ls -A "$T/mh-fragments-arm" 2>/dev/null | tr '\n' ' ')"
 fi
 
+# --- a pointer a fresh arm replaced mid-run is kept: drop_pointer only removes
+# the generation it read. A `date` shim (called after the pointer is read, before
+# the expiry sweep) stands in for the fresh arm rewriting <sid>.current ---
+T=$(fresh_tmpdir)
+REPO=$(fresh_repo)
+arm "c14" "$T" "$REPO" "$REPO/frags.md"
+for m in "$T/mh-fragments-arm"/c14.*; do
+  case "$m" in *.current|*.candidate) ;; *) touch -t 200001010000 "$m" ;; esac
+done
+DATE_SHIM="$T/dateshim"; mkdir -p "$DATE_SHIM"
+printf '#!/bin/sh\nprintf fresh > "%s/mh-fragments-arm/c14.current"\nexec "%s" "$@"\n' "$T" "$(command -v date)" > "$DATE_SHIM/date"
+chmod +x "$DATE_SHIM/date"
+printf '{"session_id":"c14","cwd":"%s","tool_name":"Write","tool_input":{"file_path":"%s/frags.md","content":"x"}}' "$REPO" "$REPO" \
+  | PATH="$DATE_SHIM:$PATH" HOME="$FAKE_HOME" TMPDIR="$T" bash "$HOOK" >/dev/null 2>&1
+if [ "$(cat "$T/mh-fragments-arm/c14.current" 2>/dev/null)" = "fresh" ]; then
+  ok "drop_pointer keeps a pointer that names a different (fresh) generation"
+else
+  bad "a fresh generation's pointer was dropped: $(ls -A "$T/mh-fragments-arm" 2>/dev/null | tr '\n' ' ')"
+fi
+
 echo "hooks/fragments-capture: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

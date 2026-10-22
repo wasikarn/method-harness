@@ -63,7 +63,7 @@ trash "$fake_home" "$transcript" 2>/dev/null || true
 # Codex pairing (docs/plans/codex-pairing-2026-09-06.md item F): a Skill call
 # to a codex:* skill and an Agent dispatch to a codex:* subagent_type are
 # tallied into a separate codex_invocations row -- a count, not a cost. No
-# .message.usage on this line, so emit_rows produces nothing; the only row
+# .message.usage on this line, so no usage row is written; the only row
 # written is the codex tally, keeping the assertion single-line.
 fake_home=$(mktemp -d)
 transcript=$(mktemp)
@@ -92,7 +92,7 @@ assert "tallies codex:* Skill and Agent tool_use calls into one codex_invocation
 trash "$fake_home" "$transcript" 2>/dev/null || true
 
 # Regression: one API response spans several JSONL lines sharing one message.id
-# (emit_rows' own 2026-09-04 finding, applies here too) -- 3 duplicate lines
+# (the usage extraction's 2026-09-04 finding, applies here too) -- 3 duplicate lines
 # with the same id, each carrying a codex:review tool_use, must count as ONE
 # call, not three.
 fake_home=$(mktemp -d)
@@ -792,7 +792,7 @@ trash "$fake_home" "$sess_dir" "$jq_shim_dir" "$jq_log" 2>/dev/null || true
 # not have one overwrite the other. The original code tallied every file's
 # lines together in one combined jq call; the refactor computes the main
 # transcript's contribution separately (via scan_transcript) and merges it
-# additively with the subagent files' contribution (via emit_codex_invocations)
+# additively with the subagent files' contribution (from the subagent jq read)
 # -- an overwrite-instead-of-add merge bug would silently undercount.
 fake_home=$(mktemp -d)
 sess_dir=$(mktemp -d)

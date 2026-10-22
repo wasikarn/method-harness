@@ -554,6 +554,35 @@ if [[ "$got" == "$want" ]] && /usr/bin/grep -q 'emit_rows(subagent): jq failed' 
 else
   fail6=$((fail6 + 1)); echo "FAIL: sentinel rows were:"$'\n'"$got"$'\n'"expected:"$'\n'"$want"$'\n'"stderr: $(cat "$sd_dir/bad.err")" >&2
 fi
+# A subagent usage jq cannot read must not cost the codex tally: the usage and codex
+# halves share one jq read, so an error in one must not take the other down.
+mkdir -p "$sd_dir/cx/subagents"
+python3 - "$sd_dir" <<'PY'
+import json, sys
+d = sys.argv[1]
+def line(mid, usage, tools):
+    m = {"model": "claude-opus-5-5", "id": mid, "content": [{"type": "tool_use", "name": n, "input": i} for n, i in tools]}
+    if usage is not None:
+        m["usage"] = usage
+    return json.dumps({"type": "assistant", "message": m}) + "\n"
+u = {"input_tokens": 10, "output_tokens": 20}
+open(d + "/cx.jsonl", "w").write(line("m_main", u, [("Skill", {"skill": "codex:rescue"})]))
+open(d + "/cx/subagents/agent-a1.jsonl", "w").write(
+    line("m_bad", "oops", [])
+    + line("m_s1", None, [("Agent", {"subagent_type": "codex:codex-rescue"})])
+    + line("m_s2", None, [("Skill", {"skill": "codex:review"}), ("Skill", {"skill": "codex:review"})]))
+open(d + "/cx/subagents/agent-a1.meta.json", "w").write('{"agentType":"Explore"}')
+PY
+got=$(sd_rows cx | jq -c 'select(.codex_invocations) | .codex_invocations')
+want='{"codex:codex-rescue":1,"codex:rescue":1,"codex:review":2}'
+got_sub=$(jq -c 'select(.stream == "subagent") | .error' <<< "$(sd_rows cx)")
+if [[ $(jq -cS . <<< "$got") == "$want" && "$got_sub" == '"jq_failed"' ]] \
+   && /usr/bin/grep -q 'emit_rows(subagent): jq failed' "$sd_dir/cx.err" \
+   && /usr/bin/grep -q 'Cannot index string' "$sd_dir/cx.err"; then
+  pass6=$((pass6 + 1)); echo "PASS: a subagent usage jq cannot read keeps the full codex tally and prints jq's own error"
+else
+  fail6=$((fail6 + 1)); echo "FAIL: codex tally ${got:-<none>} (want $want), subagent error ${got_sub:-<none>}, stderr: $(cat "$sd_dir/cx.err")" >&2
+fi
 echo "$pass6 passed, $fail6 failed (phase 6)"
 
 # Phase 7 -- argv edge cases (GH #397, #398). Runs under /bin/bash, which is 3.2 on macOS:
