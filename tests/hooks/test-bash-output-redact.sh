@@ -121,6 +121,21 @@ out="$(payload Bash "KEY_$GH" "" | bash "$HOOK")"
 res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
 { [[ "$res" == *"[REDACTED:GitHub token]"* && "$res" != *"$GH"* ]]; } || _r=1; check "token after a name ending in underscore is replaced" "$_r"; _r=0
 
+# 6e. MCP tool output: tool_response is a list of content blocks; text blocks are rewritten
+# via updatedMCPToolOutput (probed 2026-10-22, GH #534), other blocks pass through
+mcp_payload() { # mcp_payload <tool> <text>
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"PostToolUse","tool_name":sys.argv[1],"tool_input":{},"tool_response":[{"type":"text","text":sys.argv[2]},{"type":"image","data":"AAAA"}]}))' "$1" "$2"
+}
+out="$(mcp_payload mcp__srv__get "note $GH end" | bash "$HOOK")"; rc=$?
+[ "$rc" -eq 0 ] || _r=1; check "MCP hit: exit 0" "$_r"; _r=0
+res="$(field "$out" hookSpecificOutput.updatedMCPToolOutput)"
+[[ "$res" == *"[REDACTED:GitHub token]"* && "$res" != *"$GH"* && "$res" == *"AAAA"* ]] || _r=1; check "MCP text block redacted, image block kept" "$_r"; _r=0
+{ [ -z "$(field "$out" hookSpecificOutput.updatedToolOutput)" ] && [ -n "$res" ]; } || _r=1; check "MCP result uses updatedMCPToolOutput only" "$_r"; _r=0
+out="$(mcp_payload mcp__srv__get "nothing here" | bash "$HOOK")"; rc=$?
+{ [ "$rc" -eq 0 ] && [ -z "$out" ]; } || _r=1; check "silent: clean MCP output" "$_r"; _r=0
+out="$(printf '{"tool_name":"mcp__srv__get","tool_response":"a string %s"}' "$GH" | bash "$HOOK" 2>&1)"; rc=$?
+{ [ "$rc" -eq 0 ] && [ -z "$out" ]; } || _r=1; check "silent: MCP tool_response that is not a block list" "$_r"; _r=0
+
 # 7. large clean output stays fast and silent
 big="$(python3 -c 'print("line of ordinary text\n" * 20000)')"
 start=$SECONDS
