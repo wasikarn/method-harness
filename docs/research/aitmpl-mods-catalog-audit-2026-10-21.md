@@ -70,5 +70,13 @@ Weighted sum: (7×40 + 4×30 + 3×30) / 10 = (280 + 120 + 90) / 10 = **49.0/100*
 
 The `mh:ideate` run on this URL assumed the mod format was new to mh and proposed adopting one pinned mod (Secret Redactor) as a candidate. Both premises are wrong: mh already ships a mod (`hooks/mod/cost-ledger.ts`, one module per plugin, observer only), and Secret Redactor is the vendor's own DO_NOT_INSTALL pick with 8 of 10 probes missed. The ideate shortlist's other two items (a decline register, a gap scan) survive; the adopt-one idea does not.
 
-<!-- Reserved: a later pass appends a dated correction here, never rewrites the sections above.
-**Correction (date, mechanism):** ... -->
+**Correction (2026-10-22, deep-audit of this session):**
+
+- **Open question 1 is answerable.** `.claude-plugin/types/claude-code/index.d.ts:1256` declares `hookSpecificOutput.updatedToolOutput` for a classic (settings/command) `PostToolUse` hook, "replaces what the model sees of the tool's result"; `updatedMCPToolOutput` (`:1261`) is the MCP-only variant. These are the engine's declarations (Claude Code 2.1.289), not a live probe. So the "fit" reason (4/10) and the "deferred until output-rewrite by shell hook is shown to be impossible" item are weaker than written: output-side redaction probably has a native shell-hook route, and `CLAUDE.md:57` bans only a new PreToolUse gate. The score is not re-run; a probe from a main session is the next step.
+- **Shipped section is stale.** The file was committed in `c27435fe` and merged by PR #531 (`bb9e399b`), not left uncommitted.
+- **Claim 15:** the clone has six `jev-*` mods, not five.
+- **Citation:** "never a gate" sits at `docs/reference/cost-ledger-module.md:135`; "one module per plugin" at `:133`.
+- **Open question 3 settled:** `plannotator` registers a `tool.call` hook (`hooks/mod/register.ts:377` in its plugin cache).
+
+<!-- Reserved: a later pass appends a further dated correction here, never rewrites the sections above. -->
+
