@@ -72,7 +72,14 @@ like something native auto-memory should have caught.
 5. **Write the approved ones** as `memory/<slug>.md` in the standard format (frontmatter `name` /
    `description` / `metadata.type`; body; for feedback/project add **Why:** and **How to apply:**;
    link related memories with `[[name]]`). Add a one-line pointer to `MEMORY.md`. Use absolute
-   dates. Follow the memory rules in the system prompt.
+   dates. Follow the memory rules in the system prompt. Write the body as:
+   - **The system as it is**, not the session that found it: "`x.sh` exits 1 on an empty
+     config", not "we noticed that `x.sh`...".
+   - **Confirmed facts only, once:** a hypothesis waits for its check; a fact already stored gets
+     its existing file updated, not a second one.
+   - **Standalone lines:** name the file, tool or setting in each; no "it", "this" or "the
+     above", since recall can surface one line without its neighbours.
+   (Adapted from claude-mem's observer prompt, `plugin/modes/code.json`.)
 
 6. **Lint.** Run `mh:memory-lint`.
 
