@@ -78,5 +78,7 @@ The `mh:ideate` run on this URL assumed the mod format was new to mh and propose
 - **Citation:** "never a gate" sits at `docs/reference/cost-ledger-module.md:135`; "one module per plugin" at `:133`.
 - **Open question 3 settled:** `plannotator` registers a `tool.call` hook (`hooks/mod/register.ts:377` in its plugin cache).
 
+**Correction (2026-10-22, probe):** open question 1 is closed by a live probe on Claude Code 2.1.307. A shell `PostToolUse` command hook that prints `hookSpecificOutput.updatedToolOutput` as an object shaped like the hook's own `tool_response` (`{stdout, stderr, interrupted}`) replaces what the model sees of a Bash result; the hook fired and the model reported the replacement. A bare string was ignored. So output-side secret redaction has a native shell-hook route that is neither a module nor a PreToolUse gate, and the "deferred until output-rewrite is shown impossible" item resolves to "possible". Not yet probed: Read, MCP tools, and whether a hook error leaves the original output visible (fail-open).
+
 <!-- Reserved: a later pass appends a further dated correction here, never rewrites the sections above. -->
 
