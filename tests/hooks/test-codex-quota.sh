@@ -75,7 +75,8 @@ else
 fi
 
 # --- advisory self-clears a stale (past-TTL) record instead of warning forever ---
-# TTL=-1 guarantees staleness regardless of clock timing (age is always >= 0 > -1).
+# TTL=-1 guarantees staleness regardless of clock timing (age is always >= 0 > -1); this record has no
+# reset_at, since a future reset outlives the TTL.
 payload=$(pretooluse_payload "codex exec 'again'")
 out=$(echo "$payload" | MH_CODEX_QUOTA_TTL_SECONDS=-1 bash "$ADVISORY" "$STATE")
 if [ -z "$out" ] && [ ! -f "$STATE" ]; then
@@ -225,8 +226,26 @@ future_state "$S2"
 for cmd in 'git commit -m "fix codex hook"' 'grep codex notes.md' 'echo codex' 'command -v codex'; do
   out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
   if echo "$out" | grep -q '"permissionDecision": *"deny"'; then bad "a command that only mentions codex was denied: $cmd"
-  else ok "a known reset does not deny a command that only mentions codex: $cmd"; fi
+  elif echo "$out" | grep -q 'mh-codex-quota-advisory'; then ok "a known reset only advises a command that mentions codex: $cmd"
+  else bad "expected the advisory for a command that mentions codex: $cmd, got '$out'"; fi
 done
+# heredoc commit body, a companion path that is not run, and codex subcommands that spend no quota
+for cmd in $'git commit -m "$(cat <<\'EOF\'\nfix x\n\ncodex exec now denied\nEOF\n)"' 'git add hooks/codex-companion.mjs' 'codex login' 'codex --version' 'git commit -m "fix (codex hook)"'; do
+  out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
+  if echo "$out" | grep -q '"permissionDecision": *"deny"'; then bad "denied a command that runs no quota-spending codex: $(echo "$cmd" | head -1)"
+  else ok "no deny for: $(echo "$cmd" | head -1)"; fi
+done
+# a far-dated or misparsed reset (beyond 8 days of the record) never denies, and an old one still clears by TTL
+printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(( $(date +%s) - 90000 ))" "$(( $(date +%s) + 9 * 86400 ))" > "$S2"
+out=$(pretooluse_payload "codex exec 'go'" | bash "$ADVISORY" "$S2")
+if echo "$out" | grep -q '"permissionDecision"'; then bad "a reset more than 8 days out denied: '$out'"
+elif [ ! -f "$S2" ]; then ok "a reset more than 8 days out is ignored and the old record clears by TTL"
+else bad "expected the stale record to be removed"; fi
+# old record + future reset + a mention: advisory only, and the record stays for the real invocation
+printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(( $(date +%s) - 90000 ))" "$(( $(date +%s) + 172800 ))" > "$S2"
+out=$(pretooluse_payload "grep codex x" | bash "$ADVISORY" "$S2")
+if echo "$out" | grep -q 'mh-codex-quota-advisory' && [ -f "$S2" ]; then ok "old record with a future reset: a mention advises and the record stays"
+else bad "expected advisory and a kept record, got '$out'"; fi
 for cmd in "cd /tmp && codex exec 'go'" "rtk proxy codex exec 'go'" "FOO=1 codex exec 'go'" "echo hi; codex exec 'go'" "node /p/codex-companion.mjs task go"; do
   out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
   if echo "$out" | grep -q '"permissionDecision": *"deny"'; then ok "a known reset still denies a real invocation: $cmd"
