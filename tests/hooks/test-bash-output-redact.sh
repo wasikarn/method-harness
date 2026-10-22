@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral tests for hooks/sensors/bash-output-redact.sh (PostToolUse, Bash).
+# Behavioral tests for hooks/sensors/bash-output-redact.sh (PostToolUse, Bash and MCP).
 # Run standalone: bash tests/hooks/test-bash-output-redact.sh
 #
 # No literal token-shaped secret string appears in this file: every test token's
@@ -131,6 +131,9 @@ out="$(mcp_payload mcp__srv__get "note $GH end" | bash "$HOOK")"; rc=$?
 res="$(field "$out" hookSpecificOutput.updatedMCPToolOutput)"
 [[ "$res" == *"[REDACTED:GitHub token]"* && "$res" != *"$GH"* && "$res" == *"AAAA"* ]] || _r=1; check "MCP text block redacted, image block kept" "$_r"; _r=0
 { [ -z "$(field "$out" hookSpecificOutput.updatedToolOutput)" ] && [ -n "$res" ]; } || _r=1; check "MCP result uses updatedMCPToolOutput only" "$_r"; _r=0
+out="$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"mcp__srv__get","tool_response":[{"type":"resource","resource":{"uri":"file:///x","text":"embedded "+sys.argv[1]}}]}))' "$GH" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedMCPToolOutput)"
+{ [[ "$res" == *"[REDACTED:GitHub token]"* && "$res" != *"$GH"* && "$res" == *"file:///x"* ]]; } || _r=1; check "MCP embedded resource text redacted, uri kept" "$_r"; _r=0
 out="$(mcp_payload mcp__srv__get "nothing here" | bash "$HOOK")"; rc=$?
 { [ "$rc" -eq 0 ] && [ -z "$out" ]; } || _r=1; check "silent: clean MCP output" "$_r"; _r=0
 out="$(printf '{"tool_name":"mcp__srv__get","tool_response":"a string %s"}' "$GH" | bash "$HOOK" 2>&1)"; rc=$?

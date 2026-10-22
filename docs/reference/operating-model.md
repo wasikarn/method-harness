@@ -28,12 +28,15 @@ Everything not in that table is advice: METHODOLOGY.md text, skill prose, agent 
 `sensor:bash:output-redact` is advice too, not a gate: a `PostToolUse` hook that replaces
 vendor-shaped credential tokens (`secret-scan.py`'s patterns, with the leading word boundary
 dropped and whole PEM blocks taken) in Bash stdout/stderr (`updatedToolOutput`) and in the
-text blocks of an MCP tool's result (`updatedMCPToolOutput`, matcher `mcp__.*`) with
-`[REDACTED:<kind>]`. It is best-effort: a token outside those shapes, one split across
-stdout and stderr, Read output and a `run_in_background` run's output file (read back
-through Read) pass through unredacted, and on an error or a timeout the original output
-stays visible (fail-open; exit 1, invalid JSON, exit 2 and a timeout probed on CC 2.1.307,
-GH #534). A foreground output over 30 KB is saved to its file already redacted.
+text blocks of an MCP tool's result, including an embedded resource's text
+(`updatedMCPToolOutput`, matcher `mcp__.*`), with `[REDACTED:<kind>]`. It is best-effort: a
+token outside those shapes, one split across stdout and stderr, Read output, a
+`run_in_background` run's output file (read back through Read), and an MCP result that is
+not a list of content blocks (a dict with `structuredContent`) or a non-text block pass
+through unredacted. On an error or a timeout the original output stays visible (fail-open;
+exit 1, invalid JSON, exit 2 and a timeout probed for Bash on CC 2.1.307, GH #534; MCP
+shares the code path and is not separately probed). A foreground Bash output over 30 KB is
+saved to its file already redacted; that was not probed for MCP.
 Advice is honest about being advice; no doc claims a check enforces a rule unless a file in
 `hooks/gates/` does.
 

@@ -67,10 +67,17 @@ try:
     if isinstance(tr, list):
         out = []
         for blk in tr:
-            if isinstance(blk, dict) and isinstance(blk.get("text"), str) and blk["text"]:
+            if isinstance(blk, dict):
                 blk = dict(blk)
-                blk["text"], n = redact(blk["text"], patterns, is_placeholder)
-                total += n
+                # text blocks carry "text"; an embedded resource block carries "resource": {"text": ...}
+                holders = [blk]
+                if isinstance(blk.get("resource"), dict):
+                    blk["resource"] = dict(blk["resource"])
+                    holders.append(blk["resource"])
+                for h in holders:
+                    if isinstance(h.get("text"), str) and h["text"]:
+                        h["text"], n = redact(h["text"], patterns, is_placeholder)
+                        total += n
             out.append(blk)
         field = "updatedMCPToolOutput"
     else:
