@@ -165,6 +165,61 @@ out=$(pretooluse_payload "npm test" | env -u HOME -u MH_CODEX_QUOTA_STATE_FILE b
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then ok "GH #326 HOME unset: no unbound-variable error, exit 0 and silent"
 else bad "expected exit 0 and no output with HOME unset, got rc=$rc out='$out'"; fi
 
+# --- known reset time: the sensor parses "try again at ..." into reset_at; the advisory denies
+# while that time is in the future (a doomed dispatch burns a round-trip, and five parallel
+# lanes burned five), keeps the old advice when the time is unknown, and drops a reset record.
+S2="$STATE_DIR/reset-state.json"
+state_field() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get(sys.argv[2], "MISSING"))' "$1" "$2"; }
+
+rm -f "$S2"
+failure_payload "codex exec 'x'" "You've hit your usage limit. Try again at Jan 2nd, 2099 3:05 PM." | bash "$SENSOR" "$S2"
+want=$(python3 -c 'import datetime,time; print(int(time.mktime(datetime.datetime(2099,1,2,15,5).timetuple())))')
+got=$(state_field "$S2" reset_at)
+if [ "$got" = "$want" ]; then ok "sensor parses a dated 'try again at' into reset_at (local time)"
+else bad "expected reset_at=$want for a dated reset, got '$got'"; fi
+
+rm -f "$S2"
+failure_payload "codex exec 'x'" "You've hit your usage limit. Try again at 9:47 PM." | bash "$SENSOR" "$S2"
+got=$(state_field "$S2" reset_at)
+now=$(date +%s)
+if [ "$got" != MISSING ] && [ "$got" -gt "$((now - 5))" ] && [ "$got" -le "$((now + 86400 + 5))" ]; then
+  ok "sensor reads a time-only reset as its next occurrence (within 24 h)"
+else bad "expected reset_at in (now, now+24h] for a time-only reset, got '$got' (now=$now)"; fi
+
+rm -f "$S2"
+failure_payload "codex exec 'x'" "Usage limit reached, try again at Sep 26th" | bash "$SENSOR" "$S2"
+got=$(state_field "$S2" reset_at)
+if [ "$got" = MISSING ]; then ok "sensor leaves reset_at out when the message has no readable time"
+else bad "expected no reset_at for an unreadable reset, got '$got'"; fi
+
+future_state() { printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(date +%s)" "$(( $(date +%s) + 7200 ))" > "$1"; }
+future_state "$S2"
+out=$(pretooluse_payload "codex exec 'go'" | bash "$ADVISORY" "$S2"); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | python3 -c '
+import json, sys
+h = json.load(sys.stdin)["hookSpecificOutput"]
+r = h.get("permissionDecisionReason", "")
+sys.exit(0 if h["hookEventName"] == "PreToolUse" and h.get("permissionDecision") == "deny" and "MH_CODEX_QUOTA_DENY" in r and "reset-state.json" in r else 1)'; then
+  ok "advisory denies a codex command while a known reset time is in the future, and names the way out"
+else bad "expected a deny naming MH_CODEX_QUOTA_DENY and the state file, got rc=$rc out='$out'"; fi
+
+out=$(pretooluse_payload "codex exec 'go'" | MH_CODEX_QUOTA_DENY=0 bash "$ADVISORY" "$S2")
+if echo "$out" | python3 -c '
+import json, sys
+h = json.load(sys.stdin)["hookSpecificOutput"]
+sys.exit(0 if "permissionDecision" not in h and "additionalContext" in h else 1)'; then
+  ok "MH_CODEX_QUOTA_DENY=0 keeps the old advisory-only behavior"
+else bad "expected additionalContext with no permissionDecision under MH_CODEX_QUOTA_DENY=0, got '$out'"; fi
+
+out=$(pretooluse_payload "npm test" | bash "$ADVISORY" "$S2")
+if [ -z "$out" ]; then ok "a known reset never denies a non-codex command"
+else bad "expected silence for a non-codex command, got '$out'"; fi
+
+printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(date +%s)" "$(( $(date +%s) - 10 ))" > "$S2"
+out=$(pretooluse_payload "codex exec 'go'" | bash "$ADVISORY" "$S2")
+if [ -z "$out" ] && [ ! -f "$S2" ]; then ok "a reset time already past clears the record and stays silent"
+else bad "expected silence and a removed record once reset_at has passed, got out='$out' state_exists=$([ -f "$S2" ] && echo yes || echo no)"; fi
+
 echo
 echo "codex-quota tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

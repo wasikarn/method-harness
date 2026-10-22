@@ -193,7 +193,10 @@ exit 1, the backend error message alone on stdout, and `[codex] Codex error: <me
 `[codex] Turn failed.` on stderr. The quota-exhausted case was not reproduced. From the runner
 source it takes the same path (app-server `error` notification, turn not completed, exit 1),
 carrying the binary's "You've hit your usage limit." text. The codex-quota sensor and advisory
-match the companion invocation as well as the bare `codex` CLI.
+match the companion invocation as well as the bare `codex` CLI. The sensor also stores the
+"try again at" time when the message has one (`reset_at`); while it is ahead, the advisory denies a
+Codex dispatch instead of advising (a parallel batch of lanes burned five round-trips once on a
+known limit). A message with no readable time still only advises.
 
 ## Degrading gracefully
 

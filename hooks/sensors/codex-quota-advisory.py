@@ -2,9 +2,13 @@
 """PreToolUse(Bash) sensor: before a Codex CLI command runs, if
 codex-quota-sensor.py recently recorded a usage-limit/rate-limit failure,
 inject an advisory (additionalContext) naming the recorded message and how
-long ago it fired. Never blocks or denies -- always allows; a stale or
-wrong signal costs one redundant line, never a lost dispatch. See
-codex-quota-sensor.py's docstring for the gap this closes.
+long ago it fired. When the record carries a reset time still in the future,
+deny instead: the limit is known to be closed, so the dispatch (and each of a
+parallel batch) is doomed. The deny names the state file to delete and
+MH_CODEX_QUOTA_DENY=0 (advisory only) as the way out, for a switched account.
+A record with no readable reset time only advises, so a wrong signal costs one
+redundant line, never a lost dispatch. See codex-quota-sensor.py's docstring
+for the gap this closes.
 
 TTL default 24h (MH_CODEX_QUOTA_TTL_SECONDS overrides, tests use a small
 value): quota reset windows in the logged incidents ranged hours to days;
@@ -36,6 +40,14 @@ def ttl_seconds():
         except ValueError:
             pass
     return _DEFAULT_TTL_SECONDS
+
+
+def deny_enabled():
+    return os.environ.get("MH_CODEX_QUOTA_DENY") != "0"
+
+
+def format_reset(epoch):
+    return time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(epoch))
 
 
 def looks_like_codex_command(command):
@@ -94,6 +106,31 @@ def main(argv):
         except OSError:
             pass
         return 0
+
+    now = int(time.time())
+    reset_at = state.get("reset_at")
+    if isinstance(reset_at, int):
+        if reset_at <= now:  # the window has reopened: the record is spent
+            try:
+                os.remove(state_path)
+            except OSError:
+                pass
+            return 0
+        if deny_enabled():
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        f"Codex usage limit is closed until {format_reset(reset_at)} "
+                        f"(recorded {format_age(age)}: \"{state.get('message', '')}\"). "
+                        "Wait, or fall back to Claude and note \"independence reduced for this pass\". "
+                        f"Switched account or limit already reset: delete {state_path}, "
+                        "or set MH_CODEX_QUOTA_DENY=0 to get the advisory only."
+                    ),
+                }
+            }))
+            return 0
 
     context = (
         "<mh-codex-quota-advisory>\n"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sensor: before a Codex CLI Bash command runs, warn (additionalContext) if
 # codex-quota-sensor.sh recently recorded a usage-limit/rate-limit failure.
-# Advisory-only -- never denies, never blocks; always exits 0.
+# Advises; denies only while a recorded reset time is still ahead (MH_CODEX_QUOTA_DENY=0 turns
+# the deny off). Always exits 0.
 # See codex-quota-advisory.py for the gap this closes.
 set -uo pipefail
 
