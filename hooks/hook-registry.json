@@ -96,7 +96,7 @@
       },
       {
         "id": "sensor:bash:codex-quota-advisory",
-        "description": "Advisory only, never blocks: before a Codex CLI Bash command runs, warn via additionalContext if codex-quota-sensor recently recorded a usage-limit/rate-limit failure. Stale records past the TTL self-clear.",
+        "description": "Before a Codex CLI Bash command runs, warn via additionalContext if codex-quota-sensor recently recorded a usage-limit/rate-limit failure; deny while the recorded reset time is still in the future (MH_CODEX_QUOTA_DENY=0 keeps it advisory). Stale records past the TTL, and records whose reset has passed, self-clear.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/codex-quota-advisory.sh\""
       }
     ],
@@ -125,7 +125,7 @@
       },
       {
         "id": "sensor:bash:codex-quota-sensor",
-        "description": "Advisory only, never blocks: on a Codex CLI Bash command failing with a usage-limit/rate-limit-shaped error, record the failure (persisted, not session-scoped) so codex-quota-advisory can warn before the next Codex dispatch.",
+        "description": "Never blocks: on a Codex CLI Bash command failing with a usage-limit/rate-limit-shaped error, record the failure and any try-again-at reset time (persisted, not session-scoped) so codex-quota-advisory can warn or deny before the next Codex dispatch.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/codex-quota-sensor.sh\""
       }
     ],

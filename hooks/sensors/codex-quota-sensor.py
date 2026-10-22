@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """PostToolUseFailure(Bash) sensor: on a Codex CLI command failing with a
-usage-limit/rate-limit-shaped error, records the failure so the paired
-codex-quota-advisory.py sensor can warn before the next Codex dispatch
-instead of finding out mid-call again. Never blocks (always exit 0) --
-advisory infrastructure only, same posture as failure-diagnose-nudge.py.
+usage-limit/rate-limit-shaped error, records the failure (and the reset
+time when the message names one) so the paired codex-quota-advisory.py can
+warn, or deny while that reset is still ahead, before the next Codex dispatch
+instead of finding out mid-call again. This sensor itself never blocks
+(always exit 0), same posture as failure-diagnose-nudge.py.
 
 Real gap this closes: docs/reference/codex-integration-map.md and
 memory's project_codex_usage_limit_hit_twice_2026_09_12.md both record the
@@ -24,6 +25,7 @@ Deliberately loose match on the failure text ("usage limit", "rate limit",
 a documented contract, and a false positive here only costs one redundant
 advisory line later, never a block.
 """
+import datetime
 import json
 import os
 import re
@@ -35,6 +37,14 @@ import time
 _CODEX_RE = re.compile(r"(^|[\s/\"'])codex([\s\"']|$)|codex-companion\.mjs")
 _QUOTA_RE = re.compile(r"usage\s*limit|rate\s*limit|quota", re.IGNORECASE)
 _MAX_MESSAGE_LEN = 500
+# "try again at 9:47 PM" or "try again at Oct 4th, 2026 12:15 AM" (the two wordings logged so far).
+_RESET_RE = re.compile(
+    r"try again at\s+(?:(?P<mon>[A-Za-z]{3})[a-z]*\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?P<year>\d{4})\s+)?"
+    r"(?P<hour>\d{1,2}):(?P<min>\d{2})\s*(?P<ap>[AaPp][Mm])",
+    re.IGNORECASE,
+)
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 
 
 def default_state_path():
@@ -51,6 +61,28 @@ def looks_like_quota_failure(text):
     return bool(_QUOTA_RE.search(text))
 
 
+def parse_reset_at(text, now):
+    """Epoch seconds (local time) of the reset the message names, else None. A time with no
+    date means its next occurrence after `now`; a date it cannot read means no reset."""
+    m = _RESET_RE.search(text)
+    if not m:
+        return None
+    hour = int(m.group("hour")) % 12 + (12 if m.group("ap").lower() == "pm" else 0)
+    minute = int(m.group("min"))
+    try:
+        if m.group("mon"):
+            mon = _MONTHS[m.group("mon").lower()]
+            when = datetime.datetime(int(m.group("year")), mon, int(m.group("day")), hour, minute)
+        else:
+            today = datetime.datetime.fromtimestamp(now)
+            when = today.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if when.timestamp() < now:
+                when += datetime.timedelta(days=1)
+    except (KeyError, ValueError):
+        return None
+    return int(when.timestamp())
+
+
 def extract_command(data):
     ti = data.get("tool_input")
     if isinstance(ti, dict):
@@ -61,10 +93,15 @@ def extract_command(data):
 
 
 def record(state_path, message):
+    now = int(time.time())
+    state = {"recorded_at": now, "message": message[:_MAX_MESSAGE_LEN]}
+    reset_at = parse_reset_at(message, now)
+    if reset_at is not None:
+        state["reset_at"] = reset_at
     try:
         os.makedirs(os.path.dirname(state_path), exist_ok=True)
         with open(state_path, "w") as f:
-            json.dump({"recorded_at": int(time.time()), "message": message[:_MAX_MESSAGE_LEN]}, f)
+            json.dump(state, f)
     except OSError:
         pass  # fail-open: losing the record just means no advisory next time, never blocks
 
