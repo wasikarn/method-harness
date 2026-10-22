@@ -142,6 +142,16 @@ head -2 "$SESSIONLESS" > "$ONLY_SL"
 out_only="$(MH_GATE_JOURNAL_PATH="$ONLY_SL" python3 "$REPORT_PY")"
 assert "a journal of only session-less rows says so instead of printing zero-count tables" \
   "$(grep -q 'no events with a session_id' <<<"$out_only" && grep -q 'Ignored 2 session-less row(s)' <<<"$out_only" && echo 1 || echo 0)"
+# The textual fast skip for null-session rows must not change what the full parse decides:
+# a compact spelling and a null row carrying "count" both still go through json.loads.
+SL_SPELL="$TMPDIR_TEST/sessionless-spellings.jsonl"
+printf '%s\n' \
+  '{"ts":"2026-09-29T01:00:00Z","id":"gate:a","tool_name":"Bash","decision":"deny","session_id":null}' \
+  '{"ts": "2026-09-29T01:00:01Z", "id": "gate:write:secret-scan", "tool_name": "Write", "decision": "allow-suppressed", "session_id": null, "count": 3}' \
+  '{"ts": "2026-10-01T09:00:00Z", "id": "gate:b", "tool_name": "Edit", "decision": "ask", "session_id": "real1"}' > "$SL_SPELL"
+out_spell="$(MH_GATE_JOURNAL_PATH="$SL_SPELL" python3 "$REPORT_PY")"
+assert "compact \"session_id\":null parses as session-less, and a null row's count:3 still weighs (1 + 3 = 4)" \
+  "$(grep -q 'Ignored 4 session-less row(s)' <<<"$out_spell" && grep -q '^Gate journal: 1 ask/deny event(s)$' <<<"$out_spell" && echo 1 || echo 0)"
 
 # A made-up id still passes the session_id filter; the report names non-UUID ids (counted, not
 # dropped: another host's log may not use UUIDs) so a fixture-heavy gate count is visible.

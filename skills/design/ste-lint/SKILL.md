@@ -22,13 +22,15 @@ technical noun (Rule 1.8). Detail: `rules.md`.
 ## Run it
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/ste-lint.py" [path] [--mode procedural|descriptive|auto] [--json]
+python3 "${CLAUDE_SKILL_DIR}/scripts/ste-lint.py" [path] [--mode procedural|descriptive|auto] [--json] [--no-advisory]
 ```
 
 - No `path`: scans `*.md` files changed in the working tree (staged,
   unstaged, and untracked), excluding the frozen paths below.
 - A file or directory path: scans just that, and **overrides** the
   frozen-path exclusion (an explicit ask is a deliberate ask).
+- A directory scan prints many lines. Scan one file, or pass `--no-advisory`
+  to hide advisory lines (they never change the exit code).
 - `--mode auto` (default): classifies each sentence as procedural (an
   instruction, 20-word limit) or descriptive (25) by a heuristic and labels
   every guess. A word-count finding on a guessed sentence is advisory, since a

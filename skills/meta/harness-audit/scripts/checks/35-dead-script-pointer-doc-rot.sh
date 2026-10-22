@@ -22,16 +22,20 @@ while IFS= read -r _path; do
 done < <(find "$CLAUDE_DIR" \( -name '*.sh' -o -name '*.py' -o -name '*.js' \) \
             -not -path '*/.git/*' -not -path '*/.scratch/*' 2>/dev/null)
 
+_files35=()
 for _f in "$CLAUDE_DIR"/skills/*/SKILL.md "$CLAUDE_DIR"/skills/*/*/SKILL.md \
           "$CLAUDE_DIR"/skills/*/reference.md "$CLAUDE_DIR"/skills/*/*/reference.md \
           "$CLAUDE_DIR"/agents/*.md \
           "$CLAUDE_DIR"/docs/*.md "$CLAUDE_DIR"/docs/reference/*.md; do
   # docs/research/*.md is excluded on purpose — those are dated design/analysis
   # snapshots that correctly describe deleted surfaces as history, not doc-rot.
-  [ -f "$_f" ] || continue
-  # Pull interpreter-prefixed script paths: <interp> [flags] .../scripts/NAME.(sh|py|js)
-  # Tolerate a ${VAR}/ or path prefix before scripts/; capture the basename.
-  while IFS= read -r _line; do
+  [ -f "$_f" ] && _files35+=("$_f")
+done
+# One grep over every file (was: grep + sort per file, plus grep + basename per hit).
+# awk tags each hit with its file's index so sort keeps glob file order and dedups per file.
+_re35='scripts/[A-Za-z0-9_./${}-]+\.(sh|py|js)'
+if [ "${#_files35[@]}" -gt 0 ]; then
+  while IFS=$'\t' read -r _ _f _line; do
     [ -z "$_line" ] && continue
     # A reference resolving against an external vault (e.g. $VAULT/scripts/...,
     # ${MH_WIKI_VAULT:-...}/scripts/...) wraps llm-wiki's own scripts by design
@@ -41,15 +45,19 @@ for _f in "$CLAUDE_DIR"/skills/*/SKILL.md "$CLAUDE_DIR"/skills/*/*/SKILL.md \
     case "$_line" in
       *VAULT*) continue ;;
     esac
-    _ref=$(printf '%s\n' "$_line" | grep -oE 'scripts/[A-Za-z0-9_./${}-]+\.(sh|py|js)')
-    [ -z "$_ref" ] && continue
-    _base=$(basename "$_ref")
-    # Resolve against the pre-built whole-fleet set (a wrapper may live in any
-    # skill's scripts/). Exclude .git/.scratch already applied when building it.
-    if [ -z "${_known_scripts37[$_base]:-}" ]; then
-      warn "dead script-pointer in ${_f#"$CLAUDE_DIR"/}: invokes '$_ref' but no '$_base' exists in the fleet (doc-rot — crashes on invoke)"
-    fi
-  done < <(grep -hoE '(bash|sh|python3|python|node|exec)[[:space:]]+[^|;&]*scripts/[A-Za-z0-9_./${}-]+\.(sh|py|js)' "$_f" 2>/dev/null \
-             | sort -u)
-done
-unset _f _ref _base _known_scripts37
+    # Every scripts/ path in the hit, not just the last (a line can invoke two).
+    _rest=$_line
+    while [[ $_rest =~ $_re35 ]]; do
+      _ref="${BASH_REMATCH[0]}"; _base="${_ref##*/}"
+      _rest=${_rest#*"$_ref"}
+      # Resolve against the pre-built whole-fleet set (a wrapper may live in any
+      # skill's scripts/). Exclude .git/.scratch already applied when building it.
+      if [ -z "${_known_scripts37[$_base]:-}" ]; then
+        warn "dead script-pointer in ${_f#"$CLAUDE_DIR"/}: invokes '$_ref' but no '$_base' exists in the fleet (doc-rot — crashes on invoke)"
+      fi
+    done
+  done < <(grep -HoE '(bash|sh|python3|python|node|exec)[[:space:]]+[^|;&]*scripts/[A-Za-z0-9_./${}-]+\.(sh|py|js)' "${_files35[@]}" 2>/dev/null \
+             | awk '{f=$0; sub(/:.*/,"",f); l=substr($0,length(f)+2); if(f!=p){n++;p=f} print n "\t" f "\t" l}' \
+             | sort -u -t$'\t' -k1,1n -k3)
+fi
+unset _f _ref _base _rest _line _re35 _files35 _known_scripts37

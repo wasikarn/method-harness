@@ -93,18 +93,16 @@ PYEOF
     done
     _refs=""
     if [ "${#_targets[@]}" -gt 0 ]; then
-      _refs=$(/usr/bin/grep -rhoE 'mh:[a-z][a-z0-9-]*' "${_targets[@]}" 2>/dev/null | sed 's/^mh://' | sort -u || true)
+      # --exclude-dir=results skips untracked eval run output; a tracked results/ dir under docs/tests would be skipped too (none exist).
+      _refs=$(/usr/bin/grep -rhoE --exclude-dir=results 'mh:[a-z][a-z0-9-]*' "${_targets[@]}" 2>/dev/null | sed 's/^mh://' | sort -u || true)
     fi
     _EXPECTED_EXCLUDED="${MANIFEST_EXPECTED_EXCLUDED:-ste-lint}"
-    for _ref in $_refs; do
-      _status=$(printf '%s\n' "$_skill_status" | awk -F'\t' -v n="$_ref" '$1==n{print $2}')
-      # No real skills/**/<name>/SKILL.md at all -- an agent name, a
-      # retired skill, or a typo. Out of this check's scope (see header).
-      [ -z "$_status" ] && continue
-      [ "$_status" = "shipped" ] && continue
+    # One awk join (was: one awk spawn per ref). A ref with no real skill dir (agent name,
+    # retired skill, typo) or only a shipped one prints nothing: out of this check's scope.
+    while IFS= read -r _ref; do
       case " $_EXPECTED_EXCLUDED " in *" $_ref "*) continue ;; esac
       crit "docs/evals/tests reference 'mh:$_ref', a real skill directory that exists but is excluded from .claude-plugin/plugin.json's shipped skill list (and not a documented exception) -- either add its own documented caveat, or the exclusion needs reversing"
-    done
+    done < <(awk -F'\t' 'NR==FNR{if($2=="excluded")ex[$1]=1;next} ($1 in ex){print $1}' <(printf '%s\n' "$_skill_status") <(printf '%s\n' $_refs))
     unset _ref _refs _status _EXPECTED_EXCLUDED _t _targets
   fi
   unset _skill_status

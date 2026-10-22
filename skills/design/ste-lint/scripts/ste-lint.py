@@ -497,20 +497,22 @@ def format_finding(f):
     if "words" in f:
         tag = " [guessed mode]" if f.get("guessed_mode") else ""
         tag += " [nested 8.5]" if f.get("nested") else ""
-        return f"{f['words']} words (limit {f['limit']}, mode={f.get('mode', '?')}){tag}: {f['sentence']!r}"
+        s = f['sentence']
+        s = s if len(s) <= 100 else s[:100] + "..."  # a run-on sentence would flood a directory scan
+        return f"{f['words']} words (limit {f['limit']}, mode={f.get('mode', '?')}){tag}: {s!r}"
     if "sentences" in f:
         return f"{f['sentences']} sentences (limit {MAX_PARAGRAPH_SENTENCES})"
     return str(f)
 
 
-def print_human(result):
+def print_human(result, advisory=True):
     for e in result.get("errors", []):
         print(f"[error] {e['message']}")
     for f in result["files"]:
         print(f["path"])
         for c in f["confirmed"]:
             print(f"  [confirmed] rule {c['rule']} line {c['line']}: {format_finding(c)}")
-        for a in f["advisory"]:
+        for a in (f["advisory"] if advisory else []):
             print(f"  [advisory]  rule {a['rule']} line {a['line']}: {format_finding(a)}")
         for e in f["errors"]:
             print(f"  [error]     {e['message']}")
@@ -523,6 +525,8 @@ def main():
     p.add_argument("path", nargs="?", help="file or directory; default: changed .md files in the working tree")
     p.add_argument("--mode", choices=["procedural", "descriptive", "auto"], default="auto")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--no-advisory", action="store_true",
+                   help="hide advisory lines in the human report (they never affect the exit code)")
     p.add_argument("--selftest", action="store_true")
     args = p.parse_args()
 
@@ -553,7 +557,7 @@ def main():
 
     exit_code = 2 if any_error else (1 if any_confirmed else 0)
     result = {"files": files_out, "errors": scan_errors, "exit_code": exit_code}
-    print(json.dumps(result, indent=2)) if args.json else print_human(result)
+    print(json.dumps(result, indent=2)) if args.json else print_human(result, not args.no_advisory)
     sys.exit(exit_code)
 
 

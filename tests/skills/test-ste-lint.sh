@@ -159,4 +159,23 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" 2>/dev/null || true
   [ "$code" -eq 2 ] || { echo "FAIL: outside a git repo expected exit 2, got $code"; exit 1; }
 ) || FAIL=1
 
+TMP4="$(mktemp -d)"
+trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" "$TMP4" 2>/dev/null || true' EXIT
+(
+  # --no-advisory hides advisory lines but keeps confirmed ones and the exit code;
+  # a long sentence's echoed excerpt is capped so a directory scan stays readable.
+  cd "$TMP4" || exit 1
+  git init -q
+  long="Remove the cover; $(printf 'then check the bolt %.0s' $(seq 1 30))and the colour of the panel."
+  printf '%s\n' "$long" > doc.md
+  full=$(python3 "$SCRIPT" --mode procedural doc.md); c1=$?
+  quiet=$(python3 "$SCRIPT" --mode procedural --no-advisory doc.md); c2=$?
+  /usr/bin/grep -q '\[advisory\]' <<<"$full" || { echo "FAIL: fixture produced no advisory line"; exit 1; }
+  /usr/bin/grep -q '\[advisory\]' <<<"$quiet" && { echo "FAIL: --no-advisory still prints advisory lines"; exit 1; }
+  /usr/bin/grep -q '\[confirmed\]' <<<"$quiet" || { echo "FAIL: --no-advisory dropped confirmed lines"; exit 1; }
+  [ "$c1" -eq 1 ] && [ "$c2" -eq 1 ] || { echo "FAIL: exit codes $c1/$c2, expected 1/1"; exit 1; }
+  maxlen=$(/usr/bin/grep 'words (limit' <<<"$full" | awk '{ if (length > m) m = length } END { print m+0 }')
+  [ "$maxlen" -gt 0 ] && [ "$maxlen" -le 200 ] || { echo "FAIL: word-count finding line is $maxlen chars, excerpt not capped"; exit 1; }
+) || FAIL=1
+
 [ "$FAIL" -eq 0 ] && echo "PASS: test-ste-lint" || { echo "FAIL: test-ste-lint"; exit 1; }

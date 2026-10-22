@@ -43,6 +43,12 @@ def main():
             line = line.strip()
             if not line:
                 continue
+            # shortcut: textual fast path for the journal's own null-session rows (json.dumps
+            # spelling), skipping json.loads on the ~99% test rows; a malformed or duplicate-key
+            # row with this spelling counts session-less, not skipped. Other spellings parse below.
+            if '"session_id": null' in line and '"count"' not in line and line[0] == "{" and line[-1] == "}":
+                sessionless += 1
+                continue
             try:
                 row = json.loads(line)
             except ValueError:

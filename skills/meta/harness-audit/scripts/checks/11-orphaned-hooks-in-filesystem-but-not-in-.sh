@@ -10,6 +10,9 @@
 # below already degrades correctly to "not found" when $SETTINGS is absent
 # (same pattern check 03 already relies on), so plugin-mode hooks still
 # correctly skip via the hooks.json/transitive branches.
+# Read both wiring files once (was: two grep spawns per hook). A substring test equals
+# grep -q for a fixed name with no regex metachars beyond '.'; a missing file reads as empty.
+_wired11=$(cat "$SETTINGS" "$CLAUDE_DIR/hooks/hooks.json" 2>/dev/null; :)
 for f in "$CLAUDE_DIR/hooks"/**/*; do
   [ -f "$f" ] || continue
   case "${f#"$CLAUDE_DIR"/hooks/}" in tests/*|*__pycache__*) continue;; esac
@@ -27,8 +30,7 @@ for f in "$CLAUDE_DIR/hooks"/**/*; do
   # named inside a *.sh/*.py dispatch script hooks.json itself points to
   # (transitive, one level — see hook_wired_transitively() in audit.sh,
   # shared with check 03 so the two can't drift).
-  grep -q "$hook_name" "$SETTINGS" 2>/dev/null && continue
-  grep -q "$hook_name" "$CLAUDE_DIR/hooks/hooks.json" 2>/dev/null && continue
+  [[ "$_wired11" == *"$hook_name"* ]] && continue
   hook_wired_transitively "$hook_name" && continue
   crit "hook '$hook_name' exists in hooks/ but not wired in settings.json or hooks.json"
 done
