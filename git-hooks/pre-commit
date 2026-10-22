@@ -8,6 +8,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT" || exit 1
 fail=0
 staged() { git diff --cached --name-only --diff-filter=ACMR -- "$@"; }
+staged_z() { git diff --cached --name-only -z --diff-filter=ACMR; }  # NUL-separated, for xargs -0
 # Syntax layers skip the audit's known-bad fixtures: they are invalid on purpose (checks 17,
 # 18, 19 must fire on them). The home-path ban still covers them.
 staged_lint() { staged "$@" ':(exclude)tests/skills/harness-audit/known-bad'; }
@@ -41,12 +42,11 @@ fi
 
 # 4. hardcoded home paths (repo is public); frozen history dirs are exempt from wording passes,
 #    never from this (CLAUDE.md, repo-gotchas.md: a 2026-08-26 purge missed 29 hits there)
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  git show ":$f" | LC_ALL=C /usr/bin/grep -aqE '/Users/[A-Za-z]|-Users-[A-Za-z]' 2>/dev/null || continue
+#    One git grep over the index copies of every staged file (-a: binary files too), not one git show each.
+while IFS= read -r -d '' f; do
   echo "pre-commit: hardcoded home path in $f — use \$HOME or ~" >&2
   fail=1
-done < <(staged)
+done < <(staged_z | LC_ALL=C xargs -0 -r git --literal-pathspecs grep --cached -z -a -l -E '/Users/[A-Za-z]|-Users-[A-Za-z]' --)
 
 # 5. METHODOLOGY.md is injected whole every session: hard cap 4096 bytes
 if staged docs/METHODOLOGY.md | /usr/bin/grep -q .; then

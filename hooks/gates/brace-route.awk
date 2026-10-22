@@ -10,7 +10,7 @@
 # command string. A shell backslash makes the next token literal ("r{m,x\ y}": the escaped blank does not end
 # the word). A "{" followed by a bare quote is a JSON object of the payload itself, and "${" is a
 # parameter; neither opens a group.
-# tests/hooks/test-gates.sh enumerates every shape of { } , x . up to 7 characters, and wider alphabets (backslash,
+# tests/hooks/test-gates-other.sh enumerates every shape of { } , x . up to 7 characters, and wider alphabets (backslash,
 # quotes, blank, newline, CR, NBSP, "<(") up to 5 and 4, and checks that no shape _bracex expands is missed here.
 # One scan starts per "{" and can run to the end of its word, and awk copies the line on every substr, so the work
 # is budgeted (BUDGET characters scanned in all per line): a payload over it prints a hit and python decides, never

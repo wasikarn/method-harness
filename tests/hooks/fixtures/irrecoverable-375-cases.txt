@@ -1,4 +1,4 @@
-# GH #375 cases for hooks/gates/irrecoverable.sh, replayed by tests/hooks/test-gates.sh.
+# GH #375 cases for hooks/gates/irrecoverable.sh, replayed by tests/hooks/test-gates-other.sh.
 # DENY <cmd>: exit 2. ALLOW <cmd>: exit 0, empty stdout, no journal row.
 # shlex splits one shell word at a character outside its word characters ($, :, @, a Thai letter),
 # so a git global's value (-C $R) took the variable's name for the subcommand. Each DENY shape in 1-5 was

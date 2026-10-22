@@ -192,7 +192,7 @@ def _mid_merge():
 # and reverted: it made this anchor match `claude` wherever it next appeared,
 # including deep inside an unrelated command's quoted argument (broke the
 # existing `git commit -m "mention claude -p in docs"` -> ALLOW regression
-# test in tests/hooks/test-gates.sh, since this anchor runs on the raw
+# test in tests/hooks/test-gates-irrecoverable-2.sh, since this anchor runs on the raw
 # command text, not the quote-masked string subagent-git-guard.py's sibling
 # anchor uses). Matching only real wrapper WORDS keeps that same precision:
 # "git", "commit", "-m", or a quoted-string token never satisfy the

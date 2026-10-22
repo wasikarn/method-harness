@@ -29,6 +29,9 @@ else
   bad "no shard set: the listing differs from the files on disk"
 fi
 
+# The two largest files by bytes (the split's own proxy for run time) must land apart.
+read -r big1 big2 < <(cd "$ROOT" && printf '%s\n' "$full" | while IFS= read -r t; do
+  printf '%s %s\n' "$(wc -c <"$t" | tr -d ' ')" "$t"; done | LC_ALL=C sort -k1,1nr -k2,2 | head -n 2 | cut -d' ' -f2 | tr '\n' ' ')
 for n in 1 2 3 4 5 6; do
   all=""; empty=0; order=0; gates=0; guard=0
   i=1
@@ -37,8 +40,8 @@ for n in 1 2 3 4 5 6; do
     [ -n "$s" ] || empty=1
     # A shard keeps glob order, so the log reads like a serial run.
     [ "$(printf '%s\n' "$full" | /usr/bin/grep -xF -f <(printf '%s\n' "$s"))" = "$s" ] || order=1
-    printf '%s\n' "$s" | /usr/bin/grep -qx 'tests/hooks/test-gates.sh' && gates=$i
-    printf '%s\n' "$s" | /usr/bin/grep -qx 'tests/hooks/test-subagent-git-guard.sh' && guard=$i
+    printf '%s\n' "$s" | /usr/bin/grep -qxF "$big1" && gates=$i
+    printf '%s\n' "$s" | /usr/bin/grep -qxF "$big2" && guard=$i
     all="$all$s"$'\n'
     i=$((i + 1))
   done
@@ -52,9 +55,9 @@ for n in 1 2 3 4 5 6; do
   [ "$order" -eq 0 ] && ok "N=$n: each shard keeps glob order" || bad "N=$n: a shard is out of glob order"
   if [ "$n" -ge 2 ]; then
     if [ "$gates" -ne 0 ] && [ "$gates" -ne "$guard" ]; then
-      ok "N=$n: test-gates.sh and test-subagent-git-guard.sh are on different shards"
+      ok "N=$n: the two largest files ($big1, $big2) are on different shards"
     else
-      bad "N=$n: test-gates.sh (shard $gates) and test-subagent-git-guard.sh (shard $guard) share a shard"
+      bad "N=$n: the two largest files $big1 (shard $gates) and $big2 (shard $guard) share a shard"
     fi
   fi
 done

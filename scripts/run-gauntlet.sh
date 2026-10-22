@@ -103,19 +103,22 @@ run_lint() {
 # tests/scripts/test-run-gauntlet-wiring.sh can check the globs without running
 # anything (it once ran the whole layer through a shim, which xargs bypasses).
 hook_test_files() {
-  local t n
+  local t
   for t in tests/hooks/*.sh tests/skills/test*.sh tests/skills/*/test*.sh tests/scripts/test*.sh tests/evals/test*.sh tests/skills/memory-lint/test_*.py; do
     [ -f "$t" ] && printf '%s\n' "$t"
   done | if [ -z "${shard:-}" ]; then cat; else
     # Shard i/N: greedy bin-packing by byte size, largest file first, each to the
-    # lightest shard (lowest index on a tie), so test-gates.sh and
-    # test-subagent-git-guard.sh (~half of all test time) land apart. Byte size is
+    # lightest shard (lowest index on a tie), so the largest files (the three
+    # test-gates*.sh parts and test-subagent-git-guard.sh, ~half of all test time) spread out. Byte size is
     # a rough proxy for run time, but needs no timing table to keep current.
     # Same input gives the same split on every runner; output keeps glob order.
-    n=0
-    while IFS= read -r t; do
-      n=$((n + 1)); printf '%s %s %s\n' "$(wc -c <"$t" | tr -d ' ')" "$n" "$t"
-    done | LC_ALL=C sort -k1,1nr -k3,3 |
+    # One wc for all files, not one per file; head drops its "total" line. A read loop, not
+    # mapfile, so macOS's stock bash 3.2 still runs it.
+    local files=()
+    while IFS= read -r t; do files+=("$t"); done
+    [ "${#files[@]}" -gt 0 ] || return 0
+    wc -c "${files[@]}" | head -n "${#files[@]}" |
+      awk '{ s = $1; sub(/^ *[0-9]+ /, ""); print s, NR, $0 }' | LC_ALL=C sort -k1,1nr -k3,3 |
       awk -v i="${shard%/*}" -v n="${shard#*/}" '
         { b = 1; for (k = 2; k <= n; k++) if (sum[k] < sum[b]) b = k
           sum[b] += $1; if (b == i) print $2, $3 }' |
@@ -127,7 +130,7 @@ hook_test_files() {
 run_hook_tests() {
   local rc=0 t
   # Redirect the gate-verdict journal for the whole hook-test layer: several
-  # suites (test-gates.sh alone has 165 deny/ask assertions) exercise gates
+  # suites (the test-gates*.sh files hold ~1700 allow/deny/ask rows) exercise gates
   # whose journal() call writes to $HOME/.local/share/kbg/metrics/
   # gate-decisions.jsonl by default. Without this, every local
   # run-gauntlet.sh/pre-push would silently append synthetic rows to the
@@ -145,7 +148,7 @@ run_hook_tests() {
   # Test files run in parallel (GAUNTLET_JOBS, default 4 locally, 1 when CI is
   # set), each with its own journal file and output file, then print in glob
   # order so the log reads the same as a serial run. Biggest files start first
-  # (`ls -S`, longest job first): test-gates.sh and test-subagent-git-guard.sh
+  # (`ls -S`, longest job first): test-gates*.sh and test-subagent-git-guard.sh
   # are ~half of all test time, so they must not queue behind the cheap files.
   # Kept at 4, not nproc: the box is shared and timing rows (GH #158) fail under
   # heavy load. CI stays serial: its runner is slower with fewer cores, and the
