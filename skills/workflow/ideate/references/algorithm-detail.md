@@ -73,7 +73,7 @@ premature abstraction, 1 false economy") plus the one-line reasons, not a silent
 
 Source: `provenance.md`'s "3-axis scoring rubric source" section.
 
-## Critic invocation (auto-fire path)
+## Critic invocation (default path)
 
 Collect the Phase 1 `ideas[]` JSON into the envelope in `agents/ideate-critic.md` and pass it as
 the whole prompt of one `subagent_type: mh:ideate-critic` Agent call; parse its final message
@@ -81,7 +81,7 @@ as JSON (a reply with text outside the braces is a parse failure, reported like 
 branch) and render the output shape from its returned `scores`, `clusters`,
 `shortlist`, `shortlistReasons`, `nonObviousPick`, `nonObviousPickReason`, `runnerUp`,
 `confidence`, `traps`, `deepened`, `provocation`. The critic's `deepened` is the Focus
-block; Phase 3's three Agent calls run only on the host path.
+block; Phase 3's three Agent calls run only on the opt-in host path.
 
 ## Output shape — full rendering contract
 
@@ -89,7 +89,7 @@ Render in this order after Phase 2 — don't collapse into a wall of prose; the 
 the point.
 
 1. **Brief + cost estimate.** 1-2 lines on the problem/reframe, then:
-   *"Cost estimate: 8 Agent calls (6 on the critic path), ~3k–8k input tokens,
+   *"Cost estimate: 6 Agent calls (8 on the opt-in host path), ~3k–8k input tokens,
    ~1k–3k output tokens. Actuals vary by problem size."* Advisory heuristic,
    not a metered bill.
 2. **Wide set.** Full pool grouped by cluster and angle, one short phrase

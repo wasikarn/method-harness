@@ -8,13 +8,13 @@ effort: high
 
 # Ideate
 
-Divergent ideation in two fan-out waves: five isolated generator agents under different
-cognitive frames, a score-and-cluster pass, then three deepen agents. Explicit
-(`mh:ideate <problem>`, "brainstorm") and auto-routed invocations run the same algorithm.
+Divergent ideation: five isolated generator agents under different cognitive frames, then one
+critic agent that scores, clusters, ranks and deepens. Explicit (`mh:ideate <problem>`,
+"brainstorm") and auto-routed invocations run the same algorithm.
 
 ## Pre-flight gate
 
-A run costs 8 Agent calls on the host path (6 on the critic path), 30-90 s, and 5-10x a direct
+A run costs 6 Agent calls (8 on the opt-in host path), 30-90 s, and 5-10x a direct
 answer. An imperative request to run it (`mh:ideate <problem>`, "brainstorm", "ideate mode",
 "run ideate on this") is opt-in: go straight to Phase 1. Mentioning the skill's name inside a
 question about whether to run it is not opt-in; the gate applies. Otherwise ask three
@@ -34,9 +34,9 @@ Done when: the brief names either the three YES answers or the explicit trigger.
 ## Wave structure (load-bearing)
 
 - **Phase 1 Diverge:** 5 parallel Agent calls, peak 5.
-- **Phase 2 Focus:** score and cluster on the host, no fan-out; or one sequential critic call,
-  which also deepens and so replaces Phase 3.
-- **Phase 3 Deepen (host path only):** 3 parallel Agent calls, peak 3.
+- **Phase 2 Focus:** one sequential critic call, which also deepens and so replaces Phase 3;
+  on the opt-in host path, score and cluster on the host, no fan-out.
+- **Phase 3 Deepen (opt-in host path only):** 3 parallel Agent calls, peak 3.
 
 Peak concurrency 5 is this skill's own design limit (Rule 13 caps at 10). Phase 1 completes before Phase 2 starts; never
 collapse Diverge and Deepen into one wave of 8. History of the 44-to-105-agent failure this
@@ -73,15 +73,15 @@ guards against: `references/provenance.md`.
 3. **Shortlist** rank.py's top 3 (traps excluded) with a one-line reason each, the
    runner-up and why it missed, and a confidence level with its reason.
 
-**Who scores.** Auto-fired runs (the gate passed on high stakes) hand Phase 2 to the
-`ideate-critic` agent, one sequential Agent call (`subagent_type: mh:ideate-critic`) with the
-envelope in `agents/ideate-critic.md`; its JSON reply carries every field the output shape
-renders, including the three deepened branches, so Phase 3 is skipped. Explicit runs score on
-the host and run Phase 3 unless the user asks for the critic. The critic is the same model class
-as the generators: fresh context cuts anchoring, and its output is advisory evidence, not
+**Who scores.** Every run hands Phase 2 to the `ideate-critic` agent, explicit or auto-fired:
+one sequential Agent call (`subagent_type: mh:ideate-critic`) with the envelope in
+`agents/ideate-critic.md`; its JSON reply carries every field the output shape renders,
+including the three deepened branches, so Phase 3 is skipped. Score on the host and run Phase 3
+instead only when the user asks for host scoring ("host", "no critic"). The critic is the same
+model class as the generators: fresh context cuts anchoring, and its output is advisory evidence, not
 ground truth. Done when: every idea has three scores, a cluster, and a trap or none.
 
-## Phase 3: Deepen (host path)
+## Phase 3: Deepen (opt-in host path)
 
 Dispatch 3 parallel Agent calls (`subagent_type: general-purpose`), one per shortlisted idea,
 each prompt the FOCUS block from
@@ -102,7 +102,7 @@ Render in this order; the structure is the point, never a wall of prose. Full pe
 contract: `references/algorithm-detail.md`, Output shape.
 
 1. **Brief**: problem in 1-2 lines, the five frames, any failed branch, the cost line
-   ("8 Agent calls" on the host path, "6" on the critic path; advisory, not metered).
+   ("6 Agent calls", or "8" on the opt-in host path; advisory, not metered).
 2. **Wide set**: clusters with angle labels, one phrase per idea, score chips `[N7 V8 F9]`,
    convergence notes.
 3. **Converge**: the 3 shortlisted ideas with reasons, ★ on the non-obvious-but-viable pick with its

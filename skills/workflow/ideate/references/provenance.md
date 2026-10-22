@@ -52,16 +52,21 @@ Source: upstream `/tmp/adhd-repo/skills/adhd/SKILL.md:84-112` and
 - Host-Claude scoring (Phase 2+3 run on the same model class as the Phase 1
   generators) carries the LLM-judge-circularity caveat from `docs/reference/operating-model.md`'s
   "The maker never grades its own work".
-- On the explicit-invocation path (the gate is skipped), stakes
-  aren't classified — don't infer high-stakes from prompt wording like
-  "critical"/"production"; that lexical-heuristic pattern is exactly what
-  `harness-audit` already flags as toothless elsewhere.
+- The critic is the default for every run, explicit or auto-fired. Explicit runs used to score
+  on the host (8 calls) because the gate skips stake classification there; the critic path
+  costs 6 calls and adds the fresh-context benefit below, so the split was dropped. The host
+  path stays as an opt-in ("host", "no critic"). Routing never infers stakes from prompt wording
+  like "critical"/"production"; that lexical-heuristic pattern is exactly what `harness-audit`
+  already flags as toothless elsewhere.
+- Trade accepted: on the critic path the three deepen branches run inside one critic context,
+  not as three isolated Agent calls, so a deepened idea can anchor on the one deepened before
+  it. The host path keeps that isolation for a user who wants it.
 - `ideate-critic` reuses the same scoring rubric but starts fresh, cutting
   the chance the host's own generation anchors the judgment. Its output is
   still advisory evidence, not ground truth — the user is the gate
   (`docs/reference/operating-model.md` §2, "The maker never grades its own work").
 - Routing to the critic adds no third fan-out wave: Phase 2 goes from 0
-  agent calls (host-inline) to 1 sequential call on the auto-fire path, not
+  agent calls (host-inline) to 1 sequential call on the default path, not
   a parallel spawn, and that call returns the deepened branches, so Phase 3
   does not run — the "2-wave, peak-5" design limit (inside Rule 13's cap of 10) is unaffected.
 
