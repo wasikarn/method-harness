@@ -41,6 +41,24 @@ def reconstruct(tool, ti, old_raw):
         return old_raw.replace(old_s, new_s, count)
     return None
 
+def is_known_settings_target(path, cwd):
+    # A dotfiles setup symlinks ~/.claude/settings.json to a file whose parent is not
+    # named .claude (dotfiles/claude/settings.json), so writing that real path skips the
+    # parent-name check. Match the real path of each settings file Claude Code loads:
+    # the config dir, the project dir and the cwd. Lowercased like the basename check.
+    # shortcut: a symlink target with another basename still passes the fast path and
+    # this gate; upgrade if such a setup turns up.
+    dirs = [os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")]
+    for root in (os.environ.get("CLAUDE_PROJECT_DIR"), cwd):
+        if isinstance(root, str) and root:
+            dirs.append(os.path.join(root, ".claude"))
+    real = os.path.realpath(path).lower()
+    for d in dirs:
+        for name in ("settings.json", "settings.local.json"):
+            if os.path.realpath(os.path.join(d, name)).lower() == real:
+                return True
+    return False
+
 def security_keys(raw):
     # Returns the SECURITY_KEYS tuple of values, or None if raw cannot be
     # parsed as a JSON object -- "unverifiable," handled the same as a
@@ -84,7 +102,7 @@ try:
     # safe on case-sensitive filesystems too.
     if base.lower() not in ("settings.json", "settings.local.json"):
         sys.exit(0)
-    if os.path.basename(parent).lower() != ".claude":
+    if os.path.basename(parent).lower() != ".claude" and not is_known_settings_target(path, d.get("cwd")):
         sys.exit(0)
 
     if not os.path.lexists(path):

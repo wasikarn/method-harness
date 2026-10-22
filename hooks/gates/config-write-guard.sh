@@ -2,7 +2,9 @@
 # Gate: ask before CREATING a brand-new Claude Code settings file
 # (.claude/settings.json, .claude/settings.local.json -- covers both the
 # user-level ~/.claude/ and any project-level .claude/ dir, since both share
-# that same basename shape).
+# that same basename shape), plus the real file a symlinked settings file in
+# the config dir, project dir or cwd resolves to (a dotfiles repo's
+# claude/settings.json).
 #
 # Why the asymmetry: an edit lands on a file a human has already reviewed at
 # least once; a brand-new file introduces a whole unreviewed behavior surface
