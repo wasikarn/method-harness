@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, sys
+import json, os, sys
 
 # GH #156: raise the int-string digit limit before parsing so an oversized
 # unquoted int literal doesn't crash json.load() into this gate's fail-open
@@ -18,8 +18,16 @@ GATE_ID = "gate:agent:subagent-spawn-guard"
 
 try:
     d = json.load(sys.stdin)
+except (RecursionError, MemoryError):
+    # Fail-closed, same as subagent-git-guard.py: Claude Code never sends a payload this deep.
+    try:
+        print("[mh:gate] BLOCKED: PreToolUse payload nested too deep to parse -- failing closed", file=sys.stderr, flush=True)
+        journal(GATE_ID, None, "deny", None)
+    finally:
+        os._exit(2)
 except Exception as e:
-    # Fail-safe = ALLOW: a parse error must not stall every subagent Agent call.
+    # Fail-safe = ALLOW for every other parse error (truncated or malformed JSON): it must not
+    # stall every subagent Agent call. Depth overflow above is the one exception and denies.
     print(f"[mh:gate] subagent-spawn-guard: unparseable stdin, allowing ({e})", file=sys.stderr)
     sys.exit(0)
 

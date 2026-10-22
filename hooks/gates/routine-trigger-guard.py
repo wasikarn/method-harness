@@ -17,8 +17,15 @@ GATE_ID = "gate:tool:routine-trigger-guard"
 
 try:
     d = json.load(sys.stdin)
+except (RecursionError, MemoryError):
+    # Depth overflow cannot be checked, so ask, not allow. sys.exit, not os._exit: os._exit drops stdout.
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                             "permissionDecision": "ask",
+                                             "permissionDecisionReason": "routine-trigger-guard: payload nested too deep to parse; cannot check this RemoteTrigger call -- confirm it is operator-approved."}}))
+    journal(GATE_ID, None, "ask", None)
+    sys.exit(0)
 except Exception as e:
-    # Fail-safe = ALLOW: a parse error must not stall a legitimate call.
+    # Fail-safe = ALLOW for every other parse error: it must not stall a legitimate call.
     print(f"[mh:gate] routine-trigger-guard: unparseable stdin, allowing ({e})", file=sys.stderr)
     sys.exit(0)
 

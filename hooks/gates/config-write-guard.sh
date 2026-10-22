@@ -31,7 +31,8 @@
 # gate's outer exception handler still allows on a malformed top-level
 # payload it cannot parse at all (an intentionally unchanged, pre-existing
 # safety net for genuinely unexpected errors -- see the try/except structure
-# below). The "same invariant" claim below is scoped to the
+# below). A payload nested too deep for json.load (RecursionError/
+# MemoryError) is the one parse failure that asks instead. The "same invariant" claim below is scoped to the
 # hooks/enabledPlugins/env comparison itself, not this file's entire error
 # handling.
 #

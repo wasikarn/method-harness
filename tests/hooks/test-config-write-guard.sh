@@ -163,6 +163,21 @@ out=$(payload_edit "$FIXTURE/src/app.py" 'x = 1' 'x = 2' | bash "$GUARD" 2>&1); 
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
 check "ordinary Edit elsewhere -> exit 0, no output, no stderr" "$ok"
 
+# --- JSON depth: an extra key nested past the decoder's limit raises RecursionError ---
+# A non-settings path is never asked on, so only the depth branch can ask here.
+# depth 500, not 1000: Python <=3.11 overflows near 986.
+deepen() { python3 -c 'import sys; s = sys.stdin.read().rstrip(); n = int(sys.argv[1]); print(s[:-1] + ", \"x\": " + "[" * n + "]" * n + "}")' "$1"; }
+out=$(payload_write "$FIXTURE/src/app.py" | deepen 1000000 | bash "$GUARD" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "JSON depth 1e6, Write to a non-settings path -> ask (payload not checked)" "$ok"
+out=$(payload_write "$FIXTURE/src/app.py" | deepen 500 | bash "$GUARD" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
+check "JSON depth 500, Write to a non-settings path -> still parses, exit 0, no output" "$ok"
+err=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GUARD" 2>&1 >/dev/null); rc=$?
+out=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GUARD" 2>/dev/null)
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && echo "$err" | /usr/bin/grep -q "internal error, allowing" && ok=0
+check "truncated JSON -> still allows with the internal-error note (only depth asks)" "$ok"
+
 
 echo ""
 total=$((pass + fail))

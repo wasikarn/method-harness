@@ -210,6 +210,28 @@ test_deny_failclosed() {
   fi
 }
 
+# deepen <n>: the JSON object on stdin plus one extra key nested <n> arrays deep. Depth 1000000
+# overflows json.load (RecursionError) on every Python; depth 500 parses everywhere (<=3.11 overflows
+# near 986). Fed through echo by the test_* helpers, so no exec argument-size limit applies.
+deepen() {
+  python3 -c 'import sys; s = sys.stdin.read().rstrip(); n = int(sys.argv[1]); print(s[:-1] + ", \"x\": " + "[" * n + "]" * n + "}")' "$1"
+}
+
+# Expect the depth-overflow fail-closed deny: exit 2 AND the "nested too deep" stderr line, so neither a
+# crash nor the gate's ordinary rule can pass the row.
+test_deny_deep() {
+  local gate="$1" desc="$2" payload="$3"
+  local rc
+  rc=$(echo "$payload" | bash "$gate" 2>"$_ERRF"; echo $?)
+  if [[ "$rc" == "2" ]] && /usr/bin/grep -q 'nested too deep' "$_ERRF"; then
+    echo "  ✅ DENY (too deep): $desc"
+    pass=$((pass + 1))
+  else
+    echo "  ❌ DEPTH DENY EXPECTED but got exit $rc: $desc" >&2
+    fail=$((fail + 1))
+  fi
+}
+
 # Expect the gate to ALLOW (exit 0 + empty stdout — no permissionDecision JSON).
 test_allow() {
   local gate="$1" desc="$2" payload="$3" envvar="${4:-}"

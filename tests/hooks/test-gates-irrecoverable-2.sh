@@ -575,6 +575,12 @@ test_deny "$TASK_COMPLETE" "GH #155 gap: agent_id present but an empty string st
   "$(taskupdate_payload_forced_id completed mh:build-error-resolver '')"
 test_deny "$TASK_COMPLETE" "GH #155 gap: agent_id present but JSON null still denied" \
   "$(taskupdate_payload_forced_id completed mh:build-error-resolver '__NULL__')"
+# JSON depth: an extra key nested past the decoder's limit raises RecursionError. The main-session
+# payload would otherwise be allowed, so only the fail-closed depth branch can deny it.
+test_deny_deep "$TASK_COMPLETE" "JSON depth 1e6, main-session TaskUpdate(completed): fails closed" \
+  "$(taskupdate_payload completed '' | deepen 1000000)"
+test_allow "$TASK_COMPLETE" "JSON depth 500, main-session TaskUpdate(completed): still parses and allows" \
+  "$(taskupdate_payload completed '' | deepen 500)"
 
 echo ""
 echo "=== nested-spawn deny (irrecoverable.py: a subagent may not spawn a nested claude session via Bash) ==="
@@ -925,6 +931,14 @@ test_allow "$SUBAGENT_SPAWN_GUARD" "valid JSON but non-object payload (fail-safe
 # of being parsed and denied normally.
 test_deny "$SUBAGENT_SPAWN_GUARD" "GH #156: 5000-digit unquoted agent_id parses and denies, doesn't fail-open past the int-digit limit" \
   "$(printf '{"tool_name":"Agent","tool_input":{"prompt":"x","description":"y","subagent_type":"general-purpose"},"agent_id":%s}' "$(python3 -c "print('9'*5000)")")"
+# JSON depth: an extra key nested past the decoder's limit raises RecursionError, which the old
+# broad except allowed. The main-session row would otherwise be allowed, so only the depth branch denies it.
+test_deny_deep "$SUBAGENT_SPAWN_GUARD" "JSON depth 1e6, main-session Agent: fails closed" \
+  "$(agent_payload 'general-purpose' '' '' | deepen 1000000)"
+test_deny_deep "$SUBAGENT_SPAWN_GUARD" "JSON depth 1e6, subagent Agent: fails closed" \
+  "$(agent_payload 'general-purpose' 'agent-1' '' | deepen 1000000)"
+test_allow "$SUBAGENT_SPAWN_GUARD" "JSON depth 500, main-session Agent: still parses and allows" \
+  "$(agent_payload 'general-purpose' '' '' | deepen 500)"
 
 echo ""
 echo "=== routine-trigger-guard (ADR 0004 §4/§5 item 6: nothing gated RemoteTrigger before this) ==="
@@ -964,6 +978,11 @@ test_allow "$ROUTINE_TRIGGER_GUARD" "malformed stdin (fail-safe allow)" \
   '{"tool_name": invalid'
 test_allow "$ROUTINE_TRIGGER_GUARD" "valid JSON but non-object payload (fail-safe allow)" \
   '["RemoteTrigger"]'
+# JSON depth: action=list would be allowed, so only the depth branch can ask on it.
+test_ask "$ROUTINE_TRIGGER_GUARD" "JSON depth 1e6, RemoteTrigger action=list: asks (cannot be checked)" \
+  "$(routine_trigger_payload 'RemoteTrigger' 'list' | deepen 1000000)"
+test_allow "$ROUTINE_TRIGGER_GUARD" "JSON depth 500, RemoteTrigger action=list: still parses and allows" \
+  "$(routine_trigger_payload 'RemoteTrigger' 'list' | deepen 500)"
 
 # Missing-sibling .py (corrupted/partial plugin install), mirroring the
 # irrecoverable.py case below but expecting this gate's own documented

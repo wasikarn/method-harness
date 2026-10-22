@@ -32,7 +32,7 @@ fi
 
 _py="$(dirname "$0")/task-complete-separation.py"
 if [ ! -r "$_py" ]; then
-  echo "[mh:gate] internal error: sibling script task-complete-separation.py missing or unreadable — allowing (fail-safe = allow, same posture as this gate's own parse-error path)" >&2
+  echo "[mh:gate] internal error: sibling script task-complete-separation.py missing or unreadable — allowing (fail-safe = allow, same posture as this gate's ordinary parse-error path)" >&2
   exit 0
 fi
 

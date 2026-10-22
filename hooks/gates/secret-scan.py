@@ -141,7 +141,12 @@ def build_reason(path, hits):
 
 
 try:
-    d = json.load(sys.stdin)
+    try:
+        d = json.load(sys.stdin)
+    except (RecursionError, MemoryError):
+        # Depth overflow: the payload cannot be checked, so ask. Other parse errors still allow below.
+        emit_ask("secret-scan: payload nested too deep to parse, so this write was not checked; approve only if expected.", None, None)
+        sys.exit(0)
     tool = d.get("tool_name")
     ti = d.get("tool_input")
     session_id = d.get("session_id")
