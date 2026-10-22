@@ -48,6 +48,10 @@ stdout — never reaches Phase 3's report); 2 = NEEDS-DECISION escalation.
 import json
 import re
 import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "scripts", "_lib"))
+from verdict_json import CITATION_RE, mask_json_spans, extract_object, extract_valid_candidates  # noqa: E402
 
 CONTRACT_VERSION = 1
 REQUIRED_KEYS = {"contract_version", "requirements", "gauntlet", "scope_ok", "unexpected_files"}
@@ -55,65 +59,6 @@ REQUIREMENT_KEYS = {"id", "verdict", "note", "accepted"}
 GAUNTLET_KEYS = {"command", "sha", "exit_code", "output_tail"}
 VERDICTS = {"CONFORMS", "DEVIATED", "MISSING", "UNVERIFIABLE"}
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
-# Mirrors skills/workflow/idea-audit/scripts/check-citations.py's CITATION_RE
-# exactly (M3, harness gap-audit 2026-09-20) -- one regex, not worth a
-# cross-skill-directory import for (it would couple the two skills' install
-# layouts). KEEP THIS IN SYNC with that file's CITATION_RE by
-# hand -- a compliance-audit follow-up (2026-09-20) found this copy had
-# drifted stale after idea-audit's own numeric-ratio fix (LOW batch) added
-# the letter-requiring lookahead here but not there.
-# tests/skills/test-check-verdict-drift.sh now fails on a re-drift, and on drift
-# in the three helpers this file shares with the other two check-verdict.py copies.
-CITATION_RE = re.compile(r"`[^`]+`|(?=[^\s:`]*[A-Za-z])[^\s:`]*[./][^\s:`]*:\d+")
-
-
-def mask_json_spans(text):
-    """Replace every substring that parses as a JSON value with spaces, same
-    length. Mirrors mh:deep-audit's scripts/check-verdict.py's identical
-    function: a NEEDS-DECISION match found only inside an otherwise-valid
-    verdict's own `note` field (e.g. citing this repo's escape hatch by name)
-    isn't mistaken for a real escalation. Found by mh:deep-audit 2026-09-19."""
-    dec = json.JSONDecoder()
-    masked = list(text)
-    i = text.find("{")
-    while i != -1:
-        try:
-            _, end = dec.raw_decode(text, i)
-        except ValueError:
-            i = text.find("{", i + 1)
-            continue
-        for j in range(i, end):
-            masked[j] = " "
-        i = text.find("{", end)
-    return "".join(masked)
-
-
-def extract_object(text):
-    dec = json.JSONDecoder()
-    i = text.find("{")
-    while i != -1:
-        try:
-            obj, _ = dec.raw_decode(text, i)
-            return obj
-        except ValueError:
-            i = text.find("{", i + 1)
-    return None
-
-
-def extract_valid_candidates(text):
-    dec = json.JSONDecoder()
-    seen = {}
-    i = text.find("{")
-    while i != -1:
-        try:
-            obj, _ = dec.raw_decode(text, i)
-        except ValueError:
-            i = text.find("{", i + 1)
-            continue
-        if isinstance(obj, dict) and validate(obj)[0]:
-            seen[json.dumps(obj, sort_keys=True)] = obj
-        i = text.find("{", i + 1)
-    return list(seen.values())
 
 
 def validate(obj):
@@ -220,7 +165,7 @@ def main():
         print(match.group(0).strip())
         print("check-verdict: escalation (NEEDS-DECISION), not a malformed verdict", file=sys.stderr)
         return 2
-    candidates = extract_valid_candidates(text)
+    candidates = extract_valid_candidates(text, validate)
     if len(candidates) == 1:
         result = dict(candidates[0])
         if expected_sha is not None and not sha_matches(result["gauntlet"]["sha"], expected_sha):

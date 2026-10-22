@@ -52,8 +52,21 @@ def _validated(item_id, s):
     return s
 
 
+def _no_dup(pairs):
+    # json keeps the last of two equal keys silently; a repeated idea ID would drop a score.
+    keys = [k for k, _ in pairs]
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    if dup:
+        _die(f"duplicate key(s): {dup}")
+    return dict(pairs)
+
+
 def rank(payload):
-    scores = payload["scores"]
+    if not isinstance(payload, dict):
+        _die(f"payload must be an object, not {type(payload).__name__}")
+    scores = payload.get("scores")
+    if not isinstance(scores, dict) or not all(isinstance(s, dict) for s in scores.values()):
+        _die("'scores' must be an object of per-idea objects")
     for i, s in scores.items():
         _validated(i, s)
     # 2026-09-21 deep-audit: same fail-closed class as _validated() -- int()
@@ -162,5 +175,5 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         _selftest()
     else:
-        json.dump(rank(json.load(sys.stdin)), sys.stdout, indent=2)
+        json.dump(rank(json.load(sys.stdin, object_pairs_hook=_no_dup)), sys.stdout, indent=2)
         print()
