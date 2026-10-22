@@ -581,6 +581,8 @@ test_deny_deep "$TASK_COMPLETE" "JSON depth 1e6, main-session TaskUpdate(complet
   "$(taskupdate_payload completed '' | deepen 1000000)"
 test_allow "$TASK_COMPLETE" "JSON depth 500, main-session TaskUpdate(completed): still parses and allows" \
   "$(taskupdate_payload completed '' | deepen 500)"
+GATE_RUNNER=memerr test_deny_deep "$TASK_COMPLETE" "json.load MemoryError, main-session TaskUpdate(completed): fails closed" \
+  "$(taskupdate_payload completed '')"
 
 echo ""
 echo "=== nested-spawn deny (irrecoverable.py: a subagent may not spawn a nested claude session via Bash) ==="
@@ -939,6 +941,8 @@ test_deny_deep "$SUBAGENT_SPAWN_GUARD" "JSON depth 1e6, subagent Agent: fails cl
   "$(agent_payload 'general-purpose' 'agent-1' '' | deepen 1000000)"
 test_allow "$SUBAGENT_SPAWN_GUARD" "JSON depth 500, main-session Agent: still parses and allows" \
   "$(agent_payload 'general-purpose' '' '' | deepen 500)"
+GATE_RUNNER=memerr test_deny_deep "$SUBAGENT_SPAWN_GUARD" "json.load MemoryError, main-session Agent: fails closed" \
+  "$(agent_payload 'general-purpose' '' '')"
 
 echo ""
 echo "=== routine-trigger-guard (ADR 0004 §4/§5 item 6: nothing gated RemoteTrigger before this) ==="
@@ -983,6 +987,8 @@ test_ask "$ROUTINE_TRIGGER_GUARD" "JSON depth 1e6, RemoteTrigger action=list: as
   "$(routine_trigger_payload 'RemoteTrigger' 'list' | deepen 1000000)"
 test_allow "$ROUTINE_TRIGGER_GUARD" "JSON depth 500, RemoteTrigger action=list: still parses and allows" \
   "$(routine_trigger_payload 'RemoteTrigger' 'list' | deepen 500)"
+GATE_RUNNER=memerr test_ask "$ROUTINE_TRIGGER_GUARD" "json.load MemoryError, RemoteTrigger action=list: asks (cannot be checked)" \
+  "$(routine_trigger_payload 'RemoteTrigger' 'list')"
 
 # Missing-sibling .py (corrupted/partial plugin install), mirroring the
 # irrecoverable.py case below but expecting this gate's own documented
