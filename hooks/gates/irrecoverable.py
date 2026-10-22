@@ -1900,6 +1900,76 @@ def _opaque_var(argv0, rest):
     name = rest[0] if argv0 == "$" and rest else argv0[1:] if argv0.startswith("$") else ""
     return bool(_VAR_NAME_RE.fullmatch(name)) and name not in _ASSIGNED_NAMES
 
+# 2026-10-23: `gh api` write detection, so settings.json can drop its blanket Bash(gh api *) ask and
+# reads stop prompting. gh follows pflag: a value-taking short flag takes the rest of its cluster
+# (-XPUT, -iXPUT, -X=PUT) or the next word, and the last -X/--method wins. With no method gh sends
+# GET, or POST once a field or --input is given. graphql is always a POST, so it is judged by its
+# query text instead; a query read from a file is unseen and counts as a write.
+_GH_API_SHORT_VALUE = set("XfFHpqt")
+_GH_API_LONG_VALUE = {"--method", "--field", "--raw-field", "--header", "--preview", "--jq",
+                      "--template", "--input", "--hostname", "--cache"}
+# T2 writes (CLAUDE.md Risk tiers): comments and labels on one issue or PR, which a follow-up undoes.
+_GH_API_T2_RE = re.compile(r"/?repos/[^/]+/[^/]+/(issues/\d+/(comments|labels)|pulls/\d+/comments(/\d+/replies)?)")
+
+def _gh_api_write(args):
+    method, fields, has_input, endpoint = None, [], False, None
+    i = 0
+    while i < len(args):
+        t = args[i]
+        if t.startswith("--"):
+            name, eq, val = t.partition("=")
+            if name in _GH_API_LONG_VALUE:
+                if not eq:
+                    i += 1
+                    val = args[i] if i < len(args) else ""
+                if name == "--method":
+                    method = val
+                elif name in ("--field", "--raw-field"):
+                    fields.append(val)
+                elif name == "--input":
+                    has_input = True
+                elif name == "--header" and "method-override" in val.lower():
+                    has_input = True
+        elif t.startswith("-") and len(t) > 1:
+            for j, ch in enumerate(t[1:], 1):
+                if ch in _GH_API_SHORT_VALUE:
+                    val = t[j + 1:]
+                    if val.startswith("="):
+                        val = val[1:]
+                    elif not val:
+                        i += 1
+                        val = args[i] if i < len(args) else ""
+                    if ch == "X":
+                        method = val
+                    elif ch in "fF":
+                        fields.append(val)
+                    elif ch == "H" and "method-override" in val.lower():
+                        has_input = True  # an override header turns a GET into a write
+                    break
+        elif endpoint is None:
+            endpoint = t
+        i += 1
+    if endpoint == "graphql":
+        # A read is a query the gate can see: text starting with "query" or "{". A $(...) or variable
+        # arrives empty (its placeholder is stripped), and a file (@path) is unseen: both count as writes.
+        queries = [f.split("=", 1)[1].strip() for f in fields if f.split("=", 1)[0] == "query" and "=" in f]
+        return has_input or not queries or any(
+            not q.lower().startswith(("query", "{")) or "mutation" in q.lower() for q in queries)
+    if method is not None:
+        write = method.upper() not in ("GET", "HEAD")
+    else:
+        write = bool(fields) or has_input
+    return write and not (method in (None, "POST", "post") and endpoint and _GH_API_T2_RE.fullmatch(endpoint))
+
+# Built-in gh subcommands and help topics (gh 2.x, `gh --help`). Anything else is an alias or an
+# extension, either of which can run `gh api` out of sight.
+_GH_BUILTINS = {"accessibility", "actions", "agent-task", "alias", "api", "attestation", "auth", "browse",
+                "cache", "codespace", "completion", "config", "copilot", "discussion", "environment",
+                "exit-codes", "extension", "formatting", "gist", "gpg-key", "help", "issue", "label",
+                "licenses", "mintty", "org", "pr", "preview", "project", "reference", "release", "repo",
+                "ruleset", "run", "search", "secret", "skill", "ssh-key", "status", "telemetry",
+                "variable", "version", "workflow"}
+
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 def _check_window(_wi, w):
     global _cur_depth
@@ -2084,6 +2154,14 @@ def _check_window(_wi, w):
             if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
+        else:
+            # gh only as the command xargs runs (past its flags and their values), since "gh" is also a
+            # common grep pattern: `xargs grep -l gh src` must not read as gh.
+            j = 0
+            while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
+                j += 2 if rest[j].replace(PH, "") in ("-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a") else 1
+            if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
+                argv0, rest = "gh", rest[j + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
         # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
         # inner command so the SQL check fires on a containerized client.
@@ -2378,6 +2456,16 @@ def _check_window(_wi, w):
                 ask("gh api .../merge calls the GitHub merge endpoint directly — the "
                     "PR-review flow (docs/reference/branching-model.md) expects a human to "
                     "do this. Confirm this is intentional.", rule="gh-api-merge")
+            if gh_scan[0] == "api" and _gh_api_write(gh_scan[1:]):
+                ask("gh api would write to GitHub (a non-GET method, a field or --input, or a graphql "
+                    "mutation) — a T3 change by CLAUDE.md's Risk tiers unless it is an issue/PR comment "
+                    "or label. Confirm this is intentional.", rule="gh-api-write")
+            # Only a "gh <sub>" written in the command: the KNOWN_DANGEROUS splice duplication and the
+            # views put a candidate "gh" before any word ("rm${IFS}-rf build" yields "gh build").
+            if (re.fullmatch(r"[a-z][a-z0-9-]*", gh_scan[0]) and gh_scan[0] not in _GH_BUILTINS
+                    and re.search(r"(?<![\w./-])gh\s+" + re.escape(gh_scan[0]) + r"(?![\w-])", cmd)):
+                ask(f"gh {gh_scan[0]} is not a built-in gh command — an alias or extension can run "
+                    "gh api out of sight. Confirm what it runs.", rule="gh-unknown-subcommand")
 
         if argv0 == "dd" and any(t.replace(PH, "").startswith("of=/dev/") for t in rest):
             deny("dd writing to a raw device — irrecoverable disk-level destruction", rule="dd-device")
