@@ -81,6 +81,17 @@ case "$SUFFIX" in
 esac
 
 MARKER="$BASE/${SESSION_ID}.${SUFFIX}"
+
+# Disarm the pointer too once this generation is done: a leftover
+# <sid>.current keeps the readdir gate open, so every later Write/Edit paid a
+# python parse (11 ms -> 72 ms). Under the arm lock, and only if the pointer
+# still names this generation (a fresh arm may have replaced it).
+drop_pointer() {
+  fragments_lock_acquire "$BASE/$SESSION_ID.lock" || return 0
+  [ -f "$POINTER" ] && [ ! -L "$POINTER" ] && [ "$(head -c 64 -- "$POINTER" 2>/dev/null)" = "$SUFFIX" ] \
+    && rm -f "$POINTER" 2>/dev/null
+  fragments_lock_release "$BASE/$SESSION_ID.lock"
+}
 [ -d "$MARKER" ] && [ ! -L "$MARKER" ] || { dbg "marker dir missing for suffix $SUFFIX"; exit 0; }
 
 # Window-expiry sweep, scoped to exactly the one generation the pointer
@@ -96,6 +107,7 @@ if [ "$AGE" -gt 1800 ]; then
   dbg "arm window expired (age=${AGE}s > 1800s), sweeping"
   rmdir "$MARKER" 2>/dev/null
   rm -f "${MARKER}.candidate" 2>/dev/null
+  drop_pointer
   exit 0
 fi
 
@@ -277,5 +289,6 @@ fi
 dbg "captured $DEST"
 rm -f "${MARKER}.candidate" 2>/dev/null
 rmdir "$CLAIMED" 2>/dev/null
+drop_pointer
 
 exit 0

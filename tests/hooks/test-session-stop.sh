@@ -757,6 +757,8 @@ while (( i < ${#args[@]} )); do
   fi
   if [[ "$a" == "$TRANSCRIPT_UNDER_TEST" ]]; then
     echo "hit" >> "$jq_log"
+  elif [[ -n "${SUB_UNDER_TEST:-}" && "$a" == "$SUB_UNDER_TEST" ]]; then
+    echo "sub" >> "$jq_log"
   fi
   i=$((i+1))
 done
@@ -774,11 +776,15 @@ mkdir -p "$sess_dir/passcount/subagents"
 make_transcript_line claude-sonnet-5 10 5 > "$sess_dir/passcount/subagents/agent-aaa.jsonl"
 printf '{"agentType":"general-purpose","toolUseId":"t1","spawnDepth":1}' > "$sess_dir/passcount/subagents/agent-aaa.meta.json"
 payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "passcount"}))' "$transcript")
-printf '%s' "$payload" | TRANSCRIPT_UNDER_TEST="$transcript" PATH="$jq_shim_dir:$PATH" HOME="$fake_home" bash "$COST_TRACKER" >/dev/null 2>&1
+printf '%s' "$payload" | TRANSCRIPT_UNDER_TEST="$transcript" SUB_UNDER_TEST="$sess_dir/passcount/subagents/agent-aaa.jsonl" PATH="$jq_shim_dir:$PATH" HOME="$fake_home" bash "$COST_TRACKER" >/dev/null 2>&1
 rc=$?
-hits=$(wc -l < "$jq_log" | tr -d ' ')
+hits=$(/usr/bin/grep -c '^hit$' "$jq_log")
+sub_hits=$(/usr/bin/grep -c '^sub$' "$jq_log")
 [[ "$rc" == "0" && "$hits" == "1" ]] && ok=1 || ok=0
 assert "cost-tracker.sh scans the main transcript with jq exactly once per Stop call (was 3-5x before the single-pass consolidation)" "$ok"
+# 2026-10-22 lane-3 fold: usage rows and codex tallies come from one jq read of each subagent file (was 2).
+[[ "$rc" == "0" && "$sub_hits" == "1" ]] && ok=1 || ok=0
+assert "cost-tracker.sh reads each subagent transcript with jq exactly once per Stop call (got $sub_hits)" "$ok"
 trash "$fake_home" "$sess_dir" "$jq_shim_dir" "$jq_log" 2>/dev/null || true
 
 # Regression risk specific to the single-scan refactor: codex tool_use tallies

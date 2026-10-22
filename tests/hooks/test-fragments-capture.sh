@@ -357,5 +357,39 @@ else
   bad "raw-NUL session_id splice not closed: rec='$REC' still_armed='$STILL_ARMED'"
 fi
 
+# --- a successful capture also removes this session's .current pointer, so the
+# next Write/Edit exits at the readdir gate without spawning python (a leftover
+# pointer kept the gate open: 11 ms -> 72 ms per Write/Edit, 2026-10-22) ---
+T=$(fresh_tmpdir)
+REPO=$(fresh_repo)
+arm "c12" "$T" "$REPO" "$REPO/frags.md"
+printf '# Title\nfrag one\n' > "$REPO/frags.md"
+capture "c12" "$T" "$REPO" Write "$REPO/frags.md" '# Title\\nfrag one\\n' >/dev/null 2>"$T/err"
+PY_SHIM="$T/pyshim"; mkdir -p "$PY_SHIM"
+printf '#!/bin/sh\necho spawn >> "%s/py.log"\nexec "%s" "$@"\n' "$T" "$(command -v python3)" > "$PY_SHIM/python3"
+chmod +x "$PY_SHIM/python3"
+printf '{"session_id":"c12","cwd":"%s","tool_name":"Write","tool_input":{"file_path":"%s/other.md","content":"x"}}' "$REPO" "$REPO" \
+  | PATH="$PY_SHIM:$PATH" HOME="$FAKE_HOME" TMPDIR="$T" bash "$HOOK" >/dev/null 2>&1
+if [ ! -e "$T/mh-fragments-arm/c12.current" ] && [ ! -e "$T/py.log" ]; then
+  ok "a successful capture removes the .current pointer; the next Write spawns no python"
+else
+  bad "pointer left or python spawned: current=$(ls "$T/mh-fragments-arm" 2>/dev/null | tr '\n' ' ') py=$(cat "$T/py.log" 2>/dev/null | wc -l)"
+fi
+
+# --- an expired arm window also removes the .current pointer ---
+T=$(fresh_tmpdir)
+REPO=$(fresh_repo)
+arm "c13" "$T" "$REPO" "$REPO/frags.md"
+for m in "$T/mh-fragments-arm"/c13.*; do
+  case "$m" in *.current|*.candidate) ;; *) touch -t 200001010000 "$m" ;; esac
+done
+printf '# Title\nfrag one\n' > "$REPO/frags.md"
+capture "c13" "$T" "$REPO" Write "$REPO/frags.md" '# Title\\nfrag one\\n' >/dev/null 2>"$T/err"
+if [ ! -e "$T/mh-fragments-arm/c13.current" ] && [ -z "$(ls -A "$T/mh-fragments-arm" 2>/dev/null)" ]; then
+  ok "an expired arm window sweeps the marker and the .current pointer"
+else
+  bad "expiry left entries: $(ls -A "$T/mh-fragments-arm" 2>/dev/null | tr '\n' ' ')"
+fi
+
 echo "hooks/fragments-capture: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

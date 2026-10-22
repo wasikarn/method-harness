@@ -69,7 +69,7 @@ sonnet_rate='{"i":2.0,"o":10.0,"cw":2.50,"cw1h":4.00,"cr":0.20}'
 # Missing/unreadable meta.json then falls back to "unknown" rather than dropping
 # the row — a type gap shouldn't cost the spend data. The orchestrator's own
 # transcript has no such sibling, so it's never passed as a subagent file;
-# emit_rows treats a file absent from the map as agent_type:null.
+# the subagent jq read treats a file absent from the map as agent_type:null.
 # Each map value is {t: <agent_type>}.
 #
 # parent_map/vmap are now passed in pre-computed (2026-09-22 single-scan perf
@@ -85,7 +85,7 @@ sonnet_rate='{"i":2.0,"o":10.0,"cw":2.50,"cw1h":4.00,"cr":0.20}'
 # one-line string, else "". A "" line (no meta, an unreadable one, any other shape) takes the
 # per-file path below, so every type is the one that path would give. The second builds the map.
 # ponytail: the second call takes 3 args per file (~400 bytes), so macOS ARG_MAX (1 MB) is near
-# 2,000 subagents (the max seen is 193; raw_records' --argjson typemap has the same ceiling). Past
+# 2,000 subagents (the max seen is 193; the subagent read's --argjson typemap has the same ceiling). Past
 # it the map falls back to {} (agent_type null); feed the triples on stdin if that ever happens.
 build_type_map() {
   local parent_map="$1" vmap="$2" f meta t tu id i=0 rf=() fast types=() args=(); shift 2
@@ -149,7 +149,7 @@ build_type_map() {
 # when subagents existed; folded into scan_transcript's single pass below
 # (2026-09-22), same $ids-glob + jq filter, unchanged semantics.
 
-# emit_rows <stream-label> <type-map-json> <transcript-file>...
+# Usage rows (the subagent jq read and scan_transcript, then group_and_price).
 # Aggregates every named JSONL transcript into one priced row per (model, agent_type)
 # pair, tagged with the stream it came from. Reads files un-slurped (`-nR` + `inputs`,
 # not `-Rs`) so `input_filename` can key into the type map per line — a whole
@@ -173,7 +173,7 @@ build_type_map() {
 # (last == max on 100% of differing ids). The LAST line per (file, message.id) is
 # kept, so `turns` = API responses; lines with no id (old transcripts) still count
 # per line. Rows carry `dedup_usage: true` + `usage_pick: "last"` from then on.
-# raw_records <typemap-json> <file>...
+# Record extraction (the subagent jq read):
 # Extracts + dedups per-API-response usage records (one per (file, message.id),
 # last-line-wins — see emit_rows' original 2026-09-04 comment, unchanged) from
 # one or more transcript files. Stops BEFORE grouping/pricing so the orchestrator
@@ -267,7 +267,7 @@ adv_seen='[]'
 
 # usage_rec($t; $f): one executor usage record from an assistant line, the
 # iterations-aware cw/cw1h split described above. One definition for both
-# readers: raw_records (subagent files, $t from the type map) and
+# readers: the subagent jq read (subagent files, $t from the type map) and
 # scan_transcript (main transcript, $t null). A past fix had to edit two copies.
 usage_def='def usage_rec($t; $f):
   (.message.usage.iterations // []) as $its
@@ -295,30 +295,11 @@ jq_failed_row() {
       error: "jq_failed", files: $files}' 2>/dev/null
 }
 
-raw_records() {
-  local typemap="$1"; shift
-  jq -nRc --argjson typemap "$typemap" --argjson seen "$adv_seen" "$adv_def$usage_def"'
-    ($seen | map({(.): true}) | add // {}) as $s
-    | [ inputs | try fromjson |
-      select(.type == "assistant") |
-      select((.message // {}).usage != null) |
-      select((.message.model // "") | ascii_downcase | test("^claude")) |
-      adv_recs($typemap[input_filename].t // null; input_filename),
-      usage_rec($typemap[input_filename].t // null; input_filename) ]
-    | reduce .[] as $x ({byid: {}, out: []};
-        if $x.id == null then .out += [$x]
-        elif $x.adv then .byid[$x.id] = $x
-        else .byid[$x.f + "\u0000" + $x.id] = $x end)
-    | .out + (.byid | [.[]])
-    | map(select(.adv != true or ($s[.id // ""] | not)))
-  ' "$@"
-}
-
 # group_and_price <typemap-json> <stream> <records-json>
 # Groups already-extracted records by (model, agent_type), attaches each
 # group's verify-window tokens from typemap, and prices each row. Pure jq over
-# already-in-memory JSON — no file I/O — so both the subagent path (via
-# emit_rows below, still file-scanning) and the orchestrator path (via
+# already-in-memory JSON — no file I/O — so both the subagent path (the one
+# jq read of the subagent files below) and the orchestrator path (via
 # scan_transcript, pre-scanned) share this one pricing implementation.
 group_and_price() {
   local typemap="$1" stream="$2" records="$3"
@@ -351,7 +332,7 @@ group_and_price() {
       # happens to equal 2x that branch own i (the page states this as the
       # general 1h-write multiplier), a cross-check, not the source of the
       # numbers -- cr on the fable/mythos branches is the proof a flat
-      # multiplier cannot always be assumed instead of read. (raw_records/
+      # multiplier cannot always be assumed instead of read. (the subagent read/
       # scan_transcript above now read the Messages API usage objects own
       # cache_creation breakdown to tell 5m from 1h; cache_creation_input_tokens
       # alone never could.)
@@ -407,38 +388,6 @@ group_and_price() {
   ' 2>/dev/null
 }
 
-# emit_rows <stream-label> <type-map-json> <transcript-file>...
-# Thin wrapper: raw_records (file I/O + jq_failed sentinel handling, unchanged
-# from before the 2026-09-22 split) -> group_and_price (pure, no file I/O).
-# Still used for the subagent stream, which has no pre-scanned equivalent to
-# scan_transcript below (subagent transcripts are typically small; only the
-# main transcript — read via scan_transcript — was the measured hotspot).
-emit_rows() {
-  local stream="$1" typemap="$2"; shift 2
-  (( $# )) || return 0
-  local records jq_err jq_rc
-  jq_err=$(mktemp 2>/dev/null) || jq_err=/dev/null
-  records=$(raw_records "$typemap" "$@" 2>"$jq_err")
-  jq_rc=$?
-  if [[ $jq_rc -ne 0 ]]; then
-    # A real jq failure (malformed transcript shape jq's own `try fromjson`
-    # can't catch -- e.g. .message.usage indexed on a non-object -- or any
-    # other runtime error) produced the exact same empty result as the
-    # documented legitimate case (a session with no claude-model turns at
-    # all). Distinguish them: emit a sentinel row instead of silently
-    # reading as zero spend, so mh:cost-report can surface the gap rather
-    # than a misleading "no spend that turn."
-    echo "[mh:cost-tracker] emit_rows($stream): jq failed rc=$jq_rc on: $*" >&2
-    cat "$jq_err" >&2 2>/dev/null
-    rm -f "$jq_err" 2>/dev/null
-    jq_failed_row "$stream" "$*"
-    return 0
-  fi
-  rm -f "$jq_err" 2>/dev/null
-  group_and_price "$typemap" "$stream" "$records"
-}
-
-# scan_transcript <transcript-file>
 # Single jq pass over the main transcript, replacing what used to be 3-5
 # separate full-file jq scans per Stop call (build_verify_map for the
 # orchestrator typemap, build_type_map's own parent_map extraction PLUS its
@@ -502,7 +451,7 @@ scan_transcript() {
             | {(.id): (.input.subagent_type // empty)}] | add // {}
         ) catch {} ),
         usages: ( try (
-          # The same usage_rec def raw_records uses (usage_def, above).
+          # The same usage_rec def the subagent read uses (usage_def, above).
           [ $lines[] |
             select(.type == "assistant") |
             select((.message // {}).usage != null) |
@@ -530,35 +479,6 @@ scan_transcript() {
   ' "$1"
 }
 
-# emit_codex_invocations <transcript-file>...
-# Tallies `/codex:*` Skill and Agent tool_use calls across the given
-# transcripts into one small counts object -- a count, not a cost (Codex
-# exposes no local per-call price). Separate pass from emit_rows: that
-# function only scans .message.usage on claude*-model turns, but a Codex
-# tool_use block lives inside one of those same turns and needs its own scan.
-# Same last-line-per-(file, message.id) dedup as emit_rows -- one API response
-# spans several JSONL lines sharing one message.id (see emit_rows' own
-# 2026-09-04 comment), so a tool_use block on a repeated line would otherwise
-# be counted once per duplicate line, not once per real call.
-emit_codex_invocations() {
-  (( $# )) || return 0
-  local counts
-  counts=$(jq -nRc '
-    [ inputs | try fromjson | select(.type == "assistant") |
-      { c: (.message.content // []), id: (.message.id // null), f: input_filename } ]
-    | reduce .[] as $x ({byid: {}, out: []};
-        if $x.id == null then .out += [$x]
-        else .byid[$x.f + "::" + $x.id] = $x end)
-    | (.out + (.byid | [.[]])) | map(.c[]?) | map(select(.type == "tool_use")) |
-      map(if .name == "Skill" and ((.input.skill // "") | startswith("codex:")) then .input.skill
-          elif .name == "Agent" and ((.input.subagent_type // "") | startswith("codex:")) then .input.subagent_type
-          else empty end)
-    | group_by(.) | map({(.[0]): length}) | add // {}
-  ' "$@" 2>/dev/null) || counts=''
-  [[ -z "$counts" || "$counts" == "{}" ]] && return 0
-  printf '%s' "$counts"
-}
-
 if [[ -n "$transcript" && -f "$transcript" ]]; then
   # Completion marker (#117): re-deriving totals from the transcript on every
   # Stop had no way to tell "already processed this turn" from "new turn" --
@@ -574,8 +494,9 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
   # some unbounded time later, so only the most recent key needs remembering.
   # Sequential duplicates only: this is check-then-write with no lock, and the
   # hook runs async (hooks.json), so two overlapping cost-tracker processes for
-  # one session would both pass the check and both append. No observed case;
-  # add a mkdir lock if one ever shows up.
+  # one session can both pass the check and both append. Observed twice on
+  # 2026-10-06: the duplicate rows were identical and mh:cost-report's dedup
+  # left the report unaffected, so no lock yet; add a mkdir lock if that changes.
   marker_dir="$metrics_dir/.markers"
   mkdir -p "$marker_dir" 2>/dev/null
   # session_id is taken verbatim from the Stop payload with no validation --
@@ -632,16 +553,12 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
     scan_rc=$?
     [[ "$(tsize)" == "$transcript_size" ]] && break
   done
-  verify_map=$(printf '%s' "$scan" | jq -c '.verify_map' 2>/dev/null); [[ -z "$verify_map" ]] && verify_map='{}'
-  parent_map=$(printf '%s' "$scan" | jq -c '.parent_map' 2>/dev/null); [[ -z "$parent_map" ]] && parent_map='{}'
-  main_usages=$(printf '%s' "$scan" | jq -c '.usages' 2>/dev/null)
-  main_codex=$(printf '%s' "$scan" | jq -c '.codex' 2>/dev/null); [[ -z "$main_codex" ]] && main_codex='{}'
+  # Here-string, not `< <(...)`: bash `read` on a pipe is byte-at-a-time, 5x slower.
+  { IFS= read -r verify_map; IFS= read -r parent_map; IFS= read -r main_usages; IFS= read -r main_codex; IFS= read -r orch_typemap; IFS= read -r adv_seen_pre; IFS= read -r usages_is_obj; } <<< "$(printf '%s' "$scan" | jq -c --arg f "$transcript" '.verify_map, .parent_map, .usages, .codex, {($f): {v: ([.verify_map[]?] | add // [])}}, (.usages | if type == "array" then [.[] | select(.adv == true and .id != null) | .id] else [] end), (.usages | type == "object")' 2>/dev/null)"
+  [[ -z "$verify_map" ]] && verify_map='{}'; [[ -z "$parent_map" ]] && parent_map='{}'; [[ -z "$main_codex" ]] && main_codex='{}'; [[ -z "$orch_typemap" ]] && orch_typemap='{}'
 
   # Orchestrator row: every return window in the whole session, so its
   # verify_tokens is the session total handoff-verification cost.
-  orch_typemap=$(printf '%s' "$verify_map" | jq -c --arg f "$transcript" \
-    '{($f): {v: ([.[]] | add // [])}}' 2>/dev/null)
-  [[ -z "$orch_typemap" ]] && orch_typemap='{}'
   # usages resolving to the {__error:true} marker means scan_transcript's own
   # try/catch caught a runtime error extracting usage records (H7 case); a
   # nonzero rc or empty $scan means the whole single-pass call itself failed
@@ -653,7 +570,7 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
   usages_failed=0
   if [[ $scan_rc -ne 0 || -z "$scan" ]]; then
     usages_failed=1
-  elif printf '%s' "$main_usages" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  elif [[ "$usages_is_obj" == true ]]; then
     usages_failed=1
   fi
   if [[ $usages_failed -eq 1 ]]; then
@@ -676,20 +593,50 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
     sub_files=("$sub_dir"/*.jsonl)
     shopt -u nullglob
     if (( ${#sub_files[@]} )); then
-      adv_seen=$(printf '%s' "$main_usages" | jq -c '[.[]? | select(.adv == true and .id != null) | .id]' 2>/dev/null)
+      adv_seen=${adv_seen_pre:-}
       [[ -z "$adv_seen" ]] && adv_seen='[]'
       sub_typemap=$(build_type_map "$parent_map" "$verify_map" "${sub_files[@]}")
-      sub_rows=$(emit_rows subagent "$sub_typemap" "${sub_files[@]}")
+      # One jq read of every subagent file prints two lines: the usage records
+      # and the codex tally. Subagent transcripts are not small (p90 24 MB), so
+      # the old second pass over them (emit_codex_invocations) doubled the cost.
+      both=$(jq -nRc --argjson typemap "$sub_typemap" --argjson seen "$adv_seen" "$adv_def$usage_def"'
+        ($seen | map({(.): true}) | add // {}) as $s
+        | [ inputs | try fromjson | select(.type == "assistant") | . + {__f: input_filename} ] as $a
+        | ( [ $a[] | select((.message // {}).usage != null)
+              | select((.message.model // "") | ascii_downcase | test("^claude"))
+              | .__f as $f | adv_recs($typemap[$f].t // null; $f), usage_rec($typemap[$f].t // null; $f) ]
+            | reduce .[] as $x ({byid: {}, out: []};
+                if $x.id == null then .out += [$x]
+                elif $x.adv then .byid[$x.id] = $x
+                else .byid[$x.f + "\u0000" + $x.id] = $x end)
+            | .out + (.byid | [.[]])
+            | map(select(.adv != true or ($s[.id // ""] | not))) ),
+          ( try ( [ $a[] | { c: (.message.content // []), id: (.message.id // null), f: .__f } ]
+            | reduce .[] as $x ({byid: {}, out: []};
+                if $x.id == null then .out += [$x] else .byid[$x.f + "::" + $x.id] = $x end)
+            | (.out + (.byid | [.[]])) | map(.c[]?) | map(select(.type == "tool_use")) |
+              map(if .name == "Skill" and ((.input.skill // "") | startswith("codex:")) then .input.skill
+                  elif .name == "Agent" and ((.input.subagent_type // "") | startswith("codex:")) then .input.subagent_type
+                  else empty end)
+            | group_by(.) | map({(.[0]): length}) | add // {} ) catch {} )
+      ' "${sub_files[@]}" 2>/dev/null)
+      both_rc=$?
+      if [[ $both_rc -ne 0 ]]; then
+        echo "[mh:cost-tracker] emit_rows(subagent): jq failed rc=$both_rc on: ${sub_files[*]}" >&2
+        sub_rows=$(jq_failed_row subagent "${sub_files[*]}")
+      else
+        { IFS= read -r sub_records; IFS= read -r sub_codex_pre; } <<< "$both"
+        sub_rows=$(group_and_price "$sub_typemap" subagent "$sub_records")
+      fi
       [[ -n "$sub_rows" ]] && rows="${rows:+$rows$'\n'}$sub_rows"
     fi
   fi
 
   # Codex tally: main transcript's contribution comes from the single scan
-  # above; subagent files (typically small — not the measured hotspot) are
-  # still scanned here. The two are summed per-key, not overwritten — the
+  # above, the subagent files' from the same jq read as their usage rows. The two are summed per-key, not overwritten — the
   # original single combined call effectively did the same summation by
   # tallying tool_use blocks across every file's lines together.
-  sub_codex=$(emit_codex_invocations ${sub_files[@]+"${sub_files[@]}"}); [[ -z "$sub_codex" ]] && sub_codex='{}'
+  sub_codex=${sub_codex_pre:-}; [[ -z "$sub_codex" ]] && sub_codex='{}'
   codex_counts=$(jq -nc --argjson a "$main_codex" --argjson b "$sub_codex" \
     'reduce (($b | keys_unsorted)[]) as $k ($a; .[$k] = ((.[$k] // 0) + $b[$k]))' 2>/dev/null)
   [[ "$codex_counts" == "{}" ]] && codex_counts=''

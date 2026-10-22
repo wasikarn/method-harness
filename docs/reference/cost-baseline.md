@@ -31,7 +31,7 @@ and `post-mortem` carry `disable-model-invocation: true`.
 
 | Hook | Trigger | Bytes when it fires |
 |---|---|---:|
-| `sensors/failure-diagnose-nudge` | a Bash call fails, including one a PreToolUse gate denied before it ran; once per distinct command per session (and per subagent) | 431 |
+| `sensors/failure-diagnose-nudge` | a Bash call fails, including one a PreToolUse gate denied before it ran; once per distinct command per session (and per subagent) | 325 for the first in a session or subagent, 134 after |
 | `session/memory-health-nudge` | memory-lint reports `findings: [1-9]`, or the store's auto-commit failed | ~200 B fixed + the lint output (estimate from source) |
 | `session/fragments-surface` (startup/resume/clear) | fragment files recorded for this project | roughly 400-650 B fixed + one line per file (estimate from source) |
 | `sensors/codex-quota-advisory` | a Codex CLI call is about to run and a usage-limit failure was recorded within the TTL (24 h) | 388 with a 30 B recorded message (measured), so ~358 + message |
@@ -57,6 +57,19 @@ time is roughly the figure minus 30.
 | `sensors/codex-quota-sensor.sh` | 62 |
 
 SessionStart sum, net of overhead: ~155 ms (summed serially; Claude Code may run them in parallel).
+
+### Stop: `stop/cost-tracker.sh` CPU
+
+Children user+sys CPU, median, interleaved A/B (lane 3 measurement, 2026-10-22, simulator
+`ab2.py`: a real transcript cut to N lines plus a real 17 MB `subagents/` directory, scratch HOME).
+Async, so it never blocks the turn; this is machine load, not latency.
+
+| Transcripts | Before (two jq reads per subagent file) | After (one read) |
+|---|---:|---:|
+| 158 MB main + 17 MB subagents | 2,422 ms | 2,108 ms |
+| 14 MB main + 17 MB subagents | 764 ms | 575 ms |
+
+jq spawns per Stop on a 3-subagent fixture: 20 before, 13 after.
 
 ## Method
 

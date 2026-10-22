@@ -43,11 +43,17 @@ CAP = 1
 
 NUDGE = (
     "<mh-failure-diagnose-nudge>\n"
-    "A Bash command just exited non-zero. If you expected that (a red test you just wrote, a "
-    "grep with no match), carry on. Otherwise, before retrying: check MEMORY.md and its "
-    "sub-indexes for a matching prior gotcha, and find the cause before moving on. If the fix "
-    "is a durable, non-obvious lesson, record it with mh:learn or a memory file directly -- "
-    "never a separate log/store.\n"
+    "Bash exited non-zero. Expected (a red test, a grep with no match)? Carry on. Otherwise find "
+    "the cause before retrying and check MEMORY.md and its sub-indexes for a prior gotcha. Record "
+    "a durable, non-obvious lesson with mh:learn or a memory file, never a separate log.\n"
+    "</mh-failure-diagnose-nudge>"
+)
+
+# From the second nudge on in one counter scope (session or subagent): the
+# full text is already in context, so a reminder is enough.
+SHORT = (
+    "<mh-failure-diagnose-nudge>\n"
+    "Bash exited non-zero. Expected? Carry on. Otherwise diagnose before retrying.\n"
     "</mh-failure-diagnose-nudge>"
 )
 
@@ -188,6 +194,7 @@ def main(argv):
         return 0
 
     state_path = argv[1] if len(argv) > 1 else default_state_path(data)
+    text = NUDGE
     if state_path is not None:
         sig = signature(extract_command(data))
         with locked(state_path):
@@ -197,12 +204,16 @@ def main(argv):
                 return 0  # capped -- stay silent for this exact command, don't spam
 
             counts[sig] = seen + 1
+            # "_n" counts nudges sent in this scope; signatures are 16 hex chars, so it never collides.
+            if counts.get("_n"):
+                text = SHORT
+            counts["_n"] = counts.get("_n", 0) + 1
             save_counts(state_path, counts)
 
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PostToolUseFailure",
-            "additionalContext": NUDGE,
+            "additionalContext": text,
         }
     }))
     return 0

@@ -38,14 +38,30 @@ command -v git >/dev/null 2>&1 || exit 0
 
 _MEMDIR_RESOLVER="${CLAUDE_PLUGIN_ROOT:-}/scripts/_lib/memory-dir.py"
 [ -r "$_MEMDIR_RESOLVER" ] || exit 0
-MEMDIR="$(python3 "$_MEMDIR_RESOLVER" 2>/dev/null)" || exit 0
+# One python launch for memory dir, enc and ACQUIRE_TS (was three): NUL-separated,
+# loaded by path under -I like hooks/session/memory-health-nudge.sh.
+# Sub-second ACQUIRE_TS matters: two events (a retry after a quick failure, a
+# genuinely concurrent waiter and holder) can land in the same wall-clock
+# second under `date +%s`, which would break the "strictly older" ordering
+# the marker sweep below depends on (BSD `date` has no %N).
+MEMDIR="" ENC="" ACQUIRE_TS=""
+{
+  IFS= read -r -d '' MEMDIR
+  IFS= read -r -d '' ENC
+  IFS= read -r -d '' ACQUIRE_TS
+} < <(python3 -I -c '
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("memory_dir", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sys.stdout.write(m.resolve_memory_dir() + "\0" + m.resolve_enc() + "\0" + repr(time.time()) + "\0")
+' "$_MEMDIR_RESOLVER" 2>/dev/null)
 [ -n "$MEMDIR" ] || exit 0
 
 [ -d "$MEMDIR/.git" ] || exit 0   # not opted in — nothing to do
 
-# After the opt-in check: a store without .git never pays for this second resolver run (GH #379).
-ENC="$(python3 "$_MEMDIR_RESOLVER" --enc 2>/dev/null)" || exit 0
 [ -n "$ENC" ] || exit 0
+[ -n "$ACQUIRE_TS" ] || ACQUIRE_TS="$(date +%s)"
 
 mkdir -p "$HOME/.claude/state" 2>/dev/null
 
@@ -65,14 +81,6 @@ LOCKDIR="$HOME/.claude/state/memory-audit-commit-lock-$ENC"
 LOCK_WAIT_MAX="${MH_MEMORY_LOCK_WAIT_MAX:-10}"                  # seconds, bounded wait before giving up
 LOCK_POLL_INTERVAL="${MH_MEMORY_LOCK_POLL_INTERVAL:-0.2}"
 LOCK_STALE_METADATA_SEC="${MH_MEMORY_LOCK_STALE_METADATA_SEC:-300}"  # only for corrupted/unreadable lock metadata
-
-# Sub-second precision matters: two events (a retry after a quick failure, a
-# genuinely concurrent waiter and holder) can easily land in the same
-# wall-clock second under `date +%s`'s 1-second resolution, which would
-# silently break the "strictly older" ordering the marker sweep below
-# depends on. python3's time.time() gives portable sub-second precision on
-# both macOS and Linux (BSD `date` has no %N).
-ACQUIRE_TS="$(python3 -c 'import time; print(time.time())' 2>/dev/null)" || ACQUIRE_TS="$(date +%s)"
 
 # Read this process's own start time once, for the lock-ownership record.
 # `ps -o lstart=` is available on both macOS and Linux; used to detect PID

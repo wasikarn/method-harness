@@ -22,5 +22,5 @@ fi
 payload=$(cat)
 [[ "$payload" == *codex* ]] || exit 0
 
-python3 "$_py" "$@" <<<"$payload"
+python3 -S "$_py" "$@" <<<"$payload"
 exit 0
