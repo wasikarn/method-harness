@@ -220,6 +220,25 @@ out=$(pretooluse_payload "codex exec 'go'" | bash "$ADVISORY" "$S2")
 if [ -z "$out" ] && [ ! -f "$S2" ]; then ok "a reset time already past clears the record and stays silent"
 else bad "expected silence and a removed record once reset_at has passed, got out='$out' state_exists=$([ -f "$S2" ] && echo yes || echo no)"; fi
 
+# --- the deny needs a real codex invocation; a command that only names the word still just advises ---
+future_state "$S2"
+for cmd in 'git commit -m "fix codex hook"' 'grep codex notes.md' 'echo codex' 'command -v codex'; do
+  out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
+  if echo "$out" | grep -q '"permissionDecision": *"deny"'; then bad "a command that only mentions codex was denied: $cmd"
+  else ok "a known reset does not deny a command that only mentions codex: $cmd"; fi
+done
+for cmd in "cd /tmp && codex exec 'go'" "rtk proxy codex exec 'go'" "FOO=1 codex exec 'go'" "echo hi; codex exec 'go'" "node /p/codex-companion.mjs task go"; do
+  out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
+  if echo "$out" | grep -q '"permissionDecision": *"deny"'; then ok "a known reset still denies a real invocation: $cmd"
+  else bad "expected a deny for a real codex invocation: $cmd, got '$out'"; fi
+done
+
+# --- a reset still ahead outlives the advisory TTL (a weekly limit can be days out) ---
+printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(( $(date +%s) - 90000 ))" "$(( $(date +%s) + 172800 ))" > "$S2"
+out=$(pretooluse_payload "codex exec 'go'" | bash "$ADVISORY" "$S2")
+if echo "$out" | grep -q '"permissionDecision": *"deny"'; then ok "a record older than the TTL still denies while its reset is ahead"
+else bad "expected a deny for an old record with a future reset, got '$out'"; fi
+
 echo
 echo "codex-quota tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
