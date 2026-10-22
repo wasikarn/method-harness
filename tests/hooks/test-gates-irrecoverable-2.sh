@@ -548,6 +548,35 @@ test_allow "$IRRECOVERABLE" "gh pr create (not a merge)"           "$(bash_paylo
 test_allow "$IRRECOVERABLE" "gh api on an unrelated endpoint"      "$(bash_payload 'gh api repos/wasikarn/method-harness/pulls/5')"
 
 echo ""
+echo "=== gh api write ask (2026-10-23: replaces settings.json's blanket Bash(gh api *) ask, so reads stop prompting) ==="
+test_ask   "$IRRECOVERABLE" "gh api -X DELETE a ruleset"            "$(bash_payload 'gh api -X DELETE repos/o/r/rulesets/5')"
+test_ask   "$IRRECOVERABLE" "gh api --method put (lower case) contents" "$(bash_payload 'gh api --method put repos/o/r/contents/f -f message=x')"
+test_ask   "$IRRECOVERABLE" "gh api -XPATCH visibility"             "$(bash_payload 'gh api -XPATCH repos/o/r -f visibility=public')"
+test_ask   "$IRRECOVERABLE" "gh api bundled -iXPUT branch protection" "$(bash_payload 'gh api -iXPUT repos/o/r/branches/main/protection')"
+test_ask   "$IRRECOVERABLE" "gh api -X=PUT"                         "$(bash_payload 'gh api -X=PUT repos/o/r/topics')"
+test_ask   "$IRRECOVERABLE" "gh api --method=POST dispatches"       "$(bash_payload 'gh api --method=POST repos/o/r/dispatches')"
+test_ask   "$IRRECOVERABLE" "gh api -f with no method is a POST (deploy key)" "$(bash_payload 'gh api repos/o/r/keys -f key=ssh-ed25519')"
+test_ask   "$IRRECOVERABLE" "gh api -F with no method is a POST (release)" "$(bash_payload 'gh api -F tag_name=v1 repos/o/r/releases')"
+test_ask   "$IRRECOVERABLE" "gh api --input body is a POST (webhook)" "$(bash_payload 'gh api repos/o/r/hooks --input body.json')"
+test_ask   "$IRRECOVERABLE" "gh api graphql mutation"               "$(bash_payload "gh api graphql -f query='mutation { deleteBranchProtectionRule(input: {}) { clientMutationId } }'")"
+test_ask   "$IRRECOVERABLE" "gh api graphql query read from a file (unseen)" "$(bash_payload 'gh api graphql -F query=@q.graphql')"
+test_ask   "$IRRECOVERABLE" "gh api last -X wins: GET then DELETE"  "$(bash_payload 'gh api -X GET -X DELETE repos/o/r')"
+test_ask   "$IRRECOVERABLE" "gh api method from a variable (unseen)" "$(bash_payload 'gh api -X "$M" repos/o/r')"
+test_ask   "$IRRECOVERABLE" "rtk proxy gh api -X DELETE"            "$(bash_payload 'rtk proxy gh api -X DELETE repos/o/r/git/refs/heads/x')"
+test_ask   "$IRRECOVERABLE" "gh <alias or extension> could wrap gh api" "$(bash_payload 'gh nuke repos/o/r')"
+test_allow "$IRRECOVERABLE" "gh api plain GET"                      "$(bash_payload 'gh api repos/o/r/issues --paginate -q .[].title')"
+test_allow "$IRRECOVERABLE" "gh api -X GET with -f fields is a query" "$(bash_payload 'gh api -X GET search/issues -f q=bug')"
+test_allow "$IRRECOVERABLE" "gh api --method head"                  "$(bash_payload 'gh api --method head repos/o/r')"
+test_allow "$IRRECOVERABLE" "gh api last -X wins: DELETE then GET"  "$(bash_payload 'gh api -X DELETE -X GET repos/o/r')"
+test_allow "$IRRECOVERABLE" "gh api -H value is not a method"       "$(bash_payload "gh api -H 'X-Note: -XPUT' repos/o/r")"
+test_allow "$IRRECOVERABLE" "gh api graphql read query"             "$(bash_payload "gh api graphql -f query='query { viewer { login } }'")"
+test_allow "$IRRECOVERABLE" "gh api issue comment (T2 allowlist)"   "$(bash_payload 'gh api repos/o/r/issues/5/comments -f body=hi')"
+test_allow "$IRRECOVERABLE" "gh api PR review-comment reply (T2 allowlist)" "$(bash_payload 'gh api repos/o/r/pulls/5/comments/9/replies -f body=done')"
+test_allow "$IRRECOVERABLE" "gh api issue labels (T2 allowlist)"    "$(bash_payload "gh api repos/o/r/issues/5/labels -f 'labels[]=bug'")"
+test_allow "$IRRECOVERABLE" "gh issue list (built-in)"              "$(bash_payload 'gh issue list')"
+test_allow "$IRRECOVERABLE" "gh --version"                          "$(bash_payload 'gh --version')"
+
+echo ""
 echo "=== task-complete-separation gate (maker≠checker: subagent cannot self-complete) ==="
 # Maker self-completion is the one thing the harness forbids — a subagent (agent_type present)
 # calling TaskUpdate(completed) is blocked at exit 2.
@@ -1305,6 +1334,7 @@ test_deny "$IRRECOVERABLE" 'GH #255: an abbreviated --forc after HEAD@{0}' \
   "$(bash_payload 'git push origin HEAD@{0} --forc')"
 # Deep-audit 2026-10-01: the ambiguity verb regex is length-bounded (~400 chars of globals), so the
 # parser, which resolves the git sub at any length, also denies a destructive sub next to a brace token.
+_many_c=$(printf -- '-C . %.0s' $(seq 100))  # lost in the d42e54cb split; the two tests below ran with no globals
 _many_cfg=$(printf -- '-c a=b %.0s' $(seq 70))
 test_deny "$IRRECOVERABLE" 'deep-audit 2026-10-01: 100 -C globals before a brace-hidden push flag' \
   "$(bash_payload "git ${_many_c}push {--force,} origin main")"
