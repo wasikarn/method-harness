@@ -1,4 +1,4 @@
 ---
 type: llm
 ---
-Score 1 only if the final message answers the question directly in a few lines with the idiom, and at most one line offers `mh:ideate` for a wider exploration. Score 0 if it brainstorms alternatives, spawns agents, lists frames or clusters, or lectures about the gate.
+Score 1 only if the final message gives the idiom directly: a short code block plus at most a few sentences of explanation. A passing mention or one-line offer of `mh:ideate` is fine. Score 0 if it brainstorms alternatives, lists frames or clusters, spawns agents, or spends more than a couple of sentences explaining the pre-flight gate.
