@@ -76,7 +76,7 @@ Is "done" testable as the plan states it? Does each meaningful change have a sta
 
 ### 8. Operability & Reversibility
 
-**Post-deploy** operational surface: will a production failure of this plan be visible (logs, metrics, an error that surfaces vs. one that silently corrupts data), and is there a rollback or mitigation path if it goes wrong after shipping? Size the gap to the change: a change that `git revert` fully undoes (a copy tweak, a rename) has no rollback gap to report; a schema change, breaking API, or phased rollout with no rollback is blocking.
+**Post-deploy** operational surface: will a production failure of this plan be visible (logs, metrics, an error that surfaces vs. one that silently corrupts data), and is there a rollback or mitigation path if it goes wrong after shipping? Size the gap to the change: a change that `git revert` fully undoes (a copy tweak, a rename) has no rollback gap to report; a schema change, breaking API, or phased rollout with no rollback is blocking. Report every visibility or mitigation gap you find, including low-severity or uncertain ones; the lead ranks by severity and confidence.
 
 ## Output Format
 
