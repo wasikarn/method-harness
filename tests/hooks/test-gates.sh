@@ -26,16 +26,18 @@ ROUTINE_TRIGGER_GUARD="$ROOT/hooks/gates/routine-trigger-guard.sh"
 pass=0
 fail=0
 
-# Build a minimal Bash tool payload. Uses json.dumps (not printf %s) so
-# commands containing quotes/backslashes (e.g. mysql -e "DROP TABLE...",
-# find -exec ... \;) don't produce malformed JSON that silently degrades
-# to an empty command downstream. Piped via stdin, not argv: a GH #140-style
+# Build a minimal Bash tool payload. The command is JSON-encoded by jq (not
+# printf %s) so commands containing quotes/backslashes (e.g. mysql -e "DROP
+# TABLE...", find -exec ... \;) don't produce malformed JSON that silently
+# degrades to an empty command downstream; -a keeps non-ASCII as \uXXXX
+# escapes, as json.dumps did. Piped via stdin, not argv: a GH #140-style
 # oversized command (700k chars) as a literal exec() argument exceeds Linux's
 # MAX_ARG_STRLEN (128 KiB per argument, a hard kernel cap absent on macOS),
-# so python3 itself fails to exec with "Argument list too long" before ever
-# reaching the gate under test -- confirmed live on Ubuntu 24.04. stdin has
-# no such limit, and it also matches how the real hook receives its payload.
-bash_payload() { printf '%s' "$1" | python3 -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.stdin.read()}}))'; }
+# so the tool itself fails to exec with "Argument list too long" before ever
+# reaching the gate under test -- confirmed live on Ubuntu 24.04. jq reads
+# stdin, and the encoded string goes to the printf builtin (no exec), so
+# neither step has that limit. jq starts faster than python3.
+bash_payload() { printf '{"tool_name": "Bash", "tool_input": {"command": %s}}\n' "$(printf '%s' "$1" | jq -Rsa .)"; }
 
 # Build a Write tool payload. Uses json.dumps (see bash_payload above) so
 # content containing quotes/backslashes doesn't produce malformed JSON.
@@ -291,6 +293,19 @@ test_deny  "$IRRECOVERABLE" "SQL DROP TABLE via sqlite3 (H3, was untested)" \
   "$(bash_payload 'sqlite3 db.sqlite "DROP TABLE users"')"
 test_deny  "$IRRECOVERABLE" "SQL TRUNCATE via mariadb (H3, was untested)" \
   "$(bash_payload 'mariadb -e "TRUNCATE orders"')"
+# Rule shapes a mutation run showed no row pinned (each mutant survived the whole file).
+test_deny  "$IRRECOVERABLE" "rm -Rf: the capital-R recursive flag" \
+  "$(bash_payload 'rm -Rf /tmp/test')"
+test_deny  "$IRRECOVERABLE" "find -execdir rm: the -execdir action, not just -exec" \
+  "$(bash_payload 'find /tmp/x -execdir rm {} \;')"
+test_deny  "$IRRECOVERABLE" "git push -uf: a force flag bundled with other short flags" \
+  "$(bash_payload 'git push -uf origin develop')"
+test_deny  "$IRRECOVERABLE" "mysql -e drop table: the SQL verb in lower case" \
+  "$(bash_payload 'mysql -e "drop table users"')"
+test_deny  "$IRRECOVERABLE" "psql -c DROP SCHEMA: a schema drop, not just table/database" \
+  "$(bash_payload 'psql -c "DROP SCHEMA public CASCADE"')"
+test_deny  "$IRRECOVERABLE" "git config core.HooksPath: the hook-bypass key in any case" \
+  "$(bash_payload 'git config core.HooksPath /dev/null')"
 test_deny  "$IRRECOVERABLE" "git add -A (was prose-only)" \
   "$(bash_payload 'git add -A')"
 test_deny  "$IRRECOVERABLE" "git add . (was prose-only)" \
@@ -2560,6 +2575,25 @@ else
   fail=$((fail + 1))
 fi
 rm -f "$_errf"
+# Both gates run their .py through the _run.py import stub: with every sibling present but the stub,
+# irrecoverable fails closed (exit 2) and subagent-git-guard fails open (exit 0), each with its own message.
+MISSRUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/kbg-missrun.XXXXXX")
+cp "$ROOT"/hooks/gates/*.sh "$ROOT"/hooks/gates/*.py "$MISSRUN_DIR"/
+[ -e "$MISSRUN_DIR/_run.py" ] && trash "$MISSRUN_DIR/_run.py"
+_errf="$MISSRUN_DIR/err"
+_out=$(bash_payload 'rm -rf /tmp/x' | bash "$MISSRUN_DIR/irrecoverable.sh" 2>"$_errf"); _rc=$?
+if [ "$_rc" -eq 2 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py missing' "$_errf"; then
+  echo "  ✅ DENY: missing _run.py stub -> irrecoverable fails closed (exit 2) with [mh:gate] message"; pass=$((pass + 1))
+else
+  echo "  ❌ missing _run.py: irrecoverable expected exit 2 + [mh:gate] _run.py message, got rc=$_rc stdout='$_out' stderr: $(cat "$_errf")" >&2; fail=$((fail + 1))
+fi
+_out=$(bash_agent_payload 'git stash' fork | bash "$MISSRUN_DIR/subagent-git-guard.sh" 2>"$_errf"); _rc=$?
+if [ "$_rc" -eq 0 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py missing' "$_errf"; then
+  echo "  ✅ ALLOW: missing _run.py stub -> subagent-git-guard fails open (exit 0) with [mh:gate] message"; pass=$((pass + 1))
+else
+  echo "  ❌ missing _run.py: subagent-git-guard expected exit 0 + [mh:gate] _run.py message, got rc=$_rc stdout='$_out' stderr: $(cat "$_errf")" >&2; fail=$((fail + 1))
+fi
+trash "$MISSRUN_DIR"
 
 # GH #184/#185/#194/#195/#196: fail closed when the command is syntactically ambiguous (nested or
 # mixed substitutions, a quoted ")" inside "$(", a "case" inside "$(", brace tokens, eval of a
@@ -3021,6 +3055,33 @@ _timed_case "GH #309: 20000 nested brace pairs before a force reset are denied i
   "$(python3 -c "print('{' * 20000 + 'x' + '}' * 20000 + '; git reset --hard')")"
 _timed_case "GH #309: 30000 chained brace groups before a hidden reset are denied inside the hook timeout" 2 \
   "$(python3 -c "print('echo ' + '{a,b}' * 30000 + '; git {,\"reset\"} --hard')")"
+# A body that blew the depth budget only in the brace view left the flag set, and the next (ifs-split)
+# view read it as its own blow-out and returned no windows, so an IFS-hidden rm after it was never read.
+for _u in 1000 2000; do
+  test_deny "$IRRECOVERABLE" "a depth-budget flag from the brace view does not empty the next view ($_u-char eval body)" \
+    "$(bash_payload "$(python3 - "$_u" <<'PY'
+import sys
+print("eval '$( " + "a" * int(sys.argv[1]) + "'{1..64} ; rm${IFS}-rf${IFS}/tmp/x", end="")
+PY
+)")"
+done
+# The 50-handover xargs bound was one counter for every reading: the main reading spent 26, so the ifs-split
+# view stopped before it reached the IFS-hidden rm at the end. The bound is per reading.
+test_deny "$IRRECOVERABLE" "26 xargs handovers in the main reading leave the ifs-split view its own 50" \
+  "$(bash_payload "$(python3 - <<'PY'
+print("echo a | xargs env true; " * 26 + "rm${IFS}-rf${IFS}/tmp/x", end="")
+PY
+)")"
+# Stripping leading words one slice at a time copied the rest each step: 75k `!` took 19 s, past the 8 s timeout.
+_quad_tail='rm${IFS}-rf${IFS}/tmp/x a{b} c$d'
+_timed_case "74900 leading ! words before an IFS rm are stripped in linear time" 2 \
+  "$(python3 -c 'import sys; print("! " * 74900 + sys.argv[1], end="")' "$_quad_tail")"
+_timed_case "37450 env wrappers before an IFS rm are unwrapped in linear time" 2 \
+  "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
+# Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
+# four evals took 25 s.
+_timed_case "a 20 KB ! flood under four evals is denied inside the hook timeout" 2 \
+  "$(python3 -c 'import sys; t = sys.argv[1]; print("eval eval eval eval " + "! " * ((20000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail")"
 # Empty alternatives build no new text, so the budget never charged them: 26 groups of {,} made 2^26 empty
 # strings (4.7 s, 1.8 GB), and at 27 the gate ran past the 8 s hook timeout and failed open on the raw reset.
 # 28 groups: the old gate does not finish inside the 10 s timeout (rc 124), so the row is red there on any machine.

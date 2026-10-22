@@ -52,5 +52,10 @@ _no_agent_id() {
 }
 _no_agent_id && exit 0
 
-printf '%s' "$_input" | python3 -S "$_py"  # -S: skip site import (stdlib-only gate)
+_run="${_py%subagent-git-guard.py}_run.py"
+if [ ! -r "$_run" ]; then
+  echo "[mh:gate] internal error: sibling script _run.py missing or unreadable — allowing (fail-safe = allow, same posture as this gate's own parse-error path)" >&2
+  exit 0
+fi
+printf '%s' "$_input" | python3 -S "$_run" subagent-git-guard  # imports the gate so its bytecode comes from __pycache__; -S: skip site import
 exit $?

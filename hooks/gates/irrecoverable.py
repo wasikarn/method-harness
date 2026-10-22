@@ -1568,24 +1568,44 @@ def _scan_body(body):
         deny("a subagent may not spawn a nested Claude Code session via Bash "
              "(claude -p/--print/--agent/--bg/--worktree), inside bash -c / eval either "
              "-- only the main session dispatches")
-    try:
-        # GH #219: "{var}>f" is a redirect in bash 4+/ksh/zsh and a literal word plus a redirect in
-        # macOS sh, bash 3.2 and dash, so a body holding "{" is read both ways and every window checked.
-        for nf in ((True, False, "zsh") if "{" in body else (True,)):
-            for cur, ww in _readings(_tokens(_blanked(body, nf), whitespace_split=True)):
-                if ww:
-                    _queue_words(ww, _cur_depth + 1)
-                if not cur:
-                    continue
-                _WDEPTH[len(windows)] = _cur_depth + 1
-                windows.append(cur)
-                curc = _drop_ph_tokens(cur)
-                if curc != cur:
-                    _WDEPTH[len(windows)] = _cur_depth + 1
-                    windows.append(curc)
-    except ValueError:
+    readings, blown, bad = _body_readings(body)
+    for cur, ww, curc in readings:
+        if ww:
+            _queue_words(ww, _cur_depth + 1)
+        if not cur:
+            continue
+        _WDEPTH[len(windows)] = _cur_depth + 1
+        windows.append(cur)
+        if curc != cur:
+            _WDEPTH[len(windows)] = _cur_depth + 1
+            windows.append(curc)
+    if blown:
+        _DEPTH_BUDGET_BLOWN[0] = True
+    if bad:
         deny("could not safely tokenize the body of a bash -c / eval string - confirm with user first")
     _deny_if_depth_blown()
+
+# The same body comes back from every copy of its window (token and word readings, the "{}" token
+# lists, the views) and again at each eval / sh -c level, so its readings are made once per run. Only
+# the reading is cached; every window is still appended and checked, so each rule, budget and counter
+# runs as before. (readings, depth budget blown, unparsable) -> bad stops the list where _tokens raised.
+_BODY_READINGS = {}
+def _body_readings(body):
+    r = _BODY_READINGS.get(body)
+    if r is None:
+        readings, bad, saved = [], False, _DEPTH_BUDGET_BLOWN[0]
+        _DEPTH_BUDGET_BLOWN[0] = False
+        try:
+            # GH #219: "{var}>f" is a redirect in bash 4+/ksh/zsh and a literal word plus a redirect in
+            # macOS sh, bash 3.2 and dash, so a body holding "{" is read both ways and every window checked.
+            for nf in ((True, False, "zsh") if "{" in body else (True,)):
+                for cur, ww in _readings(_tokens(_blanked(body, nf), whitespace_split=True)):
+                    readings.append((cur, ww, _drop_ph_tokens(cur) if cur else cur))
+        except ValueError:
+            bad = True
+        r = _BODY_READINGS[body] = (readings, _DEPTH_BUDGET_BLOWN[0], bad)
+        _DEPTH_BUDGET_BLOWN[0] = saved or r[1]
+    return r
 
 # Candidate names for placeholder-splice duplication: the exact argv0 basenames
 # and git subcommands any check below dispatches on by exact string match.
@@ -1884,8 +1904,10 @@ def _opaque_var(argv0, rest):
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
-    while w and (w[0] in SHELL_KEYWORDS or _assignment(w[0])):
-        w = w[1:]
+    _s = 0  # an index, one slice: a flood of `!` / NAME=v words must stay linear
+    while _s < len(w) and (w[_s] in SHELL_KEYWORDS or _assignment(w[_s])):
+        _s += 1
+    w = w[_s:]
     if not w:
         return
     argv0, rest = basename(w[0]), w[1:]
@@ -1909,11 +1931,14 @@ def _check_window(_wi, w):
     # a fix landing in one and not the other is exactly how the agent_id
     # truthiness bug went unnoticed at 3 of 5 real call sites across two
     # separate GH issues (2026-09-20 audit).
-    while rest and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS):
+    # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
+    # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
+    o = 0
+    while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
-            argv0, rest = basename(rest[0]), rest[1:]
+            argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
-            i = 0
+            i = o
             while i < len(rest):
                 t = rest[i].replace(PH, "")
                 if t == "-u" and i + 1 < len(rest):
@@ -1926,9 +1951,9 @@ def _check_window(_wi, w):
                     break
             if i >= len(rest):
                 break
-            argv0, rest = basename(rest[i]), rest[i + 1:]
+            argv0, o = basename(rest[i]), i + 1
         elif argv0 in FLAG_VALUE_WRAPPERS:
-            i = 0
+            i = o
             while i < len(rest) and rest[i].replace(PH, "").startswith("-"):
                 t = rest[i].replace(PH, "")
                 i += 1
@@ -1942,7 +1967,7 @@ def _check_window(_wi, w):
                 i += 1  # the DURATION positional
             if i >= len(rest):
                 break
-            argv0, rest = basename(rest[i]), rest[i + 1:]
+            argv0, o = basename(rest[i]), i + 1
         elif argv0 in ("sudo", "doas"):  # GH #290: doas takes -u/-C values and has no long options
             # sudo -u/-g take a value: space-joined, "="-joined, attached ("-ualice"),
             # or bundled with getopt semantics ("-nu alice": alice is the value;
@@ -1950,7 +1975,7 @@ def _check_window(_wi, w):
             # are a non-goal.
             LONG_VALUE_FLAGS = {"--user", "--group"} if argv0 == "sudo" else set()
             _VALUE_LETTERS = "ug" if argv0 == "sudo" else "uC"
-            i = 0
+            i = o
             while i < len(rest):
                 t = rest[i].replace(PH, "")
                 bare = t.split("=", 1)[0]
@@ -1969,10 +1994,10 @@ def _check_window(_wi, w):
                     break
             if i >= len(rest):
                 break
-            argv0, rest = basename(rest[i]), rest[i + 1:]
+            argv0, o = basename(rest[i]), i + 1
         elif argv0 == "rtk":
             # GH #216. Global flags first, then the subcommand; see _RTK_RUNNERS above.
-            i = _past_dash_words(rest)
+            i = _past_dash_words(rest, o)
             if i >= len(rest):
                 break
             sub = rest[i].replace(PH, "")
@@ -1989,28 +2014,30 @@ def _check_window(_wi, w):
                     j += 1
                 if body is not None:
                     # A shell body: hand it to the same one-level -c unwrap as `sh -c`.
-                    argv0, rest = "sh", ["-c", body]
+                    argv0, rest, o = "sh", ["-c", body], 0
                     break
                 if j >= len(rest):
                     break
                 # positional args are joined and run through `sh -c` (verified live)
-                argv0, rest = "sh", ["-c", " ".join(rest[j:])]
+                argv0, rest, o = "sh", ["-c", " ".join(rest[j:])], 0
                 break
             elif sub in _RTK_RUNNERS or sub in _RTK_SHELL_RUNNERS:
                 j = _past_dash_words(rest, i + 1)
                 if j >= len(rest):
                     break
                 if sub in _RTK_SHELL_RUNNERS:
-                    argv0, rest = "sh", ["-c", " ".join(rest[j:])]
+                    argv0, rest, o = "sh", ["-c", " ".join(rest[j:])], 0
                     break
-                argv0, rest = basename(rest[j]), rest[j + 1:]
+                argv0, o = basename(rest[j]), j + 1
             else:  # an rtk verb that dispatches to the real tool of the same name
-                argv0, rest = basename(rest[i]), rest[i + 1:]
+                argv0, o = basename(rest[i]), i + 1
         else:  # command, nohup, time, setsid, builtin — bare flags then the wrapped command
-            i = _past_dash_words(rest)
+            i = _past_dash_words(rest, o)
             if i >= len(rest):
                 break
-            argv0, rest = basename(rest[i]), rest[i + 1:]
+            argv0, o = basename(rest[i]), i + 1
+
+    rest = rest[o:]
 
     _unwrap_shell(argv0.replace(PH, ""), rest)  # `s$(true)h -c` is still sh
 
@@ -2435,6 +2462,10 @@ def _views():
     return out
 
 def _view_windows(text):
+    # A body that blew the depth budget ended the previous view with the flag still set; it says nothing
+    # about this view's text, and read as this view's own blow-out it dropped the view unread.
+    _DEPTH_BUDGET_BLOWN[0] = False
+    _XARGS_HANDOVERS[0] = 0  # the 50-handover bound is per reading: the main reading spent its own
     try:
         toks = _tokens(_blanked(text))
     except ValueError:
