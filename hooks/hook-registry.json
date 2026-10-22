@@ -102,6 +102,11 @@
     ],
     "PostToolUse": [
       {
+        "id": "sensor:bash:output-redact",
+        "description": "After a Bash call, replace vendor-specific credential-shaped tokens (secret-scan.py's PATTERNS) in stdout/stderr with a [REDACTED:kind] marker via PostToolUse updatedToolOutput. Bash only (Read output was not rewritable, probed 2026-10-22, GH #534); best-effort; fails open, never denies.",
+        "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/bash-output-redact.sh\""
+      },
+      {
         "id": "sensor:write:fragments-capture",
         "description": "If this session is armed (sensor:prompt:fragments-arm) and this write plausibly targets a writing-fragments document, record a durable path pointer to it; never touches or inlines content, never prints anything.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/fragments-capture.sh\""
