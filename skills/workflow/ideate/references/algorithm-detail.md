@@ -75,7 +75,8 @@ Source: `provenance.md`'s "3-axis scoring rubric source" section.
 
 ## Critic invocation (default path)
 
-Collect the Phase 1 `ideas[]` JSON into the envelope in `agents/ideate-critic.md` and pass it as
+Collect the Phase 1 `ideas[]` JSON into the envelope in `agents/ideate-critic.md` (give each idea an
+`id` `i1`..`iN` and its branch's `frameId` and `frameLabel`; pass `options` `{"topK": 3}`) and pass it as
 the whole prompt of one `subagent_type: mh:ideate-critic` Agent call; parse its final message
 as JSON (a reply with text outside the braces is a parse failure, reported like a failed
 branch) and render the output shape from its returned `scores`, `clusters`,

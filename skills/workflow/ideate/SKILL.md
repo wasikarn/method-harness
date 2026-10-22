@@ -77,9 +77,9 @@ guards against: `references/provenance.md`.
 one sequential Agent call (`subagent_type: mh:ideate-critic`) with the envelope in
 `agents/ideate-critic.md`; its JSON reply carries every field the output shape renders,
 including the three deepened branches, so Phase 3 is skipped. Score on the host and run Phase 3
-instead only when the user asks for host scoring ("host", "no critic"). The critic is the same
-model class as the generators: fresh context cuts anchoring, and its output is advisory evidence, not
-ground truth. Done when: every idea has three scores, a cluster, and a trap or none.
+instead only when the user asks for host scoring ("host scoring", "no critic"). The critic is
+pinned to Sonnet (`agents/ideate-critic.md`), so scoring and deepening no longer run on a stronger
+host model: fresh context cuts anchoring, and its output is advisory evidence, not ground truth. Done when: every idea has three scores, a cluster, and a trap or none.
 
 ## Phase 3: Deepen (opt-in host path)
 
@@ -92,7 +92,7 @@ returns a sketch, a load-bearing risk, a first concrete step, and 3-5 child idea
 ## Isolation invariant
 
 Diverge branches never see each other. A branch that reads another's output anchors to it and
-the method collapses into one wider thought. Siblings are shared only at Phase 3, only as a
+the method collapses into one wider thought. Siblings are shared only at Phase 3 (or inside the critic's one context), only as a
 pool, never as the focus idea. A Diverge or Deepen branch never spawns its own Agent calls:
 the branch prompt is the whole task, and a nested wave is the 44-to-105 failure again.
 

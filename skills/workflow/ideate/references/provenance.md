@@ -23,7 +23,7 @@ The 2026-06-12 audit caught a 44→105-agent failure mode where a
 soft cap on a work-list was silently doubled by an audit + verify
 layer (operator memory store, `bounded-agent-spawning` and
 `whole-repo-dig-2026-06-16`; not in this repo). `evals/ideate-run/`
-bounds Agent calls per run (8 to 9) but cannot see wave shape; what Rule 13
+bounds Agent calls per run (6) but cannot see wave shape; what Rule 13
 provides is narrower than a fixture would claim: its hard cap is injected prose, no hook, that
 tells the lead to clamp any single wave's work-list to ≤10 before spawning (≤5 until 2026-10-05;
 this skill keeps its own 5-agent design limit). This command's Phase 1 (5)
@@ -55,12 +55,15 @@ Source: upstream `/tmp/adhd-repo/skills/adhd/SKILL.md:84-112` and
 - The critic is the default for every run, explicit or auto-fired. Explicit runs used to score
   on the host (8 calls) because the gate skips stake classification there; the critic path
   costs 6 calls and adds the fresh-context benefit below, so the split was dropped. The host
-  path stays as an opt-in ("host", "no critic"). Routing never infers stakes from prompt wording
+  path stays as an opt-in ("host scoring", "no critic"). Routing never infers stakes from prompt wording
   like "critical"/"production"; that lexical-heuristic pattern is exactly what `harness-audit`
   already flags as toothless elsewhere.
+- Trade accepted (model): `ideate-critic` is pinned `model: sonnet`, so scoring and deepening on
+  every run now use Sonnet even when the session model is stronger. Generators still inherit.
 - Trade accepted: on the critic path the three deepen branches run inside one critic context,
   not as three isolated Agent calls, so a deepened idea can anchor on the one deepened before
-  it. The host path keeps that isolation for a user who wants it.
+  it, and `deepened[]` folds the load-bearing risk and first step into the sketch prose instead of
+  separate fields. The host path keeps that isolation and structure for a user who wants it.
 - `ideate-critic` reuses the same scoring rubric but starts fresh, cutting
   the chance the host's own generation anchors the judgment. Its output is
   still advisory evidence, not ground truth — the user is the gate
