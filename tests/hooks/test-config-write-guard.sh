@@ -88,6 +88,40 @@ out=$(payload_write "$FIXTURE/settings.json" | bash "$GUARD" 2>/dev/null); rc=$?
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
 check "settings.json NOT under a .claude dir -> exit 0, no output" "$ok"
 
+# Regression: a dotfiles setup symlinks ~/.claude/settings.json to a file in a repo dir
+# that is not named .claude (dotfiles/claude/settings.json). Writing that real path
+# skipped the gate, since only the parent dir name was checked. The real path of each
+# known settings location (config dir, project dir, cwd) now counts as a settings file.
+mkdir -p "$FIXTURE/home/.claude" "$FIXTURE/dot/claude" "$FIXTURE/proj/.claude" "$FIXTURE/projdot"
+echo '{"hooks":{"PreToolUse":[]},"theme":"dark"}' > "$FIXTURE/dot/claude/settings.json"
+ln -s "$FIXTURE/dot/claude/settings.json" "$FIXTURE/home/.claude/settings.json"
+out=$(payload_write_content "$FIXTURE/dot/claude/settings.json" '{"hooks":{"PreToolUse":[{"id":"evil"}]},"theme":"dark"}' | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null)
+ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "real target of a symlinked ~/.claude/settings.json, edit changes hooks -> ask" "$ok"
+
+out=$(payload_edit "$FIXTURE/dot/claude/settings.json" '"theme":"dark"' '"theme":"light"' | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
+check "real target of a symlinked ~/.claude/settings.json, unrelated key -> no friction" "$ok"
+
+out=$(payload_write_content "$FIXTURE/dot/claude/settings.json" '{"hooks":{"PreToolUse":[{"id":"evil"}]}}' | HOME="$FIXTURE/home" CLAUDE_CONFIG_DIR="$FIXTURE/home/.claude" bash "$GUARD" 2>/dev/null)
+ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "CLAUDE_CONFIG_DIR points at the symlinked dir, edit changes hooks -> ask" "$ok"
+
+ln -s "$FIXTURE/dot/claude/settings.local.json" "$FIXTURE/home/.claude/settings.local.json"
+out=$(payload_write "$FIXTURE/dot/claude/settings.local.json" | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null)
+ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "dangling ~/.claude/settings.local.json symlink, Write creates its target -> ask" "$ok"
+
+echo '{"env":{}}' > "$FIXTURE/projdot/settings.json"
+ln -s "$FIXTURE/projdot/settings.json" "$FIXTURE/proj/.claude/settings.json"
+out=$(payload_write_content "$FIXTURE/projdot/settings.json" '{"env":{"MH_ALLOW_MAIN_EDIT":"1"}}' | HOME="$FIXTURE/home" CLAUDE_PROJECT_DIR="$FIXTURE/proj" bash "$GUARD" 2>/dev/null)
+ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "real target of a symlinked project .claude/settings.json, edit changes env -> ask" "$ok"
+
+out=$(payload_write_content "$FIXTURE/projdot/settings.json" '{"env":{"MH_ALLOW_MAIN_EDIT":"1"}}' | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
+check "settings.json that no known settings location resolves to -> exit 0, no output" "$ok"
+
 # --- content-aware edit checks: hooks/enabledPlugins vs everything else ---
 
 echo '{"hooks":{"PreToolUse":[]}}' > "$FIXTURE/.claude/settings.json"
