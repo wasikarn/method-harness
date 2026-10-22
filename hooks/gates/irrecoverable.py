@@ -2445,7 +2445,10 @@ def _check_window(_wi, w):
                 ask("gh api would write to GitHub (a non-GET method, a field or --input, or a graphql "
                     "mutation) — a T3 change by CLAUDE.md's Risk tiers unless it is an issue/PR comment "
                     "or label. Confirm this is intentional.", rule="gh-api-write")
-            if not gh_scan[0].startswith("-") and gh_scan[0] not in _GH_BUILTINS:
+            # Only a "gh <sub>" written in the command: the KNOWN_DANGEROUS splice duplication and the
+            # views put a candidate "gh" before any word ("rm${IFS}-rf build" yields "gh build").
+            if (re.fullmatch(r"[a-z][a-z0-9-]*", gh_scan[0]) and gh_scan[0] not in _GH_BUILTINS
+                    and re.search(r"(?<![\w./-])gh\s+" + re.escape(gh_scan[0]) + r"(?![\w-])", cmd)):
                 ask(f"gh {gh_scan[0]} is not a built-in gh command — an alias or extension can run "
                     "gh api out of sight. Confirm what it runs.", rule="gh-unknown-subcommand")
 
