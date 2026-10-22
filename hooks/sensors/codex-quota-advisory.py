@@ -23,6 +23,13 @@ import time
 
 # Same pattern as codex-quota-sensor.py; keep the two in step (GH #333).
 _CODEX_RE = re.compile(r"(^|[\s/\"'])codex([\s\"']|$)|codex-companion\.mjs")
+# A real invocation: `codex` as the command word of a segment (after ; & | ( or a newline, past env
+# assignments and rtk/env/time-style prefixes), or the companion script. The loose _CODEX_RE above
+# only picks who gets the advisory; a deny must not hit `git commit -m "fix codex hook"`.
+_INVOKE_RE = re.compile(
+    r"(?:^|[;&|(\n])\s*(?:(?:\w+=\S*|env|rtk|proxy|time|nohup|exec)\s+)*(?:\S*/)?codex(?:\s|$)"
+    r"|codex-companion\.mjs"
+)
 _DEFAULT_TTL_SECONDS = 24 * 3600
 
 
@@ -48,6 +55,10 @@ def deny_enabled():
 
 def format_reset(epoch):
     return time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(epoch))
+
+
+def invokes_codex(command):
+    return bool(_INVOKE_RE.search(command))
 
 
 def looks_like_codex_command(command):
@@ -99,16 +110,17 @@ def main(argv):
     if state is None:
         return 0
 
-    age = int(time.time()) - state["recorded_at"]
-    if age < 0 or age > ttl_seconds():
+    now = int(time.time())
+    age = now - state["recorded_at"]
+    reset_at = state.get("reset_at")
+    reset_ahead = isinstance(reset_at, int) and reset_at > now  # outlives the TTL: a weekly limit can be days out
+    if age < 0 or (age > ttl_seconds() and not reset_ahead):
         try:
             os.remove(state_path)
         except OSError:
             pass
         return 0
 
-    now = int(time.time())
-    reset_at = state.get("reset_at")
     if isinstance(reset_at, int):
         if reset_at <= now:  # the window has reopened: the record is spent
             try:
@@ -116,7 +128,7 @@ def main(argv):
             except OSError:
                 pass
             return 0
-        if deny_enabled():
+        if deny_enabled() and invokes_codex(command):
             print(json.dumps({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
