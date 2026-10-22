@@ -85,15 +85,21 @@ OUT=$(run_script '{}')
 [ "$OUT" = "" ] && ok "script mode: missing session_id field prints empty line" || bad "script mode missing field: got '$OUT'"
 
 # -B must prevent a bytecode cache write when run as a script.
-PYCACHE_BEFORE=$(find "$LIB_DIR" -name '__pycache__' 2>/dev/null | wc -l | tr -d ' ')
-[ "$PYCACHE_BEFORE" = "0" ] || trash "$LIB_DIR/__pycache__" 2>/dev/null || true
+# Only hook_payload's own bytecode counts: sibling tests import other scripts/_lib modules
+# (verdict_json) concurrently under the sharded gauntlet and legitimately create __pycache__/.
+_hp_pyc() { find "$LIB_DIR" -path '*/__pycache__/hook_payload*' -name '*.pyc' 2>/dev/null; }
+PYCACHE_BEFORE=$(_hp_pyc | wc -l | tr -d ' ')
+[ "$PYCACHE_BEFORE" = "0" ] || _hp_pyc | while IFS= read -r _f; do trash "$_f"; done
 run_script '{"session_id":"s1"}' >/dev/null
-PYCACHE_AFTER=$(find "$LIB_DIR" -name '__pycache__' 2>/dev/null | wc -l | tr -d ' ')
+# Script mode never caches the script itself, so also import the module: this is the run that would
+# write hook_payload's .pyc into scripts/_lib if -B were dropped.
+PYTHONPATH="$LIB_DIR" python3 -B -c 'import hook_payload'
+PYCACHE_AFTER=$(_hp_pyc | wc -l | tr -d ' ')
 if [ "$PYCACHE_AFTER" = "0" ]; then
   ok "-B prevents a __pycache__/ write in scripts/_lib at hook runtime"
 else
   bad "-B did not prevent a __pycache__/ write (found $PYCACHE_AFTER)"
-  trash "$LIB_DIR/__pycache__" 2>/dev/null || true
+  _hp_pyc | while IFS= read -r _f; do trash "$_f"; done
 fi
 
 # --- deep-audit finding, live-reproduced with a planted glob.py: every

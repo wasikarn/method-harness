@@ -365,6 +365,21 @@ big="$(python3 -c 'print("x = 1\n" * 7000)')"$'\n'"AKIA$(rnd 16 "$UPPER36" 8)"
 out=$(asks "$big"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
 check "secret at the end of a 42 KB Write -> ask" "$ok"
 
+# --- JSON depth: an extra key nested past the decoder's limit raises RecursionError ---
+# The Write carries no token-shaped text, so only the depth branch can ask on it.
+# depth 500, not 1000: Python <=3.11 overflows near 986.
+deepen() { python3 -c 'import sys; s = sys.stdin.read().rstrip(); n = int(sys.argv[1]); print(s[:-1] + ", \"x\": " + "[" * n + "]" * n + "}")' "$1"; }
+out=$(payload_write_content "$FIXTURE/scratch.txt" "x = 1" | deepen 1000000 | bash "$GATE" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+check "JSON depth 1e6, clean Write -> ask (payload not checked)" "$ok"
+out=$(payload_write_content "$FIXTURE/scratch.txt" "x = 1" | deepen 500 | bash "$GATE" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
+check "JSON depth 500, clean Write -> still parses, exit 0, no output" "$ok"
+err=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GATE" 2>&1 >/dev/null); rc=$?
+out=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GATE" 2>/dev/null)
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && echo "$err" | /usr/bin/grep -q "internal error, allowing" && ok=0
+check "truncated JSON -> still allows with the internal-error note (only depth asks)" "$ok"
+
 # Drift guard: secret-scan.sh's fast path lists one literal per PATTERNS entry. A new pattern
 # needs its literal added there, or the fast path skips python for it; then bump this count.
 n=$(python3 -c 'import ast,sys; t=ast.parse(open(sys.argv[1]).read()); print([len(a.value.elts) for a in t.body if isinstance(a, ast.Assign) and getattr(a.targets[0], "id", "") == "PATTERNS"][0])' "$ROOT/hooks/gates/secret-scan.py")

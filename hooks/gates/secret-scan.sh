@@ -18,7 +18,10 @@
 # any exception inside secret-scan.py) -- this gate's verdict is advisory on
 # a write that was already happening, and it runs on every Write/Edit in
 # every host project that loads this plugin, so a single internal bug must
-# never turn into an ask on every write everywhere.
+# never turn into an ask on every write everywhere. That includes an ordinary
+# parse error (truncated or malformed JSON). The one exception: a payload
+# nested too deep for json.load (RecursionError/MemoryError) asks, since its
+# content cannot be checked and Claude Code never sends one.
 #
 # Sourced from `mh:idea-audit`'s Round-4 re-scan of Anthropic's "AI-Native
 # SDLC playbook" (2026-09-28), which confirmed zero secret-content scanning
