@@ -90,6 +90,37 @@ out="$(printf '{"tool_name":"Bash","tool_response":"a string %s"}' "$GH" | bash 
 out="$(printf '{"tool_name":"Bash","tool_response":{"stdout":123,"stderr":null}}' | bash "$HOOK" 2>/dev/null)"; rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] || _r=1; check "non-string streams: exit 0, no output" "$_r"; _r=0
 
+# 6b. fail-open diagnostics are asserted, not discarded
+err="$(printf 'not json{' | bash "$HOOK" 2>&1 >/dev/null)"
+[[ "$err" == *"internal error"* ]] || _r=1; check "invalid JSON prints an internal-error diagnostic" "$_r"; _r=0
+err="$(printf '[]' | bash "$HOOK" 2>&1)"; rc=$?
+{ [ "$rc" -eq 0 ] && [ -z "$err" ]; } || _r=1; check "top-level non-object payload: silent, no false diagnostic" "$_r"; _r=0
+tmp="$(mktemp -d)"; cp "$HOOK" "$tmp/bash-output-redact.sh"
+payload Bash "$GH" "" >"$tmp/in.json"
+err="$(bash "$tmp/bash-output-redact.sh" <"$tmp/in.json" 2>&1)"; rc=$?
+{ [ "$rc" -eq 0 ] && [[ "$err" == *"missing or unreadable"* && "$err" != *"$GH"* ]]; } || _r=1; check "missing sibling script: exit 0 with a diagnostic" "$_r"; _r=0
+trash "$tmp"
+
+# 6c. multi-line private key: every body line goes, up to and including the END line
+body="$(for i in 1 2 3 4 5; do rnd 64 "$ALNUM" "1$i"; done)"
+pem5="$(printf -- 'before\n-----BEGIN RSA PRIVATE KEY-----\n%s\n-----END RSA PRIVATE KEY-----\nafter' "$body")"
+out="$(payload Bash "$pem5" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+line1="$(sed -n 1p <<<"$body")"; line5="$(sed -n 5p <<<"$body")"
+{ [[ "$res" == *"[REDACTED:Private key]"* && "$res" != *"$line1"* && "$res" != *"$line5"* && "$res" == "before"* && "$res" == *"after" ]]; } || _r=1; check "5-line private key fully replaced, surrounding text kept" "$_r"; _r=0
+trunc="$(printf -- '-----BEGIN PRIVATE KEY-----\n%s\n%s' "$line1" "$line5")"
+out="$(payload Bash "$trunc" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:Private key]"* && "$res" != *"$line1"* && "$res" != *"$line5"* ]]; } || _r=1; check "private key with no END line is replaced to end of stream" "$_r"; _r=0
+
+# 6d. a token glued to a word character still goes (JSON-escaped newline, KEY_ prefix)
+out="$(payload Bash "{\"msg\":\"a\\n$GH\"}" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:GitHub token]"* && "$res" != *"$GH"* ]]; } || _r=1; check "token after a literal backslash-n is replaced" "$_r"; _r=0
+out="$(payload Bash "KEY_$GH" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:GitHub token]"* && "$res" != *"$GH"* ]]; } || _r=1; check "token after a name ending in underscore is replaced" "$_r"; _r=0
+
 # 7. large clean output stays fast and silent
 big="$(python3 -c 'print("line of ordinary text\n" * 20000)')"
 start=$SECONDS

@@ -19,11 +19,25 @@ def load_secret_scan():
         pass
     finally:
         sys.stdin = saved
-    return ns["PATTERNS"], ns["is_placeholder"]
+    # Output text glues tokens to word characters far more often than source files do
+    # (a JSON-escaped newline before a token, a KEY_ prefix), so drop the gate's leading
+    # word boundary: over-redacting output is cheaper than leaking a token.
+    lead = "\\b"
+    patterns = [(label, re.compile(p.pattern[len(lead):] if p.pattern.startswith(lead) else p.pattern, p.flags), chk)
+                for label, p, chk in ns["PATTERNS"]]
+    return patterns, ns["is_placeholder"]
+
+
+# The gate's Private key pattern only has to detect a key, so it stops at the first
+# body line. Redaction has to take the whole block: through the END line, or to the end
+# of the stream when the output was cut off.
+PEM_BLOCK = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----.*?"
+    r"(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\Z)", re.S)
 
 
 def redact(text, patterns, is_placeholder):
-    hits = 0
+    text, hits = PEM_BLOCK.subn("[REDACTED:Private key]", text)
     for label, pattern, has_placeholder_check in patterns:
         def sub(m, label=label, check=has_placeholder_check):
             nonlocal hits
@@ -37,6 +51,8 @@ def redact(text, patterns, is_placeholder):
 
 try:
     d = json.load(sys.stdin)
+    if not isinstance(d, dict):
+        sys.exit(0)
     if d.get("tool_name") != "Bash":
         sys.exit(0)
     tr = d.get("tool_response")

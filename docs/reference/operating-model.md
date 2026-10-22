@@ -25,6 +25,13 @@ tool call — see its own row below for what that means in practice:
 | `gate:agent:subagent-verdict-check` | `SubagentStop`, plus a `PreToolUse` twin (`gate:agent:subagent-verdict-check-handback`, matcher `SubagentHandback`) that runs the same check on `tool_input.message` for the auto-mode delivery path on CC >= 2.1.271 (GH #160; the deny is a re-prompt with no counter, bounded by Claude Code's own turn budget): blocks a subagent's Stop and re-prompts it once when its final message contains a Rule 13 `{pass, findings[], checked[], scope_ok, unexpected_files[]}`-shaped object that is vacuous (`pass:true` with both `findings[]` and `checked[]` empty) or self-contradictory (`pass:true` with `scope_ok:false` or a non-empty `unexpected_files[]`); allows on `stop_hook_active:true`, `NEEDS-DECISION`, ambiguous multi-candidate output, or no verdict-shaped output at all |
 
 Everything not in that table is advice: METHODOLOGY.md text, skill prose, agent guardrails.
+`sensor:bash:output-redact` is advice too, not a gate: a `PostToolUse` hook that replaces
+vendor-shaped credential tokens (`secret-scan.py`'s patterns, with the leading word boundary
+dropped and whole PEM blocks taken) in Bash stdout/stderr with `[REDACTED:<kind>]`, via
+`updatedToolOutput`. It is best-effort: a token outside those shapes, one split across
+stdout and stderr, Read output and MCP output pass through unredacted, and on an error the
+original output stays visible (fail-open; exit 1, invalid JSON and exit 2 probed on CC 2.1.307,
+GH #534; a timeout is not probed).
 Advice is honest about being advice; no doc claims a check enforces a rule unless a file in
 `hooks/gates/` does.
 
