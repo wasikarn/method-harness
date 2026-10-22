@@ -13,7 +13,8 @@ for the gap this closes.
 TTL default 24h (MH_CODEX_QUOTA_TTL_SECONDS overrides, tests use a small
 value): quota reset windows in the logged incidents ranged hours to days;
 past the TTL the record is treated as stale and removed rather than kept
-around to warn forever on a limit that has almost certainly reset.
+around to warn forever on a limit that has almost certainly reset, unless its
+reset time is still ahead (and within 8 days of the record, else it is a misparse).
 """
 import json
 import os
@@ -23,13 +24,18 @@ import time
 
 # Same pattern as codex-quota-sensor.py; keep the two in step (GH #333).
 _CODEX_RE = re.compile(r"(^|[\s/\"'])codex([\s\"']|$)|codex-companion\.mjs")
-# A real invocation: `codex` as the command word of a segment (after ; & | ( or a newline, past env
-# assignments and rtk/env/time-style prefixes), or the companion script. The loose _CODEX_RE above
-# only picks who gets the advisory; a deny must not hit `git commit -m "fix codex hook"`.
+# A real, quota-spending invocation: `codex` as the command word of a segment (after ; & or |, past
+# env assignments and rtk/env/time-style prefixes) that is not login/--version/mcp, or `node ...
+# codex-companion.mjs`. The loose _CODEX_RE above only picks who gets the advisory; a deny must not
+# hit `git commit -m "fix codex hook"`, a heredoc body line, or `codex login` (the account switch).
+# A newline is not a segment start: it would read a heredoc body line as a command. Misses fall back
+# to the advisory.
 _INVOKE_RE = re.compile(
-    r"(?:^|[;&|(\n])\s*(?:(?:\w+=\S*|env|rtk|proxy|time|nohup|exec)\s+)*(?:\S*/)?codex(?:\s|$)"
-    r"|codex-companion\.mjs"
+    r"(?:^|[;&|])\s*(?:(?:\w+=\S*|env|rtk|proxy|time|nohup|exec)\s+)*(?:\S*/)?codex"
+    r"(?!\s+(?:login|logout|--version|-V|--help|-h|mcp|completion)\b)(?:\s|$)"
+    r"|\bnode\s+\S*codex-companion\.mjs"
 )
+_MAX_RESET_SECONDS = 8 * 24 * 3600  # a reset further out than this from the record is a misparse
 _DEFAULT_TTL_SECONDS = 24 * 3600
 
 
@@ -113,6 +119,8 @@ def main(argv):
     now = int(time.time())
     age = now - state["recorded_at"]
     reset_at = state.get("reset_at")
+    if isinstance(reset_at, int) and reset_at - state["recorded_at"] > _MAX_RESET_SECONDS:
+        reset_at = None
     reset_ahead = isinstance(reset_at, int) and reset_at > now  # outlives the TTL: a weekly limit can be days out
     if age < 0 or (age > ttl_seconds() and not reset_ahead):
         try:
