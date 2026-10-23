@@ -1954,7 +1954,7 @@ def _gh_api_write(args):
         # arrives empty (its placeholder is stripped), and a file (@path) is unseen: both count as writes.
         queries = [f.split("=", 1)[1].strip() for f in fields if f.split("=", 1)[0] == "query" and "=" in f]
         return has_input or not queries or any(
-            not q.lower().startswith(("query", "{")) or "mutation" in q.lower() for q in queries)
+            not q.lower().startswith(("query", "{")) or re.search(r"\bmutation\b(?!\s*:)", q) for q in queries)
     if method is not None:
         write = method.upper() not in ("GET", "HEAD")
     else:
@@ -1977,26 +1977,47 @@ _GH_BUILTIN_WRITES = {
     "repo deploy-key": {"add", "delete"},
     "secret": {"set", "delete", "remove"}, "variable": {"set", "delete"},
     "release": {"delete", "delete-asset"}, "ssh-key": {"add", "delete"}, "gpg-key": {"add", "delete"},
-    "extension": {"install", "upgrade"}, "alias": {"set", "import"},
+    "extension": {"install", "upgrade", "exec"}, "alias": {"set", "import"},
     "issue": {"delete", "transfer"}, "label": {"delete"}, "cache": {"delete"}, "codespace": {"delete"},
     "workflow": {"run", "enable", "disable"}, "run": {"cancel", "delete", "rerun"}, "project": {"delete"},
 }
+# Verbs that are T2 by default and T3/T4 only with one flag: --clobber deletes the old asset, --force hard-resets.
+_GH_BUILTIN_FORCED = {("release", "upload"): "--clobber", ("repo", "sync"): "--force"}
+
+def _gh_words(scan, limit):
+    # Indexes of the first positional words the way cobra finds a subcommand: "--x=v", an attached "-xV"
+    # and help/version stand alone, any other bare "-x" or "--flag" takes the next word as its value
+    # (so `gh secret -e prod set` is `secret set`), and an empty word (a stripped $(...)) is skipped.
+    idx, i = [], 0
+    while i < len(scan) and len(idx) < limit:
+        t = scan[i]
+        if t == "--":
+            break
+        if t.startswith("-") and len(t) > 1:
+            alone = "=" in t or t in ("-h", "--help", "--version") or (not t.startswith("--") and len(t) > 2)
+            i += 1 if alone else 2
+            continue
+        if t:
+            idx.append(i)
+        i += 1
+    return idx
+
+def _gh_group_first(scan):
+    # Flags may come before the group (`gh -X DELETE api ...`) and gh still applies them, so move the group
+    # to the front and keep every other word for the checks that read flags.
+    idx = _gh_words(scan, 1)
+    return [scan[idx[0]]] + scan[:idx[0]] + scan[idx[0] + 1:] if idx else scan
 
 def _gh_builtin_write(scan):
-    # The verb is the group's first positional word: -R/--repo take a value, other flags stand alone.
-    group, i = scan[0], 1
-    words = []
-    while i < len(scan) and len(words) < 2:
-        t = scan[i]
-        if t in ("-R", "--repo"):
-            i += 2
-            continue
-        if not t.startswith("-"):
-            words.append(t)
-        i += 1
+    group, rest = scan[0], scan[1:]
+    words = [rest[i] for i in _gh_words(rest, 2)]
     if group == "repo" and words[:1] == ["deploy-key"]:
         group, words = "repo deploy-key", words[1:]
-    return bool(words) and words[0] in _GH_BUILTIN_WRITES.get(group, ())
+    if not words:
+        return False
+    flag = _GH_BUILTIN_FORCED.get((group, words[0]))
+    return words[0] in _GH_BUILTIN_WRITES.get(group, ()) or bool(
+        flag and any(t == flag or t.startswith(flag + "=") for t in rest))
 
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 def _check_window(_wi, w):
@@ -2187,7 +2208,9 @@ def _check_window(_wi, w):
             # common grep pattern: `xargs grep -l gh src` must not read as gh.
             j = 0
             while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
-                j += 2 if rest[j].replace(PH, "") in ("-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a") else 1
+                j += 2 if rest[j].replace(PH, "") in ("-I", "-J", "-R", "-S", "-n", "-P", "-L", "-d", "-s", "-E", "-a",
+                                                      "--arg-file", "--delimiter", "--max-args", "--max-procs",
+                                                      "--max-chars", "--process-slot-var") else 1
             if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
                 argv0, rest = "gh", rest[j + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
@@ -2475,7 +2498,7 @@ def _check_window(_wi, w):
         # Routine, the web UI, a raw API call) -- see docs/adr/0004-* for that
         # threat model; branch protection on develop is the real enforcement there.
         if argv0 == "gh" and rest:
-            gh_scan = [t.replace(PH, "") for t in rest]
+            gh_scan = _gh_group_first([t.replace(PH, "") for t in rest])
             if gh_scan[0] == "pr" and "merge" in gh_scan[1:]:
                 ask("gh pr merge would merge a pull request into this repo — the PR-review "
                     "flow (docs/reference/branching-model.md) expects a human to do this. "
