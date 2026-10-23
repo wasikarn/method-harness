@@ -8,15 +8,14 @@
 # ($PLUGIN_ACTIVE, set earlier in audit.sh) — a clean checkout with neither
 # has genuinely no way to prove loadability, which is a different fact than
 # "every skill is missing." Distinguish by whether $HOME/.claude/skills
-# exists AT ALL: if it does, this machine is using symlink-mode and a
-# missing individual symlink is still a real, per-component gap (unchanged
-# behavior below). If it does not, AND $PLUGIN_ACTIVE=0, neither delivery
-# mechanism is configured here at all — downgrade to one aggregated WARN
-# instead of one CRIT per skill, and skip the loop.
-# Symlink mode needs at least one symlink in the dir, not the dir alone: a cloud
-# session ships ~/.claude/skills holding its own plain dirs (session-start-hook,
-# synced), which read as a farm with every link missing, 12 CRIT (cloud audit
-# 2026-10-23, F6).
+# holds at least one symlink: if it does, this machine is using symlink-mode
+# and a missing individual symlink is still a real, per-component gap
+# (unchanged behavior below). If it does not, AND $PLUGIN_ACTIVE=0, neither
+# delivery mechanism is configured here at all — downgrade to one aggregated
+# WARN instead of one CRIT per skill, and skip the loop. The dir alone is not
+# enough: a cloud session ships ~/.claude/skills holding its own plain dirs
+# (session-start-hook, synced), which read as a farm with every link missing,
+# 12 CRIT (cloud audit 2026-10-23, F6).
 _farm=0
 for _e in "$HOME/.claude/skills"/*; do
   [ -L "$_e" ] && { _farm=1; break; }
