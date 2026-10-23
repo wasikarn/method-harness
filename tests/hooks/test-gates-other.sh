@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # literal \$ in test payload strings is intentional
+# shellcheck disable=SC2154  # _many_c and the other helpers come from the sourced tests/_lib/gates-harness.sh
 # Gate unit tests: simulates PreToolUse JSON payloads and asserts allow/deny/ask.
 # Each test_deny call expects exit 2; test_allow expects exit 0 + empty stdout;
 # test_ask expects exit 0 + a permissionDecision: ask JSON on stdout.
@@ -401,7 +402,8 @@ miss = [c for c, o in zip(cmds, out) if o == "0"]
 bad, nbash = [], 0
 bash = shutil.which("bash")
 if bash:
-    got = subprocess.run([bash, "-c", "\n".join(c for c, _ in shapes)], capture_output=True, text=True).stdout.split("\n")[:-1]
+    # On stdin, not one -c argument: ~19.5k shapes exceed Linux's 128 KiB per-argument cap (E2BIG).
+    got = subprocess.run([bash], input="\n".join(c for c, _ in shapes) + "\n", capture_output=True, text=True).stdout.split("\n")[:-1]
     if len(got) == len(shapes):
         nbash = len(got)
         bad = [c for (c, e), g in zip(shapes, got) if g.split() != e[1:]]
