@@ -1134,6 +1134,25 @@ else
 fi
 trash "$_trdir" 2>/dev/null || true
 
+echo "=== same damage, other git verbs (2026-10-23 bypass sweep after the cloud audit) ==="
+for c in 'git push --mirror' 'git push origin --mirror' 'git push --prune origin' \
+         'git push origin :main' 'git push origin :refs/heads/develop' 'git push origin --delete main' 'git push -d origin master' \
+         'git read-tree -u --reset HEAD' 'git read-tree --reset -u HEAD' \
+         'git checkout-index -f -a' 'git checkout-index --force --all' 'git checkout-index -fa' \
+         'git worktree remove --force wt' 'git worktree remove -f wt' \
+         'git reflog expire --expire=now --all' 'git reflog expire --expire-unreachable=all --all' 'git reflog expire --expire now --all' \
+         'git reflog delete HEAD@{1}' 'git gc --prune=now' 'git gc --prune=all' 'git prune --expire=now' 'git prune --expire now' \
+         'git update-ref -d refs/heads/main' 'git update-ref --delete refs/heads/develop' \
+         'git branch -M x main' 'git branch -m --force x master' 'git branch -C x develop' \
+         'git $(echo push) --mirror'; do
+  test_deny "$IRRECOVERABLE" "$c" "$(bash_payload "$c")"
+done
+for c in 'git push origin --delete feat' 'git push origin :feat' 'git push origin main' 'git read-tree HEAD' \
+         'git checkout-index -a' 'git worktree remove wt' 'git reflog expire --all' 'git reflog show' 'git gc' 'git gc --prune=2.weeks.ago' \
+         'git prune' 'git prune --dry-run' 'git prune -n --expire=now' 'git update-ref -d refs/heads/feat' 'git branch -M old new' 'git branch -m main' 'git worktree list'; do
+  test_allow "$IRRECOVERABLE" "$c" "$(bash_payload "$c")"
+done
+
 echo "=== fast-path (bash pre-filter that skips python3 on commands that cannot match, added 2026-08-14) ==="
 # Irrecoverable gained a bash fast-path so a benign command skips the python3 cold-start.
 test_deny  "$IRRECOVERABLE" "r\"\"m -rf (quote-concatenation -> fast-path quote-strip)" \

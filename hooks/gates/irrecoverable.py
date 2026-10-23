@@ -1655,7 +1655,12 @@ def _exclude_only_pathspecs(toks):
         elif t in ("--chmod", "--chmod="):
             i += 2 if i < len(toks) and toks[i] in ("+", "-") else 1
     return bool(paths) and all(_EXCLUDE_PATHSPEC_RE.match(t) for t in paths)
-KNOWN_GIT_SUBS = ("push", "reset", "clean", "restore", "checkout", "switch", "branch", "stash", "commit", "add")
+KNOWN_GIT_SUBS = ("push", "reset", "clean", "restore", "checkout", "switch", "branch", "stash", "commit", "add",
+                  "read-tree", "checkout-index", "worktree", "reflog", "gc", "prune", "update-ref")
+
+def _protected_ref(name):
+    # main/master/develop as the last path part, any case: "origin/main", "refs/heads/Develop".
+    return name.rstrip("/").rsplit("/", 1)[-1].lower() in ("main", "master", "develop")
 
 # Duplication also fires on a token still carrying raw substitution syntax
 # (belt-and-braces for any path that hands over an unblanked token). Narrow
@@ -2359,12 +2364,12 @@ def _check_window(_wi, w):
                 if skip:
                     skip = False
                     continue
-                # restore's and checkout's -m is --merge (no value); skipping the
-                # next token would eat the pathspec (GH #249, deep-audit
-                # 2026-09-30). An unresolved sub (PH / raw substitution) may be
+                # restore's and checkout's -m is --merge and branch's is --move (no value);
+                # skipping the next token would eat the pathspec or branch name (GH #249,
+                # deep-audit 2026-09-30). An unresolved sub (PH / raw substitution) may be
                 # either, so it does not skip.
                 if t.replace(PH, "") in ("-m", "--message") and not (
-                        sub in ("restore", "checkout") or PH in sub or _has_raw_subst(sub)):
+                        sub in ("restore", "checkout", "branch") or PH in sub or _has_raw_subst(sub)):
                     skip = True
                     continue
                 if t == "":  # only a word window keeps an empty word; git rejects it as a pathspec or ref
@@ -2515,6 +2520,39 @@ def _check_window(_wi, w):
                 # -Fnotes.txt a file, -tnotes a template, -uno the untracked-files mode.
                 if sub == "commit" and any(_bundled_flag(t, "mFtu", "n") for t in scan):
                     deny("git commit -n is --no-verify, it bypasses safety hooks", rule="git-commit-n")
+                # 2026-10-23 bypass sweep: other verbs with the same damage as a deny above.
+                _nonflag = [t for t in scan if not t.startswith("-")]
+                if sub == "push" and any(_is_flag(t, "--mirror", "--prune") for t in scan):
+                    deny("git push --mirror/--prune overwrites or deletes remote refs, like --force — confirm with user first", rule="git-push-mirror")
+                if sub == "push" and (
+                        any(t.startswith(":") and _protected_ref(t[1:]) for t in _nonflag)
+                        or (any(_is_flag(t, "--delete") or _bundled_flag(t, "", "d") for t in scan)
+                            and any(_protected_ref(t) for t in _nonflag[1:]))):
+                    deny("git push deleting main/master/develop on the remote — confirm with user first", rule="git-push-delete-protected")
+                if sub == "read-tree" and any(_is_flag(t, "--reset") for t in scan) and "-u" in scan:
+                    deny("git read-tree -u --reset discards uncommitted work, like reset --hard — confirm with user first", rule="git-read-tree-reset")
+                if sub == "checkout-index" and any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan):
+                    deny("git checkout-index -f overwrites working-tree files — confirm with user first", rule="git-checkout-index-force")
+                if sub == "worktree" and _nonflag[:1] == ["remove"] and any(
+                        t == "-f" or _is_flag(t, "--force") for t in scan):
+                    deny("git worktree remove --force deletes the worktree's uncommitted changes — confirm with user first", rule="git-worktree-remove-force")
+                # The reflog is the way back after a reset or a branch delete; these empty it now, not in 90 days.
+                _now = lambda v: v.lower() in ("now", "all", "0")
+                _vals = [t.split("=", 1)[1] for t in scan if "=" in t] + [
+                    scan[k + 1] for k, t in enumerate(scan[:-1]) if "=" not in t and _is_flag(t, "--expire", "--expire-unreachable", "--prune")]
+                if (sub == "reflog" and (_nonflag[:1] == ["delete"] or (_nonflag[:1] == ["expire"] and any(_now(v) for v in _vals)))
+                        or sub == "gc" and any(_now(t.split("=", 1)[1]) for t in scan if _is_flag(t.split("=", 1)[0], "--prune") and "=" in t)
+                        # A bare prune keeps what a reflog still names; only an explicit now/all reaches it.
+                        or sub == "prune" and not any(t == "-n" or _is_flag(t, "--dry-run") or _bundled_flag(t, "", "n") for t in scan)
+                        and any(_now(v) for v in _vals)):
+                    deny("git reflog expire/delete, gc --prune=now and prune remove the history a reset or branch delete could be undone from — confirm with user first", rule="git-reflog-prune")
+                if sub == "update-ref" and any(t == "-d" or _is_flag(t, "--delete") for t in scan) and any(_protected_ref(t) for t in _nonflag):
+                    deny("git update-ref -d on main/master/develop deletes a protected branch, like branch -D — confirm with user first", rule="git-update-ref-delete-protected")
+                if sub == "branch" and (
+                        any(t in ("-M", "-C") or (t.startswith("-") and not t.startswith("--") and ("M" in t or "C" in t)) for t in scan)
+                        or (any(t == "-m" or t == "-c" or _is_flag(t, "--move", "--copy") for t in scan)
+                            and any(t == "-f" or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
+                    deny("git branch -M/-C onto main/master/develop overwrites a protected branch — confirm with user first", rule="git-branch-force-move-protected")
                 # -A also arrives bundled (-Af, -fA, -vA); add has no value-taking short flag.
                 # --pathspec-from-file's value is a pathspec list the gate cannot read
                 # (GH #200), so any use denies, as in restore/checkout above.
