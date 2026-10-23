@@ -622,6 +622,10 @@ test_allow "$IRRECOVERABLE" "gh repo sync --force=0"                "$(bash_payl
 test_allow "$IRRECOVERABLE" "gh release upload -- --clobber (a file named --clobber)" "$(bash_payload 'gh release upload v1 a.zip -- --clobber')"
 test_allow "$IRRECOVERABLE" "gh api graphql read, comment before the alias colon" "$(bash_payload "gh api graphql -f query='query { viewer { mutation # c
 : login } }'")"
+test_allow "$IRRECOVERABLE" "gh api graphql read starting with a comment line" "$(bash_payload "gh api graphql -f query='# who am I
+query { viewer { login } }'")"
+test_ask   "$IRRECOVERABLE" "gh api graphql comment line hiding nothing: still a mutation" "$(bash_payload "gh api graphql -f query='# query
+mutation { deleteRef(input: {}) { clientMutationId } }'")"
 test_ask   "$IRRECOVERABLE" "gh release upload --clobber=true"      "$(bash_payload 'gh release upload v1 a.zip --clobber=true')"
 test_ask   "$IRRECOVERABLE" "gh repo delete o/r -- --help (help after -- is an argument)" "$(bash_payload 'gh repo delete o/r -- --help')"
 test_ask   "$IRRECOVERABLE" "gh extension exec x --help (exec hands --help to the extension)" "$(bash_payload 'gh extension exec x --help')"
