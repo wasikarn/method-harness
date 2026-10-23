@@ -13,7 +13,7 @@ tool call — see its own row below for what that means in practice:
 
 | gate | denies or asks |
 |---|---|
-| `gate:bash:irrecoverable` | `rm -rf`, `find -delete`, `--no-verify`, `hooksPath` edits, `push --force`, `reset --hard`, `clean -f`, discarding `restore`/`checkout`, `branch -D` (a plain `git branch -D <names>` without main/master/develop is allowed), `stash drop/clear`, `commit --amend`, `dd`, SQL `DROP`, `git add -A` outside a merge, nested `claude` spawns from a subagent. Asks (never denies) on `gh pr merge`, `gh api .../merge`, a `gh api` write (non-GET method, a field or `--input` with no method, a graphql mutation; issue/PR comments and labels excepted), a `gh` alias or extension, and a T3/T4 built-in write (`gh repo delete/archive/rename/edit`, `secret`/`variable set/delete`, `release delete`, `ssh-key`/`gpg-key`/deploy-key `add/delete`, `extension install/exec`, `alias set`, `issue delete/transfer`, `workflow run`, `run cancel/rerun/delete` and a few more in `_GH_BUILTIN_WRITES`; `release upload --clobber` and `repo sync --force` in `_GH_BUILTIN_FORCED`), with the verb found the way gh's parser finds it, so a flag before the verb or the group (`gh secret -e prod set`, `gh -X DELETE api`), a group alias (`cs`, `ext`) and a `$(...)` in the group or verb slot are still seen; a built-in's `-h`/`--help` (outside `extension exec`), a pflag false value (`--clobber=false`) and words after `--` do not ask |
+| `gate:bash:irrecoverable` | `rm -rf`, `find -delete`, `--no-verify`, `hooksPath` edits, `push --force` (and `push --mirror`/`--prune`, a push deleting main/master/develop), `reset --hard` (and `read-tree -u --reset`, `checkout-index -f`, `worktree remove --force`), `reflog expire`/`delete` and `gc`/`prune` at now/all, `update-ref -d` or `branch -M`/`-C` onto main/master/develop, `clean -f`, discarding `restore`/`checkout`, `branch -D` (a plain `git branch -D <names>` without main/master/develop is allowed), `stash drop/clear`, `commit --amend`, `dd`, SQL `DROP`, `git add -A` outside a merge, nested `claude` spawns from a subagent. Asks (never denies) on `gh pr merge`, `gh api .../merge`, a `gh api` write (non-GET method, a field or `--input` with no method, a graphql mutation; issue/PR comments and labels excepted), a `gh` alias or extension, and a T3/T4 built-in write (`gh repo delete/archive/rename/edit`, `secret`/`variable set/delete`, `release delete`, `ssh-key`/`gpg-key`/deploy-key `add/delete`, `extension install/exec`, `alias set`, `issue delete/transfer`, `workflow run`, `run cancel/rerun/delete` and a few more in `_GH_BUILTIN_WRITES`; `release upload --clobber` and `repo sync --force` in `_GH_BUILTIN_FORCED`), with the verb found the way gh's parser finds it, so a flag before the verb or the group (`gh secret -e prod set`, `gh -X DELETE api`), a group alias (`cs`, `ext`) and a `$(...)` in the group or verb slot are still seen; a built-in's `-h`/`--help` (outside `extension exec`), a pflag false value (`--clobber=false`) and words after `--` do not ask |
 | `gate:bash:subagent-git-guard` | `git stash`/`reset`/`clean` from a dispatched subagent |
 | `gate:agent:subagent-spawn-guard` | a subagent calling the Agent tool to spawn its own reviewer/validator |
 | `gate:task:complete-separation` | a subagent marking its own task complete |
@@ -40,13 +40,15 @@ saved to its file already redacted; that was not probed for MCP.
 Advice is honest about being advice; no doc claims a check enforces a rule unless a file in
 `hooks/gates/` does.
 
-Each gate owns its error path, and the policy is written in the gate, not assumed: input it
-cannot tokenize asks (`could not safely tokenize`); a missing `python3` always allows, announced
+Each gate owns its error path, and the policy is written in the gate, not assumed: input
+`irrecoverable.py` cannot tokenize denies (exit 2, `could not safely tokenize ... - confirm with user
+first`), since an unparsed command could hide any write; a missing `python3` always allows, announced
 on stderr (#93); a missing sibling script denies (exit 2) for `irrecoverable.py`, but allows
 (same stderr-note posture) for the four subagent-scoped gates (`subagent-git-guard`,
 `task-complete-separation`, `subagent-spawn-guard`, `subagent-verdict-check`), for
 `routine-trigger-guard` (tool-scoped, not subagent-scoped, same allow-on-missing-sibling
-posture), and for `secret-scan.py` — its verdict is advisory on a write already happening, and it
+posture), for the three ask-only write gates (`test-integrity`, `config-write-guard`,
+`codex-setup-guard`), and for `secret-scan.py` — its verdict is advisory on a write already happening, and it
 runs on every Write/Edit in every host project loading this plugin, so an internal exception
 there also allows rather than asking. `scripts/gate-canary.sh` proves
 every staged gate still allows benign payloads. The table is the contract; the hook type is
