@@ -1953,8 +1953,10 @@ def _gh_api_write(args):
         # A read is a query the gate can see: text starting with "query" or "{". A $(...) or variable
         # arrives empty (its placeholder is stripped), and a file (@path) is unseen: both count as writes.
         queries = [f.split("=", 1)[1].strip() for f in fields if f.split("=", 1)[0] == "query" and "=" in f]
+        # An alias named mutation (`mutation: login`, a # comment line allowed before the colon) is a read.
         return has_input or not queries or any(
-            not q.lower().startswith(("query", "{")) or re.search(r"\bmutation\b(?!\s*:)", q) for q in queries)
+            not q.lower().startswith(("query", "{")) or re.search(r"\bmutation\b(?!(?:\s|#[^\n]*\n)*:)", q)
+            for q in queries)
     if method is not None:
         write = method.upper() not in ("GET", "HEAD")
     else:
@@ -2004,6 +2006,17 @@ def _gh_words(scan, limit):
         i += 1
     return idx
 
+def _gh_help(scan):
+    # A -h/--help that cobra reads as a flag (before "--", not a flag's value) only prints help.
+    i = 0
+    while i < len(scan) and scan[i] != "--":
+        t = scan[i]
+        if t in ("-h", "--help"):
+            return True
+        alone = not t.startswith("-") or t == "-" or "=" in t or t == "--version" or (not t.startswith("--") and len(t) > 2)
+        i += 1 if alone else 2
+    return False
+
 def _gh_group_first(scan):
     # Flags may come before the group (`gh -X DELETE api ...`) and gh still applies them, so move the group
     # to the front, under its full name, and keep every other word for the checks that read flags.
@@ -2028,7 +2041,10 @@ def _gh_builtin_write(scan):
     flag = _GH_BUILTIN_FORCED.get((group, words[0]))
     if words[0] in _GH_BUILTIN_WRITES.get(group, ()):
         return f"{group} {words[0]}"
-    if flag and any(t == flag or t.startswith(flag + "=") for t in rest):
+    flags = rest[:rest.index("--")] if "--" in rest else rest
+    # pflag's false spellings (strconv.ParseBool) turn the flag off.
+    if flag and any(t == flag or (t.startswith(flag + "=") and t[len(flag) + 1:] not in ("0", "f", "F", "false", "FALSE", "False"))
+                    for t in flags):
         return f"{group} {words[0]} {flag}"
     return ""
 
@@ -2514,19 +2530,22 @@ def _check_window(_wi, w):
         # threat model; branch protection on develop is the real enforcement there.
         if argv0 == "gh" and rest:
             gh_scan = _gh_group_first([t.replace(PH, "") for t in rest])
-            if gh_scan[0] == "pr" and "merge" in gh_scan[1:]:
+            # Help runs nothing, except under extension exec, which hands --help to the extension.
+            # An alias or extension (gh-unknown-subcommand below) still asks.
+            gh_write = _gh_builtin_write(gh_scan)
+            gh_runs = not (_gh_help(gh_scan) and gh_scan[0] in _GH_BUILTINS and gh_write != "extension exec")
+            if gh_runs and gh_scan[0] == "pr" and "merge" in gh_scan[1:]:
                 ask("gh pr merge would merge a pull request into this repo — the PR-review "
                     "flow (docs/reference/branching-model.md) expects a human to do this. "
                     "Confirm this is intentional.", rule="gh-pr-merge")
-            if gh_scan[0] == "api" and any("/merge" in t for t in gh_scan[1:]):
+            if gh_runs and gh_scan[0] == "api" and any("/merge" in t for t in gh_scan[1:]):
                 ask("gh api .../merge calls the GitHub merge endpoint directly — the "
                     "PR-review flow (docs/reference/branching-model.md) expects a human to "
                     "do this. Confirm this is intentional.", rule="gh-api-merge")
-            gh_write = _gh_builtin_write(gh_scan)
-            if gh_write:
+            if gh_runs and gh_write:
                 ask(f"gh {gh_write} is a T3/T4 write by CLAUDE.md's Risk tiers (no undo, a credential "
                     "or third-party code, or it starts CI). Confirm this is intentional.", rule="gh-builtin-write")
-            if gh_scan[0] == "api" and _gh_api_write(gh_scan[1:]):
+            if gh_runs and gh_scan[0] == "api" and _gh_api_write(gh_scan[1:]):
                 ask("gh api would write to GitHub (a non-GET method, a field or --input, or a graphql "
                     "mutation) — a T3 change by CLAUDE.md's Risk tiers unless it is an issue/PR comment "
                     "or label. Confirm this is intentional.", rule="gh-api-write")
