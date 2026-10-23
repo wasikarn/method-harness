@@ -12,7 +12,7 @@ _input="$(cat)"
 # A JSON-escaped backslash (two backslashes) is a literal backslash, not the start of a \n or \t
 # escape, so mark the pair first; the shell reads backslash-t as a plain t (fuzz sweep 2026-10-01).
 _bs=$'\001'
-_norm="$(printf '%s' "$_input" | sed "s/\\\\\\\\/$_bs/g; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"'$_bs\\")"
+_norm="$(printf '%s' "$_input" | sed "s/\\\\\\\\/$_bs/g; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"'$_bs\\\\")"
 _norm_nows="$(printf '%s' "$_norm" | tr -d '[:space:]')"
 _has_subst=0
 case "$_input" in *'`'*|*'$'*) _has_subst=1 ;; esac

@@ -1121,6 +1121,19 @@ fi
 rm -f "$_errf"
 trash "$MISSPY_RTG_DIR" 2>/dev/null || true
 
+echo "=== GNU tr stays quiet (cloud audit 2026-10-23: an unescaped trailing backslash in tr -d warned on every Bash call) ==="
+_trdir=$(mktemp -d "${TMPDIR:-/tmp}/kbg-gnutr.XXXXXX")
+if command -v gtr >/dev/null 2>&1; then ln -s "$(command -v gtr)" "$_trdir/tr"; fi
+_trerr=$(bash_payload 'ls' | PATH="$_trdir:$PATH" bash "$IRRECOVERABLE" 2>&1 >/dev/null)
+if [ -z "$_trerr" ]; then
+  echo "  ✅ no stderr from the gate on a plain command (tr: $(PATH="$_trdir:$PATH" command -v tr))"
+  pass=$((pass + 1))
+else
+  echo "  ❌ the gate wrote to stderr on a plain command: $_trerr" >&2
+  fail=$((fail + 1))
+fi
+trash "$_trdir" 2>/dev/null || true
+
 echo "=== fast-path (bash pre-filter that skips python3 on commands that cannot match, added 2026-08-14) ==="
 # Irrecoverable gained a bash fast-path so a benign command skips the python3 cold-start.
 test_deny  "$IRRECOVERABLE" "r\"\"m -rf (quote-concatenation -> fast-path quote-strip)" \

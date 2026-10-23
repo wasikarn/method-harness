@@ -40,13 +40,15 @@ saved to its file already redacted; that was not probed for MCP.
 Advice is honest about being advice; no doc claims a check enforces a rule unless a file in
 `hooks/gates/` does.
 
-Each gate owns its error path, and the policy is written in the gate, not assumed: input it
-cannot tokenize asks (`could not safely tokenize`); a missing `python3` always allows, announced
+Each gate owns its error path, and the policy is written in the gate, not assumed: input
+`irrecoverable.py` cannot tokenize denies (exit 2, `could not safely tokenize ... - confirm with user
+first`), since an unparsed command could hide any write; a missing `python3` always allows, announced
 on stderr (#93); a missing sibling script denies (exit 2) for `irrecoverable.py`, but allows
 (same stderr-note posture) for the four subagent-scoped gates (`subagent-git-guard`,
 `task-complete-separation`, `subagent-spawn-guard`, `subagent-verdict-check`), for
 `routine-trigger-guard` (tool-scoped, not subagent-scoped, same allow-on-missing-sibling
-posture), and for `secret-scan.py` — its verdict is advisory on a write already happening, and it
+posture), for the three ask-only write gates (`test-integrity`, `config-write-guard`,
+`codex-setup-guard`), and for `secret-scan.py` — its verdict is advisory on a write already happening, and it
 runs on every Write/Edit in every host project loading this plugin, so an internal exception
 there also allows rather than asking. `scripts/gate-canary.sh` proves
 every staged gate still allows benign payloads. The table is the contract; the hook type is
