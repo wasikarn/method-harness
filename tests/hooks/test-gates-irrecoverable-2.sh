@@ -612,7 +612,27 @@ test_allow "$IRRECOVERABLE" "gh -R o/r pr view (a built-in after a flag)" "$(bas
 test_allow "$IRRECOVERABLE" "gh release upload without --clobber (T2)" "$(bash_payload 'gh release upload v1.0 a.zip')"
 test_allow "$IRRECOVERABLE" "gh repo sync without --force (fast-forward)" "$(bash_payload 'gh repo sync o/r')"
 test_allow "$IRRECOVERABLE" "gh api graphql read with a field aliased mutation" "$(bash_payload "gh api graphql -f query='query { viewer { mutation: login } }'")"
-test_allow "$IRRECOVERABLE" "gh repo view"                         "$(bash_payload 'gh repo view o/r')"
+# 2026-10-23 deep-audit LOW over-asks: help only prints, a false bool flag is off, words after -- are not
+# flags, and a GraphQL comment is ignored before an alias colon.
+test_allow "$IRRECOVERABLE" "gh --help repo delete (prints help)"   "$(bash_payload 'gh --help repo delete')"
+test_allow "$IRRECOVERABLE" "gh repo delete o/r --help (prints help)" "$(bash_payload 'gh repo delete o/r --help')"
+test_allow "$IRRECOVERABLE" "gh secret set -h (prints help)"        "$(bash_payload 'gh secret set -h')"
+test_allow "$IRRECOVERABLE" "gh release upload --clobber=false"     "$(bash_payload 'gh release upload v1 a.zip --clobber=false')"
+test_allow "$IRRECOVERABLE" "gh repo sync --force=0"                "$(bash_payload 'gh repo sync o/r --force=0')"
+test_allow "$IRRECOVERABLE" "gh release upload -- --clobber (a file named --clobber)" "$(bash_payload 'gh release upload v1 a.zip -- --clobber')"
+test_allow "$IRRECOVERABLE" "gh api graphql read, comment before the alias colon" "$(bash_payload "gh api graphql -f query='query { viewer { mutation # c
+: login } }'")"
+test_ask   "$IRRECOVERABLE" "gh release upload --clobber=true"      "$(bash_payload 'gh release upload v1 a.zip --clobber=true')"
+test_ask   "$IRRECOVERABLE" "gh repo delete o/r -- --help (help after -- is an argument)" "$(bash_payload 'gh repo delete o/r -- --help')"
+test_ask   "$IRRECOVERABLE" "gh extension exec x --help (exec hands --help to the extension)" "$(bash_payload 'gh extension exec x --help')"
+test_ask   "$IRRECOVERABLE" "gh nuke --help (an alias or extension may not treat --help as help)" "$(bash_payload 'gh nuke --help')"
+test_ask   "$IRRECOVERABLE" "gh api graphql mutation after a comment line" "$(bash_payload "gh api graphql -f query='# c
+mutation { deleteRef(input: {}) { clientMutationId } }'")"
+test_ask_says "$IRRECOVERABLE" "ask names the write: gh secret -e prod set" "$(bash_payload 'gh secret -e prod set FOO')" "gh secret set is a T3/T4 write"
+test_ask_says "$IRRECOVERABLE" "ask names the forced flag"           "$(bash_payload 'gh release upload v1 a.zip --clobber')" "gh release upload --clobber is a T3/T4 write"
+test_ask_says "$IRRECOVERABLE" "ask names gh api writes"             "$(bash_payload 'gh -X DELETE api repos/o/r')" "gh api would write"
+test_ask_says "$IRRECOVERABLE" "ask names an unknown subcommand"     "$(bash_payload 'gh -R o/r nuke')" "gh nuke is not a built-in"
+test_allow "$IRRECOVERABLE" "gh repo view"                      "$(bash_payload 'gh repo view o/r')"
 test_allow "$IRRECOVERABLE" "gh repo view of a repo named delete"  "$(bash_payload 'gh repo view o/delete')"
 test_allow "$IRRECOVERABLE" "gh secret list"                       "$(bash_payload 'gh secret list -R o/r')"
 test_allow "$IRRECOVERABLE" "gh release view"                      "$(bash_payload 'gh release view v1.0')"

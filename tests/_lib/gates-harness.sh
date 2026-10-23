@@ -268,6 +268,21 @@ test_ask() {
   fi
 }
 
+# test_ask, plus the reason must contain <needle>: the gate emits only its first ask, so the
+# reason names which rule fired.
+test_ask_says() {
+  local gate="$1" desc="$2" payload="$3" needle="$4"
+  local out rc
+  out=$(echo "$payload" | ${GATE_RUNNER:-bash} "$gate" 2>/dev/null); rc=$?
+  if [[ "$rc" == "0" ]] && printf '%s' "$out" | NEEDLE="$needle" python3 -c 'import json,os,sys; o=json.loads(sys.stdin.read())["hookSpecificOutput"]; assert o["permissionDecision"] == "ask" and os.environ["NEEDLE"] in o["permissionDecisionReason"]' 2>/dev/null; then
+    echo "  ✅ ASK ($needle): $desc"
+    pass=$((pass + 1))
+  else
+    echo "  ❌ ASK naming '$needle' EXPECTED but got exit $rc out='$out': $desc" >&2
+    fail=$((fail + 1))
+  fi
+}
+
 # Fix C appends one window per action flag: a flood of -exec words, or nested `find -exec find`, must
 # stay inside the gate's own 8s hook timeout (the deny must not arrive after the budget).
 _timed_case() {  # <name> <expected rc> <command>
