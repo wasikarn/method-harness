@@ -1975,7 +1975,7 @@ _GH_BUILTINS = {"accessibility", "actions", "agent-task", "alias", "api", "attes
 _GH_BUILTIN_WRITES = {
     "repo": {"delete", "archive", "unarchive", "rename", "edit"},
     "repo deploy-key": {"add", "delete"},
-    "secret": {"set", "delete", "remove"}, "variable": {"set", "delete"},
+    "secret": {"set", "delete", "remove"}, "variable": {"set", "delete", "remove"},
     "release": {"delete", "delete-asset"}, "ssh-key": {"add", "delete"}, "gpg-key": {"add", "delete"},
     "extension": {"install", "upgrade", "exec"}, "alias": {"set", "import"},
     "issue": {"delete", "transfer"}, "label": {"delete"}, "cache": {"delete"}, "codespace": {"delete"},
@@ -1983,41 +1983,54 @@ _GH_BUILTIN_WRITES = {
 }
 # Verbs that are T2 by default and T3/T4 only with one flag: --clobber deletes the old asset, --force hard-resets.
 _GH_BUILTIN_FORCED = {("release", "upload"): "--clobber", ("repo", "sync"): "--force"}
+# Cobra aliases of the groups above (`gh <group> --help` lists them).
+_GH_GROUP_ALIASES = {"cs": "codespace", "ext": "extension", "extensions": "extension"}
 
 def _gh_words(scan, limit):
     # Indexes of the first positional words the way cobra finds a subcommand: "--x=v", an attached "-xV"
-    # and help/version stand alone, any other bare "-x" or "--flag" takes the next word as its value
-    # (so `gh secret -e prod set` is `secret set`), and an empty word (a stripped $(...)) is skipped.
+    # and help/version stand alone, a bare "-" is dropped, any other bare "-x" or "--flag" takes the next
+    # word as its value (so `gh secret -e prod set` is `secret set`). An empty word is a stripped $(...) or
+    # variable, unknown until it runs, so it is kept as a word, not skipped.
     idx, i = [], 0
     while i < len(scan) and len(idx) < limit:
         t = scan[i]
         if t == "--":
             break
-        if t.startswith("-") and len(t) > 1:
-            alone = "=" in t or t in ("-h", "--help", "--version") or (not t.startswith("--") and len(t) > 2)
+        if t.startswith("-"):
+            alone = t == "-" or "=" in t or t in ("-h", "--help", "--version") or (not t.startswith("--") and len(t) > 2)
             i += 1 if alone else 2
             continue
-        if t:
-            idx.append(i)
+        idx.append(i)
         i += 1
     return idx
 
 def _gh_group_first(scan):
     # Flags may come before the group (`gh -X DELETE api ...`) and gh still applies them, so move the group
-    # to the front and keep every other word for the checks that read flags.
+    # to the front, under its full name, and keep every other word for the checks that read flags.
     idx = _gh_words(scan, 1)
-    return [scan[idx[0]]] + scan[:idx[0]] + scan[idx[0] + 1:] if idx else scan
+    if not idx:
+        return scan
+    group = scan[idx[0]]
+    return [_GH_GROUP_ALIASES.get(group, group)] + scan[:idx[0]] + scan[idx[0] + 1:]
 
 def _gh_builtin_write(scan):
+    # The write's name for the ask message ("secret set", "release upload --clobber"), or "" for none.
     group, rest = scan[0], scan[1:]
+    if group == "":
+        return "<a group built at run time>"
     words = [rest[i] for i in _gh_words(rest, 2)]
     if group == "repo" and words[:1] == ["deploy-key"]:
         group, words = "repo deploy-key", words[1:]
     if not words:
-        return False
+        return ""
+    if words[0] == "" and (group in _GH_BUILTIN_WRITES or group == "pr"):
+        return f"{group} <a verb built at run time>"
     flag = _GH_BUILTIN_FORCED.get((group, words[0]))
-    return words[0] in _GH_BUILTIN_WRITES.get(group, ()) or bool(
-        flag and any(t == flag or t.startswith(flag + "=") for t in rest))
+    if words[0] in _GH_BUILTIN_WRITES.get(group, ()):
+        return f"{group} {words[0]}"
+    if flag and any(t == flag or t.startswith(flag + "=") for t in rest):
+        return f"{group} {words[0]} {flag}"
+    return ""
 
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 def _check_window(_wi, w):
@@ -2208,9 +2221,11 @@ def _check_window(_wi, w):
             # common grep pattern: `xargs grep -l gh src` must not read as gh.
             j = 0
             while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
-                j += 2 if rest[j].replace(PH, "") in ("-I", "-J", "-R", "-S", "-n", "-P", "-L", "-d", "-s", "-E", "-a",
-                                                      "--arg-file", "--delimiter", "--max-args", "--max-procs",
-                                                      "--max-chars", "--process-slot-var") else 1
+                t = rest[j].replace(PH, "")
+                # A bundled short cluster (-tJ) takes the next word when its last letter takes a value.
+                takes = t in ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
+                              "--process-slot-var") or (not t.startswith("--") and t[-1:] in "IJRSnPLdsEa")
+                j += 2 if takes else 1
             if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
                 argv0, rest = "gh", rest[j + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
@@ -2507,8 +2522,9 @@ def _check_window(_wi, w):
                 ask("gh api .../merge calls the GitHub merge endpoint directly — the "
                     "PR-review flow (docs/reference/branching-model.md) expects a human to "
                     "do this. Confirm this is intentional.", rule="gh-api-merge")
-            if _gh_builtin_write(gh_scan):
-                ask(f"gh {' '.join(gh_scan[:3])} is a T3/T4 write by CLAUDE.md's Risk tiers (no undo, a credential "
+            gh_write = _gh_builtin_write(gh_scan)
+            if gh_write:
+                ask(f"gh {gh_write} is a T3/T4 write by CLAUDE.md's Risk tiers (no undo, a credential "
                     "or third-party code, or it starts CI). Confirm this is intentional.", rule="gh-builtin-write")
             if gh_scan[0] == "api" and _gh_api_write(gh_scan[1:]):
                 ask("gh api would write to GitHub (a non-GET method, a field or --input, or a graphql "
@@ -2517,7 +2533,8 @@ def _check_window(_wi, w):
             # Only a "gh <sub>" written in the command: the KNOWN_DANGEROUS splice duplication and the
             # views put a candidate "gh" before any word ("rm${IFS}-rf build" yields "gh build").
             if (re.fullmatch(r"[a-z][a-z0-9-]*", gh_scan[0]) and gh_scan[0] not in _GH_BUILTINS
-                    and re.search(r"(?<![\w./-])gh\s+" + re.escape(gh_scan[0]) + r"(?![\w-])", cmd)):
+                    and re.search(r"(?<![\w./-])gh(?:\s+-\S+(?:\s+[^\s-]\S*)?)*?\s+" + re.escape(gh_scan[0])
+                                  + r"(?![\w-])", cmd)):
                 ask(f"gh {gh_scan[0]} is not a built-in gh command — an alias or extension can run "
                     "gh api out of sight. Confirm what it runs.", rule="gh-unknown-subcommand")
 
