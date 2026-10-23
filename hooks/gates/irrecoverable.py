@@ -1970,6 +1970,34 @@ _GH_BUILTINS = {"accessibility", "actions", "agent-task", "alias", "api", "attes
                 "ruleset", "run", "search", "secret", "skill", "ssh-key", "status", "telemetry",
                 "variable", "version", "workflow"}
 
+# T3/T4 writes gh runs without `gh api` (CLAUDE.md Risk tiers): a revert can't undo them, they add a credential
+# or third-party code, or they start CI. Keyed by group; "repo deploy-key" is a group of its own.
+_GH_BUILTIN_WRITES = {
+    "repo": {"delete", "archive", "unarchive", "rename", "edit"},
+    "repo deploy-key": {"add", "delete"},
+    "secret": {"set", "delete", "remove"}, "variable": {"set", "delete"},
+    "release": {"delete", "delete-asset"}, "ssh-key": {"add", "delete"}, "gpg-key": {"add", "delete"},
+    "extension": {"install", "upgrade"}, "alias": {"set", "import"},
+    "issue": {"delete", "transfer"}, "label": {"delete"}, "cache": {"delete"}, "codespace": {"delete"},
+    "workflow": {"run", "enable", "disable"}, "run": {"cancel", "delete", "rerun"}, "project": {"delete"},
+}
+
+def _gh_builtin_write(scan):
+    # The verb is the group's first positional word: -R/--repo take a value, other flags stand alone.
+    group, i = scan[0], 1
+    words = []
+    while i < len(scan) and len(words) < 2:
+        t = scan[i]
+        if t in ("-R", "--repo"):
+            i += 2
+            continue
+        if not t.startswith("-"):
+            words.append(t)
+        i += 1
+    if group == "repo" and words[:1] == ["deploy-key"]:
+        group, words = "repo deploy-key", words[1:]
+    return bool(words) and words[0] in _GH_BUILTIN_WRITES.get(group, ())
+
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 def _check_window(_wi, w):
     global _cur_depth
@@ -2456,6 +2484,9 @@ def _check_window(_wi, w):
                 ask("gh api .../merge calls the GitHub merge endpoint directly — the "
                     "PR-review flow (docs/reference/branching-model.md) expects a human to "
                     "do this. Confirm this is intentional.", rule="gh-api-merge")
+            if _gh_builtin_write(gh_scan):
+                ask(f"gh {' '.join(gh_scan[:3])} is a T3/T4 write by CLAUDE.md's Risk tiers (no undo, a credential "
+                    "or third-party code, or it starts CI). Confirm this is intentional.", rule="gh-builtin-write")
             if gh_scan[0] == "api" and _gh_api_write(gh_scan[1:]):
                 ask("gh api would write to GitHub (a non-GET method, a field or --input, or a graphql "
                     "mutation) — a T3 change by CLAUDE.md's Risk tiers unless it is an issue/PR comment "
