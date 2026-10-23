@@ -370,6 +370,17 @@ for id in 02 03; do
   HOME="$EMPTY_HOME" expect_silent "$id" fleet-good --plugin-cache "$CACHE"
   HOME="$EMPTY_HOME" expect_crit   "$id" fleet-good --plugin-cache "$DECOY"
 done
+# Cloud audit 2026-10-23 F6: with no cache, a ~/.claude/skills (or agents) dir holding only plain dirs,
+# as a cloud session ships it, is not a symlink farm: one WARN, not a CRIT per component. One symlink in
+# the dir makes it a farm again, and the missing links stay CRIT.
+NO_CACHE="$CODEX_TMP/no-cache"
+PLAIN_HOME="$CODEX_TMP/plain-farm-home"; mkdir -p "$PLAIN_HOME/.claude/skills/synced" "$PLAIN_HOME/.claude/agents/synced"
+LINK_HOME="$CODEX_TMP/link-farm-home"; mkdir -p "$LINK_HOME/.claude/skills" "$LINK_HOME/.claude/agents"
+ln -s "$CODEX_TMP" "$LINK_HOME/.claude/skills/other"; ln -s "$CODEX_TMP" "$LINK_HOME/.claude/agents/other.md"
+for id in 02 03; do
+  HOME="$PLAIN_HOME" expect_warn "$id" fleet-good --plugin-cache "$NO_CACHE"
+  HOME="$LINK_HOME"  expect_crit "$id" fleet-good --plugin-cache "$NO_CACHE"
+done
 # Check 02 bootstrap (GH #204): a skill absent from the base ref (default origin/develop) passes as
 # INFO, since the plugin cache is built from committed state and cannot hold it yet. A skill already
 # on the base ref, or a repo with no base ref, stays CRIT. Repos are built here (not fixtures under

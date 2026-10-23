@@ -9,8 +9,12 @@
 # integrity covered only skills and hooks. (The commands/ loop that used to
 # live here was dropped 2026-08-25, #112 — commands/ retired as a surface
 # type entirely, every command converted to a skill.)
-# CI-safety: same guard shape as check 02/the hooks loop above.
-if [ "${PLUGIN_ACTIVE:-0}" -eq 0 ] && [ ! -d "$HOME/.claude/agents" ]; then
+# CI-safety: same guard shape as check 02/the hooks loop above, a farm needs one symlink.
+_farm=0
+for _e in "$HOME/.claude/agents"/*; do
+  [ -L "$_e" ] && { _farm=1; break; }
+done
+if [ "${PLUGIN_ACTIVE:-0}" -eq 0 ] && [ "$_farm" -eq 0 ]; then
   warn "no plugin cache and no ~/.claude/agents symlink farm present — agent loadability unverified in this environment (expected on a clean CI checkout; not a per-agent finding)"
 else
 for f in "$CLAUDE_DIR/agents"/*.md; do

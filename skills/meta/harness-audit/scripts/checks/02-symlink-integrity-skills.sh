@@ -13,8 +13,15 @@
 # behavior below). If it does not, AND $PLUGIN_ACTIVE=0, neither delivery
 # mechanism is configured here at all — downgrade to one aggregated WARN
 # instead of one CRIT per skill, and skip the loop.
-#
-if [ "${PLUGIN_ACTIVE:-0}" -eq 0 ] && [ ! -d "$HOME/.claude/skills" ]; then
+# Symlink mode needs at least one symlink in the dir, not the dir alone: a cloud
+# session ships ~/.claude/skills holding its own plain dirs (session-start-hook,
+# synced), which read as a farm with every link missing, 12 CRIT (cloud audit
+# 2026-10-23, F6).
+_farm=0
+for _e in "$HOME/.claude/skills"/*; do
+  [ -L "$_e" ] && { _farm=1; break; }
+done
+if [ "${PLUGIN_ACTIVE:-0}" -eq 0 ] && [ "$_farm" -eq 0 ]; then
   warn "no plugin cache and no ~/.claude/skills symlink farm present — skill loadability unverified in this environment (expected on a clean CI checkout; not a per-skill finding)"
 else
 for d in "$CLAUDE_DIR/skills"/*/ "$CLAUDE_DIR/skills"/*/*/; do
