@@ -1952,7 +1952,9 @@ def _gh_api_write(args):
     if endpoint == "graphql":
         # A read is a query the gate can see: text starting with "query" or "{". A $(...) or variable
         # arrives empty (its placeholder is stripped), and a file (@path) is unseen: both count as writes.
-        queries = [f.split("=", 1)[1].strip() for f in fields if f.split("=", 1)[0] == "query" and "=" in f]
+        # Leading # comment lines are ignored tokens in GraphQL, so the operation keyword follows them.
+        queries = [re.sub(r"^(?:\s|#[^\n]*\n)*", "", f.split("=", 1)[1]) for f in fields
+                   if f.split("=", 1)[0] == "query" and "=" in f]
         # An alias named mutation (`mutation: login`, a # comment line allowed before the colon) is a read.
         return has_input or not queries or any(
             not q.lower().startswith(("query", "{")) or re.search(r"\bmutation\b(?!(?:\s|#[^\n]*\n)*:)", q)
