@@ -1813,6 +1813,29 @@ def _git_words(rest, ph_value=False):
                 out.append(word())
     return out + rest[i:] if (hit if ph_value else joined) else None
 
+# GH #562: `git config` on core.hooksPath: a read (get, list, the key alone) and the one documented write,
+# `core.hooksPath git-hooks` with no value-pattern, are allowed. The word git-hooks anywhere else (a
+# value-pattern, a --comment) allowed `git config core.hooksPath /dev/null git-hooks`, which replaces the
+# git-hooks value with /dev/null.
+_GIT_CONFIG_VALUE_OPTS = ("-f", "--file", "--blob", "--type", "--comment", "--default", "--value")
+_GIT_CONFIG_READ_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list")
+_GIT_CONFIG_EDIT_OPTS = ("--unset", "--unset-all", "--rename-section", "--remove-section", "-e", "--edit")
+def _hooks_path_ok(scan):
+    pos, opts, i = [], [], 0
+    while i < len(scan):
+        t = scan[i]
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        (opts if t.startswith("-") else pos).append(t.split("=", 1)[0] if t.startswith("--") else t)
+        i += 1
+    if any(t in _GIT_CONFIG_EDIT_OPTS for t in opts) or pos[:1] in (["unset"], ["rename-section"], ["remove-section"], ["edit"]):
+        return False
+    if pos[:1] in (["get"], ["list"]) or any(t in _GIT_CONFIG_READ_OPTS for t in opts):
+        return True
+    pos = pos[1:] if pos[:1] == ["set"] else pos
+    return len(pos) == 1 or (len(pos) == 2 and pos[1] == "git-hooks" and not any(t == "--value" for t in opts))
+
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
     # window w set core.hooksPath (key case-insensitive) to a non-empty value?
@@ -2398,7 +2421,7 @@ def _check_window(_wi, w):
                 # `git config core.hooksPath X` / --unset disables pre-commit and
                 # pre-push (same bypass class as --no-verify). The documented
                 # wiring value `git-hooks` stays allowed.
-                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and "git-hooks" not in scan:
+                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and not _hooks_path_ok(scan):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
                     deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
