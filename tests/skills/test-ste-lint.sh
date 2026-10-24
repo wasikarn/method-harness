@@ -49,10 +49,16 @@ trap 'trash "$TMP" "$OUTSIDE" 2>/dev/null || true' EXIT
   # Unreadable file: reported as an error (exit 2), not a crash.
   printf 'Do not use this; it is not allowed.\n' > unreadable.md
   chmod 000 unreadable.md
-  python3 "$SCRIPT" unreadable.md --json > /dev/null 2>&1
-  code=$?
+  # Root reads a mode-000 file anyway: the row would test nothing there, so it skips aloud.
+  if [ -r unreadable.md ]; then
+    echo "SKIP: unreadable file (chmod 000 leaves it readable here, e.g. as root)"
+  else
+    python3 "$SCRIPT" unreadable.md --json > /dev/null 2>&1
+    code=$?
+    chmod 644 unreadable.md
+    [ "$code" -eq 2 ] || { echo "FAIL: unreadable file expected exit 2, got $code"; exit 1; }
+  fi
   chmod 644 unreadable.md
-  [ "$code" -eq 2 ] || { echo "FAIL: unreadable file expected exit 2, got $code"; exit 1; }
 
   # A semicolon inside a fenced code block is never reported; the same
   # semicolon in prose is.
@@ -128,10 +134,15 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" 2>/dev/null || true' EXIT
   mkdir noaccess
   printf 'Do not use this; it is not allowed.\n' > noaccess/x.md
   chmod 000 noaccess
-  python3 "$SCRIPT" noaccess --json > /dev/null 2>&1
-  code=$?
+  if [ -r noaccess ]; then
+    echo "SKIP: unreadable directory (chmod 000 leaves it listable here, e.g. as root)"
+  else
+    python3 "$SCRIPT" noaccess --json > /dev/null 2>&1
+    code=$?
+    chmod 755 noaccess
+    [ "$code" -eq 2 ] || { echo "FAIL: unreadable directory expected exit 2, got $code"; exit 1; }
+  fi
   chmod 755 noaccess
-  [ "$code" -eq 2 ] || { echo "FAIL: unreadable directory expected exit 2, got $code"; exit 1; }
 
   # A same-tree symlink alias that resolves to a frozen path must not bypass
   # the frozen-dir exclusion just because its own tracked name doesn't start

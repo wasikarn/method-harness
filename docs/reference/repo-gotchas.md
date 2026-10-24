@@ -40,6 +40,8 @@ never runs at all and nothing server-side notices. Run the verify command above 
   `CHANGELOG.md`) are exempt from wording passes, never from hygiene: on 2026-08-26 a purge
   reported clean while 29 hits sat in exactly those dirs.
 - **Never `rm -rf`.** Use `trash` (`trash-put` on Linux; neither installed means ask the user).
+  `run-gauntlet.sh` needs the `trash` command itself, since the tests call it by that name, and
+  stops without it: on Linux, `pip install trash-cli` provides `trash` alongside `trash-put`.
   Enforced by `gate:bash:irrecoverable`. Validate the argument is non-empty before any `trash`
   call: an empty glob result once trashed the whole repo. A template `mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX"`
   prints "" when TMPDIR names a missing directory (a plain `mktemp -d` falls back on macOS), and `set -u`

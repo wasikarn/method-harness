@@ -678,12 +678,17 @@ def _selftest():
         tf.write(b"Some text.\n")
         unreadable_path = tf.name
     os.chmod(unreadable_path, 0)
+    # Root reads a mode-0 file anyway, so there the case proves nothing: skip it, said aloud.
+    readable = os.access(unreadable_path, os.R_OK)
     try:
         _, _, errors = scan_markdown_file(unreadable_path, "auto")
     finally:
         os.chmod(unreadable_path, 0o644)
         os.unlink(unreadable_path)
-    assert errors and "could not read" in errors[0]["message"], errors
+    if readable:
+        print("SKIP: unreadable-file case (chmod 000 leaves the file readable here, e.g. as root)", file=sys.stderr)
+    else:
+        assert errors and "could not read" in errors[0]["message"], errors
 
     # Rule 8.6: a multi-word quoted phrase counts as ONE word, not one word
     # per space -- deep-audit finding, was silently over-counting.
