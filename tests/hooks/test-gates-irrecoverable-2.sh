@@ -538,6 +538,12 @@ fi
 echo ""
 echo "=== gh merge ask-tier gate (Phase B, 2026-09-28: local defense-in-depth for the PR-review flow) ==="
 test_ask   "$IRRECOVERABLE" "gh pr merge <number>"                "$(bash_payload 'gh pr merge 5')"
+# GH #565: "merge" as a search word, a branch name or a file path is a read, not the merge verb or endpoint.
+test_allow "$IRRECOVERABLE" "GH #565: gh pr list --search merge" "$(bash_payload 'gh pr list --search merge')"
+test_allow "$IRRECOVERABLE" "GH #565: gh api contents/.../merge_sort.py" "$(bash_payload 'gh api repos/o/r/contents/lib/merge_sort.py')"
+test_allow "$IRRECOVERABLE" "GH #565: gh api commits?path=src/merge.py" "$(bash_payload "gh api 'repos/o/r/commits?path=src/merge.py'")"
+test_ask   "$IRRECOVERABLE" "GH #565: gh pr -R o/r merge still asks" "$(bash_payload 'gh pr -R o/r merge 3')"
+test_ask   "$IRRECOVERABLE" "GH #565: gh api .../pulls/3/merge still asks" "$(bash_payload 'gh api repos/o/r/pulls/3/merge')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with --squash flag"       "$(bash_payload 'gh pr merge --squash 5')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with a brace word asks once (two window copies)" "$(bash_payload 'gh pr merge feat{1}')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with a \$() argument asks once (compacted copy)" "$(bash_payload 'gh pr merge $(true) 12')"

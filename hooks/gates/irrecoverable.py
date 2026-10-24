@@ -2574,11 +2574,13 @@ def _check_window(_wi, w):
             # An alias or extension (gh-unknown-subcommand below) still asks.
             gh_write = _gh_builtin_write(gh_scan)
             gh_runs = not (_gh_help(gh_scan) and gh_scan[0] in _GH_BUILTINS and gh_write != "extension exec")
-            if gh_runs and gh_scan[0] == "pr" and "merge" in gh_scan[1:]:
+            # GH #565: the verb (pr's first positional word) and the endpoint's merge segment, not the word
+            # anywhere: `gh pr list --search merge` and `gh api .../contents/lib/merge_sort.py` are reads.
+            if gh_runs and gh_scan[0] == "pr" and [gh_scan[1:][k] for k in _gh_words(gh_scan[1:], 1)] == ["merge"]:
                 ask("gh pr merge would merge a pull request into this repo — the PR-review "
                     "flow (docs/reference/branching-model.md) expects a human to do this. "
                     "Confirm this is intentional.", rule="gh-pr-merge")
-            if gh_runs and gh_scan[0] == "api" and any("/merge" in t for t in gh_scan[1:]):
+            if gh_runs and gh_scan[0] == "api" and any(re.search(r"/merge(?:$|[/?#])", t) for t in gh_scan[1:]):
                 ask("gh api .../merge calls the GitHub merge endpoint directly — the "
                     "PR-review flow (docs/reference/branching-model.md) expects a human to "
                     "do this. Confirm this is intentional.", rule="gh-api-merge")
