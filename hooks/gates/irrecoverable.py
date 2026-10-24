@@ -1835,6 +1835,51 @@ def _sets_hooks_path(w):
             return True
     return False
 
+# GH #561: config a git run is given re-enables a denied action without its flag: an alias runs any
+# subcommand or shell line, remote.<r>.mirror is push --mirror, a "+" remote.<r>.push refspec is a forced
+# push, clean.requireForce=false is clean -f, and gc's expiry keys at now are reflog expire + prune.
+# Read from `-c KEY=VAL` (and a `git config KEY VALUE` write of the same keys, see _git_config_write).
+_GIT_FALSE = ("false", "no", "off", "0", "")
+def _git_c_pairs(globs):
+    # (lowercased key, value) of each -c KEY=VAL / -cKEY=VAL in git's global flags.
+    out = []
+    for idx, t in enumerate(globs):
+        t_pf = t.replace(PH, "")
+        kv = globs[idx + 1] if t_pf == "-c" and idx + 1 < len(globs) else t_pf[2:] if t_pf.startswith("-c") and t_pf != "-c" else None
+        if kv and "=" in kv:
+            key, _, val = kv.replace(PH, "").partition("=")
+            out.append((key.lower(), val))
+    return out
+
+def _git_cfg_risk(key, val, sub):
+    # The rule a config pair breaks for subcommand sub (None: any later run), or None.
+    now = val.lower() in ("now", "all", "0")
+    if key.startswith("remote.") and key.endswith(".mirror") and val.lower() not in _GIT_FALSE and sub in ("push", None):
+        return "git-push-mirror"
+    if key.startswith("remote.") and key.endswith(".push") and val.startswith("+") and sub in ("push", None):
+        return "git-push-force"
+    if key == "clean.requireforce" and val.lower() in _GIT_FALSE and sub in ("clean", None):
+        return "git-clean-force"
+    if key in ("gc.pruneexpire", "gc.reflogexpire", "gc.reflogexpireunreachable") and now and sub in ("gc", None):
+        return "git-reflog-prune"
+    return None
+
+_GIT_CONFIG_VALUE_OPTS = ("-f", "--file", "--blob", "--type", "--comment", "--default", "--value")
+def _git_config_write(scan):
+    # (key, value) a `git config [set] KEY VALUE` writes, or None (a read, a list, an unset).
+    pos, i = [], 0
+    while i < len(scan):
+        t = scan[i]
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        if not t.startswith("-"):
+            pos.append(t)
+        i += 1
+    if pos[:1] == ["set"]:
+        pos = pos[1:]
+    return (pos[0], pos[1]) if len(pos) >= 2 and "." in pos[0] else None
+
 # GH #336: chmod making files world-writable (777 / a+rwx) recursively or on / or ~.
 # The tokenizer splits `+` out of a word (`a+rwx` is "a", "+", "rwx"), so the mode is read on the
 # joined words. 777 means u, g and o each get r, w and x: in any letter order, with X (execute on
@@ -2357,6 +2402,16 @@ def _check_window(_wi, w):
             if _ambig and _ambig[1] is _AMBIG_BROAD_VERB_RE and sub.replace(PH, "") in (
                     "push", "reset", "clean", "checkout", "restore", "switch", "branch", "stash"):
                 _deny_ambiguous()
+            # GH #561: what a -c pair makes of this subcommand (an alias names it, or a key re-enables a deny).
+            _sub = sub.replace(PH, "")
+            for _k, _v in _git_c_pairs(rest[:i]):
+                if _k == "alias." + _sub.lower() and _v:
+                    _scan_body((_v[1:] if _v.startswith("!") else "git " + _v) + " " + " ".join(args))
+                _r = _git_cfg_risk(_k, _v, _sub)
+                if _r == "git-clean-force" and any(t.replace(PH, "") in ("-n", "--dry-run", "-i", "--interactive") for t in args):
+                    _r = None  # a dry run or the prompt deletes nothing unasked
+                if _r:
+                    deny("git -c " + _k + "=" + _v + " makes `git " + _sub + "` do what its denied flag does — confirm with user first", rule=_r)
             # drop the value token after a free-text flag so message content
             # (e.g. "commit -m ...rm -rf...") is never pattern-matched.
             scan_raw, skip = [], False
@@ -2398,6 +2453,13 @@ def _check_window(_wi, w):
                 # `git config core.hooksPath X` / --unset disables pre-commit and
                 # pre-push (same bypass class as --no-verify). The documented
                 # wiring value `git-hooks` stays allowed.
+                # GH #561: a stored alias or key does at the next run what the -c pair above does now.
+                _cw = _git_config_write(scan) if sub == "config" else None
+                if _cw and _cw[0].lower().startswith("alias.") and _cw[1]:
+                    _scan_body(_cw[1][1:] if _cw[1].startswith("!") else "git " + _cw[1])
+                if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
+                    deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
+                         rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
                 if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and "git-hooks" not in scan:
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
