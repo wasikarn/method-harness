@@ -42,11 +42,56 @@ _HEREDOC_RE = re.compile(r"<<(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
 # against the segment of the line BEFORE "<<" (the command the heredoc feeds).
 _INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
+# 2026-10-24 sweep: a SQL client reads SQL on stdin too (a heredoc, a here-string, a pipe), where the
+# -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
+# checked with the stdin text further down (_sql_stdin_drop). A SQL comment separates words like a blank.
+_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb)(?![\w.-])")
+_SQL_GAP = r"(?:\s|/\*[^*]{0,200}\*/|--[^\n]{0,200}\n)+"
+_SQL_DROP_RE = re.compile(r"DROP" + _SQL_GAP + r"(TABLE|DATABASE|SCHEMA)|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w",
+                          re.IGNORECASE)
+_SQL_HEREDOC_BODIES = []
+
+def _pieces(text, pipe=False):
+    # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
+    # pipe=True a single | or |&. A redirect's & (2>&1, &>f) separates nothing.
+    out, start, i, q, n = [], 0, 0, None, len(text)
+    while i < n:
+        c, w = text[i], 0
+        if q:
+            if c == "\\" and q == '"':
+                i += 1
+            elif c == q:
+                q = None
+        elif c == "\\":
+            i += 1
+        elif c in "'\"":
+            q = c
+        elif pipe:
+            if c == "|" and text[i + 1:i + 2] != "|" and text[i - 1:i] != "|":
+                w = 2 if text[i + 1:i + 2] == "&" else 1
+        elif text.startswith(("&&", "||"), i):
+            w = 2
+        elif c in ";\n" or (c == "&" and text[i - 1:i] not in (">", "<", "|") and text[i + 1:i + 2] != ">"):
+            w = 1
+        if w:
+            out.append((start, i))
+            i += w
+            start = i
+            continue
+        i += 1
+    out.append((start, n))
+    return out
+
+def _statement_at(line, pos):
+    # The pipeline of line that holds line[pos].
+    return next(line[s:e] for s, e in _pieces(line) if pos <= e)
 
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
     # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
+    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is still
+    # stripped, and kept in _SQL_HEREDOC_BODIES for the SQL check.
     lines = cmd.split("\n")
     out, i = [], 0
     while i < len(lines):
@@ -70,6 +115,8 @@ def _strip_heredocs(cmd):
             # Unmatched closing delimiter: put the scanned lines BACK rather
             # than silently eat a real write statement that followed.
             out.extend(lines[body_start:i])
+        elif _SQL_CLIENT_RE.search(_statement_at(line, m.start())):
+            _SQL_HEREDOC_BODIES.append("\n".join(lines[body_start:i - 1]))
     return "\n".join(out)
 
 def _normalize_ansi_c_quotes(cmd):
@@ -1216,6 +1263,27 @@ def _drop_ph_tokens(w):
 _CMD_LEN_CAP = 150_000
 if len(cmd) > _CMD_LEN_CAP:
     deny("command too long to safely tokenize (" + str(len(cmd)) + " chars, cap " + str(_CMD_LEN_CAP) + ") - confirm with user first")
+
+def _sql_stdin_drop(c):
+    # SQL a client reads on stdin drops or truncates: a heredoc body it reads, a here-string in its own pipe
+    # segment, or text upstream of it in its pipeline (echo 'DROP TABLE t' | psql). Text downstream of the
+    # client is its output (psql -c '\d' | grep -i 'drop table'), so it is not read.
+    if any(_SQL_DROP_RE.search(b) for b in _SQL_HEREDOC_BODIES):
+        return True
+    if not _SQL_CLIENT_RE.search(c) or not _SQL_DROP_RE.search(c):
+        return False
+    for s, e in _pieces(c):
+        segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
+        k = next((k for k, g in enumerate(segs) if _SQL_CLIENT_RE.search(g)), None)
+        if k is None:
+            continue
+        here = segs[k].split("<<<", 1)
+        if _SQL_DROP_RE.search(" ".join(segs[:k])) or (len(here) > 1 and _SQL_DROP_RE.search(here[1])):
+            return True
+    return False
+
+if _sql_stdin_drop(cmd):
+    deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) sent to a SQL client on stdin — confirm with user first", rule="sql-drop")
 
 # GH #309: bash, ksh and zsh (not dash) expand a brace inside a word before anything reads it, so
 # "git {,\"reset\"} --hard", "--fo{r,}{ce,}" and "r{m,} -rf" hid a verb or flag from every check below,
@@ -2604,9 +2672,15 @@ def _check_window(_wi, w):
             # SQL genuinely lives inside -e/-c values, so DO scan them, but only
             # for known-dangerous statements. TABLE is optional in TRUNCATE
             # grammar. Full PH removal: a splice can land mid-keyword (DR$(true)OP).
-            if re.search(r"DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE\s+(TABLE\s+)?\w",
-                         " ".join(rest).replace(PH, ""), re.IGNORECASE):
+            if _SQL_DROP_RE.search(" ".join(rest).replace(PH, "")):
                 deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) detected — confirm with user first", rule="sql-drop")
+
+    # 2026-10-24 sweep: the client tools that drop a database without SQL. dropdb drops the user's own
+    # database when no name is given, so anything but a help or version request denies.
+    if _a0 == "dropdb" and not all(t.replace(PH, "") in ("--help", "-?", "--version", "-V") for t in rest):
+        deny("dropdb drops a database — confirm with user first", rule="sql-drop")
+    if _a0 in ("mysqladmin", "mariadb-admin") and any(t.replace(PH, "").lower() == "drop" for t in rest):
+        deny("mysqladmin drop drops a database — confirm with user first", rule="sql-drop")
 
 def _run_windows(i):
     while i < len(windows):  # a window's checks may append more (bash -c / eval bodies, find, xargs)
