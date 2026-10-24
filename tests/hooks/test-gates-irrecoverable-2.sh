@@ -915,6 +915,15 @@ test_allow "$IRRECOVERABLE" "main session: bash -c claude -p (no agent_id, not a
   "$(bash_payload "bash -c 'claude -p hi'")"
 test_allow "$IRRECOVERABLE" "sudo bash -c with a harmless body" \
   "$(bash_payload "sudo bash -c 'ls -la'")"
+# GH #560: env -S / --split-string runs its string as the command, like a sh -c body; -C takes a value.
+test_deny  "$IRRECOVERABLE" "GH #560: env -S hiding rm -rf" "$(bash_payload "env -S 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env --split-string= hiding push --force" \
+  "$(bash_payload "env --split-string='git push --force'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -S with the flag after the string" "$(bash_payload "env -S 'git push' --force")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -C DIR before rm -rf" "$(bash_payload 'env -C /tmp rm -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #560: subagent: env -S hiding claude -p" "$(bash_agent_payload "env -S 'claude -p hi'" fork)"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -S with a harmless string" "$(bash_payload "env -S 'ls -la'")"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -C DIR ls" "$(bash_payload 'env -C /tmp ls')"
 # Non-goal: cat <<EOF | bash, eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"

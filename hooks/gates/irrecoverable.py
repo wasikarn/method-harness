@@ -2093,10 +2093,19 @@ def _check_window(_wi, w):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
-            i = o
+            # GH #560: -S STRING / --split-string=STRING splits STRING into the command and its first
+            # words, so it is a command line like a `sh -c` body (any words after it are appended).
+            # -C (chdir) and BSD -P (path) take a value like -u.
+            i, body = o, None
             while i < len(rest):
                 t = rest[i].replace(PH, "")
-                if t == "-u" and i + 1 < len(rest):
+                if t in ("-S", "--split-string") and i + 1 < len(rest):
+                    body, i = rest[i + 1], i + 2
+                    break
+                if t.startswith("--split-string=") or (t.startswith("-S") and not t.startswith("--")):
+                    body, i = rest[i].split("=", 1)[1] if t.startswith("--") else rest[i][rest[i].index("S") + 1:], i + 1
+                    break
+                if t in ("-u", "-C", "-P") and i + 1 < len(rest):
                     i += 2
                 elif t.startswith("-"):
                     i += 1
@@ -2104,6 +2113,10 @@ def _check_window(_wi, w):
                     i += 1
                 else:
                     break
+            if body is not None:
+                _scan_body(" ".join([body] + rest[i:]))
+                o = len(rest)
+                break
             if i >= len(rest):
                 break
             argv0, o = basename(rest[i]), i + 1
