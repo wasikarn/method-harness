@@ -1190,4 +1190,15 @@ test_allow "$IRRECOVERABLE" "a short xargs env xargs chain, benign (audit of #22
 _timed_case "25 nested find -exec find stays fast and allowed (audit of #227)" 0 \
   "$(python3 -c "print('find . ' + '-exec find . ' * 25 + '-print')")"
 
+# GH #563: git verbs with a denied verb's damage.
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack --force" "$(bash_payload 'git send-pack --force git@github.com:o/r.git main')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -rf drops uncommitted edits" "$(bash_payload 'git rm -rf src')"
+test_deny  "$IRRECOVERABLE" "GH #563: worktree remove -ff" "$(bash_payload 'git worktree remove -ff ../wt')"
+test_deny  "$IRRECOVERABLE" "GH #563: branch -f main" "$(bash_payload 'git branch -f main HEAD~5')"
+test_deny  "$IRRECOVERABLE" "GH #563: update-ref moving main" "$(bash_payload 'git update-ref refs/heads/main HEAD~5')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm --cached -f" "$(bash_payload 'git rm -r --cached -f build')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm a file" "$(bash_payload 'git rm a.txt')"
+test_allow "$IRRECOVERABLE" "GH #563 control: branch -f feature" "$(bash_payload 'git branch -f feature x')"
+test_allow "$IRRECOVERABLE" "GH #563 control: update-ref on a feature branch" "$(bash_payload 'git update-ref refs/heads/feature x')"
+
 gates_summary

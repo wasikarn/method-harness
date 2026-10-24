@@ -2534,7 +2534,7 @@ def _check_window(_wi, w):
                 if sub == "checkout-index" and any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan):
                     deny("git checkout-index -f overwrites working-tree files — confirm with user first", rule="git-checkout-index-force")
                 if sub == "worktree" and _nonflag[:1] == ["remove"] and any(
-                        t == "-f" or _is_flag(t, "--force") for t in scan):
+                        t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan):  # -ff: GH #563
                     deny("git worktree remove --force deletes the worktree's uncommitted changes — confirm with user first", rule="git-worktree-remove-force")
                 # The reflog is the way back after a reset or a branch delete; these empty it now, not in 90 days.
                 _now = lambda v: v.lower() in ("now", "all", "0")
@@ -2553,6 +2553,20 @@ def _check_window(_wi, w):
                         or (any(t == "-m" or t == "-c" or _is_flag(t, "--move", "--copy") for t in scan)
                             and any(t == "-f" or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
                     deny("git branch -M/-C onto main/master/develop overwrites a protected branch — confirm with user first", rule="git-branch-force-move-protected")
+                # GH #563 (2026-10-24 sweep): more verbs with a denied verb's damage. send-pack is push's
+                # plumbing; rm -f drops a tracked file's uncommitted edits (--cached leaves the worktree);
+                # branch -f and update-ref without -d move main/master/develop like branch -M does.
+                _force = any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan)
+                if sub == "send-pack" and (any(_is_flag(t, "--force", "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
+                    deny("git send-pack --force/--mirror/+refspec overwrites remote history, like push --force — confirm with user first", rule="git-push-force")
+                if sub == "rm" and _force and not any(_is_flag(t, "--cached") for t in scan):
+                    deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first", rule="git-rm-force")
+                if sub == "branch" and _force and _nonflag and _protected_ref(_nonflag[0]) and not any(
+                        t.startswith("-") and not t.startswith("--") and any(c in t for c in "dDmMcC")
+                        or _is_flag(t, "--delete", "--move", "--copy") for t in scan):
+                    deny("git branch -f onto main/master/develop moves a protected branch — confirm with user first", rule="git-branch-force-move-protected")
+                if sub == "update-ref" and not any(t == "-d" or _is_flag(t, "--delete", "--stdin") for t in scan) and _nonflag[:1] and _protected_ref(_nonflag[0]):
+                    deny("git update-ref on main/master/develop moves a protected branch — confirm with user first", rule="git-update-ref-delete-protected")
                 # -A also arrives bundled (-Af, -fA, -vA); add has no value-taking short flag.
                 # --pathspec-from-file's value is a pathspec list the gate cannot read
                 # (GH #200), so any use denies, as in restore/checkout above.
