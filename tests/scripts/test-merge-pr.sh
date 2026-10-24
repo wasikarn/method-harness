@@ -102,7 +102,7 @@ merged() { /usr/bin/grep -q '^gh pr merge' "$LOG"; }
 refuses() {
   if [ "$rc" -ne 0 ]; then ok "$1 exits non-zero (rc=$rc)"; else bad "$1 exited 0"; fi
   if merged; then bad "$1 still reached gh pr merge"; else ok "$1 never calls gh pr merge"; fi
-  if printf '%s' "$out" | /usr/bin/grep -q -- "$2"; then ok "$1 message matches '$2'"; else bad "$1: no '$2' in: $out"; fi
+  if /usr/bin/grep -q -- "$2" <<<"$out"; then ok "$1 message matches '$2'"; else bad "$1: no '$2' in: $out"; fi
 }
 # second_call_line <pattern>: line number in the stub log of the second matching call (empty
 # when there is none), i.e. the call made after the load wait.
@@ -129,7 +129,7 @@ refuses "behind PR" "ebase on origin/develop"
 run 0 othersha999 1.50
 if [ "$rc" -ne 0 ]; then ok "head mismatch exits non-zero (rc=$rc)"; else bad "head mismatch exited 0"; fi
 if merged; then ok "head mismatch reached gh pr merge with the checked sha"; else bad "head mismatch never tried the merge"; fi
-if printf '%s' "$out" | /usr/bin/grep -q 'mergesha000'; then bad "head mismatch printed a merge sha"; else ok "head mismatch prints no merge sha"; fi
+if /usr/bin/grep -q 'mergesha000' <<<"$out"; then bad "head mismatch printed a merge sha"; else ok "head mismatch prints no merge sha"; fi
 
 # 4. load stays high: fails with the figure, no merge.
 run 0 headsha111 7.25
@@ -202,7 +202,7 @@ refuses "unreadable version" "could not read"
 # 4i. a same-version head fails fast, before the load wait (load 7.25 would otherwise wait).
 STUB_HEAD_VER=1.1.5 STUB_DEV_VER=1.1.5 run 0 headsha111 7.25
 refuses "same version under high load" "1.1.5"
-if printf '%s' "$out" | /usr/bin/grep -q 'load'; then bad "refused after the load wait: $out"; else ok "same version is refused before the load wait"; fi
+if /usr/bin/grep -q 'load' <<<"$out"; then bad "refused after the load wait: $out"; else ok "same version is refused before the load wait"; fi
 
 # 4j. the two manifests at the head disagree: refuse (checking plugin.json alone would miss it).
 STUB_HEAD_MKT_VER=1.1.9 run 0 headsha111 1.50

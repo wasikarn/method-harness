@@ -23,50 +23,50 @@ status=$?
 
 if [ "$status" -eq 0 ]; then ok "clean pair: exit 0"; else bad "clean pair: exit $status (expected 0)"; fi
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'shared-skill-case' \
-  && printf '%s\n' "$out" | /usr/bin/grep -qF '+0.050' \
+/usr/bin/grep -qF 'shared-skill-case' <<<"$out" \
+  && /usr/bin/grep -qF '+0.050' <<<"$out" \
   && ok "clean pair: shared-skill-case delta is +0.050 (0.95 - 0.9)" \
   || bad "clean pair: shared-skill-case delta wrong or missing"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'shared-agent-case' \
-  && printf '%s\n' "$out" | /usr/bin/grep -qF '+0.200' \
+/usr/bin/grep -qF 'shared-agent-case' <<<"$out" \
+  && /usr/bin/grep -qF '+0.200' <<<"$out" \
   && ok "clean pair: shared-agent-case delta is +0.200 (0.8 - 0.6)" \
   || bad "clean pair: shared-agent-case delta wrong or missing"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'only-in-a: only in fixture-a' \
-  && printf '%s\n' "$out" | /usr/bin/grep -qF 'only-in-b: only in fixture-b' \
+/usr/bin/grep -qF 'only-in-a: only in fixture-a' <<<"$out" \
+  && /usr/bin/grep -qF 'only-in-b: only in fixture-b' <<<"$out" \
   && ok "clean pair: outer-join lists both one-sided cases under their real label" \
   || bad "clean pair: outer-join missing a one-sided case"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'CAVEAT: 1 of 2 compared cases dispatch a subagent' \
+/usr/bin/grep -qF 'CAVEAT: 1 of 2 compared cases dispatch a subagent' <<<"$out" \
   && ok "clean pair: agent-dispatch caveat counts exactly the 1 case with subagent_type" \
   || bad "clean pair: agent-dispatch caveat count wrong or missing"
 
-printf '%s\n' "$out" | /usr/bin/grep -q 'WARN' \
+/usr/bin/grep -q 'WARN' <<<"$out" \
   && bad "clean pair: printed a WARN with nothing that should mismatch" \
   || ok "clean pair: no spurious WARN"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'safety classifiers' \
+/usr/bin/grep -qF 'safety classifiers' <<<"$out" \
   && bad "clean pair: content-fallback caveat printed for non-model labels" \
   || ok "clean pair: no content-fallback caveat for non-model labels"
 
 # --- content-fallback caveat: fires only for an arm on a classifier-backed model ---
 out=$(python3 "$DIFF_PY" --label-a sonnet@high --label-b claude-opus-5-5 \
   "$FIXTURES/clean-a.json" "$FIXTURES/clean-b.json" 2>&1)
-printf '%s\n' "$out" | /usr/bin/grep -qF 'CAVEAT: claude-opus-5-5 runs a model with safety classifiers' \
+/usr/bin/grep -qF 'CAVEAT: claude-opus-5-5 runs a model with safety classifiers' <<<"$out" \
   && ok "opus-5-5 arm: content-fallback caveat names the arm" \
   || bad "opus-5-5 arm: content-fallback caveat missing"
 
 # `default` resolves to Opus 5.5 on every plan (model-config#default-model-setting)
 out=$(python3 "$DIFF_PY" --label-a default --label-b sonnet \
   "$FIXTURES/clean-a.json" "$FIXTURES/clean-b.json" 2>&1)
-printf '%s\n' "$out" | /usr/bin/grep -qF 'CAVEAT: default runs a model with safety classifiers' \
+/usr/bin/grep -qF 'CAVEAT: default runs a model with safety classifiers' <<<"$out" \
   && ok "default arm: content-fallback caveat names the arm" \
   || bad "default arm: content-fallback caveat missing"
 
 out=$(python3 "$DIFF_PY" --label-a claude-opus-4-8 --label-b sonnet \
   "$FIXTURES/clean-a.json" "$FIXTURES/clean-b.json" 2>&1)
-printf '%s\n' "$out" | /usr/bin/grep -qF 'safety classifiers' \
+/usr/bin/grep -qF 'safety classifiers' <<<"$out" \
   && bad "opus-4-8 vs sonnet: content-fallback caveat printed for models without it" \
   || ok "opus-4-8 vs sonnet: no content-fallback caveat"
 
@@ -75,16 +75,16 @@ printf '%s\n' "$out" | /usr/bin/grep -qF 'safety classifiers' \
 # against its own file's judge.
 out=$(python3 "$DIFF_PY" --label-a sonnet@high --label-b claude-opus-5-5 \
   "$FIXTURES/clean-a.json" "$FIXTURES/clean-b.json" 2>&1)
-printf '%s\n' "$out" | /usr/bin/grep -qF 'sonnet@high: arm shares the judge model family (sonnet)' \
+/usr/bin/grep -qF 'sonnet@high: arm shares the judge model family (sonnet)' <<<"$out" \
   && ok "same-family arm: WARN names the arm and the shared family" \
   || bad "same-family arm: no WARN for sonnet arm judged by sonnet"
-printf '%s\n' "$out" | /usr/bin/grep -qF 'claude-opus-5-5: arm shares' \
+/usr/bin/grep -qF 'claude-opus-5-5: arm shares' <<<"$out" \
   && bad "same-family arm: WARN fired for the opus arm against a sonnet judge" \
   || ok "same-family arm: no WARN for an arm of a different family"
 out=$(python3 "$DIFF_PY" --label-a claude-sonnet-5 --label-b claude-haiku-4-5 \
   "$FIXTURES/clean-a.json" "$FIXTURES/mismatch-b.json" 2>&1)
-printf '%s\n' "$out" | /usr/bin/grep -qF 'claude-haiku-4-5: arm shares the judge model family (haiku)' \
-  && printf '%s\n' "$out" | /usr/bin/grep -qF 'claude-sonnet-5: arm shares the judge model family (sonnet)' \
+/usr/bin/grep -qF 'claude-haiku-4-5: arm shares the judge model family (haiku)' <<<"$out" \
+  && /usr/bin/grep -qF 'claude-sonnet-5: arm shares the judge model family (sonnet)' <<<"$out" \
   && ok "same-family arm: each arm checked against its own file's judge" \
   || bad "same-family arm: per-arm judge not used (haiku arm/haiku judge, sonnet arm/sonnet judge)"
 
@@ -95,23 +95,23 @@ status=$?
 
 if [ "$status" -eq 0 ]; then ok "mismatch pair: exit 0 (WARN, not fatal)"; else bad "mismatch pair: exit $status (expected 0)"; fi
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'judgeModel differs: fixture-a=sonnet vs fixture-b=haiku' \
+/usr/bin/grep -qF 'judgeModel differs: fixture-a=sonnet vs fixture-b=haiku' <<<"$out" \
   && ok "mismatch pair: WARN on judgeModel sonnet vs haiku" \
   || bad "mismatch pair: judgeModel WARN missing or wrong"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'caseFilter differs: fixture-a=model-bench-fixture vs fixture-b=all cases' \
+/usr/bin/grep -qF 'caseFilter differs: fixture-a=model-bench-fixture vs fixture-b=all cases' <<<"$out" \
   && ok "mismatch pair: WARN on caseFilter set vs absent(default)" \
   || bad "mismatch pair: caseFilter WARN missing or wrong"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'ablation differs: fixture-a=none vs fixture-b=with-without' \
+/usr/bin/grep -qF 'ablation differs: fixture-a=none vs fixture-b=with-without' <<<"$out" \
   && ok "mismatch pair: WARN on ablation none vs with-without" \
   || bad "mismatch pair: ablation WARN missing or wrong"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF 'claudeVersion differs: fixture-a=2.1.270 vs fixture-b=2.1.275' \
+/usr/bin/grep -qF 'claudeVersion differs: fixture-a=2.1.270 vs fixture-b=2.1.275' <<<"$out" \
   && ok "mismatch pair: WARN on claudeVersion 2.1.270 vs 2.1.275" \
   || bad "mismatch pair: claudeVersion WARN missing or wrong"
 
-printf '%s\n' "$out" | /usr/bin/grep -qF "plugin version differs: fixture-a=['1.1.94'] vs fixture-b=['1.1.95']" \
+/usr/bin/grep -qF "plugin version differs: fixture-a=['1.1.94'] vs fixture-b=['1.1.95']" <<<"$out" \
   && ok "mismatch pair: WARN on plugin version 1.1.94 vs 1.1.95" \
   || bad "mismatch pair: plugin version WARN missing or wrong"
 
@@ -121,11 +121,11 @@ out=$(python3 "$DIFF_PY" --label-a fixture-a --label-b fixture-b \
 status=$?
 
 if [ "$status" -eq 1 ]; then ok "plugin-problem arm: exit 1 (hard-fail)"; else bad "plugin-problem arm: exit $status (expected 1)"; fi
-printf '%s\n' "$out" | /usr/bin/grep -qF 'HARD-FAIL' \
-  && printf '%s\n' "$out" | /usr/bin/grep -qF 'plugin problem: disabled_by_default' \
+/usr/bin/grep -qF 'HARD-FAIL' <<<"$out" \
+  && /usr/bin/grep -qF 'plugin problem: disabled_by_default' <<<"$out" \
   && ok "plugin-problem arm: HARD-FAIL names the plugin problem" \
   || bad "plugin-problem arm: HARD-FAIL message missing or wrong"
-printf '%s\n' "$out" | /usr/bin/grep -q 'overallScore\|score=' \
+/usr/bin/grep -q 'overallScore\|score=' <<<"$out" \
   && bad "plugin-problem arm: printed score numbers despite hard-fail (numbers would be misleading)" \
   || ok "plugin-problem arm: no score table printed alongside the hard-fail"
 
@@ -135,11 +135,11 @@ out=$(python3 "$DIFF_PY" --label-a fixture-a --label-b fixture-b \
 status=$?
 
 if [ "$status" -eq 1 ]; then ok "partial arm: exit 1 (hard-fail)"; else bad "partial arm: exit $status (expected 1)"; fi
-printf '%s\n' "$out" | /usr/bin/grep -qF 'HARD-FAIL' \
-  && printf '%s\n' "$out" | /usr/bin/grep -qF 'partial run (reason: test-interrupted)' \
+/usr/bin/grep -qF 'HARD-FAIL' <<<"$out" \
+  && /usr/bin/grep -qF 'partial run (reason: test-interrupted)' <<<"$out" \
   && ok "partial arm: HARD-FAIL names the partialReason" \
   || bad "partial arm: HARD-FAIL message missing or wrong"
-printf '%s\n' "$out" | /usr/bin/grep -q 'overallScore\|score=' \
+/usr/bin/grep -q 'overallScore\|score=' <<<"$out" \
   && bad "partial arm: printed score numbers despite hard-fail (numbers would be misleading)" \
   || ok "partial arm: no score table printed alongside the hard-fail"
 
@@ -149,7 +149,7 @@ out=$(python3 "$DIFF_PY" --label-a fixture-a --label-b fixture-b \
 status=$?
 
 if [ "$status" -eq 0 ]; then ok "zero-case arm: exit 0"; else bad "zero-case arm: exit $status (expected 0)"; fi
-printf '%s\n' "$out" | /usr/bin/grep -qF 'casesTotal is 0' \
+/usr/bin/grep -qF 'casesTotal is 0' <<<"$out" \
   && ok "zero-case arm: explicit note instead of a crash or misleading 0-vs-0 table" \
   || bad "zero-case arm: missing the casesTotal==0 note"
 
@@ -161,14 +161,14 @@ out=$(python3 "$DIFF_PY" --label-a fixture-a --label-b fixture-b \
 status=$?
 
 if [ "$status" -eq 0 ]; then ok "missing-casesTotal arm: exit 0"; else bad "missing-casesTotal arm: exit $status (expected 0)"; fi
-printf '%s\n' "$out" | /usr/bin/grep -qF "fixture-b: 'casesTotal' missing" \
+/usr/bin/grep -qF "fixture-b: 'casesTotal' missing" <<<"$out" \
   && ok "missing-casesTotal arm: WARN names the missing field" \
   || bad "missing-casesTotal arm: no WARN for the missing casesTotal"
-printf '%s\n' "$out" | /usr/bin/grep -qF 'shared-skill-case' \
-  && printf '%s\n' "$out" | /usr/bin/grep -qF '+0.050' \
+/usr/bin/grep -qF 'shared-skill-case' <<<"$out" \
+  && /usr/bin/grep -qF '+0.050' <<<"$out" \
   && ok "missing-casesTotal arm: per-case table still rendered from cases[]" \
   || bad "missing-casesTotal arm: per-case table skipped despite cases[] having entries"
-printf '%s\n' "$out" | /usr/bin/grep -qF 'casesTotal is 0' \
+/usr/bin/grep -qF 'casesTotal is 0' <<<"$out" \
   && bad "missing-casesTotal arm: printed the casesTotal==0 note for a file that has cases" \
   || ok "missing-casesTotal arm: no misleading casesTotal==0 note"
 
@@ -216,7 +216,7 @@ if [ "$status" -eq 0 ]; then ok "sonnet@high vs opus: exit 0"; else bad "sonnet@
 /usr/bin/grep -qF 'MODEL=opus EFFORT=<unset> ' "$CLAUDE_STUB_LOG" \
   && ok "bare opus: no CLAUDE_CODE_EFFORT_LEVEL set (unchanged from today)" \
   || bad "bare opus: effort env var was set when it should be absent"
-printf '%s\n' "$out" | /usr/bin/grep -qF 'sonnet@high' \
+/usr/bin/grep -qF 'sonnet@high' <<<"$out" \
   && ok "report label is the full 'sonnet@high' spec, not the bare model name" \
   || bad "report label missing the @effort suffix"
 

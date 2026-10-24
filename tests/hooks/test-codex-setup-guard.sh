@@ -33,11 +33,11 @@ check() { # check <desc> <ok:0|1>
 echo "=== codex-setup-guard gate ==="
 
 out=$(payload_skill "codex:setup" "--enable-review-gate" | bash "$GUARD" 2>/dev/null); rc=$?
-ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "codex:setup --enable-review-gate -> ask" "$ok"
 
 out=$(payload_skill "codex:setup" "--enable-review-gate --verbose" | bash "$GUARD" 2>/dev/null); rc=$?
-ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "codex:setup --enable-review-gate mixed with other flags -> ask" "$ok"
 
 out=$(payload_skill "codex:setup" "--disable-review-gate" | bash "$GUARD" 2>/dev/null); rc=$?

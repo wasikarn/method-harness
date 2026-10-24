@@ -16,7 +16,7 @@ check() { # name expected-exit expected-stdout-substring(or empty)
   local name="$1" want="$2" pat="$3" out code
   out=$(python3 "$FP" compare "$T/m.json" 2>&1); code=$?
   if [ "$code" -ne "$want" ]; then echo "FAIL: $name: exit $code, want $want: $out"; fail=1; return; fi
-  if [ -n "$pat" ] && ! printf '%s' "$out" | /usr/bin/grep -qF -- "$pat"; then
+  if [ -n "$pat" ] && ! /usr/bin/grep -qF -- "$pat" <<<"$out"; then
     echo "FAIL: $name: missing '$pat' in: $out"; fail=1; return
   fi
   echo "ok: $name"
