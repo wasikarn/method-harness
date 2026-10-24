@@ -537,6 +537,11 @@ fi
 
 echo ""
 echo "=== gh merge ask-tier gate (Phase B, 2026-09-28: local defense-in-depth for the PR-review flow) ==="
+# GH #564: two built-in T3 writes the lists missed.
+test_ask   "$IRRECOVERABLE" "GH #564: gh gist delete" "$(bash_payload 'gh gist delete 123')"
+test_ask   "$IRRECOVERABLE" "GH #564: gh pr update-branch --rebase" "$(bash_payload 'gh pr update-branch 3 --rebase')"
+test_allow "$IRRECOVERABLE" "GH #564 control: gh pr update-branch (merge commit)" "$(bash_payload 'gh pr update-branch 3')"
+test_allow "$IRRECOVERABLE" "GH #564 control: gh gist view" "$(bash_payload 'gh gist view 1')"
 test_ask   "$IRRECOVERABLE" "gh pr merge <number>"                "$(bash_payload 'gh pr merge 5')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with --squash flag"       "$(bash_payload 'gh pr merge --squash 5')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with a brace word asks once (two window copies)" "$(bash_payload 'gh pr merge feat{1}')"
