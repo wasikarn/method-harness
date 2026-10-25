@@ -252,6 +252,16 @@ class _HeredocLine:
         _, j, _, client = self._stage(pos)
         return client[j]
 
+    def piped_shell(self, pos):
+        # GH #567: a stage after the heredoc's runs a shell that reads stdin (_reads_stdin_shell).
+        k, j, st, _ = self._stage(pos)
+        if (k, "sh") not in self.stages:
+            shell = [False] * (len(st) + 1)
+            for i in range(len(st) - 1, -1, -1):
+                shell[i] = shell[i + 1] or _reads_stdin_shell(self.line[st[i][0]:st[i][1]])
+            self.stages[(k, "sh")] = shell
+        return self.stages[(k, "sh")][j + 1]
+
 def _heredoc_feeds_sql_client(ctx, openers, views, pos):
     # Whether the heredoc opened at ctx.line[pos] is read by a SQL client: its own pipe stage or one
     # downstream runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest
@@ -268,6 +278,32 @@ def _heredoc_feeds_sql_client(ctx, openers, views, pos):
             return True
         views[o] = _HeredocLine(ctx.line[o:])
     return views[o].client(pos - o)
+
+# GH #567: a shell reads its commands on stdin too: a heredoc piped into it (cat <<EOF | bash), a here-string
+# (bash <<< 'cmd') or the words an echo/printf pipes into it (echo 'cmd' | sh). Only a shell that reads stdin
+# counts: one with no -c and no script operand (`bash -s args` reads stdin, `bash x.sh` does not).
+_STDIN_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+def _split_words(seg):
+    try:
+        return shlex.split(seg)
+    except ValueError:
+        return None
+
+def _reads_stdin_shell(seg):
+    w = _split_words(seg.split("<<<", 1)[0].split("<<", 1)[0])
+    if not w:
+        return False
+    i = 0
+    while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i] in ("sudo", "env", "command", "exec", "nohup", "time")):
+        i += 1
+    if i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+        return False
+    for t in w[i + 1:]:
+        if t == "-s" or (t.startswith("-") and not t.startswith("--") and "s" in t[1:] and "c" not in t[1:]):
+            return True  # -s: the rest are positional parameters, commands come from stdin
+        if not t.startswith(("-", "+")) or (t.startswith("-") and not t.startswith("--") and "c" in t[1:]):
+            return False  # a script operand, or -c
+    return True
 
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
@@ -289,7 +325,9 @@ def _strip_heredocs(cmd):
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
         for n_m, m in enumerate(ms):
-            code = bool(interp) and interp.start() < m.start()
+            # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
+            # from the line's stages parsed once.
+            code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
             feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
             if code and not feeds and n_m == len(ms) - 1:
                 break  # the body is code: its lines stay, read (and their own heredocs stripped) as lines
@@ -458,8 +496,8 @@ def _mid_merge():
 # needs no case). timeout/gtimeout also take one DURATION positional; that is
 # handled where the wrapper is unwrapped. setsid takes bare flags only; exec's
 # `-a name` is the one value flag (GH #227: it hid the wrapped command).
-# Open-ended by nature: a wrapper missing here (watch, flock, strace, ...) still
-# hides its command, the list covers the ones an everyday one-liner uses.
+# Open-ended by nature: a wrapper missing here and from _RUN_WRAPPERS (GH #566 added flock, watch,
+# strace, ...) still hides its command; the lists cover the ones an everyday one-liner uses.
 FLAG_VALUE_WRAPPERS = {
     "nice": ("-n", "--adjustment"),
     "ionice": ("-c", "-n", "--class", "--classdata"),
@@ -482,6 +520,30 @@ _UNWRAP_ONLY = ("builtin",)
 # dispatches to the real tool of that name, so it is classified as that tool.
 _RTK_RUNNERS = ("proxy",)
 _RTK_SHELL_RUNNERS = ("err", "test", "summary")
+# GH #566: more programs that run the command after them, unwrapped in the rule loop only (as `builtin` is):
+# a member of PREFIX_WRAPPERS would also widen the spawn-anchor walk, which runs on a time budget. A subagent's
+# claude spawned through one of them is denied per window instead (see _SPAWN_WINDOW_FLAGS).
+# name -> (flags that take the next word as their value, positionals between the flags and the command,
+#          flags whose value is a shell command line, whether the remaining words are joined into one).
+_RUN_WRAPPERS = {
+    "flock": (("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"), 1, ("-c", "--command"), False),
+    "caffeinate": (("-t", "-w"), 0, (), False),
+    "xcrun": (("-sdk", "--sdk", "-toolchain", "--toolchain", "-log"), 0, (), False),
+    "chronic": ((), 0, (), False), "unbuffer": ((), 0, (), False),
+    "strace": (("-o", "-e", "-p", "-s", "-u", "-E", "-a", "-b", "-I", "-O", "-P", "-S", "-X"), 0, (), False),
+    "ltrace": (("-o", "-e", "-p", "-s", "-u", "-a", "-n", "-A", "-D", "-F", "-l", "-x"), 0, (), False),
+    "watch": (("-n", "--interval", "-q", "--equexit"), 0, (), True),  # watch runs `sh -c "<words>"`
+    "script": (("-E", "--echo", "-o", "--output-limit", "-T", "--log-timing", "-I", "--log-in",
+                "-O", "--log-out", "-B", "--log-io", "-m", "--logging-format"), 0, ("-c", "--command"), False),
+    "su": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"), 0,
+           ("-c", "--command", "-C", "--session-command"), None),  # su's words are a user, not a command
+    "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
+                  "--joblog", "--results", "--delay", "--timeout", "-a", "--arg-file"), 0, (), False),
+    "npx": (("-p", "--package"), 0, ("-c", "--call"), False), "bunx": (("-p", "--package"), 0, (), False),
+}
+# A package runner's package names map to the program they install (`npx @anthropic-ai/claude-code -p x`).
+_PKG_PROGRAMS = {"claude-code": "claude"}
+_SPAWN_WINDOW_FLAGS = ("-p", "--print", "--agent", "--bg", "--worktree")
 # Reserved words that open a command position inside a compound statement
 # ("for x in a; do rm -rf y; done": the segment after ";" starts with "do"), so
 # the real argv0 comes right after them. Stripped at segment start only, never
@@ -1648,6 +1710,29 @@ def _sql_stdin_drop(c):
             return True
     return False
 
+def _shell_stdin_bodies(c):
+    # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
+    # right upstream of it. printf's format is read with \n as a newline; its other escapes stay literal.
+    out = []
+    for s, e in _pieces(c):
+        segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
+        for k, g in enumerate(segs):
+            if not _reads_stdin_shell(g):
+                continue
+            if "<<<" in g:
+                w = _split_words(g.split("<<<", 1)[1])
+                if w:
+                    out.append(w[0])
+            up = _split_words(segs[k - 1]) if k else None
+            if up and up[0] in ("echo", "printf"):
+                args = up[1:]
+                while up[0] == "echo" and args and re.fullmatch(r"-[neE]+", args[0]):
+                    args = args[1:]
+                out.append(" ".join(args).replace("\\n", "\n") if up[0] == "printf" else " ".join(args))
+    return out
+
+_SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
+
 _SQL_BODIES_SEEN = set()  # bash -c / eval bodies already checked by _deny_sql_stdin_drop
 
 def _deny_sql_stdin_drop(c):
@@ -1880,6 +1965,7 @@ _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _MAX_SHELL_DEPTH = 5
 _WDEPTH = {}      # window index -> unwrap depth (absent = 0, an original window)
 _XARGS_HANDOVERS = [0]  # windows appended for `xargs <wrapper> ...` (bounded, see the xargs branch)
+_ENV_PRE570_WINDOWS = set()  # indexes of the GH #560 pre-#570 env -S readings (see the env branch)
 _cur_depth = 0
 
 def _count_handover(what):
@@ -2218,6 +2304,37 @@ def _bundled_flag(t, stop_chars, flag="f"):
             return True
     return False
 
+def _rm_forced(scan):
+    # GH #563 follow-up: whether `git rm <scan>` is a real forced delete of worktree files.
+    force = dry = cached = False
+    skip = False
+    for t in scan:
+        if skip:
+            skip = False
+            continue
+        if t in ("--", "--end-of-options"):  # git >= 2.24 reads --end-of-options as "--"
+            break
+        if t.startswith("--"):
+            name = t.split("=", 1)[0]
+            if _is_flag(name, "--pathspec-from-file"):
+                skip = "=" not in t
+            elif _is_flag(name, "--no-force", "--no-dry-run", "--no-cached"):
+                # A prefix shared by several (--no-) is rejected by git; read it the deny way.
+                if _is_flag(name, "--no-dry-run"):
+                    dry = False
+                if _is_flag(name, "--no-cached"):
+                    cached = False
+                if _is_flag(name, "--no-force") and not _is_flag(name, "--no-dry-run", "--no-cached"):
+                    force = False
+            else:
+                force = force or _is_flag(name, "--force")
+                dry = dry or _is_flag(name, "--dry-run")
+                cached = cached or _is_flag(name, "--cached")
+        elif t.startswith("-") and len(t) > 1:
+            force = force or "f" in t
+            dry = dry or "n" in t
+    return force and not dry and not cached
+
 def _git_words(rest, ph_value=False):
     # GH #375: git's leading global flags with each glued token run (_Glued) joined into one shell
     # word, then the subcommand and its arguments unchanged; None when no flag or value was glued.
@@ -2306,44 +2423,104 @@ def _sets_hooks_path(w):
 # push, clean.requireForce=false is clean -f, and gc's expiry keys at now are reflog expire + prune.
 # Read from `-c KEY=VAL` (and a `git config KEY VALUE` write of the same keys, see _git_config_write).
 _GIT_FALSE = ("false", "no", "off", "0", "")
-def _git_c_pairs(globs):
-    # (lowercased key, value) of each -c KEY=VAL / -cKEY=VAL in git's global flags.
+class _GitCfgUnseen(str):
+    # A config value the gate cannot see (PR #571 review): --config-env's env var, or a value built at
+    # run time ($X, $(...)). Checks read it as the dangerous value, as an unknown value is elsewhere.
+    pass
+_GIT_CFG_UNSEEN = _GitCfgUnseen("<a value built at run time>")
+
+def _git_cfg_value(raw):
+    # The value a config word holds, or _GIT_CFG_UNSEEN when bash builds it at run time: a blanked
+    # $(...)/backtick (PH) anywhere, or a $ parameter as its first word (the verb of an alias).
+    if PH in raw:
+        return _GIT_CFG_UNSEEN
+    first = raw.lstrip("!").split(" ", 1)[0]
+    return _GIT_CFG_UNSEEN if first.startswith("$") else raw
+
+def _git_cfg_pairs(globs):
+    """(lowercased key, value) of each config pair in git's global flags, in command-line order.
+
+    Forms: `-c KEY=VAL`, `-cKEY=VAL`, a bare `-c KEY` (git reads it as KEY=true), and
+    `--config-env KEY=ENVVAR` / `--config-env=KEY=ENVVAR`, whose value is _GIT_CFG_UNSEEN (the gate
+    never sees the env var). A value built at run time is _GIT_CFG_UNSEEN too (_git_cfg_value).
+    One pass over globs: callers must stay linear in it (PR #571 review: a per-pair rescan of the
+    arguments took 9.3 s on 80 KB, past the 8 s hook timeout, which allows).
+    """
     out = []
     for idx, t in enumerate(globs):
         t_pf = t.replace(PH, "")
-        kv = globs[idx + 1] if t_pf == "-c" and idx + 1 < len(globs) else t_pf[2:] if t_pf.startswith("-c") and t_pf != "-c" else None
-        if kv and "=" in kv:
-            key, _, val = kv.replace(PH, "").partition("=")
-            out.append((key.lower(), val))
+        env = t_pf == "--config-env" or t_pf.startswith("--config-env=")
+        if t_pf in ("-c", "--config-env"):
+            kv = globs[idx + 1] if idx + 1 < len(globs) else None
+        elif t_pf.startswith("--config-env="):
+            kv = t[t.index("=") + 1:]
+        elif t_pf.startswith("-c"):
+            kv = t[t.index("c") + 1:]
+        else:
+            continue
+        if not kv:
+            continue
+        key, eq, val = kv.partition("=")
+        key = key.replace(PH, "").lower()
+        out.append((key, _GIT_CFG_UNSEEN if env else _git_cfg_value(val) if eq else "true"))
     return out
 
 def _git_cfg_risk(key, val, sub):
     # The rule a config pair breaks for subcommand sub (None: any later run), or None.
-    now = val.lower() in ("now", "all", "0")
-    if key.startswith("remote.") and key.endswith(".mirror") and val.lower() not in _GIT_FALSE and sub in ("push", None):
+    # An unseen value takes the dangerous reading of every key.
+    unseen = val is _GIT_CFG_UNSEEN
+    now = unseen or val.lower() in ("now", "all", "0")
+    if key.startswith("remote.") and key.endswith(".mirror") and (unseen or val.lower() not in _GIT_FALSE) and sub in ("push", None):
         return "git-push-mirror"
-    if key.startswith("remote.") and key.endswith(".push") and val.startswith("+") and sub in ("push", None):
+    if key.startswith("remote.") and key.endswith(".push") and (unseen or val.startswith("+")) and sub in ("push", None):
         return "git-push-force"
-    if key == "clean.requireforce" and val.lower() in _GIT_FALSE and sub in ("clean", None):
+    if key == "clean.requireforce" and (unseen or val.lower() in _GIT_FALSE) and sub in ("clean", None):
         return "git-clean-force"
     if key in ("gc.pruneexpire", "gc.reflogexpire", "gc.reflogexpireunreachable") and now and sub in ("gc", None):
         return "git-reflog-prune"
     return None
 
+def _git_alias_check(val, args, how):
+    # GH #561: an alias body runs as `git <body> <args>`, or a "!" body as a shell line. A body built
+    # at run time is unseen, so it is denied like --config-env's (git's own reading of a run-time verb,
+    # `git "$(...)" ...`, also takes the denying reading).
+    if val is _GIT_CFG_UNSEEN:
+        deny(how + " runs " + _GIT_CFG_UNSEEN + " — the gate cannot see what it runs; confirm with user first",
+             rule="git-alias-unseen")
+    elif val and val != "true":
+        _scan_body((val[1:] if val.startswith("!") else "git " + val) + (" " + " ".join(args) if args else ""))
+
+# _GIT_CONFIG_VALUE_OPTS (the options that take a value) is defined beside _hooks_path_ok (GH #562).
+# Actions that read, list, edit or remove: their second operand is a value-pattern, not a value written.
+_GIT_CONFIG_NO_WRITE_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+                             "--unset", "--unset-all", "-l", "--list", "--remove-section", "--rename-section", "-e", "--edit")
+_GIT_CONFIG_NO_WRITE_SUBS = ("get", "list", "unset", "remove-section", "rename-section", "edit")
 def _git_config_write(scan):
-    # (key, value) a `git config [set] KEY VALUE` writes, or None (a read, a list, an unset).
+    """(key, value) a `git config [set|--add|--replace-all] KEY VALUE` writes, or None.
+
+    scan is the words after `config`, a blanked substitution (PH) still in place: a value built at
+    run time comes back as _GIT_CFG_UNSEEN. None for a read, a list, an edit, an unset (PR #571
+    review: `--unset KEY +HEAD:main` names a value-pattern to remove, it writes nothing) or a key
+    with no dot. Value-taking options (_GIT_CONFIG_VALUE_OPTS) are skipped with their value.
+    """
     pos, i = [], 0
     while i < len(scan):
-        t = scan[i]
+        t = scan[i].replace(PH, "")
         if t in _GIT_CONFIG_VALUE_OPTS:
             i += 2
             continue
+        if t in _GIT_CONFIG_NO_WRITE_OPTS:
+            return None
         if not t.startswith("-"):
-            pos.append(t)
+            pos.append(scan[i])
         i += 1
-    if pos[:1] == ["set"]:
+    if pos and pos[0].replace(PH, "") in _GIT_CONFIG_NO_WRITE_SUBS:
+        return None
+    if pos and pos[0].replace(PH, "") == "set":
         pos = pos[1:]
-    return (pos[0], pos[1]) if len(pos) >= 2 and "." in pos[0] else None
+    if len(pos) < 2 or "." not in pos[0]:
+        return None
+    return pos[0].replace(PH, ""), _git_cfg_value(pos[1])
 
 # GH #336: chmod making files world-writable (777 / a+rwx) recursively or on / or ~.
 # The tokenizer splits `+` out of a word (`a+rwx` is "a", "+", "rwx"), so the mode is read on the
@@ -2567,7 +2744,85 @@ def _gh_builtin_write(scan):
         return f"{group} {words[0]} {flag}"
     return ""
 
+# GH #560: the words of an `env -S` string when its first word is an env option (env reads on
+# from them), else None (the string is the command line, scanned like a sh -c body). An unbalanced
+# quote is None too, so the string still gets the body scan.
+_ENV_SPLIT_MAX = 16
+def _env_split_options(body):
+    if not body.replace(PH, "").lstrip().startswith("-"):
+        return None
+    # GH #560 round 2: env ends the string at `\c` (outside single quotes) and at a word that
+    # starts with `#`, then reads on from the words after the -S argument (`env -S '-i #' rm -rf x`
+    # runs rm). shlex would turn `\c` into a `c` word and keep `#`, the command env never runs.
+    q, k = "", 0
+    while k < len(body):
+        ch = body[k]
+        if ch == "'" and q != '"':
+            q = "" if q else "'"
+        elif ch == '"' and q != "'":
+            q = "" if q else '"'
+        elif ch == "\\" and q != "'":
+            if body[k + 1:k + 2] == "c":
+                body = body[:k]
+                break
+            k += 1
+        k += 1
+    lex = shlex.shlex(body, posix=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    try:
+        words = list(lex)
+    except ValueError:
+        return None
+    for n, word in enumerate(words):
+        if word.startswith("#"):
+            return words[:n]
+    return words
+
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
+# xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
+_XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
+_XARGS_VALUE_LONG = ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
+                     "--process-slot-var", "--max-lines", "--replace", "--eof")
+
+def _xargs_command(rest):
+    # The index of the command xargs runs in its args: past its flags and their values. A short
+    # cluster is read left to right: the first letter that takes a value takes the rest of the
+    # cluster (`-d'\n'`, `-Is`), or the next word when it is the cluster's last letter (`-tJ x`).
+    j = 0
+    while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
+        t = rest[j].replace(PH, "")
+        j += 1
+        if t == "--":
+            break
+        if t.startswith("--"):
+            j += t in _XARGS_VALUE_LONG and j < len(rest)
+            continue
+        for k, ch in enumerate(t[1:], 1):
+            if ch in _XARGS_VALUE_LETTERS:
+                j += k == len(t) - 1 and j < len(rest)
+                break
+    return j
+
+def _past_wrapper_words(name, rest, i):
+    # The index past a prefix wrapper's own words in rest[i:]: its dash words and their values,
+    # env's and sudo's assignments, timeout's duration. Used inside xargs's command (F5).
+    vals = set(FLAG_VALUE_WRAPPERS.get(name, ()))
+    if name in ("sudo", "doas"):
+        vals |= {"-u", "-g", "-C", "-p", "-D", "-h", "-r", "-t", "-U", "--user", "--group"}
+    if name == "env":
+        vals |= {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}
+    while i < len(rest):
+        t = rest[i].replace(PH, "")
+        if t.startswith("-") and len(t) > 1:
+            i += 2 if t in vals else 1
+        elif _assignment(rest[i]) and name in ("env", "sudo", "doas"):
+            i += 1
+        else:
+            break
+    if name in ("timeout", "gtimeout") and i < len(rest):
+        i += 1  # the DURATION positional
+    return i
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -2600,8 +2855,8 @@ def _check_window(_wi, w):
     # separate GH issues (2026-09-20 audit).
     # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
     # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
-    o = 0
-    while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS):
+    o, env_splits, via_run_wrapper = 0, 0, False
+    while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
@@ -2612,7 +2867,17 @@ def _check_window(_wi, w):
             # the first value letter takes the rest of the cluster, or the next word when that is
             # empty (`-iu FOO`). getopt_long also takes an unambiguous prefix (`--split=`); `--s`
             # is the shortest, as no other env long option starts with s.
-            i, body = o, None
+            # GH #560 regression after #570: env keeps reading ITS OWN options from the split words
+            # (`env -S -i rm -rf x` and `env -S '-u FOO rm -rf x'` run rm), so a string whose first
+            # word is an option is split back into this loop, not scanned as a command line.
+            # _ENV_SPLIT_MAX bounds the re-splits: each one copies the tail, and a flood must stay
+            # linear; past it the gate denies, like the sh -c depth limit.
+            # GH #560 round 3: -S splitting has more corners than this models (a quoted or escaped
+            # `#`, `\_`, a quote inside a comment, an empty nested -S, `--unset NAME`), so an env
+            # with -S is ALSO read the way the gate read it before #570 (-S a bare flag, `-u` takes
+            # a value), as one more window at this depth: either reading denies, so no shape that
+            # denied before #570 allows now. _count_handover bounds a chain of them (each copies the tail).
+            i, body, pre_rest, pre_o, split_seen = o, None, rest, o, False
             while i < len(rest):
                 t = rest[i].replace(PH, "")
                 long_name = t[2:].split("=", 1)[0]
@@ -2621,21 +2886,51 @@ def _check_window(_wi, w):
                         body, i = rest[i].split("=", 1)[1], i + 1
                     elif i + 1 < len(rest):
                         body, i = rest[i + 1], i + 2
-                    break
-                m = re.match(r"-[^-CPSu]*([CPSu])", t)
-                if m:
-                    attached = t[m.end():]
-                    if m.group(1) == "S" and (attached or i + 1 < len(rest)):
-                        body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
-                    i += 1 if attached else 2
-                    if body is not None:
+                    else:
                         break
+                    m = None
+                else:
+                    m = re.match(r"-[^-CPSu]*([CPSu])", t)
+                    if m:
+                        attached = t[m.end():]
+                        if m.group(1) == "S" and (attached or i + 1 < len(rest)):
+                            body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
+                        i += 1 if attached else 2
+                if body is not None:
+                    split_seen = True
+                    words = _env_split_options(body)
+                    if words is None:
+                        break
+                    env_splits += 1
+                    if env_splits > _ENV_SPLIT_MAX:
+                        deny("env -S strings that start with an option, more than %d deep - confirm with user first"
+                             % _ENV_SPLIT_MAX)
+                        break
+                    rest, i, body = words + rest[i:], 0, None
+                elif m:
+                    pass
                 elif t.startswith("-"):
                     i += 1
                 elif _assignment(rest[i]):
                     i += 1
                 else:
                     break
+            if split_seen:
+                if _wi in _ENV_PRE570_WINDOWS:  # only a chain of them copies the tail again and again
+                    _count_handover("env -S")
+                j = pre_o
+                while j < len(pre_rest):
+                    t = pre_rest[j].replace(PH, "")
+                    if t == "-u" and j + 1 < len(pre_rest):
+                        j += 2
+                    elif t.startswith("-") or _assignment(pre_rest[j]):
+                        j += 1
+                    else:
+                        break
+                if j < len(pre_rest):
+                    _WDEPTH[len(windows)] = _cur_depth
+                    _ENV_PRE570_WINDOWS.add(len(windows))
+                    windows.append(pre_rest[j:])
             if body is not None:
                 _scan_body(" ".join([body] + rest[i:]))
                 o = len(rest)
@@ -2722,6 +3017,40 @@ def _check_window(_wi, w):
                 argv0, o = basename(rest[j]), j + 1
             else:  # an rtk verb that dispatches to the real tool of the same name
                 argv0, o = basename(rest[i]), i + 1
+        elif argv0 in _RUN_WRAPPERS:  # GH #566
+            vals, npos, bodies, join = _RUN_WRAPPERS[argv0]
+            i, body = o, None
+            while i < len(rest) and rest[i].replace(PH, "").startswith("-"):
+                t = rest[i].replace(PH, "")
+                name = t.split("=", 1)[0]
+                if name in bodies:
+                    body = t.split("=", 1)[1] if "=" in t else (rest[i + 1] if i + 1 < len(rest) else None)
+                    break
+                # A body letter bundled in a short cluster (`script -qc 'cmd'`): the rest of the cluster, or the next word.
+                k = next((k for k, ch in enumerate(t[1:], 1) if "-" + ch in bodies), 0) if not t.startswith("--") else 0
+                if k:
+                    body = t[k + 1:] or (rest[i + 1] if i + 1 < len(rest) else None)
+                    break
+                if t == "--":
+                    i += 1
+                    break
+                i += 2 if t in vals else 1
+            if body is None and join is None:
+                break  # su without -c runs a login shell, no command
+            if body is None:
+                i += npos
+            if body is None and i < len(rest) and argv0 == "flock" and rest[i].replace(PH, "") in ("-c", "--command"):
+                body = rest[i + 1] if i + 1 < len(rest) else None
+            if body is not None or join:
+                _scan_body(body if body is not None else " ".join(rest[i:]))
+                o = len(rest)
+                break
+            if i >= len(rest):
+                break
+            argv0, o, via_run_wrapper = basename(rest[i]), i + 1, True
+            if o - 1 < len(rest) and argv0 not in _RUN_WRAPPERS:
+                pkg = re.sub(r"@[^/@]*$", "", rest[o - 1].replace(PH, ""))
+                argv0 = _PKG_PROGRAMS.get(basename(pkg), argv0)
         else:  # command, nohup, time, setsid, builtin — bare flags then the wrapped command
             i = _past_dash_words(rest, o)
             if i >= len(rest):
@@ -2771,22 +3100,24 @@ def _check_window(_wi, w):
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(rest[j:])
                 break
+        _xc = _xargs_command(rest)
+        # Bypass hunt 2026-10-23 F5: `find | xargs rm` deletes every path it is fed, the same delete as
+        # `find -exec rm`, which denies with no flags at all. Wrappers between (`xargs sudo -u x rm`,
+        # `xargs nice -n 5 rm`, `xargs env FOO=1 rm`, `xargs timeout 5 rm`) are read past.
+        _xr = _xc
+        while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS:
+            _xr = _past_wrapper_words(basename(rest[_xr]).replace(PH, ""), rest, _xr + 1)
+        if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
+            deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
             if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
         else:
-            # gh only as the command xargs runs (past its flags and their values), since "gh" is also a
-            # common grep pattern: `xargs grep -l gh src` must not read as gh.
-            j = 0
-            while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
-                t = rest[j].replace(PH, "")
-                # A bundled short cluster (-tJ) takes the next word when its last letter takes a value.
-                takes = t in ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
-                              "--process-slot-var") or (not t.startswith("--") and t[-1:] in "IJRSnPLdsEa")
-                j += 2 if takes else 1
-            if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
-                argv0, rest = "gh", rest[j + 1:]
+            # gh only as the command xargs runs, since "gh" is also a common grep pattern: `xargs grep
+            # -l gh src` must not read as gh.
+            if _xc < len(rest) and basename(rest[_xc]).replace(PH, "") == "gh":
+                argv0, rest = "gh", rest[_xc + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
         # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
         # inner command so the SQL check fires on a containerized client.
@@ -2799,6 +3130,11 @@ def _check_window(_wi, w):
     # GH #336. Outside the candidate loop below: a PH argv0 (`${EDITOR} f`) must not read as mkfs.
     # PH is stripped instead, so a splice inside the word (`mk$(true)fs.ext4`) still matches.
     _a0 = argv0.replace(PH, "")
+    # GH #566: a subagent's claude reached through a wrapper the spawn anchor does not walk (flock, npx, ...).
+    # Only past one of those wrappers: elsewhere the anchor decides, and a window can read `claude` as argv0 where
+    # the shell does not run it (`builtin claude`, `"A=1" claude`).
+    if via_run_wrapper and "agent_id" in d and _a0 == "claude" and any(t.replace(PH, "").split("=", 1)[0] in _SPAWN_WINDOW_FLAGS for t in rest):
+        _deny_nested_spawn()
     if (_a0 in ("mkfs", "mke2fs") or _a0.startswith("mkfs.")) and any(
             not t.replace(PH, "").startswith("-") for t in rest):
         deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")
@@ -2895,14 +3231,21 @@ def _check_window(_wi, w):
                 _deny_ambiguous()
             # GH #561: what a -c pair makes of this subcommand (an alias names it, or a key re-enables a deny).
             _sub = sub.replace(PH, "")
-            for _k, _v in _git_c_pairs(rest[:i]):
-                if _k == "alias." + _sub.lower() and _v:
-                    _scan_body((_v[1:] if _v.startswith("!") else "git " + _v) + " " + " ".join(args))
+            # One pass: git keeps the last alias.<name>, so the body is scanned once (PR #571 review: one
+            # scan per alias pair was quadratic). Risk keys are not merged: a remote's name is case-
+            # sensitive, so any dangerous pair counts.
+            _alias, _alias_key = None, "alias." + _sub.lower()
+            for _k, _v in _git_cfg_pairs(rest[:i]):
+                if _k == _alias_key:
+                    _alias = _v
                 _r = _git_cfg_risk(_k, _v, _sub)
-                if _r == "git-clean-force" and any(t.replace(PH, "") in ("-n", "--dry-run", "-i", "--interactive") for t in args):
-                    _r = None  # a dry run or the prompt deletes nothing unasked
+                if _r == "git-clean-force" and any(
+                        t.replace(PH, "") in ("--dry-run", "--interactive") or _bundled_flag(t.replace(PH, ""), "e", "n")
+                        or _bundled_flag(t.replace(PH, ""), "e", "i") for t in args):
+                    _r = None  # a dry run (clean -n, -xdn) or the prompt deletes nothing unasked
                 if _r:
                     deny("git -c " + _k + "=" + _v + " makes `git " + _sub + "` do what its denied flag does — confirm with user first", rule=_r)
+            _git_alias_check(_alias, args, "git -c " + _alias_key)
             # drop the value token after a free-text flag so message content
             # (e.g. "commit -m ...rm -rf...") is never pattern-matched.
             scan_raw, skip = [], False
@@ -2945,9 +3288,9 @@ def _check_window(_wi, w):
                 # pre-push (same bypass class as --no-verify). The documented
                 # wiring value `git-hooks` stays allowed.
                 # GH #561: a stored alias or key does at the next run what the -c pair above does now.
-                _cw = _git_config_write(scan) if sub == "config" else None
-                if _cw and _cw[0].lower().startswith("alias.") and _cw[1]:
-                    _scan_body(_cw[1][1:] if _cw[1].startswith("!") else "git " + _cw[1])
+                _cw = _git_config_write(scan_raw) if sub == "config" else None
+                if _cw and _cw[0].lower().startswith("alias."):
+                    _git_alias_check(_cw[1], [], "git config " + _cw[0])
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
                     deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
                          rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
@@ -3105,21 +3448,22 @@ def _check_window(_wi, w):
                     deny("git update-ref -d on main/master/develop deletes a protected branch, like branch -D — confirm with user first", rule="git-update-ref-delete-protected")
                 if sub == "branch" and (
                         any(t in ("-M", "-C") or (t.startswith("-") and not t.startswith("--") and ("M" in t or "C" in t)) for t in scan)
-                        or (any(t == "-m" or t == "-c" or _is_flag(t, "--move", "--copy") for t in scan)
-                            and any(t == "-f" or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
+                        # -fm, -mf, -fc, -cf: the force and the move/copy bundled (GH #563 follow-up); -u takes a value.
+                        or (any(_bundled_flag(t, "u", "m") or _bundled_flag(t, "u", "c") or _is_flag(t, "--move", "--copy") for t in scan)
+                            and any(_bundled_flag(t, "u", "f") or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
                     deny("git branch -M/-C onto main/master/develop overwrites a protected branch — confirm with user first", rule="git-branch-force-move-protected")
                 # GH #563 (2026-10-24 sweep): more verbs with a denied verb's damage. send-pack is push's
                 # plumbing; rm -f drops a tracked file's uncommitted edits (--cached leaves the worktree);
                 # branch -f and update-ref without -d move main/master/develop like branch -M does.
                 _force = any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan)
-                if sub == "send-pack" and (any(_is_flag(t, "--force", "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
+                # send-pack lists "-f, --force", bundled too (-vf, -qf); no short option of it takes a value.
+                if sub == "send-pack" and (_force or any(_is_flag(t, "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
                     deny("git send-pack --force/--mirror/+refspec overwrites remote history, like push --force — confirm with user first", rule="git-push-force")
-                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) deletes nothing.
-                # Only options before "--" count (after it "-n" is a path), and --no-dry-run undoes it.
-                _rm_opts = scan[:scan.index("--")] if "--" in scan else scan
-                if sub == "rm" and _force and not any(_is_flag(t, "--cached") for t in scan) and not (
-                        any(_is_flag(t, "--dry-run") or _bundled_flag(t, "", "n") for t in _rm_opts)
-                        and not any(_is_flag(t, "--no-dry-run") for t in _rm_opts)):
+                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) and --cached
+                # delete nothing from the worktree. git reads rm's options in order, so the last of each
+                # pair wins (-f/--no-force, -n/--no-dry-run, --cached/--no-cached); only words before "--"
+                # are options (after it "-f" is a path), and a bare --pathspec-from-file takes the next word.
+                if sub == "rm" and _rm_forced(scan):
                     deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first", rule="git-rm-force")
                 if sub == "branch" and _force and _nonflag and _protected_ref(_nonflag[0]) and not any(
                         t.startswith("-") and not t.startswith("--") and any(c in t for c in "dDmMcC")
@@ -3211,6 +3555,8 @@ def _run_words():
         finally:
             _WORD_PHASE[0] = False
 
+for _b in _SHELL_STDIN_BODIES:  # GH #567: each is a command line, like a sh -c body
+    _scan_body(_b)
 _run_windows(0)
 
 # GH #245: the overlapping spawn scan, last (see _SPAWN_ANCHOR_RES).

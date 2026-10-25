@@ -265,7 +265,7 @@ fi
 GNUSTAT=""
 if command -v gstat >/dev/null 2>&1; then
   GNUSTAT=$(command -v gstat)
-elif stat --version >/dev/null 2>&1 && grep -q 'GNU coreutils' <<<"$(stat --version)"; then
+elif grep -q 'GNU coreutils' <<<"$(stat --version 2>/dev/null)"; then
   GNUSTAT=$(command -v stat)
 fi
 if [ -n "$GNUSTAT" ]; then
