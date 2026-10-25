@@ -25,12 +25,15 @@ Under `set -o pipefail`, never pipe a writer into a reader that may stop early: 
 -q PAT` fails on a match whenever grep exits before bash's line-by-line writes finish (SIGPIPE, rc
 141). Under gauntlet load this flaked the wiring test and other rows, each run naming a different
 file (2026-10-23). Write `grep -q PAT <<<"$out"` or `grep -q PAT <<<"$(cmd)"`.
-`tests/scripts/test-pipefail-grep-q-lint.sh` fails on any single `|` into a grep whose own words
-include `-q`/`--quiet`/`--silent`, in every tracked shell file (a file without `pipefail` may be
-sourced under it, as harness-audit's checks are). It does not catch a quoted grep pattern that holds
-`|` or `)` before the `-q`, nor other early-exit readers (`head`, a command that skips stdin): there,
-apply the rule by hand. `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for that last
-reason, and skips the `_*.sh` helpers the gates source.
+`tests/scripts/test-pipefail-grep-q-lint.sh` checks every tracked shell file (a file without
+`pipefail` may be sourced under it, as harness-audit's checks are) with
+`tests/_lib/pipe_into_grep_q.py`, a small lexer rather than a line regex: it joins continued lines,
+sees `$(...)` and backticks inside quotes, ignores quoted text, comments and here-document bodies, and
+follows `command`/`builtin`/`exec`/`env` prefixes, `\grep`, `egrep`/`fgrep` and `|&`. It does not
+catch a grep reached through a function or alias, nor other early-exit readers (`head`, `grep -m`, a
+command that skips stdin): there, apply the rule by hand. (GNU grep 3.11 writing to `>/dev/null` reads
+all of its input, so that form is safe.) `scripts/gate-canary.sh` feeds gates through
+`< <(printf ...)` for the stdin-skipping reason, and skips the `_*.sh` helpers the gates source.
 
 ## Git hooks
 
