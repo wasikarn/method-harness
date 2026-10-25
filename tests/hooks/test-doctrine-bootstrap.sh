@@ -57,9 +57,10 @@ assert "a newly-added gate file appears in the message with no script edit" "$ok
 # in the script's code lines at all; comments are stripped first because the
 # history note above the loop legitimately names two gates.
 hardcoded=0
+code=$(sed 's/#.*$//' "$SCRIPT")
 for g in "$ROOT"/hooks/gates/*.sh; do
   name=$(basename "$g" .sh)
-  sed 's/#.*$//' "$SCRIPT" | /usr/bin/grep -q -- "$name" && hardcoded=$((hardcoded + 1))
+  /usr/bin/grep -q -- "$name" <<<"$code" && hardcoded=$((hardcoded + 1))
 done
 [[ "$hardcoded" == "0" ]] && ok=1 || ok=0
 assert "no real gate name is hardcoded in the script's code (found $hardcoded)" "$ok"

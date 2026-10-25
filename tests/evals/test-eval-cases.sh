@@ -72,7 +72,7 @@ for d in "$EVALS"/*/; do
   outcome_graders=0
   for gf in "$d"/graders/*.md; do
     [ -f "$gf" ] || continue
-    if awk '/^---$/{n++; next} n==1' "$gf" | /usr/bin/grep -qE '^type: (regex|llm|file_exists|baseline)$'; then
+    if /usr/bin/grep -qE '^type: (regex|llm|file_exists|baseline)$' <<<"$(awk '/^---$/{n++; next} n==1' "$gf")"; then
       outcome_graders=$((outcome_graders + 1))
     fi
   done
