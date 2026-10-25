@@ -1905,6 +1905,7 @@ _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _MAX_SHELL_DEPTH = 5
 _WDEPTH = {}      # window index -> unwrap depth (absent = 0, an original window)
 _XARGS_HANDOVERS = [0]  # windows appended for `xargs <wrapper> ...` (bounded, see the xargs branch)
+_ENV_PRE570_WINDOWS = set()  # indexes of the GH #560 pre-#570 env -S readings (see the env branch)
 _cur_depth = 0
 
 def _count_handover(what):
@@ -2248,6 +2249,37 @@ def _bundled_flag(t, stop_chars, flag="f"):
         if ch == flag:
             return True
     return False
+
+def _rm_forced(scan):
+    # GH #563 follow-up: whether `git rm <scan>` is a real forced delete of worktree files.
+    force = dry = cached = False
+    skip = False
+    for t in scan:
+        if skip:
+            skip = False
+            continue
+        if t in ("--", "--end-of-options"):  # git >= 2.24 reads --end-of-options as "--"
+            break
+        if t.startswith("--"):
+            name = t.split("=", 1)[0]
+            if _is_flag(name, "--pathspec-from-file"):
+                skip = "=" not in t
+            elif _is_flag(name, "--no-force", "--no-dry-run", "--no-cached"):
+                # A prefix shared by several (--no-) is rejected by git; read it the deny way.
+                if _is_flag(name, "--no-dry-run"):
+                    dry = False
+                if _is_flag(name, "--no-cached"):
+                    cached = False
+                if _is_flag(name, "--no-force") and not _is_flag(name, "--no-dry-run", "--no-cached"):
+                    force = False
+            else:
+                force = force or _is_flag(name, "--force")
+                dry = dry or _is_flag(name, "--dry-run")
+                cached = cached or _is_flag(name, "--cached")
+        elif t.startswith("-") and len(t) > 1:
+            force = force or "f" in t
+            dry = dry or "n" in t
+    return force and not dry and not cached
 
 def _git_words(rest, ph_value=False):
     # GH #375: git's leading global flags with each glued token run (_Glued) joined into one shell
@@ -2658,6 +2690,40 @@ def _gh_builtin_write(scan):
         return f"{group} {words[0]} {flag}"
     return ""
 
+# GH #560: the words of an `env -S` string when its first word is an env option (env reads on
+# from them), else None (the string is the command line, scanned like a sh -c body). An unbalanced
+# quote is None too, so the string still gets the body scan.
+_ENV_SPLIT_MAX = 16
+def _env_split_options(body):
+    if not body.replace(PH, "").lstrip().startswith("-"):
+        return None
+    # GH #560 round 2: env ends the string at `\c` (outside single quotes) and at a word that
+    # starts with `#`, then reads on from the words after the -S argument (`env -S '-i #' rm -rf x`
+    # runs rm). shlex would turn `\c` into a `c` word and keep `#`, the command env never runs.
+    q, k = "", 0
+    while k < len(body):
+        ch = body[k]
+        if ch == "'" and q != '"':
+            q = "" if q else "'"
+        elif ch == '"' and q != "'":
+            q = "" if q else '"'
+        elif ch == "\\" and q != "'":
+            if body[k + 1:k + 2] == "c":
+                body = body[:k]
+                break
+            k += 1
+        k += 1
+    lex = shlex.shlex(body, posix=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    try:
+        words = list(lex)
+    except ValueError:
+        return None
+    for n, word in enumerate(words):
+        if word.startswith("#"):
+            return words[:n]
+    return words
+
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 # xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
 _XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
@@ -2792,7 +2858,7 @@ def _check_window(_wi, w):
     # separate GH issues (2026-09-20 audit).
     # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
     # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
-    o, via_run_wrapper = 0, False
+    o, env_splits, via_run_wrapper = 0, 0, False
     while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
@@ -2804,7 +2870,17 @@ def _check_window(_wi, w):
             # the first value letter takes the rest of the cluster, or the next word when that is
             # empty (`-iu FOO`). getopt_long also takes an unambiguous prefix (`--split=`); `--s`
             # is the shortest, as no other env long option starts with s.
-            i, body = o, None
+            # GH #560 regression after #570: env keeps reading ITS OWN options from the split words
+            # (`env -S -i rm -rf x` and `env -S '-u FOO rm -rf x'` run rm), so a string whose first
+            # word is an option is split back into this loop, not scanned as a command line.
+            # _ENV_SPLIT_MAX bounds the re-splits: each one copies the tail, and a flood must stay
+            # linear; past it the gate denies, like the sh -c depth limit.
+            # GH #560 round 3: -S splitting has more corners than this models (a quoted or escaped
+            # `#`, `\_`, a quote inside a comment, an empty nested -S, `--unset NAME`), so an env
+            # with -S is ALSO read the way the gate read it before #570 (-S a bare flag, `-u` takes
+            # a value), as one more window at this depth: either reading denies, so no shape that
+            # denied before #570 allows now. _count_handover bounds a chain of them (each copies the tail).
+            i, body, pre_rest, pre_o, split_seen = o, None, rest, o, False
             while i < len(rest):
                 t = rest[i].replace(PH, "")
                 long_name = t[2:].split("=", 1)[0]
@@ -2813,21 +2889,51 @@ def _check_window(_wi, w):
                         body, i = rest[i].split("=", 1)[1], i + 1
                     elif i + 1 < len(rest):
                         body, i = rest[i + 1], i + 2
-                    break
-                m = re.match(r"-[^-CPSu]*([CPSu])", t)
-                if m:
-                    attached = t[m.end():]
-                    if m.group(1) == "S" and (attached or i + 1 < len(rest)):
-                        body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
-                    i += 1 if attached else 2
-                    if body is not None:
+                    else:
                         break
+                    m = None
+                else:
+                    m = re.match(r"-[^-CPSu]*([CPSu])", t)
+                    if m:
+                        attached = t[m.end():]
+                        if m.group(1) == "S" and (attached or i + 1 < len(rest)):
+                            body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
+                        i += 1 if attached else 2
+                if body is not None:
+                    split_seen = True
+                    words = _env_split_options(body)
+                    if words is None:
+                        break
+                    env_splits += 1
+                    if env_splits > _ENV_SPLIT_MAX:
+                        deny("env -S strings that start with an option, more than %d deep - confirm with user first"
+                             % _ENV_SPLIT_MAX)
+                        break
+                    rest, i, body = words + rest[i:], 0, None
+                elif m:
+                    pass
                 elif t.startswith("-"):
                     i += 1
                 elif _assignment(rest[i]):
                     i += 1
                 else:
                     break
+            if split_seen:
+                if _wi in _ENV_PRE570_WINDOWS:  # only a chain of them copies the tail again and again
+                    _count_handover("env -S")
+                j = pre_o
+                while j < len(pre_rest):
+                    t = pre_rest[j].replace(PH, "")
+                    if t == "-u" and j + 1 < len(pre_rest):
+                        j += 2
+                    elif t.startswith("-") or _assignment(pre_rest[j]):
+                        j += 1
+                    else:
+                        break
+                if j < len(pre_rest):
+                    _WDEPTH[len(windows)] = _cur_depth
+                    _ENV_PRE570_WINDOWS.add(len(windows))
+                    windows.append(pre_rest[j:])
             if body is not None:
                 _scan_body(" ".join([body] + rest[i:]))
                 o = len(rest)
@@ -3346,21 +3452,22 @@ def _check_window(_wi, w):
                     deny("git update-ref -d on main/master/develop deletes a protected branch, like branch -D — confirm with user first", rule="git-update-ref-delete-protected")
                 if sub == "branch" and (
                         any(t in ("-M", "-C") or (t.startswith("-") and not t.startswith("--") and ("M" in t or "C" in t)) for t in scan)
-                        or (any(t == "-m" or t == "-c" or _is_flag(t, "--move", "--copy") for t in scan)
-                            and any(t == "-f" or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
+                        # -fm, -mf, -fc, -cf: the force and the move/copy bundled (GH #563 follow-up); -u takes a value.
+                        or (any(_bundled_flag(t, "u", "m") or _bundled_flag(t, "u", "c") or _is_flag(t, "--move", "--copy") for t in scan)
+                            and any(_bundled_flag(t, "u", "f") or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
                     deny("git branch -M/-C onto main/master/develop overwrites a protected branch — confirm with user first", rule="git-branch-force-move-protected")
                 # GH #563 (2026-10-24 sweep): more verbs with a denied verb's damage. send-pack is push's
                 # plumbing; rm -f drops a tracked file's uncommitted edits (--cached leaves the worktree);
                 # branch -f and update-ref without -d move main/master/develop like branch -M does.
                 _force = any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan)
-                if sub == "send-pack" and (any(_is_flag(t, "--force", "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
+                # send-pack lists "-f, --force", bundled too (-vf, -qf); no short option of it takes a value.
+                if sub == "send-pack" and (_force or any(_is_flag(t, "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
                     deny("git send-pack --force/--mirror/+refspec overwrites remote history, like push --force — confirm with user first", rule="git-push-force")
-                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) deletes nothing.
-                # Only options before "--" count (after it "-n" is a path), and --no-dry-run undoes it.
-                _rm_opts = scan[:scan.index("--")] if "--" in scan else scan
-                if sub == "rm" and _force and not any(_is_flag(t, "--cached") for t in scan) and not (
-                        any(_is_flag(t, "--dry-run") or _bundled_flag(t, "", "n") for t in _rm_opts)
-                        and not any(_is_flag(t, "--no-dry-run") for t in _rm_opts)):
+                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) and --cached
+                # delete nothing from the worktree. git reads rm's options in order, so the last of each
+                # pair wins (-f/--no-force, -n/--no-dry-run, --cached/--no-cached); only words before "--"
+                # are options (after it "-f" is a path), and a bare --pathspec-from-file takes the next word.
+                if sub == "rm" and _rm_forced(scan):
                     deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first", rule="git-rm-force")
                 if sub == "branch" and _force and _nonflag and _protected_ref(_nonflag[0]) and not any(
                         t.startswith("-") and not t.startswith("--") and any(c in t for c in "dDmMcC")
