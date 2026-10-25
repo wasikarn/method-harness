@@ -93,7 +93,9 @@ never runs at all and nothing server-side notices. Run the verify command above 
   `settings.json` and restart.
 - **Same-version edits are no-ops.** Claude Code loads the plugin from
   `~/.claude/plugins/cache/<marketplace>/mh/<version>/` at startup; `claude plugin update`
-  copies nothing unless `plugin.json`'s version changed. Bump both manifests before updating.
+  copies nothing unless `plugin.json`'s version changed. `scripts/merge-pr.sh` bumps both
+  manifests on every merge to `develop`, so PRs leave them alone; a local install of an unmerged
+  branch needs a throwaway bump of its own.
   This applies to third-party plugins too: `mattpocock-skills` once sat 3 commits behind
   upstream while `update` reported "already latest". Fix: uninstall, `trash` the cache dir,
   reinstall.

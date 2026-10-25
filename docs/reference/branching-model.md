@@ -34,19 +34,39 @@ Enforcement layers, weakest to strongest:
 ## Merging: `scripts/merge-pr.sh <PR>` (GH #450)
 
 #445 and #446 were each green alone and red together on `develop`. Agents merge through
-`scripts/merge-pr.sh <PR>`, not bare `gh pr merge`. It runs `git fetch origin`, refuses unless the
-PR's base is `develop` (re-read just before the merge) and its head contains the `origin/develop`
-tip (`git merge-base --is-ancestor`), waits for load below 4
-(default 900s, then fails with the load figure), fetches and re-checks ancestry after that wait,
-refuses a head whose versions are not plain `X.Y.Z`, whose two manifests disagree, or whose version is equal to or below
-`origin/develop`'s (checked before the wait and again after it; `MERGE_PR_ALLOW_SAME_VERSION=1`
-skips only the equal-version refusal, for a PR that needs no bump; an unreadable manifest or a
-failed fetch after the wait also refuses, with a message naming it), merges with
-`gh pr merge --merge --match-head-commit <checked sha>`, and prints the merge commit sha. On a
-behind-develop refusal, merge `origin/develop` into the branch and push (a rebase rewrites every commit, so
-it also throws away the review verdict below; on a wrong-base refusal, retarget the PR
-with `gh pr edit <PR> --base develop`): the pre-push gauntlet then runs on the exact tree that
-will merge, and the pinned sha makes GitHub refuse a head that moved after the check.
+`scripts/merge-pr.sh <PR>`, not bare `gh pr merge`. **PRs do not bump the version; the script does,
+at merge time** (2026-10-25: while each PR bumped itself, every peer merge re-conflicted every open PR
+on the two manifest lines, and #581 took about six re-sync and gauntlet cycles to land).
+
+Run it from the PR's own checkout, on its branch, with a clean tree (untracked files count), and
+start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. It:
+
+1. refuses unless the PR's base is `develop`, the checkout is on the PR's head branch, the tree is
+   clean, and the local branch contains the PR head (a rerun after a red gauntlet carries the
+   unpushed commits of the last run);
+2. checks the review verdict below before writing anything;
+3. takes a per-user merge lock (`~/.cache/mh/merge-pr.lock`, the gauntlet queue's code with its own
+   dir), so one merge runs at a time and develop holds still during its gauntlet; after 3600 s it
+   refuses instead of running unlocked;
+4. waits for load below 4 (default 900 s, then fails with the load figure);
+5. merges `origin/develop` into the branch when it is behind, and writes develop's version + 1 into
+   both manifests unless they already agree on a higher one. The sync and the bump are one commit
+   (`Merge origin/develop into <branch>; bump mh to N`), or `chore: bump mh to N` when no sync was
+   needed. An older PR that still bumps its own version conflicts on that line: when the only
+   conflicts are the manifests, the script merges them again with the version set aside, so the
+   PR's other manifest edits survive; any other conflict refuses (merge by hand, push, rerun);
+6. pushes to the PR branch, so the pre-push gauntlet runs on the exact tree that will merge. It
+   checks the push by `git ls-remote`, not the exit code (exit 141 is an idle SSH drop after the
+   hook), and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
+   on the local branch: fix, commit, rerun;
+7. fetches; if `origin/develop` moved (a merge made outside the script), goes back to step 4, three
+   rounds at most;
+8. re-checks the version (plain `X.Y.Z`, both manifests equal, above `origin/develop`'s), the review
+   and the base, merges with `gh pr merge --merge --match-head-commit <pushed sha>`, and prints the
+   merge commit sha.
+
+Never rebase a PR branch: a rebase rewrites every commit and throws away the review verdict below.
+On a wrong-base refusal, retarget the PR with `gh pr edit <PR> --base develop`.
 
 It also refuses a PR without a current review verdict (2026-10-25: #569–#576 and #611 merged while
 their reviews still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
@@ -54,16 +74,17 @@ their reviews still said FIX FIRST, and #570 opened a hole that took #602 to clo
 PR **comment**, `<sha>` being the head the reviewer read; a GitHub PR review or the PR body does not count,
 nor does a line inside a ``` or ~~~ fence, and the last verdict line in a comment wins. The last verdict on
 the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must be a merge
-of `develop` or touch only the two manifests, checked before and after the load wait. So merging `develop`
+of `develop` or touch only the two manifests, checked before the script writes anything, before its push
+and before the merge. So merging `develop`
 and bumping the version keep the review; any other change, a rebase, or a force-push needs a new one. The
 check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
 still caught. Post the reviewer's result as that comment. It proves a verdict was posted, not who wrote it
 or that the reviewer had fresh context, and a conflict resolved inside a merge commit is not checked. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
-The checks are local-only. The script narrows the gap; it does not close it: a push to `develop`
-from another clone between the check and the merge can still race, and nothing stops a merge made
-outside the script. The script's own `gh pr merge` call runs inside the script, so
+The checks and the lock are local-only. The script narrows the gap; it does not close it: a merge made
+outside the script costs a retry round, a push to `develop` from another clone between the last check
+and the merge can still race, and nothing stops a merge made outside the script. The script's own `gh pr merge` call runs inside the script, so
 `gate:bash:irrecoverable`'s ask on that command does not see it.
 
 The former `git worktree add -b` deny predates this and was removed in the v1.0.0 rebuild;
@@ -100,19 +121,13 @@ discipline:
 - **`ListAgents`/`SendMessage` file-claim discipline** (`~/.claude/CLAUDE.md`, injected globally)
   still applies to anyone touching a file another live session might also touch — worktree
   isolation removes the *working-tree* collision, not a collision in a file both sessions read
-  from or write to outside git (e.g. the shared memory store above; the manifests are per
-  checkout, which is why the next bullet reads `origin/develop`).
-- **Re-read both manifests right before writing a version into a commit message.** A peer session
-  in a different worktree can still push a bump first; a `Read` in your own worktree shows that
-  checkout, not the peer's push, so `git fetch` and read `origin/develop`'s manifests.
-- **Bump the manifests last, then re-check at the PR and again right before merging.** Run
-  `git fetch` and read `origin/develop`'s version immediately before the bump commit and once the
-  PR exists. Merge only through `scripts/merge-pr.sh` (never bare `gh pr merge`); it refuses a
-  head whose version is not above `origin/develop`'s, before and after its load wait (see
-  Merging above for what it checks and the race that remains). If it refuses, move to the next
-  number first. Two PRs that cut the same version leave the installed cache with whichever tree
-  built first, and the other change does not load until the next bump (#492 and #493 both took
-  1.1.189, #496 and #497 both took 1.1.191, 2026-10-05).
+  from or write to outside git (e.g. the shared memory store above).
+- **Leave the version alone in a PR.** `scripts/merge-pr.sh` cuts it at merge time, under its
+  merge lock, from `origin/develop`'s number (see Merging above), so a PR's title, body and commit
+  messages never name a version. Bumping it yourself only brings back the manifest conflict on
+  every peer merge. The lock also keeps two PRs from cutting the same number, which left the
+  installed cache with whichever tree built first (#492 and #493 both took 1.1.189, #496 and #497
+  both took 1.1.191, 2026-10-05).
 - **`/rewind` only reverts this session's own worktree.** It can no longer touch a peer's tree at
   all, since each session now has its own — this constraint from the old shared-tree model is
   gone, not merely mitigated.

@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
-# merge-pr.sh <PR> — merge a PR only if its head contains the origin/develop tip
-# and whose base is develop (GH #450). The pre-push gauntlet then ran on the exact tree that merges, so two
-# PRs green alone cannot land red together (#445 + #446). --match-head-commit
-# pins the merge to the checked sha: a push after the check makes GitHub refuse.
-# Checks are local-only; this narrows the race, it does not close it. It also refuses a PR with no
-# fresh review verdict (see check_review).
+# merge-pr.sh <PR> — bring a develop PR up to date, cut its version, push it, and merge it (GH #450).
+# PRs do not touch the version. When the PR branch is behind origin/develop the script merges develop
+# into it, writes develop's version + 1 into both manifests in the same commit, and pushes, so the
+# pre-push gauntlet runs on the exact tree that merges (#445 + #446 were green alone and red
+# together). Until 2026-10-25 each PR bumped its own version, and every peer merge re-conflicted every
+# open PR on those two lines (#581 took ~6 re-syncs). A per-user lock lets one merge-pr.sh run at a
+# time, so develop holds still while a merge's gauntlet runs; a merge made outside the script costs a
+# retry round (3 at most). --match-head-commit pins the merge to the pushed sha: a push after the check
+# makes GitHub refuse. Checks are local-only; this narrows the race, it does not close it. It also
+# refuses a PR with no fresh review verdict (see check_review).
+# Run it from the PR's own checkout, on its branch, with a clean tree: it commits there and pushes.
+# One run can span a gauntlet plus lock waits (> 10 min), so start it in the background.
 # Bash 3.2. Env: MERGE_PR_LOAD_MAX (default 4), MERGE_PR_LOAD_WAIT_SECS (900),
-# MERGE_PR_ALLOW_SAME_VERSION (1 skips the same-manifest-version refusal).
+# MERGE_PR_LOCK_DIR ($HOME/.cache/mh/merge-pr.lock), MERGE_PR_LOCK_WAIT_SECS (3600).
 set -euo pipefail
+
+HERE="$(cd -P "$(dirname "$0")" && pwd)"
+# shellcheck source=_lib/gauntlet-lock.sh
+. "$HERE/_lib/gauntlet-lock.sh"
 
 pr="${1:-}"
 if [ -z "$pr" ]; then
@@ -15,14 +25,46 @@ if [ -z "$pr" ]; then
   exit 2
 fi
 
+PLUGIN=.claude-plugin/plugin.json
+MARKET=.claude-plugin/marketplace.json
+die() { echo "merge-pr: $*" >&2; exit 1; }
+
+# On any exit: abort a sync merge this script left open, drop a version edit it left uncommitted, and
+# free the merge lock. A failed step therefore leaves the branch as the last commit the script made.
+merge_open=0
+bump_open=0
+cleanup() {
+  if [ "$merge_open" = 1 ] && git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    git merge --abort || echo "merge-pr: git merge --abort failed; clean up the branch by hand." >&2
+  elif [ "$bump_open" = 1 ]; then
+    git restore --staged --worktree --source=HEAD -- "$PLUGIN" "$MARKET" ||
+      echo "merge-pr: could not restore $PLUGIN and $MARKET; restore them by hand." >&2
+  fi
+  merge_lock_release
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+# The merge lock is the gauntlet queue's code with its own dir. `local` keeps GAUNTLET_LOCK_DIR out of
+# the environment, so the pre-push hook under this script still queues on the gauntlet lock.
+merge_lock_dir="${MERGE_PR_LOCK_DIR:-$HOME/.cache/mh/merge-pr.lock}"
+merge_lock_take() {
+  # shellcheck disable=SC2034 # read by gauntlet_lock_acquire
+  local GAUNTLET_LOCK_DIR="$merge_lock_dir" GAUNTLET_LOCK_WAIT_SECS="${MERGE_PR_LOCK_WAIT_SECS:-3600}"
+  gauntlet_lock_acquire
+}
+merge_lock_release() {
+  # shellcheck disable=SC2034 # read by gauntlet_lock_release
+  local GAUNTLET_LOCK_DIR="$merge_lock_dir"
+  gauntlet_lock_release
+}
+
 git fetch origin
 
-info=$(gh pr view "$pr" --json headRefOid,baseRefName -q '.headRefOid + " " + .baseRefName')
-head=${info% *}
-base=${info#* }
-if [ -z "$head" ] || [ "$head" = "$info" ]; then
-  echo "merge-pr: could not read the head sha and base branch of PR $pr" >&2
-  exit 1
+info=$(gh pr view "$pr" --json headRefOid,baseRefName,headRefName -q '.headRefOid + " " + .baseRefName + " " + .headRefName')
+read -r head base branch <<<"$info"
+if [ -z "$head" ] || [ -z "${branch:-}" ]; then
+  die "could not read the head sha, base and head branch of PR $pr"
 fi
 if [ "$base" != "develop" ]; then
   echo "merge-pr: PR $pr targets '$base', not develop; the origin/develop check would prove nothing." >&2
@@ -30,30 +72,38 @@ if [ "$base" != "develop" ]; then
   exit 1
 fi
 
-check_ancestry() {
-  local rc=0
-  git merge-base --is-ancestor origin/develop "$head" || rc=$?
-  if [ "$rc" -eq 1 ]; then
-    echo "merge-pr: PR $pr head $head does not contain origin/develop." >&2
-    echo "Rebase on origin/develop and push; the pre-push gauntlet then runs on the exact tree that will merge." >&2
-    exit 1
-  elif [ "$rc" -ne 0 ]; then
-    echo "merge-pr: ancestry check failed (rc=$rc); is $head fetched locally?" >&2
-    exit 1
-  fi
-}
+# The gauntlet runs on this working tree, so it must be the PR branch with nothing beside the commit.
+cur=$(git symbolic-ref --quiet --short HEAD) || cur=""
+if [ "$cur" != "$branch" ]; then
+  die "run this from a checkout of PR $pr's branch $branch (this one is on ${cur:-a detached HEAD}): the script commits the sync and the version there and pushes them."
+fi
+dirty=$(git status --porcelain) || die "git status failed."
+if [ -n "$dirty" ]; then
+  die "the checkout has uncommitted or untracked files; the pre-push gauntlet runs on this tree, so it must match the commit that merges. Commit or move them first."
+fi
+rc=0
+git merge-base --is-ancestor "$head" HEAD || rc=$?
+if [ "$rc" -ne 0 ]; then
+  die "local $branch does not contain PR $pr's head $head (rc=$rc); pull the branch first."
+fi
 
-# Refuse a head whose version is not above origin/develop's: an identical bump rebases away
-# with no conflict, so two PRs can cut one number (#492/#493, #496/#497), and a conflict
-# resolved to the older number leaves the head below. Both manifests must agree at the head, and
-# all versions must be plain X.Y.Z so they order safely. MERGE_PR_ALLOW_SAME_VERSION=1 skips
-# only the equal-version refusal, for a PR that needs no bump.
+# First "version" key; awk reads all of its input, so no SIGPIPE under pipefail.
+first_version() { awk -F'"' '/"version"/ && !seen { print $4; seen = 1 }'; }
 manifest_version() {
   local raw
   raw=$(git show "$1:$2") || { echo "merge-pr: cannot read $2 at $1." >&2; exit 1; }
-  # First "version" key; awk reads all of its input, so no SIGPIPE under pipefail.
-  printf '%s\n' "$raw" | awk -F'"' '/"version"/ && !seen { print $4; seen = 1 }'
+  printf '%s\n' "$raw" | first_version
 }
+# with_version <version>: copy stdin to stdout with the first "version" value set to <version>.
+with_version() {
+  awk -v v="$1" '!done && /"version"/ { done = sub(/"version"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"version\": \"" v "\"") } { print }'
+}
+set_version() {
+  local new
+  new=$(with_version "$2" <"$1") || die "cannot rewrite the version in $1."
+  printf '%s\n' "$new" >"$1"
+}
+is_xyz() { [[ "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; }
 # version_lt A B: exit 0 when dotted version A is lower than B.
 version_lt() {
   awk -v a="$1" -v b="$2" 'BEGIN {
@@ -61,31 +111,90 @@ version_lt() {
     for (i = 1; i <= 3; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }
     exit 1 }'
 }
+
+# A PR made before the version moved here still bumps its own version, and merging develop conflicts on
+# that line alone. Merge each conflicted manifest again with the version set to one placeholder on all
+# three sides, so the PR's other edits in the file survive; sync_and_bump then writes the real number.
+# Any other conflict refuses.
+placeholder_blob() { git show ":$1:$2" | with_version 0.0.0-merge | git hash-object -w --stdin; }
+resolve_manifest_conflicts() {
+  local files f b o t merged
+  files=$(git diff --name-only --diff-filter=U) || die "cannot list the conflicted files."
+  [ -n "$files" ] || die "git merge origin/develop failed without a conflict (see above)."
+  while IFS= read -r f; do
+    case "$f" in
+      "$PLUGIN" | "$MARKET") ;;
+      *) die "merging origin/develop into $branch conflicts in $f, not only on the version. Merge origin/develop by hand, commit, push, then run merge-pr.sh again." ;;
+    esac
+  done <<<"$files"
+  while IFS= read -r f; do
+    { b=$(placeholder_blob 1 "$f") && o=$(placeholder_blob 2 "$f") && t=$(placeholder_blob 3 "$f"); } ||
+      die "cannot read the merge stages of $f."
+    merged=$(git merge-file -p --object-id "$o" "$b" "$t") ||
+      die "$f still conflicts with the version set aside (another edit in it clashes). Merge origin/develop by hand, commit, push, then run merge-pr.sh again."
+    printf '%s\n' "$merged" >"$f"
+    git add -- "$f"
+    echo "merge-pr: $f conflicted only on the version; merged the rest." >&2
+  done <<<"$files"
+}
+
+# sync_and_bump: merge origin/develop into the checkout when it is behind, then write develop's
+# version + 1 into both manifests unless they already agree on a higher one, and commit what changed.
+sync_and_bump() {
+  local dev_ver cur_ver mkt_ver new="" merging=0 rc=0
+  git merge-base --is-ancestor origin/develop HEAD || rc=$?
+  if [ "$rc" -eq 1 ]; then
+    merging=1
+    merge_open=1
+    git merge --no-commit --no-ff origin/develop || resolve_manifest_conflicts
+  elif [ "$rc" -ne 0 ]; then
+    die "ancestry check against origin/develop failed (rc=$rc); is origin/develop fetched?"
+  fi
+  dev_ver=$(manifest_version origin/develop "$PLUGIN")
+  is_xyz "$dev_ver" || die "origin/develop's version '$dev_ver' is not X.Y.Z; cannot cut the next one."
+  cur_ver=$(first_version <"$PLUGIN")
+  mkt_ver=$(first_version <"$MARKET")
+  if [ "$cur_ver" != "$mkt_ver" ] || ! is_xyz "$cur_ver" || ! version_lt "$dev_ver" "$cur_ver"; then
+    new=$(awk -F. '{ print $1 "." $2 "." $3 + 1 }' <<<"$dev_ver")
+    bump_open=1
+    set_version "$PLUGIN" "$new"
+    set_version "$MARKET" "$new"
+    git add -- "$PLUGIN" "$MARKET"
+  fi
+  if [ "$merging" -eq 1 ]; then
+    git commit -q -m "Merge origin/develop into $branch${new:+; bump mh to $new}" || die "git commit of the sync failed (see above)."
+  elif [ -n "$new" ]; then
+    git commit -q -m "chore: bump mh to $new" -- "$PLUGIN" "$MARKET" || die "git commit of the version bump failed (see above)."
+  fi
+  merge_open=0
+  bump_open=0
+}
+
+# The last word on the version, run on the head about to be pushed and again before the merge: both
+# manifests agree on a plain X.Y.Z above origin/develop's. An identical bump rebases away with no
+# conflict, so two PRs once cut one number (#492/#493, #496/#497); sync_and_bump should make every
+# refusal here unreachable.
 check_version() {
   local head_ver mkt_ver dev_ver v
-  head_ver=$(manifest_version "$head" .claude-plugin/plugin.json)
-  mkt_ver=$(manifest_version "$head" .claude-plugin/marketplace.json)
-  dev_ver=$(manifest_version origin/develop .claude-plugin/plugin.json)
+  head_ver=$(manifest_version "$head" "$PLUGIN")
+  mkt_ver=$(manifest_version "$head" "$MARKET")
+  dev_ver=$(manifest_version origin/develop "$PLUGIN")
   if [ -z "$head_ver" ] || [ -z "$mkt_ver" ] || [ -z "$dev_ver" ]; then
     echo "merge-pr: could not read the manifest version of the PR head or origin/develop." >&2
     exit 1
   fi
   for v in "$head_ver" "$mkt_ver" "$dev_ver"; do
-    if ! [[ "$v" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    if ! is_xyz "$v"; then
       echo "merge-pr: manifest version '$v' is not X.Y.Z; cannot order it against origin/develop." >&2
       exit 1
     fi
   done
   if [ "$head_ver" != "$mkt_ver" ]; then
-    echo "merge-pr: PR $pr head has plugin.json $head_ver but marketplace.json $mkt_ver; bump both manifests to the same number." >&2
+    echo "merge-pr: PR $pr head has plugin.json $head_ver but marketplace.json $mkt_ver; the two manifests must agree." >&2
     exit 1
   fi
-  if version_lt "$head_ver" "$dev_ver"; then
-    echo "merge-pr: PR $pr head ships version $head_ver, below origin/develop's $dev_ver; the branch is stale or a conflict was resolved to the older number. Bump both manifests above $dev_ver." >&2
-    exit 1
-  fi
-  if [ "$head_ver" = "$dev_ver" ] && [ "${MERGE_PR_ALLOW_SAME_VERSION:-}" != "1" ]; then
-    echo "merge-pr: PR $pr head ships version $head_ver, the same as origin/develop; bump both manifests to the next number first (or MERGE_PR_ALLOW_SAME_VERSION=1)." >&2
+  if ! version_lt "$dev_ver" "$head_ver"; then
+    echo "merge-pr: PR $pr head ships version $head_ver, not above origin/develop's $dev_ver; run merge-pr.sh again so it cuts the next number." >&2
     exit 1
   fi
 }
@@ -139,36 +248,81 @@ check_review() {
     fi
   done
 }
-check_ancestry
-check_version
+
+wait_for_load() {
+  local load_max="${MERGE_PR_LOAD_MAX:-4}" wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}" waited=0 load
+  while :; do
+    load=$(uptime | sed 's/.*load average[s]*: *//' | awk -F'[ ,]+' '{print $1}')
+    if awk -v l="$load" -v m="$load_max" 'BEGIN { exit !(l + 0 < m + 0) }'; then
+      return 0
+    fi
+    if [ "$waited" -ge "$wait_secs" ]; then
+      die "load $load is still >= $load_max after ${waited}s; not merging."
+    fi
+    sleep 30
+    waited=$((waited + 30))
+  done
+}
+
+remote_head() {
+  local line
+  line=$(git ls-remote origin "refs/heads/$branch") || die "git ls-remote origin failed; not merging."
+  printf '%s\n' "${line%%[[:space:]]*}"
+}
+
+# push_head: push HEAD to the PR branch (the pre-push gauntlet runs on this tree) and wait until GitHub
+# shows it as the PR head. A push that exits non-zero after the hook passed (exit 141, an idle SSH
+# drop) still counts when origin has the commit.
+push_head() {
+  local rc=0 remote n=0
+  # MH_GAUNTLET_LOCK_OWNER is this script's merge-lock pid; the hook must queue on the gauntlet lock.
+  env -u MH_GAUNTLET_LOCK_OWNER git push origin "HEAD:refs/heads/$branch" || rc=$?
+  remote=$(remote_head)
+  if [ "$remote" != "$head" ]; then
+    die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push gauntlet failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch."
+  fi
+  [ "$rc" -eq 0 ] || echo "merge-pr: git push exited $rc but origin has $head; going on." >&2
+  until [ "$(gh pr view "$pr" --json headRefOid -q .headRefOid)" = "$head" ]; do
+    n=$((n + 1))
+    [ "$n" -lt 20 ] || die "GitHub still shows another head for PR $pr a minute after the push of $head; run merge-pr.sh again."
+    sleep 3
+  done
+}
+
+# Refuse a PR whose review does not cover it before the script writes anything.
 check_review
 
-load_max="${MERGE_PR_LOAD_MAX:-4}"
-wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}"
-waited=0
-while :; do
-  load=$(uptime | sed 's/.*load average[s]*: *//' | awk -F'[ ,]+' '{print $1}')
-  if awk -v l="$load" -v m="$load_max" 'BEGIN { exit !(l + 0 < m + 0) }'; then
-    break
-  fi
-  if [ "$waited" -ge "$wait_secs" ]; then
-    echo "merge-pr: load $load is still >= $load_max after ${waited}s; not merging." >&2
-    exit 1
-  fi
-  sleep 30
-  waited=$((waited + 30))
-done
+merge_lock_take
+if [ "$GAUNTLET_LOCK_HELD" != 1 ]; then
+  die "could not take the merge lock at $merge_lock_dir within ${MERGE_PR_LOCK_WAIT_SECS:-3600}s (another merge-pr.sh is running, or the dir cannot be made); not merging."
+fi
+# develop may have moved while this run waited for the lock.
+git fetch origin || die "git fetch failed after taking the merge lock; not merging."
 
-# develop can move during the load wait: fetch and check both again.
-git fetch origin || { echo "merge-pr: git fetch failed after the load wait; not merging." >&2; exit 1; }
-check_ancestry
+round=1
+while :; do
+  wait_for_load
+  sync_and_bump
+  head=$(git rev-parse HEAD)
+  check_version
+  check_review
+  [ "$(remote_head)" = "$head" ] || push_head
+  # A merge made outside this script lands no matter the lock: fetch, and sync again if it did.
+  git fetch origin || die "git fetch failed after the push; not merging."
+  rc=0
+  git merge-base --is-ancestor origin/develop "$head" || rc=$?
+  [ "$rc" -eq 0 ] && break
+  [ "$rc" -eq 1 ] || die "ancestry check against origin/develop failed (rc=$rc)."
+  [ "$round" -lt 3 ] || die "origin/develop moved during each of 3 rounds (merges made outside merge-pr.sh?); not merging."
+  round=$((round + 1))
+  echo "merge-pr: origin/develop moved while $head was pushed; syncing again (round $round of 3)." >&2
+done
 check_version
 check_review
 
 now=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
 if [ "$now" != "develop" ]; then
-  echo "merge-pr: PR $pr base changed to '$now' while waiting; not merging." >&2
-  exit 1
+  die "PR $pr base changed to '$now' while waiting; not merging."
 fi
 
 gh pr merge "$pr" --merge --match-head-commit "$head"
