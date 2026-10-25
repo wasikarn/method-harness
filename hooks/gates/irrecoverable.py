@@ -42,10 +42,39 @@ _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
 # 2026-10-24 sweep: a SQL client reads SQL on stdin too (a heredoc, a here-string, a pipe), where the
 # -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
 # checked with the stdin text further down (_sql_stdin_drop). A SQL comment separates words like a blank.
-_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb)(?![\w.-])")
+_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb|mongosh|mongo|redis-cli)(?![\w.-])")
 _SQL_GAP = r"(?:\s|/\*[^*]{0,200}\*/|--[^\n]{0,200}\n)+"
-_SQL_DROP_RE = re.compile(r"DROP" + _SQL_GAP + r"(TABLE|DATABASE|SCHEMA)|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w",
-                          re.IGNORECASE)
+# GH #607: the rest of the data-destroying statements a client takes: DROP of any stored object (and
+# ALTER ... DROP COLUMN), DELETE FROM and UPDATE ... SET with no WHERE before the statement ends, mongo's
+# dropDatabase(), drop(), deleteMany({}) and remove({}), and redis FLUSHALL / FLUSHDB.
+_SQL_DROP_OBJECTS = (r"TABLE|DATABASE|SCHEMA|INDEX|VIEW|MATERIALIZED" + _SQL_GAP + r"VIEW|USER|ROLE|FUNCTION|PROCEDURE|"
+                     r"TRIGGER|SEQUENCE|TYPE|EXTENSION|OWNED|COLUMN|EVENT|COLLECTION")
+_SQL_DROP_RE = re.compile(
+    r"DROP" + _SQL_GAP + r"(?:" + _SQL_DROP_OBJECTS + r")\b|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w"
+    r"|\bDELETE" + _SQL_GAP + r"FROM" + _SQL_GAP + r"[\w.\"`\[\]]+(?:" + _SQL_GAP + r"(?:AS" + _SQL_GAP + r")?\w+)?"
+    r"\s*(?:[;|'\"]|$|\bRETURNING\b)"  # a pipe or a closing quote ends the statement too
+    r"|\.dropDatabase\s*\(|\.drop\s*\(\s*\)|\.(?:deleteMany|remove)\s*\(\s*\{\s*\}\s*\)"
+    r"|\bFLUSH(?:ALL|DB)\b",
+    re.IGNORECASE)
+# UPDATE ... SET with no WHERE is read per statement in one linear pass, not in the regex above: a tempered
+# "no WHERE up to ;" pattern rescans the rest of the text from every UPDATE (2.4 s on 130 KB, near the 8 s
+# hook timeout, which allows).
+_SQL_UPDATE_RE = re.compile(r"\bUPDATE" + _SQL_GAP + r"[\w.\"`\[\]]+" + _SQL_GAP + r"SET\b", re.IGNORECASE)
+_SQL_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
+class _SqlDestroys:
+    # Same .search(text) interface as the regex it wraps, so every caller of _SQL_DROP_RE reads both.
+    def __init__(self, rx):
+        self.rx = rx
+    def search(self, text):
+        if self.rx.search(text):
+            return True
+        for stmt in re.split(r"[;|]", text):
+            ups = [m.end() for m in _SQL_UPDATE_RE.finditer(stmt)]
+            for k, at in enumerate(ups):
+                if not _SQL_WHERE_RE.search(stmt, at, ups[k + 1] if k + 1 < len(ups) else len(stmt)):
+                    return True
+        return False
+_SQL_DROP_RE = _SqlDestroys(_SQL_DROP_RE)
 # GH #559 review 2: SQL a client reads on stdin is matched with its string literals as one word and its
 # comments dropped, so text that only mentions a drop (-- removed the DROP TABLE step, LIKE 'truncate x')
 # reads nothing. A backslash ends no literal early here: 'a\'; DROP TABLE t is a drop to PostgreSQL.
@@ -114,7 +143,7 @@ def _pieces(text, pipe=False):
 # assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
 # A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
 # are defined. A wrapper missing here hides the client, as it does in the rule loop.
-_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb")
+_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb", "mongosh", "mongo", "redis-cli")  # mongo, redis: GH #607
 _SQL_STAGE_WRAPPERS = {
     "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
     "builtin": (), "setsid": (), "rtk": (), "doas": ("-u", "-C"), "exec": ("-a",),
@@ -2065,6 +2094,75 @@ _LONG_VALUE_OPTS = ("--rcfile", "--init-file")  # bash long options that take a 
 _SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (True,), "sh": (False, True)}
 
 
+# GH #608: an interpreter one-liner (python -c, perl/ruby -e, node -e/-p) runs a command through a string it
+# hands to a process API: os.system("rm -rf x"), subprocess.run(["git", "push", "--force"]), `git reset
+# --hard` in perl/ruby. When the body names such an API, each string literal, and each comma-separated run
+# of literals (an argv list) joined by blanks, is scanned as a shell command line. A body with no process API
+# is not read, so print("rm -rf is denied") stays allowed. API deletes (shutil.rmtree, fs.rmSync) are unseen.
+_INTERP_BODY_FLAGS = {"python": ("-c",), "perl": ("-e", "-E"), "ruby": ("-e",), "node": ("-e", "--eval", "-p", "--print")}
+_INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)[\d.]*|(node)(?:js)?")
+_INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
+                             r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`")
+_INTERP_LIT_RE = re.compile("'''(?:.|\\n)*?'''|\"\"\"(?:.|\\n)*?\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`[^`]*`"
+                            r"|\bqx\s*([{(\[<|/!])|%x\s*([{(\[<|/!])")
+_INTERP_CLOSE = {"{": "}", "(": ")", "[": "]", "<": ">"}
+
+def _interp_body(argv0, rest):
+    m = _INTERP_NAME_RE.fullmatch(argv0)
+    if not m:
+        return None
+    flags = _INTERP_BODY_FLAGS[next(g for g in m.groups() if g)]
+    for i, t in enumerate(rest):
+        t = t.replace(PH, "")
+        if t == "--":
+            return None
+        name, eq, val = t.partition("=")
+        if t in flags or (name in flags and name.startswith("--") and eq):
+            return val if eq else (rest[i + 1] if i + 1 < len(rest) else None)
+        # a short cluster holding the body letter (perl -ne, -pe), the body attached after it (python -cprint(1))
+        if t.startswith("-") and not t.startswith("--"):
+            for f in flags:
+                if not f.startswith("--") and f[1] in t[1:]:
+                    k = t.index(f[1], 1)
+                    return t[k + 1:] or (rest[i + 1] if i + 1 < len(rest) else None)
+        if not t.startswith("-"):
+            return None  # a script file: its code is unseen
+    return None
+
+def _interp_commands(body):
+    # The command lines a process-API body may run: each literal, and each comma-joined run of literals.
+    if not _INTERP_PROC_RE.search(body):
+        return []
+    lits, i, out = [], 0, []
+    while True:
+        m = _INTERP_LIT_RE.search(body, i)
+        if not m:
+            break
+        if m.group(1) or m.group(2):  # qx{...} / %x(...): read to the matching closer
+            op = m.group(1) or m.group(2)
+            j = body.find(_INTERP_CLOSE.get(op, op), m.end())
+            j = len(body) if j < 0 else j
+            lits.append((m.start(), j + 1, body[m.end():j]))
+            i = j + 1
+            continue
+        t = m.group()
+        q = 3 if t[:3] in ("'''", '"""') else 1
+        lits.append((m.start(), m.end(), t[q:len(t) - q]))
+        i = m.end()
+    run = []
+    for k, (a, b, text) in enumerate(lits):
+        out.append(text)
+        # a comma between two literals, with brackets around it: ("git", ["push", "--force"]) is one argv
+        if run and re.fullmatch(r"[\s\[\](){}]*,[\s\[\](){}]*", body[lits[k - 1][1]:a]):
+            run.append(text)
+        else:
+            if len(run) > 1:
+                out.append(" ".join(run))
+            run = [text]
+    if len(run) > 1:
+        out.append(" ".join(run))
+    return out
+
 def _unwrap_shell(argv0, rest):
     if argv0 == "eval":
         bodies = [" ".join(rest)] if rest else []
@@ -2682,16 +2780,52 @@ def _chmod_world_mode(s):
             got[w] += perms
     return all("r" in p and "w" in p and ("x" in p or "X" in p) for p in got.values())
 _ROOT_OR_HOME = ("/", "/*", "/.", "~", "~/", "~/*", "~/.")
-def _chmod_world(rest):
+# GH #587: `$HOME` / `"$HOME"` (shlex cuts it into "$", "HOME", so it is read on the joined words), and
+# a path that normalises to / or to this machine's home (taken from the environment at run time).
+# `${HOME}` (and `${HOME:-}`, `${HOME%/}`, ...) is blanked to a substitution before the rules read it,
+# so a placeholder target is matched against the raw text of a chmod's own arguments (the text after
+# `chmod` up to its statement's end), never against another statement's `echo ${HOME}`.
+_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?=[\s;&|)<>]|$)")
+_CHMOD_ARGS_RAW_RE = re.compile(r"(?<![\w.-])g?chmod(?![\w.-])([^;&|\n]*)")
+def _root_or_home_word(rest):
+    words, cur = [], []
+    for t in rest:
+        if cur and not isinstance(t, _Glued):
+            words.append("".join(cur))
+            cur = []
+        cur.append(t)
+    if cur:
+        words.append("".join(cur))
+    home = os.path.normpath(os.path.expanduser("~"))
+    for w in words:
+        if w in _ROOT_OR_HOME:
+            return True
+        if PH in w and w.strip(PH + "/.*") == "" and any(
+                _HOME_BRACED_RAW_RE.search(m.group(1))
+                for m in _CHMOD_ARGS_RAW_RE.finditer(cmd.replace("\\\n", " "))):  # `\`-newline joins a line
+            return True
+        # `$HOME/./`, `~/..`: the home prefix is read as the home dir, then the path is normalised.
+        for pre in ("$HOME", "~"):
+            if w == pre or w.startswith(pre + "/"):
+                w = home + w[len(pre):]
+                break
+        base = w[:-2] if w.endswith("/*") else w
+        if base.startswith("/") and PH not in base and os.path.normpath(base) in ("/", "//", home):
+            return True
+    return False
+
+def _chmod_world(rest, recursive=False):
+    # recursive: the mode reaches every file anyway (a find -exec action, GH #587).
     toks = [t.replace(PH, "") for t in rest]
     # GH #405: only the mode word is read (the first word that is not an option; an empty
     # substitution before it joins as a leading blank, which the regex allows), so a file named
     # 777 or a+rwx is not a mode.
     k = next((j for j, t in enumerate(toks) if not t.startswith("-")), len(toks))
     m = _CHMOD_WORLD_RE.match(" ".join(toks[k:]))
-    return ((m and _chmod_world_mode(m.group(1).replace(" ", ""))) or _chmod_world_word(rest)) and any(
-        t in _ROOT_OR_HOME or _is_flag(t, "--recursive")
-        or (t.startswith("-") and not t.startswith("--") and "R" in t) for t in toks)
+    return ((m and _chmod_world_mode(m.group(1).replace(" ", ""))) or _chmod_world_word(rest)) and (
+        recursive or _root_or_home_word(rest) or any(
+            t in _ROOT_OR_HOME or _is_flag(t, "--recursive")
+            or (t.startswith("-") and not t.startswith("--") and "R" in t) for t in toks))
 
 # GH #409: the mode read again on shell words (each glued token run joined, as _git_words does).
 # A comma mode (u+s,a+rwx) is one word whose clauses are each a mode; a word that is only an
@@ -3050,11 +3184,23 @@ def _find_actions(rest, *names):
         value = 2 if u == "-fprintf" else 1 if u in _FIND_VALUE_TESTS or _FIND_NEWER_XY_RE.fullmatch(u) else 0
     return False
 
+def _find_action_chmod_world(sub):
+    # GH #587: a find action running chmod (past its wrappers) with a world-writable mode applies it to
+    # every file find yields, as `chmod -R` does.
+    a0 = basename(sub[0]).replace(PH, "")
+    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    return (i < len(sub) and basename(sub[i]).replace(PH, "") in ("chmod", "gchmod") and _chmod_world(sub[i + 1:], True)
+            or _shell_body_runs(sub, lambda cur, k: basename(cur[k]).replace(PH, "") in ("chmod", "gchmod")
+                                and _chmod_world(cur[k + 1:], True)))
+
 def _shell_body_runs_rm(sub, depth=0):
+    return _shell_body_runs(sub, lambda cur, k: basename(cur[k]).replace(PH, "") == "rm", depth)
+
+def _shell_body_runs(sub, hit, depth=0):
     # GH #586: True when sub (a find action's command, `sh -c 'rm "$1"' _ {}`) is a shell (past its
-    # wrappers) whose body runs rm at a command position: a statement's start or after `do`/`then`/
-    # `else`, past assignments, wrappers, `eval` and `busybox`; a shell inside the body is read the
-    # same way, three levels deep. The same delete as `-exec rm`, which denies with no flags.
+    # wrappers) whose body runs a command `hit(words, k)` accepts (rm; chmod for GH #587) at a command
+    # position: a statement's start or after `do`/`then`/`else`, past assignments, wrappers, `eval`
+    # and `busybox`; a shell inside the body is read the same way, three levels deep.
     if depth > 3 or not sub:
         return False
     a0 = basename(sub[0]).replace(PH, "")
@@ -3074,9 +3220,9 @@ def _shell_body_runs_rm(sub, depth=0):
                     k += 1
                 while k < len(cur) and basename(cur[k]).replace(PH, "") in PREFIX_WRAPPERS:
                     k = _past_wrapper_words(basename(cur[k]).replace(PH, ""), cur, k + 1)
-                if k < len(cur) and basename(cur[k]).replace(PH, "") == "rm":
+                if k < len(cur) and hit(cur, k):
                     return True
-                if k < len(cur) and _shell_body_runs_rm(cur[k:], depth + 1):
+                if k < len(cur) and _shell_body_runs(cur[k:], hit, depth + 1):
                     return True
     return False
 
@@ -3317,6 +3463,10 @@ def _check_window(_wi, w):
     rest = rest[o:]
 
     _unwrap_shell(argv0.replace(PH, ""), rest)  # `s$(true)h -c` is still sh
+    _ib = _interp_body(argv0.replace(PH, ""), rest)  # GH #608
+    if _ib:
+        for _c in _interp_commands(_ib):
+            _scan_body(_c)
 
     if argv0 == "find":
         # GH #227: find -exec sh -c '<body>' \; hides the body in one token. The shell is the
@@ -3332,6 +3482,9 @@ def _check_window(_wi, w):
             if sub:
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(sub)
+                if rest[j].replace(PH, "") in ("-exec", "-execdir") and _find_action_chmod_world(sub):
+                    deny("chmod 777 / a+rwx on every file find yields makes them world-writable — confirm with user first",
+                         rule="chmod-world")
                 if rest[j].replace(PH, "") in ("-exec", "-execdir") and _shell_body_runs_rm(sub):
                     deny("find -exec/-execdir runs rm through a shell body — destructive delete; " + delete_hint(),
                          rule="find-exec-rm")
@@ -3399,7 +3552,7 @@ def _check_window(_wi, w):
     if (_a0 in ("mkfs", "mke2fs") or _a0.startswith("mkfs.")) and any(
             not t.replace(PH, "").startswith("-") for t in rest):
         deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")
-    if _a0 == "chmod" and _chmod_world(rest):
+    if _a0 in ("chmod", "gchmod") and _chmod_world(rest):  # gchmod: GNU chmod from Homebrew (GH #587)
         deny("chmod 777 / a+rwx recursively or on / or ~ makes files world-writable — confirm with user first",
              rule="chmod-world")
     if _opaque_var(argv0, rest):
@@ -3829,12 +3982,13 @@ def _check_window(_wi, w):
                     ask("dd writes to a target the command does not show (a variable or substitution) — "
                         "confirm it is not a raw device", rule="dd-device")
 
-        if argv0 in ("mysql", "psql", "sqlite3", "mariadb"):
+        if argv0 in _SQL_CLIENTS:
             # SQL genuinely lives inside -e/-c values, so DO scan them, but only
             # for known-dangerous statements. TABLE is optional in TRUNCATE
             # grammar. Full PH removal: a splice can land mid-keyword (DR$(true)OP).
             if _SQL_DROP_RE.search(" ".join(rest).replace(PH, "")):
-                deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) detected — confirm with user first", rule="sql-drop")
+                deny("destructive data command (DROP, TRUNCATE, DELETE or UPDATE with no WHERE, dropDatabase/drop/deleteMany({}), "
+                     "FLUSHALL/FLUSHDB) detected — confirm with user first", rule="sql-drop")
 
     # 2026-10-24 sweep: the client tools that drop a database without SQL. dropdb drops the user's own
     # database when no name is given, so anything but a help or version request denies.
@@ -3842,6 +3996,11 @@ def _check_window(_wi, w):
         deny("dropdb drops a database — confirm with user first", rule="sql-drop")
     if _a0 in ("mysqladmin", "mariadb-admin") and any(t.replace(PH, "").lower() == "drop" for t in rest):
         deny("mysqladmin drop drops a database — confirm with user first", rule="sql-drop")
+    # GH #607: rsync --delete (and --del, --delete-after, --delete-excluded, ...) removes every file in the
+    # destination the source lacks. A mirror is often what was meant, so it asks.
+    if _a0 == "rsync" and any(t.replace(PH, "") == "--del" or t.replace(PH, "").startswith("--delete") for t in rest):
+        ask("rsync --delete removes every destination file the source lacks — confirm the source and destination",
+            rule="rsync-delete")
 
 def _run_windows(i):
     while i < len(windows):  # a window's checks may append more (bash -c / eval bodies, find, xargs)

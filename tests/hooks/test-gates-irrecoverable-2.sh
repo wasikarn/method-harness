@@ -2358,5 +2358,74 @@ for _c in \
   test_allow "$IRRECOVERABLE" "GH #586 control: find runs no delete: $_c" "$(bash_payload "$_c")"
 done
 
+# GH #607: the rest of the data-destroying client commands, on argv and on stdin.
+test_deny  "$IRRECOVERABLE" "GH #607: DELETE FROM with no WHERE" "$(bash_payload "psql -c 'DELETE FROM users'")"
+test_deny  "$IRRECOVERABLE" "GH #607: UPDATE SET with no WHERE" "$(bash_payload "psql -c 'UPDATE users SET pw = NULL'")"
+test_deny  "$IRRECOVERABLE" "GH #607: DROP INDEX" "$(bash_payload "mysql -e 'DROP INDEX i ON t'")"
+test_deny  "$IRRECOVERABLE" "GH #607: DELETE FROM echoed into psql" "$(bash_payload "echo 'DELETE FROM t' | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #607: mongosh dropDatabase" "$(bash_payload "mongosh --eval 'db.dropDatabase()'")"
+test_deny  "$IRRECOVERABLE" "GH #607: mongo deleteMany({})" "$(bash_payload "mongo --eval 'db.users.deleteMany({})'")"
+test_deny  "$IRRECOVERABLE" "GH #607: redis-cli FLUSHALL" "$(bash_payload 'redis-cli FLUSHALL')"
+test_ask   "$IRRECOVERABLE" "GH #607: rsync --delete asks" "$(bash_payload 'rsync -a --delete src/ dst/')"
+test_allow "$IRRECOVERABLE" "GH #607 control: DELETE with WHERE" "$(bash_payload "psql -c 'DELETE FROM users WHERE id = 1'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: UPDATE with WHERE on the next line" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nUPDATE t SET a = 1\nWHERE id = 3;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #607 control: mysql FLUSH PRIVILEGES" "$(bash_payload "mysql -e 'FLUSH PRIVILEGES'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: mongosh deleteMany with a filter" "$(bash_payload "mongosh --eval 'db.users.deleteMany({age: 3})'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: rsync without --delete" "$(bash_payload 'rsync -a src/ dst/')"
+_timed_case 'GH #607: 10000 UPDATE ... SET words before a WHERE are read in bounded time' 2 \
+  "psql -c '$(python3 -c "print('UPDATE t SET ' * 10000 + 'WHERE x')")'"
+
+# GH #587 (bypass hunt 2026-10-23 F10): chmod-world's root-or-home test knew only `/` and `~` (and
+# their `/*`, `/.` forms); a find action applies the mode to every file it finds, as -R does.
+for _c in \
+  'chmod 777 $HOME' \
+  'chmod 777 "$HOME"' \
+  'chmod a+rwx $HOME/' \
+  'chmod 777 ${HOME}' \
+  'chmod 777 "${HOME}"' \
+  'chmod 777 "${HOME:-}"' \
+  'chmod 777 ${HOME%/}' \
+  'echo hi; chmod 777 ${HOME}' \
+  $'chmod 777 \\\n${HOME}' \
+  $'chmod 777 \\\n"${HOME}"' \
+  'chmod 777 ${HOME}>/dev/null' \
+  "bash -c 'chmod 777 \"\${HOME}\"'" \
+  'chmod 777 ${HOME}/' \
+  'chmod 777 $HOME/./' \
+  'chmod 777 $HOME//' \
+  'chmod 777 ~/./' \
+  "find . -exec sh -c 'chmod 777 \"\$1\"' _ {} \\;" \
+  "find . -exec bash -c 'sudo chmod -R a+rwx \"\$0\"' {} \\;" \
+  "chmod 777 $HOME" \
+  "chmod -R 777 $HOME/" \
+  'chmod 777 //' \
+  'find . -exec chmod 777 {} +' \
+  'find . -type f -execdir chmod a+rwx {} \;' \
+  'find . -exec sudo chmod 0777 {} +' \
+  'gchmod -R 777 .' \
+  '/opt/homebrew/bin/gchmod 777 /' ; do
+  test_deny "$IRRECOVERABLE" "GH #587: chmod 777 on home, root or every file find yields: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'chmod 777 f' \
+  'chmod 777 $HOME/f' \
+  "chmod 777 $HOME/project/run.sh" \
+  'chmod 755 $HOME' \
+  'chmod -R 755 .' \
+  'find . -exec chmod 644 {} +' \
+  'find . -name "*.sh" -exec chmod +x {} \;' \
+  'gchmod 644 f' \
+  'chmod 777 ${HOME}/f' \
+  'chmod 777 $HOME/./f' \
+  'chmod 777 "$(mktemp)"; echo ${HOME}' \
+  'chmod 777 $(mktemp) && ls ${HOME}' \
+  'chmod 777 `pwd`; echo ${HOME}' \
+  'chmod 777 ${PWD}; echo ${HOME}' \
+  "find . -exec sh -c 'chmod 644 \"\$1\"' _ {} \\;" \
+  'echo chmod 777 $HOME' ; do
+  test_allow "$IRRECOVERABLE" "GH #587 control: chmod that is not world-writable on home, root or a find set: $_c" "$(bash_payload "$_c")"
+done
+
 
 gates_summary
