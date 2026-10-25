@@ -3583,6 +3583,16 @@ def _check_window(_wi, w):
         _xr = _xc
         while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS:
             _xr = _past_wrapper_words(basename(rest[_xr]).replace(PH, ""), rest, _xr + 1)
+        # GH #591: xargs hands mkfs its device as a word, so the mkfs rule's operand test never sees one.
+        _xm = basename(rest[_xr]).replace(PH, "") if _xr < len(rest) else ""
+        # Only --help / --version alone run nothing: the short letters differ per tool (mkfs's -V is
+        # --verbose, mkfs.vfat's -h takes a hidden-sector count), and every word must be one of them
+        # (`-L --version`: --version is the label).
+        _xinfo = ("--help", "--version")
+        _xargs_m = [t.replace(PH, "") for t in rest[_xr + 1:]]
+        if (_xm in ("mkfs", "mke2fs") or _xm.startswith("mkfs.")) and not (
+                _xargs_m and all(t in _xinfo for t in _xargs_m)):
+            deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")
         if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
             deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
