@@ -2780,16 +2780,52 @@ def _chmod_world_mode(s):
             got[w] += perms
     return all("r" in p and "w" in p and ("x" in p or "X" in p) for p in got.values())
 _ROOT_OR_HOME = ("/", "/*", "/.", "~", "~/", "~/*", "~/.")
-def _chmod_world(rest):
+# GH #587: `$HOME` / `"$HOME"` (shlex cuts it into "$", "HOME", so it is read on the joined words), and
+# a path that normalises to / or to this machine's home (taken from the environment at run time).
+# `${HOME}` (and `${HOME:-}`, `${HOME%/}`, ...) is blanked to a substitution before the rules read it,
+# so a placeholder target is matched against the raw text of a chmod's own arguments (the text after
+# `chmod` up to its statement's end), never against another statement's `echo ${HOME}`.
+_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?=[\s;&|)<>]|$)")
+_CHMOD_ARGS_RAW_RE = re.compile(r"(?<![\w.-])g?chmod(?![\w.-])([^;&|\n]*)")
+def _root_or_home_word(rest):
+    words, cur = [], []
+    for t in rest:
+        if cur and not isinstance(t, _Glued):
+            words.append("".join(cur))
+            cur = []
+        cur.append(t)
+    if cur:
+        words.append("".join(cur))
+    home = os.path.normpath(os.path.expanduser("~"))
+    for w in words:
+        if w in _ROOT_OR_HOME:
+            return True
+        if PH in w and w.strip(PH + "/.*") == "" and any(
+                _HOME_BRACED_RAW_RE.search(m.group(1))
+                for m in _CHMOD_ARGS_RAW_RE.finditer(cmd.replace("\\\n", " "))):  # `\`-newline joins a line
+            return True
+        # `$HOME/./`, `~/..`: the home prefix is read as the home dir, then the path is normalised.
+        for pre in ("$HOME", "~"):
+            if w == pre or w.startswith(pre + "/"):
+                w = home + w[len(pre):]
+                break
+        base = w[:-2] if w.endswith("/*") else w
+        if base.startswith("/") and PH not in base and os.path.normpath(base) in ("/", "//", home):
+            return True
+    return False
+
+def _chmod_world(rest, recursive=False):
+    # recursive: the mode reaches every file anyway (a find -exec action, GH #587).
     toks = [t.replace(PH, "") for t in rest]
     # GH #405: only the mode word is read (the first word that is not an option; an empty
     # substitution before it joins as a leading blank, which the regex allows), so a file named
     # 777 or a+rwx is not a mode.
     k = next((j for j, t in enumerate(toks) if not t.startswith("-")), len(toks))
     m = _CHMOD_WORLD_RE.match(" ".join(toks[k:]))
-    return ((m and _chmod_world_mode(m.group(1).replace(" ", ""))) or _chmod_world_word(rest)) and any(
-        t in _ROOT_OR_HOME or _is_flag(t, "--recursive")
-        or (t.startswith("-") and not t.startswith("--") and "R" in t) for t in toks)
+    return ((m and _chmod_world_mode(m.group(1).replace(" ", ""))) or _chmod_world_word(rest)) and (
+        recursive or _root_or_home_word(rest) or any(
+            t in _ROOT_OR_HOME or _is_flag(t, "--recursive")
+            or (t.startswith("-") and not t.startswith("--") and "R" in t) for t in toks))
 
 # GH #409: the mode read again on shell words (each glued token run joined, as _git_words does).
 # A comma mode (u+s,a+rwx) is one word whose clauses are each a mode; a word that is only an
@@ -3148,11 +3184,23 @@ def _find_actions(rest, *names):
         value = 2 if u == "-fprintf" else 1 if u in _FIND_VALUE_TESTS or _FIND_NEWER_XY_RE.fullmatch(u) else 0
     return False
 
+def _find_action_chmod_world(sub):
+    # GH #587: a find action running chmod (past its wrappers) with a world-writable mode applies it to
+    # every file find yields, as `chmod -R` does.
+    a0 = basename(sub[0]).replace(PH, "")
+    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    return (i < len(sub) and basename(sub[i]).replace(PH, "") in ("chmod", "gchmod") and _chmod_world(sub[i + 1:], True)
+            or _shell_body_runs(sub, lambda cur, k: basename(cur[k]).replace(PH, "") in ("chmod", "gchmod")
+                                and _chmod_world(cur[k + 1:], True)))
+
 def _shell_body_runs_rm(sub, depth=0):
+    return _shell_body_runs(sub, lambda cur, k: basename(cur[k]).replace(PH, "") == "rm", depth)
+
+def _shell_body_runs(sub, hit, depth=0):
     # GH #586: True when sub (a find action's command, `sh -c 'rm "$1"' _ {}`) is a shell (past its
-    # wrappers) whose body runs rm at a command position: a statement's start or after `do`/`then`/
-    # `else`, past assignments, wrappers, `eval` and `busybox`; a shell inside the body is read the
-    # same way, three levels deep. The same delete as `-exec rm`, which denies with no flags.
+    # wrappers) whose body runs a command `hit(words, k)` accepts (rm; chmod for GH #587) at a command
+    # position: a statement's start or after `do`/`then`/`else`, past assignments, wrappers, `eval`
+    # and `busybox`; a shell inside the body is read the same way, three levels deep.
     if depth > 3 or not sub:
         return False
     a0 = basename(sub[0]).replace(PH, "")
@@ -3172,9 +3220,9 @@ def _shell_body_runs_rm(sub, depth=0):
                     k += 1
                 while k < len(cur) and basename(cur[k]).replace(PH, "") in PREFIX_WRAPPERS:
                     k = _past_wrapper_words(basename(cur[k]).replace(PH, ""), cur, k + 1)
-                if k < len(cur) and basename(cur[k]).replace(PH, "") == "rm":
+                if k < len(cur) and hit(cur, k):
                     return True
-                if k < len(cur) and _shell_body_runs_rm(cur[k:], depth + 1):
+                if k < len(cur) and _shell_body_runs(cur[k:], hit, depth + 1):
                     return True
     return False
 
@@ -3434,6 +3482,9 @@ def _check_window(_wi, w):
             if sub:
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(sub)
+                if rest[j].replace(PH, "") in ("-exec", "-execdir") and _find_action_chmod_world(sub):
+                    deny("chmod 777 / a+rwx on every file find yields makes them world-writable — confirm with user first",
+                         rule="chmod-world")
                 if rest[j].replace(PH, "") in ("-exec", "-execdir") and _shell_body_runs_rm(sub):
                     deny("find -exec/-execdir runs rm through a shell body — destructive delete; " + delete_hint(),
                          rule="find-exec-rm")
@@ -3501,7 +3552,7 @@ def _check_window(_wi, w):
     if (_a0 in ("mkfs", "mke2fs") or _a0.startswith("mkfs.")) and any(
             not t.replace(PH, "").startswith("-") for t in rest):
         deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")
-    if _a0 == "chmod" and _chmod_world(rest):
+    if _a0 in ("chmod", "gchmod") and _chmod_world(rest):  # gchmod: GNU chmod from Homebrew (GH #587)
         deny("chmod 777 / a+rwx recursively or on / or ~ makes files world-writable — confirm with user first",
              rule="chmod-world")
     if _opaque_var(argv0, rest):
