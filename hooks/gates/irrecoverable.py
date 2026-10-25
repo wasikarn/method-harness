@@ -49,12 +49,25 @@ _SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb)(?![\w.-]
 _SQL_GAP = r"(?:\s|/\*[^*]{0,200}\*/|--[^\n]{0,200}\n)+"
 _SQL_DROP_RE = re.compile(r"DROP" + _SQL_GAP + r"(TABLE|DATABASE|SCHEMA)|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w",
                           re.IGNORECASE)
-_SQL_HEREDOC_BODIES = []
+# GH #559 review 2: SQL a client reads on stdin is matched with its string literals as one word and its
+# comments dropped, so text that only mentions a drop (-- removed the DROP TABLE step, LIKE 'truncate x')
+# reads nothing. A backslash ends no literal early here: 'a\'; DROP TABLE t is a drop to PostgreSQL.
+# The -c/-e path in the rule loop keeps its raw match.
+_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|`[^`]*`?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
+
+def _sql_drops(sql):
+    return bool(_SQL_DROP_RE.search(_SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)))
+
+# GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
+# matched once where it is stripped (rescanning every stored body per bash -c / eval body was quadratic).
+_SQL_HEREDOC_DROP = [False]
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
     # pipe=True a single | or |&. A redirect's & (2>&1, &>f) separates nothing.
-    out, start, i, q, n = [], 0, 0, None, len(text)
+    # GH #559 review 2: a # that starts a word comments out the rest of the line (an apostrophe in it opens
+    # no quote), and a newline after a trailing | && || continues the pipeline, as it does in the shell.
+    out, start, i, q, n, last, last2 = [], 0, 0, None, len(text), "", ""
     while i < n:
         c, w = text[i], 0
         if q:
@@ -66,6 +79,12 @@ def _pieces(text, pipe=False):
             i += 1
         elif c in "'\"":
             q = c
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "\n" and (last == "|" or last + last2 == "&&"):
+            pass
         elif pipe:
             if c == "|" and text[i + 1:i + 2] != "|" and text[i - 1:i] != "|":
                 w = 2 if text[i + 1:i + 2] == "&" else 1
@@ -73,6 +92,8 @@ def _pieces(text, pipe=False):
             w = 2
         elif c in ";\n" or (c == "&" and text[i - 1:i] not in (">", "<", "|") and text[i + 1:i + 2] != ">"):
             w = 1
+        if c not in " \t\n":
+            last, last2 = c, last
         if w:
             out.append((start, i))
             i += w
@@ -111,7 +132,8 @@ def _words(text):
                 q = None
             elif c == "\\" and q == '"' and i + 1 < n:
                 i += 1
-                w.append(text[i])
+                if text[i] != "\n":  # a backslash-newline is a line continuation, gone from the word
+                    w.append(text[i])
             else:
                 w.append(c)
         elif c in " \t\n":
@@ -120,6 +142,13 @@ def _words(text):
                 w, has = [], False
         elif c in "'\"":
             q, has = c, True
+        elif c == "#" and not has:  # a comment, to the end of the line
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "\\" and text[i + 1:i + 2] == "\n":
+            i += 2
+            continue
         else:
             if c == "\\" and i + 1 < n:
                 i += 1
@@ -130,20 +159,37 @@ def _words(text):
     if has:
         yield "".join(w)
 
-def _runs_sql_client(stage):
-    # Whether the pipe stage's argv0 (see _SQL_STAGE_WRAPPERS above) is a SQL client.
-    wrap, skip, duration = None, False, False
-    for t in _words(stage):
+# GH #559 review 2: `docker exec <flags> <container> <cmd>` (and podman's) runs <cmd>, as the rule loop reads it.
+_DOCKER_EXEC_VALUE_FLAGS = ("-e", "-u", "-w", "--env", "--env-file", "--user", "--workdir", "--detach-keys")
+
+def _stage_cmd(stage):
+    # (argv0, the word iterator past it) of a pipe stage: its first word past shell keywords, assignments,
+    # the wrappers in _SQL_STAGE_WRAPPERS and a docker exec's flags and container; (None, ()) for none.
+    words = _words(stage)
+    wrap, skip, duration, docker = None, False, False, 0
+    for t in words:
         t = t.lstrip("$({`").rstrip(")}`;")
         if skip:
             skip = False
             continue
         if not t or t in _SQL_STAGE_KEYWORDS:
             continue
+        if docker == 1:  # only `docker exec` runs a command named after it
+            if t != "exec":
+                return "docker", words
+            docker, wrap = 2, None
+            continue
         if wrap and t.startswith("-"):
             # A short cluster takes the next word when its last letter does (sudo -iu postgres psql).
-            v = _SQL_STAGE_WRAPPERS[wrap]
+            v = _DOCKER_EXEC_VALUE_FLAGS if wrap == "docker" else _SQL_STAGE_WRAPPERS[wrap]
             skip = t in v or (not t.startswith("--") and "=" not in t and "-" + t[-1] in v)
+            continue
+        if docker == 2:
+            if t.startswith("-"):
+                wrap = "docker"
+                skip = t in _DOCKER_EXEC_VALUE_FLAGS or (not t.startswith("--") and "-" + t[-1] in _DOCKER_EXEC_VALUE_FLAGS)
+                continue
+            docker, wrap = 3, None  # the container
             continue
         if duration:
             duration = False
@@ -151,11 +197,17 @@ def _runs_sql_client(stage):
         if _ASSIGNMENT_RE.match(t):
             continue
         b = t.rsplit("/", 1)[-1]
+        if b in ("docker", "podman") and not docker:
+            docker = 1
+            continue
         if b in _SQL_STAGE_WRAPPERS or (wrap == "rtk" and b in ("proxy", "run", "err", "test", "summary")):
             wrap, duration = b, b in ("timeout", "gtimeout")
             continue
-        return b in _SQL_CLIENTS
-    return False
+        return b, words
+    return None, ()
+
+def _runs_sql_client(stage):
+    return _stage_cmd(stage)[0] in _SQL_CLIENTS
 
 def _feeds_sql_client(line, pos):
     # Whether the heredoc opened at line[pos] is read by a SQL client: its own pipe stage or one downstream
@@ -174,7 +226,7 @@ def _strip_heredocs(cmd):
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
     # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
     # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is still
-    # stripped, and kept in _SQL_HEREDOC_BODIES for the SQL check.
+    # stripped, and one that drops sets _SQL_HEREDOC_DROP for the SQL check.
     lines = cmd.split("\n")
     out, i = [], 0
     while i < len(lines):
@@ -198,8 +250,9 @@ def _strip_heredocs(cmd):
             # Unmatched closing delimiter: put the scanned lines BACK rather
             # than silently eat a real write statement that followed.
             out.extend(lines[body_start:i])
-        elif _SQL_CLIENT_RE.search(line) and _feeds_sql_client(line, m.start()):
-            _SQL_HEREDOC_BODIES.append("\n".join(lines[body_start:i - 1]))
+        elif (not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(line) and _feeds_sql_client(line, m.start())
+              and _sql_drops("\n".join(lines[body_start:i - 1]))):
+            _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
 def _normalize_ansi_c_quotes(cmd):
@@ -1348,20 +1401,31 @@ if len(cmd) > _CMD_LEN_CAP:
     deny("command too long to safely tokenize (" + str(len(cmd)) + " chars, cap " + str(_CMD_LEN_CAP) + ") - confirm with user first")
 
 def _sql_stdin_drop(c):
-    # SQL a client reads on stdin drops or truncates: a heredoc body it reads, a here-string in its own pipe
-    # segment, or text upstream of it in its pipeline (echo 'DROP TABLE t' | psql). Text downstream of the
-    # client is its output (psql -c '\d' | grep -i 'drop table'), so it is not read.
-    if any(_SQL_DROP_RE.search(b) for b in _SQL_HEREDOC_BODIES):
+    # SQL a client reads on stdin drops or truncates: a heredoc body it reads (_SQL_HEREDOC_DROP), a
+    # here-string on its own stage, or the data a stage upstream of it in its pipeline emits. Text downstream
+    # of the client is its output (psql -c '\d' | grep -i 'drop table'), so it is not read.
+    # GH #559 review 2: only echo/printf words and a cat here-string count as emitted data; another stage's
+    # words (git diff | grep -v 'DROP TABLE' | psql) are arguments, not the SQL that reaches the client.
+    if _SQL_HEREDOC_DROP[0]:
         return True
-    if not _SQL_CLIENT_RE.search(c) or not _SQL_DROP_RE.search(c):
+    if not _SQL_CLIENT_RE.search(c) or not _SQL_DROP_RE.search(re.sub(r"[\\'\"]", "", c)):
         return False
     for s, e in _pieces(c):
         segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
         k = next((k for k, g in enumerate(segs) if _runs_sql_client(g)), None)
         if k is None:
             continue
+        data = []
+        for g in segs[:k]:
+            a0, rest = _stage_cmd(g)
+            if a0 in ("echo", "printf"):
+                data.extend(rest)
+            elif a0 == "cat" and "<<<" in g:
+                data.extend(_words(g.split("<<<", 1)[1]))
         here = segs[k].split("<<<", 1)
-        if _SQL_DROP_RE.search(" ".join(segs[:k])) or (len(here) > 1 and _SQL_DROP_RE.search(here[1])):
+        if len(here) > 1:
+            data.extend(_words(here[1]))
+        if _sql_drops(" ".join(data)):
             return True
     return False
 
