@@ -976,6 +976,23 @@ for _c in "env -S '-i #' rm -rf x" "env -S '-i #' git push --force" "env -S '-u 
 done
 test_allow "$IRRECOVERABLE" "GH #560 control: env -S '-i #' ls" "$(bash_payload "env -S '-i #' ls -la")"
 test_allow "$IRRECOVERABLE" "GH #560 control: env -S '-i a#b' (mid-word # is no comment)" "$(bash_payload "env -S '-i ls a#b'")"
+# GH #560 round 3: env's -S splitting has more corners than the gate models (quoted or escaped `#`,
+# `\_`, a quote inside a comment, an empty nested -S, `--unset NAME`), so a command with -S is also
+# read the way the gate read it before #570, and either reading denies. One row-set per class.
+_r3_cmds=(
+  "env -S '-u \"#\"' rm -rf x" "env -S '-u \\#' git push --force" "env -S \"-u '#x'\" rm -rf x"
+  "env -S '-i # don'\\''t' rm -rf x" "env -S '-i # it'\\''s' git push --force"
+  "env -S '-i \\_ -v' git reset --hard" "env -S '-v \\_' rm -rf x"
+  "env -S '-S#' rm -rf x" "env -S '-S\\_' rm -rf x" "env -S '-S #c' git clean -fdx"
+  "env -S '--unset FOO' rm -rf x" "env -S '--unset FOO' git push --force"
+)
+for _c in "${_r3_cmds[@]}"; do
+  test_deny "$IRRECOVERABLE" "GH #560: -S corner, both readings checked: $_c" "$(bash_payload "$_c")"
+done
+for _c in "env -i FOO=1 ls" "env -S -i ls -la" "env -S '-i #' ls -la" "env -C /tmp make" "env -S 'ls -la'" \
+  "env -iS 'ls -la'" "env -S '-u \"#\"' ls"; do
+  test_allow "$IRRECOVERABLE" "GH #560 round 3 control: $_c" "$(bash_payload "$_c")"
+done
 test_deny  "$IRRECOVERABLE" "GH #560: subagent: env -S '-i claude -p hi'" "$(bash_agent_payload "env -S '-i claude -p hi'" fork)"
 test_deny  "$IRRECOVERABLE" "GH #560: rm read through two -S levels, under the nesting limit" \
   "$(bash_payload "env -iS env -iS rm -rf x")"

@@ -1847,6 +1847,7 @@ _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _MAX_SHELL_DEPTH = 5
 _WDEPTH = {}      # window index -> unwrap depth (absent = 0, an original window)
 _XARGS_HANDOVERS = [0]  # windows appended for `xargs <wrapper> ...` (bounded, see the xargs branch)
+_ENV_PRE570_WINDOWS = set()  # indexes of the GH #560 pre-#570 env -S readings (see the env branch)
 _cur_depth = 0
 
 def _count_handover(what):
@@ -2662,7 +2663,12 @@ def _check_window(_wi, w):
             # word is an option is split back into this loop, not scanned as a command line.
             # _ENV_SPLIT_MAX bounds the re-splits: each one copies the tail, and a flood must stay
             # linear; past it the gate denies, like the sh -c depth limit.
-            i, body = o, None
+            # GH #560 round 3: -S splitting has more corners than this models (a quoted or escaped
+            # `#`, `\_`, a quote inside a comment, an empty nested -S, `--unset NAME`), so an env
+            # with -S is ALSO read the way the gate read it before #570 (-S a bare flag, `-u` takes
+            # a value), as one more window at this depth: either reading denies, so no shape that
+            # denied before #570 allows now. _count_handover bounds a chain of them (each copies the tail).
+            i, body, pre_rest, pre_o, split_seen = o, None, rest, o, False
             while i < len(rest):
                 t = rest[i].replace(PH, "")
                 long_name = t[2:].split("=", 1)[0]
@@ -2682,6 +2688,7 @@ def _check_window(_wi, w):
                             body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
                         i += 1 if attached else 2
                 if body is not None:
+                    split_seen = True
                     words = _env_split_options(body)
                     if words is None:
                         break
@@ -2699,6 +2706,22 @@ def _check_window(_wi, w):
                     i += 1
                 else:
                     break
+            if split_seen:
+                if _wi in _ENV_PRE570_WINDOWS:  # only a chain of them copies the tail again and again
+                    _count_handover("env -S")
+                j = pre_o
+                while j < len(pre_rest):
+                    t = pre_rest[j].replace(PH, "")
+                    if t == "-u" and j + 1 < len(pre_rest):
+                        j += 2
+                    elif t.startswith("-") or _assignment(pre_rest[j]):
+                        j += 1
+                    else:
+                        break
+                if j < len(pre_rest):
+                    _WDEPTH[len(windows)] = _cur_depth
+                    _ENV_PRE570_WINDOWS.add(len(windows))
+                    windows.append(pre_rest[j:])
             if body is not None:
                 _scan_body(" ".join([body] + rest[i:]))
                 o = len(rest)
