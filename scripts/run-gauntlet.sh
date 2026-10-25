@@ -46,7 +46,9 @@ check_shard || exit 2
 # leftovers and can pass unchecked (cloud audit 2026-10-23, F4). Stop before any test runs.
 command -v trash >/dev/null 2>&1 || { echo "gauntlet: trash not found on PATH (macOS: brew install trash; Linux: pip install trash-cli), refusing to run tests that reset state with it" >&2; exit 2; }
 # tests/scripts/test-pipefail-grep-q-lint.sh parses every shell file with shfmt; say so up front.
-command -v shfmt >/dev/null 2>&1 || { echo "gauntlet: shfmt not found on PATH (shfmt >= 3.5; macOS: brew install shfmt; Linux: pip install shfmt-py, or apt install shfmt on Ubuntu 24.04+), refusing to run without the pipe-into-grep-q lint" >&2; exit 2; }
+# Run with no files, the scanner checks only its shfmt (on PATH, and it finds the race in
+# `x | grep -q y`): a version check passes Ubuntu 24.04's apt 3.8.0, whose operators are numbers.
+python3 tests/_lib/pipe_into_grep_q.py || { echo "gauntlet: no usable shfmt (macOS: brew install shfmt; Linux: pip install shfmt-py, not Ubuntu's apt package), refusing to run without the pipe-into-grep-q lint" >&2; exit 2; }
 LOG="$(mktemp -d)" && [ -d "$LOG" ] || { echo "gauntlet: mktemp -d failed, refusing to run with an empty log dir" >&2; exit 1; }
 # Keep $LOG on a failing run instead of trashing it unconditionally (GH #158):
 # the old unconditional trap deleted the only copy of a flaky failure's full

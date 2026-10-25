@@ -29,9 +29,11 @@ file (2026-10-23). Write `grep -q PAT <<<"$out"` or `grep -q PAT <<<"$(cmd)"`.
 `pipefail` may be sourced under it, as harness-audit's checks are) with
 `tests/_lib/pipe_into_grep_q.py`, which reads shfmt's JSON syntax tree: a line regex and then a
 hand-written lexer each missed sites in review (#578, #597, #598). **The gauntlet needs shfmt >= 3.5**
-(macOS: `brew install shfmt`; Linux: `pip install shfmt-py`, or `apt install shfmt` on Ubuntu 24.04+;
-22.04's 3.4 is too old; cloud sessions get it from the SessionStart hook below, apt 3.8 on 24.04 or
-pip's shfmt-py when apt's is older) and refuses to start without it, as it does without `trash`. shfmt 3.4 only
+(macOS: `brew install shfmt`; Linux: `pip install shfmt-py`, never Ubuntu's apt package: 22.04's 3.4
+is too old and 24.04's 3.8.0 writes operators as numbers, `"Op": 12` for `|`; cloud sessions get
+shfmt-py from the SessionStart hook below) and refuses to start without it, as it does without
+`trash`. Both it and the hook accept a shfmt only if the scanner's own canary passes (the scanner
+run with no files), not by version. shfmt 3.4 only
 has `-tojson`, whose operators are numbers, and once made every file scan clean, so the scanner
 checks itself on `x | grep -q y` first and exits 2 when it cannot read the tree. A file shfmt cannot
 read or parse is also an error, never a clean pass, and hits in the other files are still listed.
@@ -75,7 +77,8 @@ never runs at all and nothing server-side notices. Run the verify command above 
   stops without it: on Linux, `pip install trash-cli` provides `trash` alongside `trash-put`.
   Single-repo Claude Code cloud sessions (not Project threads or multi-repo sessions, which skip
   repo hooks) get it from the project SessionStart hook in `.claude/settings.json`
-  (`.claude/hooks/session-start.sh`, apt `trash-cli` and `shfmt`, only when `CLAUDE_CODE_REMOTE=true`); it is
+  (`.claude/hooks/session-start.sh`, apt `trash-cli` and pip `shfmt-py`, put first on PATH through
+  `CLAUDE_ENV_FILE` when another shfmt shadows it, only when `CLAUDE_CODE_REMOTE=true`); it is
   for developing this repo and is not part of the shipped plugin's `hooks/` (which sessions read
   repo settings: code.claude.com/docs/en/settings, "Settings in cloud sessions").
   Enforced by `gate:bash:irrecoverable`. Validate the argument is non-empty before any `trash`
