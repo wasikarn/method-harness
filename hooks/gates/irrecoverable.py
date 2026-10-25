@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json, os, re, shlex, sys
+import bisect  # its own line: tests/hooks/test-gate-canary.sh injects a NameError after the line above
 
 # GH #156: raise the int-string digit limit before parsing so an oversized
 # unquoted int literal doesn't crash json.load() into this gate's fail-open
@@ -37,10 +38,6 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
     sys.exit(2)
 
 SQ = chr(39)
-_HEREDOC_RE = re.compile(r"<<(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
-# A heredoc feeding an interpreter is executable code, not inert data -- checked
-# against the segment of the line BEFORE "<<" (the command the heredoc feeds).
-_INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
 # 2026-10-24 sweep: a SQL client reads SQL on stdin too (a heredoc, a here-string, a pipe), where the
 # -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
@@ -82,10 +79,19 @@ _SQL_DROP_RE = _SqlDestroys(_SQL_DROP_RE)
 # comments dropped, so text that only mentions a drop (-- removed the DROP TABLE step, LIKE 'truncate x')
 # reads nothing. A backslash ends no literal early here: 'a\'; DROP TABLE t is a drop to PostgreSQL.
 # The -c/-e path in the rule loop keeps its raw match.
-_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|`[^`]*`?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
+_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
+
+# GH #559 review 3: the stripping models plain quotes and comments only. Text holding a construct it does not
+# model ($$ or $tag$ dollar quoting, a backslash, which escapes a quote in MySQL and E'' strings, MySQL's
+# /*! executable comment and # comment, a -- with no blank after it, which MySQL reads as minus minus) is
+# matched raw: such a dialect may run what the stripper would read as a literal or a comment. GH #559
+# review 4: so is a backtick or a [, a quote to MySQL or sqlite3 but plain text to psql.
+_SQL_UNMODELED_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$|\\|/\*!|#|--(?!\s)|[`\[]")
 
 def _sql_drops(sql):
-    return bool(_SQL_DROP_RE.search(_SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)))
+    if not _SQL_UNMODELED_RE.search(sql):
+        sql = _SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)
+    return bool(_SQL_DROP_RE.search(sql))
 
 # GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
 # matched once where it is stripped (rescanning every stored body per bash -c / eval body was quadratic).
@@ -210,7 +216,8 @@ def _stage_cmd(stage):
             continue
         if wrap and t.startswith("-"):
             # A short cluster takes the next word when its last letter does (sudo -iu postgres psql).
-            v = _DOCKER_EXEC_VALUE_FLAGS if wrap == "docker" else _SQL_STAGE_WRAPPERS[wrap]
+            # .get: an rtk subcommand (rtk proxy -v psql) is a wrap with no value flags of its own.
+            v = _DOCKER_EXEC_VALUE_FLAGS if wrap == "docker" else _SQL_STAGE_WRAPPERS.get(wrap, ())
             skip = t in v or (not t.startswith("--") and "=" not in t and "-" + t[-1] in v)
             continue
         if docker == 2:
@@ -238,17 +245,68 @@ def _stage_cmd(stage):
 def _runs_sql_client(stage):
     return _stage_cmd(stage)[0] in _SQL_CLIENTS
 
-def _feeds_sql_client(line, pos):
-    # Whether the heredoc opened at line[pos] is read by a SQL client: its own pipe stage or one downstream
-    # runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest ( or `
-    # before pos: a $( the heredoc sits in is no separator to _pieces, and a quote may hold it
+# GH #559 review 3: every heredoc a line opens is read, in order (cat <<A >/dev/null; psql db <<B), not
+# only the first. A here-string's <<< opens none.
+_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
+# A heredoc feeding an interpreter is executable code, not inert data: an interpreter word anywhere on the
+# line BEFORE the << counts. GH #559 review 4: not only the heredoc's own pipe stage, since a heredoc on a
+# compound command feeds every command in it ({ bash; } <<EOF, while read x; do bash; done <<EOF), and \b
+# keeps zsh-5.9 and python3.12 interpreters. Matched once per line, at its first interpreter word.
+_INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
+_HEREDOC_SCAN_BUDGET = [3_000_000]  # chars a $( re-read of heredoc lines may parse; past it, a client is assumed
+
+class _HeredocLine:
+    # The statements and pipe stages of one line, parsed once however many heredocs it opens, so a line
+    # of 20000 openers costs one parse, not one per opener.
+    def __init__(self, line):
+        self.line, self.ends, self.stmts, self.stages = line, None, None, {}
+
+    def _stage(self, pos):
+        if self.stmts is None:
+            self.stmts = _pieces(self.line)
+            self.ends = [e for _, e in self.stmts]
+        k = bisect.bisect_left(self.ends, pos)
+        if k not in self.stages:
+            s, e = self.stmts[k]
+            st = [(s + a, s + b) for a, b in _pieces(self.line[s:e], pipe=True)]
+            # client[j]: a stage from j on runs a SQL client (read downstream of the heredoc's stage)
+            client = [False] * (len(st) + 1)
+            for j in range(len(st) - 1, -1, -1):
+                client[j] = client[j + 1] or _runs_sql_client(self.line[st[j][0]:st[j][1]])
+            self.stages[k] = (st, [b for _, b in st], client)
+        st, st_ends, client = self.stages[k]
+        return k, bisect.bisect_left(st_ends, pos), st, client
+
+    def client(self, pos):
+        _, j, _, client = self._stage(pos)
+        return client[j]
+
+    def piped_shell(self, pos):
+        # GH #567: a stage after the heredoc's runs a shell that reads stdin (_reads_stdin_shell).
+        k, j, st, _ = self._stage(pos)
+        if (k, "sh") not in self.stages:
+            shell = [False] * (len(st) + 1)
+            for i in range(len(st) - 1, -1, -1):
+                shell[i] = shell[i + 1] or _reads_stdin_shell(self.line[st[i][0]:st[i][1]])
+            self.stages[(k, "sh")] = shell
+        return self.stages[(k, "sh")][j + 1]
+
+def _heredoc_feeds_sql_client(ctx, openers, views, pos):
+    # Whether the heredoc opened at ctx.line[pos] is read by a SQL client: its own pipe stage or one
+    # downstream runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest
+    # ( or ` before pos: a $( the heredoc sits in is no separator to _pieces, and a quote may hold it
     # (gh --body "$(cat <<EOF").
-    for o in {0, max(line.rfind("(", 0, pos), line.rfind("`", 0, pos)) + 1}:
-        text, p = line[o:], pos - o
-        s, e = next((s, e) for s, e in _pieces(text) if p <= e)
-        if any(_runs_sql_client(text[s + a:s + b]) for a, b in _pieces(text[s:e], pipe=True) if s + b >= p):
+    if ctx.client(pos):
+        return True
+    o = openers[bisect.bisect_left(openers, pos) - 1] + 1 if openers and openers[0] < pos else 0
+    if not o:
+        return False
+    if o not in views:
+        _HEREDOC_SCAN_BUDGET[0] -= len(ctx.line) - o
+        if _HEREDOC_SCAN_BUDGET[0] < 0:
             return True
-    return False
+        views[o] = _HeredocLine(ctx.line[o:])
+    return views[o].client(pos - o)
 
 # GH #567: a shell reads its commands on stdin too: a heredoc piped into it (cat <<EOF | bash), a here-string
 # (bash <<< 'cmd') or the words an echo/printf pipes into it (echo 'cmd' | sh). Only a shell that reads stdin
@@ -276,47 +334,49 @@ def _reads_stdin_shell(seg):
             return False  # a script operand, or -c
     return True
 
-def _piped_into_shell(line, pos):
-    # True when the heredoc at line[pos] feeds a pipeline whose later segment is a shell reading stdin.
-    for s, e in _pieces(line):
-        if s <= pos <= e:
-            segs = _pieces(line[s:e], pipe=True)
-            k = next((k for k, (a, b) in enumerate(segs) if s + a <= pos <= s + b), None)
-            return k is not None and any(_reads_stdin_shell(line[s + a:s + b]) for a, b in segs[k + 1:])
-    return False
-
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
     # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
-    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is still
-    # stripped, and one that drops sets _SQL_HEREDOC_DROP for the SQL check.
+    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is checked for a
+    # drop whatever the interpreter decision (GH #559 review 3), and one that
+    # drops sets _SQL_HEREDOC_DROP for the SQL check.
     lines = cmd.split("\n")
     out, i = [], 0
     while i < len(lines):
         line = lines[i]
         out.append(line)
-        m = _HEREDOC_RE.search(line)
         i += 1
-        if not m:
+        ms = list(_HEREDOC_OPEN_RE.finditer(line))
+        if not ms:
             continue
-        if _INTERPRETER_RE.search(line[:m.start()]) or _piped_into_shell(line, m.start()):
-            continue
-        strip_tabs, delim = bool(m.group(1)), m.group(3)
-        body_start, found = i, False
-        while i < len(lines):
-            body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
-            i += 1
-            if body_line == delim:
-                found = True
+        ctx, views, has_client = _HeredocLine(line), {}, bool(_SQL_CLIENT_RE.search(line))
+        openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
+        interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
+        for n_m, m in enumerate(ms):
+            # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
+            # from the line's stages parsed once.
+            code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
+            feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
+            if code and not feeds and n_m == len(ms) - 1:
+                break  # the body is code: its lines stay, read (and their own heredocs stripped) as lines
+            strip_tabs, delim = bool(m.group(1)), m.group(3)
+            body_start, found = i, False
+            while i < len(lines):
+                body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
+                i += 1
+                if body_line == delim:
+                    found = True
+                    break
+            if not found:
+                # Unmatched closing delimiter: put the scanned lines BACK rather
+                # than silently eat a real write statement that followed.
+                out.extend(lines[body_start:i])
                 break
-        if not found:
-            # Unmatched closing delimiter: put the scanned lines BACK rather
-            # than silently eat a real write statement that followed.
-            out.extend(lines[body_start:i])
-        elif (not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(line) and _feeds_sql_client(line, m.start())
-              and _sql_drops("\n".join(lines[body_start:i - 1]))):
-            _SQL_HEREDOC_DROP[0] = True
+            if code:
+                out.extend(lines[body_start:i])
+            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops("\n".join(lines[body_start:i - 1])):
+                _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
 def _normalize_ansi_c_quotes(cmd):
@@ -2371,6 +2431,30 @@ def _hooks_path_ok(scan):
     pos = pos[1:] if pos[:1] == ["set"] else pos
     return len(pos) == 1 or (len(pos) == 2 and pos[1] == "git-hooks" and not any(t == "--value" for t in opts))
 
+def _drops_core_section(words):
+    # GH #562: `git config [--]remove-section core` and `[--]rename-section core X` (or X core) drop or
+    # rewrite core.hooksPath without naming it. Section names ignore case; git takes a unique prefix
+    # of a long option (`--rem`); a name built at run time (a $ or a blanked substitution) may be core
+    # when the literal text before it can still become core (`co$X`, not `x$Y`).
+    pos, mode, i = [], False, 0
+    while i < len(words):
+        t = words[i].replace(PH, "")
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        if t.startswith("-"):
+            mode = mode or _is_flag(t, "--remove-section", "--rename-section")
+        else:
+            pos.append(words[i])
+        i += 1
+    if pos and pos[0].replace(PH, "") in ("remove-section", "rename-section"):
+        mode, pos = True, pos[1:]
+    return mode and any(_may_be_core(w) for w in pos)
+
+def _may_be_core(w):
+    cut = min((k for k in (w.find(PH), w.find("$")) if k >= 0), default=-1)
+    return w.lower() == "core" if cut < 0 else "core".startswith(w[:cut].lower())
+
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
     # window w set core.hooksPath (key case-insensitive)? Any value: an empty one (`-c core.hooksPath=`)
@@ -3272,7 +3356,7 @@ def _check_window(_wi, w):
             # GNU rm takes any unambiguous prefix, and its long options (force,
             # interactive, one-file-system, no-preserve-root, preserve-root,
             # recursive, dir, verbose, help, version) leave --r and --f unambiguous.
-            has_r = has_f = False
+            has_r = has_f = has_i = False
             for t in rest:
                 # "$(true)-rf" IS "-rf" in bash but blanks to "PH-rf", which no
                 # longer starts with "-" -- strip PH, assume the dangerous
@@ -3281,15 +3365,24 @@ def _check_window(_wi, w):
                 if t.startswith("--"):
                     has_r = has_r or _is_flag(t, "--recursive")
                     has_f = has_f or _is_flag(t, "--force")
+                    # --interactive[=always|yes] asks per file; =never/no/none and =once (-I) do not.
+                    has_i = has_i or (_is_flag(t.split("=", 1)[0], "--interactive")
+                                      and t.partition("=")[2] in ("", "always", "yes"))
                 elif t.startswith("-") and len(t) > 1:
                     body = t[1:].lower()
                     has_r = has_r or "r" in body
                     has_f = has_f or "f" in body
+                    has_i = has_i or "i" in t[1:]  # -i asks per file; -I asks once and still deletes the tree
             if has_r and has_f:
                 deny("rm -rf detected — " + delete_hint(), rule="rm-rf")
             # GH #336: GNU rm takes any unambiguous prefix (`--n` is the only `--n...` option).
             if any(_is_flag(t.replace(PH, ""), "--no-preserve-root") for t in rest):
                 deny("rm --no-preserve-root lifts rm's guard on / — " + delete_hint(), rule="rm-no-preserve-root")
+            # 2026-10-25 (out-of-contract follow-up to the 2026-10-24 sweep): without -f, rm -r still deletes
+            # the tree with no undo; -f only adds silence on write-protected files and missing paths. -i
+            # prompts for every file, and the Bash tool's stdin gives no yes, so it deletes nothing unasked.
+            if has_r and not has_f and not has_i:
+                deny("rm -r deletes a directory tree with no undo, -f or not — " + delete_hint(), rule="rm-recursive")
 
         # Same PH-erases-flag-shape fix as the rm block ("find $(true)-exec").
         if argv0 == "find" and any(t.replace(PH, "") in ("-exec", "-execdir") for t in rest) and "rm" in [basename(t) for t in rest]:
@@ -3430,7 +3523,11 @@ def _check_window(_wi, w):
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
                     deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
                          rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
-                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and not _hooks_path_ok(scan):
+                # GH #562: the decision reads args, not scan: scan drops an empty word, and `core.hooksPath ""`
+                # (an empty value, which unwires every hook) then read as the key alone, a read.
+                _cfg = [t.replace(PH, "") for t in args] if sub == "config" else None
+                if _cfg and ((any(t.lower() == "core.hookspath" for t in _cfg) and not _hooks_path_ok(_cfg))
+                             or _drops_core_section(args)):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
                     deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
