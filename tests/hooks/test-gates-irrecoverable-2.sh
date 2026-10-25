@@ -2174,6 +2174,12 @@ test_deny  "$IRRECOVERABLE" "empty value: git config clean.requireForce ''" "$(b
 test_deny  "$IRRECOVERABLE" "empty value: git config set clean.requireForce \"\"" "$(bash_payload 'git config set clean.requireForce ""')"
 test_deny  "$IRRECOVERABLE" "empty value: git config clean.requireForce \"\$(true)\" (blanks to empty)" \
   "$(bash_payload 'git config clean.requireForce "$(true)"')"
+# The write forms that skip options before the key (_git_config_write's options()) see the empty word too.
+test_deny  "$IRRECOVERABLE" "empty value: git config --add clean.requireForce ''" "$(bash_payload "git config --add clean.requireForce ''")"
+test_deny  "$IRRECOVERABLE" "empty value: git config --replace-all clean.requireForce ''" "$(bash_payload "git config --replace-all clean.requireForce ''")"
+test_deny  "$IRRECOVERABLE" "empty value: git config --global clean.requireForce ''" "$(bash_payload "git config --global clean.requireForce ''")"
+test_deny  "$IRRECOVERABLE" "empty value: git config --file .git/config clean.requireForce ''" "$(bash_payload "git config --file .git/config clean.requireForce ''")"
+test_deny  "$IRRECOVERABLE" "empty value: git config --type=bool clean.requireForce ''" "$(bash_payload "git config --type=bool clean.requireForce ''")"
 test_deny  "$IRRECOVERABLE" "empty value: git -c core.hooksPath= commit" "$(bash_payload 'git -c core.hooksPath= commit -m x')"
 test_deny  "$IRRECOVERABLE" "empty value: git -c core.hooksPath=\"\" commit" "$(bash_payload 'git -c core.hooksPath="" commit -m x')"
 test_deny  "$IRRECOVERABLE" "empty value: git -ccore.hooksPath= commit (joined)" "$(bash_payload 'git -ccore.hooksPath= commit -m x')"
@@ -2181,6 +2187,8 @@ test_deny  "$IRRECOVERABLE" "empty value: git --config-env=core.hooksPath= commi
 test_allow "$IRRECOVERABLE" "empty value control: git config user.name \"\"" "$(bash_payload 'git config user.name ""')"
 test_allow "$IRRECOVERABLE" "empty value control: git config clean.requireForce true" "$(bash_payload 'git config clean.requireForce true')"
 test_allow "$IRRECOVERABLE" "empty value control: git -c user.name= commit" "$(bash_payload 'git -c user.name= commit -m x')"
+# A risk key whose empty value is git's false is safe: remote.<name>.mirror "" is no mirror.
+test_allow "$IRRECOVERABLE" "empty value control: git config remote.origin.mirror ''" "$(bash_payload "git config remote.origin.mirror ''")"
 
 # GH #563 follow-up review of PR #573: send-pack's -f is --force (bundled too); git rm reads its
 # options in order with last-wins for each pair (--cached/--no-cached, -n/--no-dry-run, -f/--no-force),
