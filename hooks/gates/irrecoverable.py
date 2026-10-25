@@ -2344,7 +2344,8 @@ def _hooks_path_ok(scan):
 
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
-    # window w set core.hooksPath (key case-insensitive) to a non-empty value?
+    # window w set core.hooksPath (key case-insensitive)? Any value: an empty one (`-c core.hooksPath=`)
+    # unwires every hook (git 2.43, live-checked); a bare `-c core.hooksPath` (no "=") is a git error.
     for idx, t in enumerate(w):
         t_pf = t.replace(PH, "")
         if t_pf == "-c" and idx + 1 < len(w):
@@ -2359,8 +2360,8 @@ def _sets_hooks_path(w):
             kv = t_pf[len("--config-env="):]
         else:
             continue
-        key, _, val = kv.partition("=")
-        if key.lower() == "core.hookspath" and val:
+        key, eq, _ = kv.partition("=")
+        if key.lower() == "core.hookspath" and eq:
             return True
     return False
 
@@ -3275,7 +3276,7 @@ def _check_window(_wi, w):
                 deny("--no-verify bypasses safety hooks", rule="git-no-verify")
             # -c core.hooksPath=<path> (split or joined "-ccore.hooksPath=X")
             # re-points git at a different hooks dir -- same bypass as
-            # --no-verify. Only a non-empty value trips it.
+            # --no-verify. An empty value trips it too: it unwires every hook.
             # Case-insensitive key match (git config keys are case-insensitive;
             # `-c core.hookspath=` re-points hooks exactly like the canonical
             # spelling, live-confirmed) -- only the KEY is lowercased for the
