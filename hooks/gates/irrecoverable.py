@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json, os, re, shlex, sys
+import bisect  # its own line: tests/hooks/test-gate-canary.sh injects a NameError after the line above
 
 # GH #156: raise the int-string digit limit before parsing so an oversized
 # unquoted int literal doesn't crash json.load() into this gate's fail-open
@@ -37,26 +38,60 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
     sys.exit(2)
 
 SQ = chr(39)
-_HEREDOC_RE = re.compile(r"<<(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
-# A heredoc feeding an interpreter is executable code, not inert data -- checked
-# against the segment of the line BEFORE "<<" (the command the heredoc feeds).
-_INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
 # 2026-10-24 sweep: a SQL client reads SQL on stdin too (a heredoc, a here-string, a pipe), where the
 # -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
 # checked with the stdin text further down (_sql_stdin_drop). A SQL comment separates words like a blank.
-_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb)(?![\w.-])")
+_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb|mongosh|mongo|redis-cli)(?![\w.-])")
 _SQL_GAP = r"(?:\s|/\*[^*]{0,200}\*/|--[^\n]{0,200}\n)+"
-_SQL_DROP_RE = re.compile(r"DROP" + _SQL_GAP + r"(TABLE|DATABASE|SCHEMA)|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w",
-                          re.IGNORECASE)
+# GH #607: the rest of the data-destroying statements a client takes: DROP of any stored object (and
+# ALTER ... DROP COLUMN), DELETE FROM and UPDATE ... SET with no WHERE before the statement ends, mongo's
+# dropDatabase(), drop(), deleteMany({}) and remove({}), and redis FLUSHALL / FLUSHDB.
+_SQL_DROP_OBJECTS = (r"TABLE|DATABASE|SCHEMA|INDEX|VIEW|MATERIALIZED" + _SQL_GAP + r"VIEW|USER|ROLE|FUNCTION|PROCEDURE|"
+                     r"TRIGGER|SEQUENCE|TYPE|EXTENSION|OWNED|COLUMN|EVENT|COLLECTION")
+_SQL_DROP_RE = re.compile(
+    r"DROP" + _SQL_GAP + r"(?:" + _SQL_DROP_OBJECTS + r")\b|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w"
+    r"|\bDELETE" + _SQL_GAP + r"FROM" + _SQL_GAP + r"[\w.\"`\[\]]+(?:" + _SQL_GAP + r"(?:AS" + _SQL_GAP + r")?\w+)?"
+    r"\s*(?:[;|'\"]|$|\bRETURNING\b)"  # a pipe or a closing quote ends the statement too
+    r"|\.dropDatabase\s*\(|\.drop\s*\(\s*\)|\.(?:deleteMany|remove)\s*\(\s*\{\s*\}\s*\)"
+    r"|\bFLUSH(?:ALL|DB)\b",
+    re.IGNORECASE)
+# UPDATE ... SET with no WHERE is read per statement in one linear pass, not in the regex above: a tempered
+# "no WHERE up to ;" pattern rescans the rest of the text from every UPDATE (2.4 s on 130 KB, near the 8 s
+# hook timeout, which allows).
+_SQL_UPDATE_RE = re.compile(r"\bUPDATE" + _SQL_GAP + r"[\w.\"`\[\]]+" + _SQL_GAP + r"SET\b", re.IGNORECASE)
+_SQL_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
+class _SqlDestroys:
+    # Same .search(text) interface as the regex it wraps, so every caller of _SQL_DROP_RE reads both.
+    def __init__(self, rx):
+        self.rx = rx
+    def search(self, text):
+        if self.rx.search(text):
+            return True
+        for stmt in re.split(r"[;|]", text):
+            ups = [m.end() for m in _SQL_UPDATE_RE.finditer(stmt)]
+            for k, at in enumerate(ups):
+                if not _SQL_WHERE_RE.search(stmt, at, ups[k + 1] if k + 1 < len(ups) else len(stmt)):
+                    return True
+        return False
+_SQL_DROP_RE = _SqlDestroys(_SQL_DROP_RE)
 # GH #559 review 2: SQL a client reads on stdin is matched with its string literals as one word and its
 # comments dropped, so text that only mentions a drop (-- removed the DROP TABLE step, LIKE 'truncate x')
 # reads nothing. A backslash ends no literal early here: 'a\'; DROP TABLE t is a drop to PostgreSQL.
 # The -c/-e path in the rule loop keeps its raw match.
-_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|`[^`]*`?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
+_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
+
+# GH #559 review 3: the stripping models plain quotes and comments only. Text holding a construct it does not
+# model ($$ or $tag$ dollar quoting, a backslash, which escapes a quote in MySQL and E'' strings, MySQL's
+# /*! executable comment and # comment, a -- with no blank after it, which MySQL reads as minus minus) is
+# matched raw: such a dialect may run what the stripper would read as a literal or a comment. GH #559
+# review 4: so is a backtick or a [, a quote to MySQL or sqlite3 but plain text to psql.
+_SQL_UNMODELED_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$|\\|/\*!|#|--(?!\s)|[`\[]")
 
 def _sql_drops(sql):
-    return bool(_SQL_DROP_RE.search(_SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)))
+    if not _SQL_UNMODELED_RE.search(sql):
+        sql = _SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)
+    return bool(_SQL_DROP_RE.search(sql))
 
 # GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
 # matched once where it is stripped (rescanning every stored body per bash -c / eval body was quadratic).
@@ -108,7 +143,7 @@ def _pieces(text, pipe=False):
 # assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
 # A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
 # are defined. A wrapper missing here hides the client, as it does in the rule loop.
-_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb")
+_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb", "mongosh", "mongo", "redis-cli")  # mongo, redis: GH #607
 _SQL_STAGE_WRAPPERS = {
     "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
     "builtin": (), "setsid": (), "rtk": (), "doas": ("-u", "-C"), "exec": ("-a",),
@@ -181,7 +216,8 @@ def _stage_cmd(stage):
             continue
         if wrap and t.startswith("-"):
             # A short cluster takes the next word when its last letter does (sudo -iu postgres psql).
-            v = _DOCKER_EXEC_VALUE_FLAGS if wrap == "docker" else _SQL_STAGE_WRAPPERS[wrap]
+            # .get: an rtk subcommand (rtk proxy -v psql) is a wrap with no value flags of its own.
+            v = _DOCKER_EXEC_VALUE_FLAGS if wrap == "docker" else _SQL_STAGE_WRAPPERS.get(wrap, ())
             skip = t in v or (not t.startswith("--") and "=" not in t and "-" + t[-1] in v)
             continue
         if docker == 2:
@@ -209,17 +245,68 @@ def _stage_cmd(stage):
 def _runs_sql_client(stage):
     return _stage_cmd(stage)[0] in _SQL_CLIENTS
 
-def _feeds_sql_client(line, pos):
-    # Whether the heredoc opened at line[pos] is read by a SQL client: its own pipe stage or one downstream
-    # runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest ( or `
-    # before pos: a $( the heredoc sits in is no separator to _pieces, and a quote may hold it
+# GH #559 review 3: every heredoc a line opens is read, in order (cat <<A >/dev/null; psql db <<B), not
+# only the first. A here-string's <<< opens none.
+_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
+# A heredoc feeding an interpreter is executable code, not inert data: an interpreter word anywhere on the
+# line BEFORE the << counts. GH #559 review 4: not only the heredoc's own pipe stage, since a heredoc on a
+# compound command feeds every command in it ({ bash; } <<EOF, while read x; do bash; done <<EOF), and \b
+# keeps zsh-5.9 and python3.12 interpreters. Matched once per line, at its first interpreter word.
+_INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
+_HEREDOC_SCAN_BUDGET = [3_000_000]  # chars a $( re-read of heredoc lines may parse; past it, a client is assumed
+
+class _HeredocLine:
+    # The statements and pipe stages of one line, parsed once however many heredocs it opens, so a line
+    # of 20000 openers costs one parse, not one per opener.
+    def __init__(self, line):
+        self.line, self.ends, self.stmts, self.stages = line, None, None, {}
+
+    def _stage(self, pos):
+        if self.stmts is None:
+            self.stmts = _pieces(self.line)
+            self.ends = [e for _, e in self.stmts]
+        k = bisect.bisect_left(self.ends, pos)
+        if k not in self.stages:
+            s, e = self.stmts[k]
+            st = [(s + a, s + b) for a, b in _pieces(self.line[s:e], pipe=True)]
+            # client[j]: a stage from j on runs a SQL client (read downstream of the heredoc's stage)
+            client = [False] * (len(st) + 1)
+            for j in range(len(st) - 1, -1, -1):
+                client[j] = client[j + 1] or _runs_sql_client(self.line[st[j][0]:st[j][1]])
+            self.stages[k] = (st, [b for _, b in st], client)
+        st, st_ends, client = self.stages[k]
+        return k, bisect.bisect_left(st_ends, pos), st, client
+
+    def client(self, pos):
+        _, j, _, client = self._stage(pos)
+        return client[j]
+
+    def piped_shell(self, pos):
+        # GH #567: a stage after the heredoc's runs a shell that reads stdin (_reads_stdin_shell).
+        k, j, st, _ = self._stage(pos)
+        if (k, "sh") not in self.stages:
+            shell = [False] * (len(st) + 1)
+            for i in range(len(st) - 1, -1, -1):
+                shell[i] = shell[i + 1] or _reads_stdin_shell(self.line[st[i][0]:st[i][1]])
+            self.stages[(k, "sh")] = shell
+        return self.stages[(k, "sh")][j + 1]
+
+def _heredoc_feeds_sql_client(ctx, openers, views, pos):
+    # Whether the heredoc opened at ctx.line[pos] is read by a SQL client: its own pipe stage or one
+    # downstream runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest
+    # ( or ` before pos: a $( the heredoc sits in is no separator to _pieces, and a quote may hold it
     # (gh --body "$(cat <<EOF").
-    for o in {0, max(line.rfind("(", 0, pos), line.rfind("`", 0, pos)) + 1}:
-        text, p = line[o:], pos - o
-        s, e = next((s, e) for s, e in _pieces(text) if p <= e)
-        if any(_runs_sql_client(text[s + a:s + b]) for a, b in _pieces(text[s:e], pipe=True) if s + b >= p):
+    if ctx.client(pos):
+        return True
+    o = openers[bisect.bisect_left(openers, pos) - 1] + 1 if openers and openers[0] < pos else 0
+    if not o:
+        return False
+    if o not in views:
+        _HEREDOC_SCAN_BUDGET[0] -= len(ctx.line) - o
+        if _HEREDOC_SCAN_BUDGET[0] < 0:
             return True
-    return False
+        views[o] = _HeredocLine(ctx.line[o:])
+    return views[o].client(pos - o)
 
 # GH #567: a shell reads its commands on stdin too: a heredoc piped into it (cat <<EOF | bash), a here-string
 # (bash <<< 'cmd') or the words an echo/printf pipes into it (echo 'cmd' | sh). Only a shell that reads stdin
@@ -247,47 +334,49 @@ def _reads_stdin_shell(seg):
             return False  # a script operand, or -c
     return True
 
-def _piped_into_shell(line, pos):
-    # True when the heredoc at line[pos] feeds a pipeline whose later segment is a shell reading stdin.
-    for s, e in _pieces(line):
-        if s <= pos <= e:
-            segs = _pieces(line[s:e], pipe=True)
-            k = next((k for k, (a, b) in enumerate(segs) if s + a <= pos <= s + b), None)
-            return k is not None and any(_reads_stdin_shell(line[s + a:s + b]) for a, b in segs[k + 1:])
-    return False
-
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
     # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
-    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is still
-    # stripped, and one that drops sets _SQL_HEREDOC_DROP for the SQL check.
+    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is checked for a
+    # drop whatever the interpreter decision (GH #559 review 3), and one that
+    # drops sets _SQL_HEREDOC_DROP for the SQL check.
     lines = cmd.split("\n")
     out, i = [], 0
     while i < len(lines):
         line = lines[i]
         out.append(line)
-        m = _HEREDOC_RE.search(line)
         i += 1
-        if not m:
+        ms = list(_HEREDOC_OPEN_RE.finditer(line))
+        if not ms:
             continue
-        if _INTERPRETER_RE.search(line[:m.start()]) or _piped_into_shell(line, m.start()):
-            continue
-        strip_tabs, delim = bool(m.group(1)), m.group(3)
-        body_start, found = i, False
-        while i < len(lines):
-            body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
-            i += 1
-            if body_line == delim:
-                found = True
+        ctx, views, has_client = _HeredocLine(line), {}, bool(_SQL_CLIENT_RE.search(line))
+        openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
+        interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
+        for n_m, m in enumerate(ms):
+            # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
+            # from the line's stages parsed once.
+            code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
+            feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
+            if code and not feeds and n_m == len(ms) - 1:
+                break  # the body is code: its lines stay, read (and their own heredocs stripped) as lines
+            strip_tabs, delim = bool(m.group(1)), m.group(3)
+            body_start, found = i, False
+            while i < len(lines):
+                body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
+                i += 1
+                if body_line == delim:
+                    found = True
+                    break
+            if not found:
+                # Unmatched closing delimiter: put the scanned lines BACK rather
+                # than silently eat a real write statement that followed.
+                out.extend(lines[body_start:i])
                 break
-        if not found:
-            # Unmatched closing delimiter: put the scanned lines BACK rather
-            # than silently eat a real write statement that followed.
-            out.extend(lines[body_start:i])
-        elif (not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(line) and _feeds_sql_client(line, m.start())
-              and _sql_drops("\n".join(lines[body_start:i - 1]))):
-            _SQL_HEREDOC_DROP[0] = True
+            if code:
+                out.extend(lines[body_start:i])
+            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops("\n".join(lines[body_start:i - 1])):
+                _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
 def _normalize_ansi_c_quotes(cmd):
@@ -1113,6 +1202,12 @@ HASH_LIT = "\x02"
 # pass as an over-deny regression on the naive "any extra nonflag arg denies"
 # version of this fix.
 PSUB = "\x03"
+# GH #586: find's `{}` and `\;` are plain words in bash (a `{` opens a group only when a blank follows
+# it, and an escaped `;` is never a separator), but the tokenizer cut the statement at each, so find's
+# words after the first `{}` (`-exec echo {} \; -delete`) landed in windows no find rule read. Either
+# one, standing alone as a word, is swapped for this placeholder (a word character, one nonflag token,
+# no dispatch matches it).
+WORD_LIT = "\x04"
 # Work budget for the depth-counting closer-search, charged per character
 # walked and shared across one _scan_once call: without it, a flood of unclosed
 # "$(" starts is O(n^2) (65s on a 100,000-char payload under the length cap).
@@ -1438,6 +1533,12 @@ def _redirect_target_end(s, j):
             k += 1
     return k
 
+_WORD_END_RE = re.compile(r"\d*[<>]|[ \t\n;&|)]|$")
+def _alone(s, i, k):
+    # True when s[i:i + k] is a whole word: a blank (or the start) before it, a blank, a separator, a
+    # redirect (`\;>/dev/null`, `{}2>x`) or the end after it.
+    return (i == 0 or s[i - 1] in " \t\n") and _WORD_END_RE.match(s, i + k) is not None
+
 def _blank_redirections(s, named_fd=True):
     # named_fd: True = bash 4+/ksh93 (consume "{var}>f"), False = macOS /bin/sh, bash 3.2, dash (the
     # literal word "{var}" plus a plain redirect), "zsh" = True plus "{var}&>f" (GH #219).
@@ -1459,6 +1560,16 @@ def _blank_redirections(s, named_fd=True):
         if c == DQ:
             out.append(c)
             i = _copy_dquote(s, i + 1, out)
+            last_escaped = False
+            continue
+        if c == "\\" and s[i + 1:i + 2] == ";" and _alone(s, i, 2):
+            out.append(WORD_LIT)  # GH #586: find's `\;`
+            i += 2
+            last_escaped = False
+            continue
+        if c == "{" and s[i + 1:i + 2] == "}" and _alone(s, i, 2):
+            out.append(WORD_LIT)  # GH #586: find's / xargs's `{}`
+            i += 2
             last_escaped = False
             continue
         if c == "\\" and i + 1 < n:
@@ -1512,7 +1623,7 @@ class _Glued(str):
 def _tokens(src, extra_wordchars="", whitespace_split=False):
     # shlex tokens of a _blanked() text; the placeholders are word characters. Raises ValueError.
     lex = shlex.shlex(src, posix=True, punctuation_chars=True)
-    lex.wordchars += PH + HASH_LIT + PSUB + extra_wordchars
+    lex.wordchars += PH + HASH_LIT + PSUB + WORD_LIT + extra_wordchars
     if whitespace_split:
         lex.whitespace_split = True
         return list(lex)
@@ -2411,6 +2522,30 @@ def _hooks_path_ok(scan):
     pos = pos[1:] if pos[:1] == ["set"] else pos
     return len(pos) == 1 or (len(pos) == 2 and pos[1] == "git-hooks" and not any(t == "--value" for t in opts))
 
+def _drops_core_section(words):
+    # GH #562: `git config [--]remove-section core` and `[--]rename-section core X` (or X core) drop or
+    # rewrite core.hooksPath without naming it. Section names ignore case; git takes a unique prefix
+    # of a long option (`--rem`); a name built at run time (a $ or a blanked substitution) may be core
+    # when the literal text before it can still become core (`co$X`, not `x$Y`).
+    pos, mode, i = [], False, 0
+    while i < len(words):
+        t = words[i].replace(PH, "")
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        if t.startswith("-"):
+            mode = mode or _is_flag(t, "--remove-section", "--rename-section")
+        else:
+            pos.append(words[i])
+        i += 1
+    if pos and pos[0].replace(PH, "") in ("remove-section", "rename-section"):
+        mode, pos = True, pos[1:]
+    return mode and any(_may_be_core(w) for w in pos)
+
+def _may_be_core(w):
+    cut = min((k for k in (w.find(PH), w.find("$")) if k >= 0), default=-1)
+    return w.lower() == "core" if cut < 0 else "core".startswith(w[:cut].lower())
+
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
     # window w set core.hooksPath (key case-insensitive)? Any value: an empty one (`-c core.hooksPath=`)
@@ -2978,6 +3113,71 @@ def _container_exec_command(tool, rest):
         i += 1
     return rest[i + 1:] or None  # past the container or service name
 
+def _find_word_may_be(t, *names):
+    # GH #586: a find word that is, or with its substitutions expanded may be, one of names: `$(true)-exec`
+    # (an empty splice), `-$(echo delete)`, `-de$(echo l)ete`. A substitution can expand to anything, so
+    # its visible text must still show the leading `-`: a bare `$(cat pattern)` (a -name value) is not
+    # read as an action, and `find . $(echo -delete)` stays a gap.
+    if PH not in t:
+        return t in names
+    if not t.replace(PH, "").startswith("-"):
+        return False
+    pat = re.compile(".*".join(re.escape(piece) for piece in t.split(PH)), re.DOTALL)
+    return any(pat.fullmatch(n) for n in names)
+
+# GH #586: find tests whose next word is a value (a name, a path, a time), never an action.
+_FIND_VALUE_TESTS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex",
+                     "-lname", "-ilname", "-newer", "-anewer", "-cnewer", "-samefile", "-type", "-xtype", "-user",
+                     "-group", "-uid", "-gid", "-perm", "-size", "-mtime", "-atime", "-ctime", "-mmin", "-amin",
+                     "-cmin", "-used", "-links", "-inum", "-maxdepth", "-mindepth", "-fstype", "-context",
+                     "-printf", "-fprint", "-fprint0", "-fls", "-regextype", "-files0-from"}
+_FIND_NEWER_XY_RE = re.compile(r"-newer[aBcm][aBcmt]")  # -newermt, -newerBt, ...: one value; -fprintf takes two
+
+def _find_actions(rest, *names):
+    # True when a word of find's `rest` that is not a test's value may be one of names. Read left to
+    # right: a test's value is skipped even when it is itself a test's name (`-name -name -delete`
+    # deletes the files named "-name").
+    value = 0
+    for t in rest:
+        if value:
+            value -= 1
+            continue
+        if _find_word_may_be(t, *names):
+            return True
+        u = t.replace(PH, "")
+        value = 2 if u == "-fprintf" else 1 if u in _FIND_VALUE_TESTS or _FIND_NEWER_XY_RE.fullmatch(u) else 0
+    return False
+
+def _shell_body_runs_rm(sub, depth=0):
+    # GH #586: True when sub (a find action's command, `sh -c 'rm "$1"' _ {}`) is a shell (past its
+    # wrappers) whose body runs rm at a command position: a statement's start or after `do`/`then`/
+    # `else`, past assignments, wrappers, `eval` and `busybox`; a shell inside the body is read the
+    # same way, three levels deep. The same delete as `-exec rm`, which denies with no flags.
+    if depth > 3 or not sub:
+        return False
+    a0 = basename(sub[0]).replace(PH, "")
+    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    if i >= len(sub) or basename(sub[i]).replace(PH, "") not in _SHELLS:
+        return False
+    sh = basename(sub[i]).replace(PH, "")
+    for g in _SHELL_GETOPT[sh]:
+        body = _shell_body(sh, sub[i + 1:], g)
+        if not body:
+            continue
+        for cur, _ww, _curc in _body_readings(body)[0]:
+            starts = [0] + [k + 1 for k, t in enumerate(cur) if t in SHELL_KEYWORDS]
+            for k in starts:
+                while k < len(cur) and (cur[k] in SHELL_KEYWORDS or _assignment(cur[k])
+                                        or basename(cur[k]).replace(PH, "") in ("eval", "busybox")):
+                    k += 1
+                while k < len(cur) and basename(cur[k]).replace(PH, "") in PREFIX_WRAPPERS:
+                    k = _past_wrapper_words(basename(cur[k]).replace(PH, ""), cur, k + 1)
+                if k < len(cur) and basename(cur[k]).replace(PH, "") == "rm":
+                    return True
+                if k < len(cur) and _shell_body_runs_rm(cur[k:], depth + 1):
+                    return True
+    return False
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -3234,6 +3434,9 @@ def _check_window(_wi, w):
             if sub:
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(sub)
+                if rest[j].replace(PH, "") in ("-exec", "-execdir") and _shell_body_runs_rm(sub):
+                    deny("find -exec/-execdir runs rm through a shell body — destructive delete; " + delete_hint(),
+                         rule="find-exec-rm")
         if len(acts) > 1:
             # A later `-exec` may be a shell's option letters (`bash -c -exec 'body'`), not a find
             # action: also scan everything after the first action as ONE command. Each such window
@@ -3316,7 +3519,7 @@ def _check_window(_wi, w):
             # GNU rm takes any unambiguous prefix, and its long options (force,
             # interactive, one-file-system, no-preserve-root, preserve-root,
             # recursive, dir, verbose, help, version) leave --r and --f unambiguous.
-            has_r = has_f = False
+            has_r = has_f = has_i = False
             for t in rest:
                 # "$(true)-rf" IS "-rf" in bash but blanks to "PH-rf", which no
                 # longer starts with "-" -- strip PH, assume the dangerous
@@ -3325,20 +3528,29 @@ def _check_window(_wi, w):
                 if t.startswith("--"):
                     has_r = has_r or _is_flag(t, "--recursive")
                     has_f = has_f or _is_flag(t, "--force")
+                    # --interactive[=always|yes] asks per file; =never/no/none and =once (-I) do not.
+                    has_i = has_i or (_is_flag(t.split("=", 1)[0], "--interactive")
+                                      and t.partition("=")[2] in ("", "always", "yes"))
                 elif t.startswith("-") and len(t) > 1:
                     body = t[1:].lower()
                     has_r = has_r or "r" in body
                     has_f = has_f or "f" in body
+                    has_i = has_i or "i" in t[1:]  # -i asks per file; -I asks once and still deletes the tree
             if has_r and has_f:
                 deny("rm -rf detected — " + delete_hint(), rule="rm-rf")
             # GH #336: GNU rm takes any unambiguous prefix (`--n` is the only `--n...` option).
             if any(_is_flag(t.replace(PH, ""), "--no-preserve-root") for t in rest):
                 deny("rm --no-preserve-root lifts rm's guard on / — " + delete_hint(), rule="rm-no-preserve-root")
+            # 2026-10-25 (out-of-contract follow-up to the 2026-10-24 sweep): without -f, rm -r still deletes
+            # the tree with no undo; -f only adds silence on write-protected files and missing paths. -i
+            # prompts for every file, and the Bash tool's stdin gives no yes, so it deletes nothing unasked.
+            if has_r and not has_f and not has_i:
+                deny("rm -r deletes a directory tree with no undo, -f or not — " + delete_hint(), rule="rm-recursive")
 
         # Same PH-erases-flag-shape fix as the rm block ("find $(true)-exec").
-        if argv0 == "find" and any(t.replace(PH, "") in ("-exec", "-execdir") for t in rest) and "rm" in [basename(t) for t in rest]:
+        if argv0 == "find" and _find_actions(rest, "-exec", "-execdir") and "rm" in [basename(t) for t in rest]:
             deny("find -exec/-execdir rm detected — destructive delete; " + delete_hint(), rule="find-exec-rm")
-        if argv0 == "find" and any(t.replace(PH, "") == "-delete" for t in rest):
+        if argv0 == "find" and _find_actions(rest, "-delete"):
             deny("find -delete detected — destructive delete; " + delete_hint(), rule="find-delete")
 
         if argv0 == "git" and rest:
@@ -3474,7 +3686,11 @@ def _check_window(_wi, w):
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
                     deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
                          rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
-                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and not _hooks_path_ok(scan):
+                # GH #562: the decision reads args, not scan: scan drops an empty word, and `core.hooksPath ""`
+                # (an empty value, which unwires every hook) then read as the key alone, a read.
+                _cfg = [t.replace(PH, "") for t in args] if sub == "config" else None
+                if _cfg and ((any(t.lower() == "core.hookspath" for t in _cfg) and not _hooks_path_ok(_cfg))
+                             or _drops_core_section(args)):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
                     deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
@@ -3715,12 +3931,13 @@ def _check_window(_wi, w):
                     ask("dd writes to a target the command does not show (a variable or substitution) — "
                         "confirm it is not a raw device", rule="dd-device")
 
-        if argv0 in ("mysql", "psql", "sqlite3", "mariadb"):
+        if argv0 in _SQL_CLIENTS:
             # SQL genuinely lives inside -e/-c values, so DO scan them, but only
             # for known-dangerous statements. TABLE is optional in TRUNCATE
             # grammar. Full PH removal: a splice can land mid-keyword (DR$(true)OP).
             if _SQL_DROP_RE.search(" ".join(rest).replace(PH, "")):
-                deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) detected — confirm with user first", rule="sql-drop")
+                deny("destructive data command (DROP, TRUNCATE, DELETE or UPDATE with no WHERE, dropDatabase/drop/deleteMany({}), "
+                     "FLUSHALL/FLUSHDB) detected — confirm with user first", rule="sql-drop")
 
     # 2026-10-24 sweep: the client tools that drop a database without SQL. dropdb drops the user's own
     # database when no name is given, so anything but a help or version request denies.
@@ -3728,6 +3945,11 @@ def _check_window(_wi, w):
         deny("dropdb drops a database — confirm with user first", rule="sql-drop")
     if _a0 in ("mysqladmin", "mariadb-admin") and any(t.replace(PH, "").lower() == "drop" for t in rest):
         deny("mysqladmin drop drops a database — confirm with user first", rule="sql-drop")
+    # GH #607: rsync --delete (and --del, --delete-after, --delete-excluded, ...) removes every file in the
+    # destination the source lacks. A mirror is often what was meant, so it asks.
+    if _a0 == "rsync" and any(t.replace(PH, "") == "--del" or t.replace(PH, "").startswith("--delete") for t in rest):
+        ask("rsync --delete removes every destination file the source lacks — confirm the source and destination",
+            rule="rsync-delete")
 
 def _run_windows(i):
     while i < len(windows):  # a window's checks may append more (bash -c / eval bodies, find, xargs)

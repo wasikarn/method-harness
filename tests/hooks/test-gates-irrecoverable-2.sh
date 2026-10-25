@@ -1901,6 +1901,59 @@ test_deny  "$IRRECOVERABLE" "GH #559 review 2: DROP TABLE echoed through cat int
   "$(bash_payload "echo 'DROP TABLE t' | cat | psql db")"
 test_deny  "$IRRECOVERABLE" "GH #559 review 2: TRUNCATE of a quoted table name in a heredoc into psql" \
   "$(bash_payload "$(printf "psql db <<'SQL'\nTRUNCATE \"users\";\nSQL")")"
+# GH #559 review round 3.
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a heredoc psql -h db-node reads (node in a host name)" \
+  "$(bash_payload "$(printf "psql -h db-node db <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a heredoc psql reads after cd into a python path" \
+  "$(bash_payload "$(printf "cd /srv/python/app && psql db <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3 control: a heredoc sudo bash reads after a cd is still code" \
+  "$(bash_payload "$(printf "cd /srv/app && sudo -u app bash <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3 control: a heredoc ssh host bash reads is still code" \
+  "$(bash_payload "$(printf "ssh host bash <<'EOF'\nrm -rf ~\nEOF")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 3: rtk proxy -v psql with a SELECT heredoc" \
+  "$(bash_payload "$(printf "rtk proxy -v psql db <<'SQL'\nSELECT 1;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 3: a heredoc piped into rtk run -q grep psql" \
+  "$(bash_payload "$(printf "cat <<'E' | rtk run -q grep psql\nhello\nE")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: rtk proxy -v psql with a DROP heredoc" \
+  "$(bash_payload "$(printf "rtk proxy -v psql db <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a dollar-quoted apostrophe before DROP TABLE" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT \$\$it's\$\$; DROP TABLE t; -- '\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a backslash-escaped quote before DROP TABLE into mysql" \
+  "$(bash_payload $'echo "SELECT \'\\\\\'\'; DROP TABLE t; -- \'" | mysql db')"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: MySQL 1--1 is no comment before DROP TABLE" \
+  "$(bash_payload "echo 'SELECT 1--1; DROP TABLE t;' | mysql db")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a MySQL /*! */ executable comment holding DROP TABLE" \
+  "$(bash_payload "echo '/*! DROP TABLE t */' | mysql db")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a MySQL # comment with an apostrophe before DROP TABLE" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT 1 # don't\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: the second heredoc on a line is the one psql reads" \
+  "$(bash_payload "$(printf "cat <<'A' >/dev/null; psql db <<'B'\nx\nA\nDROP TABLE t;\nB")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 3 control: two heredocs on a line, neither a drop to a client" \
+  "$(bash_payload "$(printf "cat <<'A' >/dev/null; psql db <<'B'\nDROP TABLE t;\nA\nSELECT 1;\nB")")"
+# GH #559 review round 4: a heredoc on a compound command feeds every command in it, and a
+# version-suffixed interpreter is one too; the body stays code.
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into { bash; } is code" \
+  "$(bash_payload "$(printf "{ bash; } <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into (bash; :) is code" \
+  "$(bash_payload "$(printf "(bash; :) <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into a while loop running bash is code" \
+  "$(bash_payload "$(printf "while read x; do bash; done <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into an if running sudo bash is code" \
+  "$(bash_payload "$(printf "if true; then sudo bash; fi <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into { cd; bash; } with git push --force is code" \
+  "$(bash_payload "$(printf "{ cd /srv/app; bash; } <<'EOF'\ngit push --force origin develop\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into zsh-5.9 is code" \
+  "$(bash_payload "$(printf "zsh-5.9 <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into python3.12 - is code" \
+  "$(bash_payload "$(printf "python3.12 - <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a backtick is no quote to psql before DROP TABLE" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 1 \`; DROP TABLE t; -- \`\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a [bracket] identifier with an apostrophe before DROP TABLE into sqlite3" \
+  "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT [it's]; DROP TABLE t; -- '\nSQL")")"
+_sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
+_timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
+_sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
+_timed_case 'GH #559 review 3: 15000 heredocs into a file on a psql line finish in bounded time' 0 "$_sql_many_heredocs_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("eval x%d;" % i for i in range(7000)) + " rm -rf ~")')"
 _timed_case 'GH #559 review 2: 7000 eval bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("bash -c x%d;" % i for i in range(5000)) + " rm -rf ~")')"
@@ -2077,6 +2130,41 @@ done
 test_ask_says "$IRRECOVERABLE" "bypass hunt F5 review: xargs -d'\\n' gh pr merge still asks" \
   "$(bash_payload "ls | xargs -d'\\n' gh pr merge 1 --admin")" "gh pr merge"
 
+# GH #562 follow-up: PR #572 regressed an empty value to a read. The token window drops an empty word, and the
+# word window's git scan dropped it too, so `core.hooksPath ""` read as the key alone. An empty hooksPath
+# unwires every hook. Removing or renaming the core section drops core.hooksPath without naming it.
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath \"\" (empty value unwires every hook)" "$(bash_payload 'git config core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath '' (single-quoted empty value)" "$(bash_payload "git config core.hooksPath ''")"
+test_deny  "$IRRECOVERABLE" "GH #562: git config set core.hooksPath \"\"" "$(bash_payload 'git config set core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --replace-all core.hooksPath \"\"" "$(bash_payload 'git config --replace-all core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath \"\" git-hooks (git-hooks is the value-pattern)" "$(bash_payload 'git config core.hooksPath "" git-hooks')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --remove-section core" "$(bash_payload 'git config --remove-section core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config remove-section core" "$(bash_payload 'git config remove-section core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --remove-section Core (section names ignore case)" "$(bash_payload 'git config --remove-section Core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rem core (unique prefix)" "$(bash_payload 'git config --rem core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rename-section core x" "$(bash_payload 'git config --rename-section core x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config rename-section core x" "$(bash_payload 'git config rename-section core x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rename-section x core (renaming onto core writes it)" "$(bash_payload 'git config --rename-section x core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --file .git/config --remove-section core" "$(bash_payload 'git config --file .git/config --remove-section core')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config get core.hooksPath" "$(bash_payload 'git config get core.hooksPath')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --remove-section alias" "$(bash_payload 'git config --remove-section alias')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --rename-section alias x" "$(bash_payload 'git config --rename-section alias x')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --get core.hooksPath \"\" (a value-pattern on a read)" "$(bash_payload 'git config --get core.hooksPath ""')"
+_hp_pad_cmd="git config core.hooksPath git-hooks$(python3 -c 'print(" \"\"" * 46000)')"
+_timed_case 'GH #562: a 140 KB run of empty words after core.hooksPath is denied in bounded time' 2 "$_hp_pad_cmd"
+
+# GH #562 round 2: git runs no hooks with an empty core.hooksPath (git 2.43, a marker pre-commit hook in a
+# throwaway repo), so a -c pair with an empty value is the same bypass; the rows above use /tmp/evil.
+test_deny  "$IRRECOVERABLE" "GH #562: git -c \"core.hooksPath=\" commit (quoted)" "$(bash_payload 'git -c "core.hooksPath=" commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git --config-env=core.hooksPath=V commit still denies" "$(bash_payload 'git --config-env=core.hooksPath=V commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= still denies" "$(bash_payload 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= git commit -m x')"
+# A section name built at run time counts only when its literal prefix can still become core.
+test_allow "$IRRECOVERABLE" "GH #562 control: --rename-section alias \"x\$Y\" (cannot become core)" "$(bash_payload 'git config --rename-section alias "x$Y"')"
+test_allow "$IRRECOVERABLE" "GH #562 control: --remove-section alias\$(date) (cannot become core)" "$(bash_payload 'git config --remove-section alias$(date)')"
+test_deny  "$IRRECOVERABLE" "GH #562: --remove-section \"\$S\" (may be core)" "$(bash_payload 'git config --remove-section "$S"')"
+test_deny  "$IRRECOVERABLE" "GH #562: --remove-section co\$X (may be core)" "$(bash_payload 'git config --remove-section co$X')"
+test_deny  "$IRRECOVERABLE" "GH #562: --rename-section alias C\$(echo ore) (may be core)" "$(bash_payload 'git config --rename-section alias C$(echo ore)')"
+
 # Empty config values (git 2.43, live-checked): git reads an empty boolean as false, so a stored
 # `clean.requireForce ""` lets a later bare `git clean` delete; the git scan dropped the empty word, so the
 # write read as a key alone. An empty `-c core.hooksPath=` skips every hook (the commit lands past a failing
@@ -2196,5 +2284,96 @@ for _c in \
   test_allow "$IRRECOVERABLE" "GH #585 control: dd to a file, or no dd: $_c" "$(bash_payload "$_c")"
 done
 
+# GH #562 follow-up: PR #572 regressed an empty value to a read. The token window drops an empty word, and the
+# word window's git scan dropped it too, so `core.hooksPath ""` read as the key alone. An empty hooksPath
+# unwires every hook. Removing or renaming the core section drops core.hooksPath without naming it.
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath \"\" (empty value unwires every hook)" "$(bash_payload 'git config core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath '' (single-quoted empty value)" "$(bash_payload "git config core.hooksPath ''")"
+test_deny  "$IRRECOVERABLE" "GH #562: git config set core.hooksPath \"\"" "$(bash_payload 'git config set core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --replace-all core.hooksPath \"\"" "$(bash_payload 'git config --replace-all core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath \"\" git-hooks (git-hooks is the value-pattern)" "$(bash_payload 'git config core.hooksPath "" git-hooks')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --remove-section core" "$(bash_payload 'git config --remove-section core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config remove-section core" "$(bash_payload 'git config remove-section core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --remove-section Core (section names ignore case)" "$(bash_payload 'git config --remove-section Core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rem core (unique prefix)" "$(bash_payload 'git config --rem core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rename-section core x" "$(bash_payload 'git config --rename-section core x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config rename-section core x" "$(bash_payload 'git config rename-section core x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rename-section x core (renaming onto core writes it)" "$(bash_payload 'git config --rename-section x core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --file .git/config --remove-section core" "$(bash_payload 'git config --file .git/config --remove-section core')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config get core.hooksPath" "$(bash_payload 'git config get core.hooksPath')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --remove-section alias" "$(bash_payload 'git config --remove-section alias')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --rename-section alias x" "$(bash_payload 'git config --rename-section alias x')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config user.name \"\" (empty value, unrelated key)" "$(bash_payload 'git config user.name ""')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --get core.hooksPath \"\" (a value-pattern on a read)" "$(bash_payload 'git config --get core.hooksPath ""')"
+_hp_pad_cmd="git config core.hooksPath git-hooks$(python3 -c 'print(" \"\"" * 46000)')"
+_timed_case 'GH #562: a 140 KB run of empty words after core.hooksPath is denied in bounded time' 2 "$_hp_pad_cmd"
+
+# GH #586 (bypass hunt 2026-10-23 F9): find-exec-rm needed an `rm` word among find's own words, and
+# find-delete compared a word to `-delete` exactly.
+for _c in \
+  "find . -exec sh -c 'rm \"\$1\"' _ {} \;" \
+  "find . -exec bash -c 'rm -- \"\$0\"' {} \;" \
+  "find . -execdir sh -c 'rm {}' \;" \
+  "find . -exec sh -c 'echo \"\$1\"; rm \"\$1\"' _ {} \;" \
+  "find . -exec sh -c 'sudo rm \"\$1\"' _ {} +" \
+  'find . -$(echo delete)' \
+  'find . -de$(echo l)ete' \
+  'find . -$(echo exec) rm {} \;' \
+  "find . -exec echo {} \\; -exec sh -c 'rm \"\$1\"' _ {} \\;" \
+  'find . -exec cat {} \; -delete' \
+  'find . -exec echo {} \; -exec rm -rf {} \;' \
+  'find . -exec find {} -exec rm {} \; \;' \
+  "find . -exec sh -c 'for f do rm \"\$f\"; done' _ {} +" \
+  "find . -exec sh -c 'sh -c \"rm \\\$1\"' _ x \\;" \
+  "find . -exec sh -c 'eval rm \"\$1\"' _ {} \\;" \
+  "find . -exec sh -c 'busybox rm \"\$1\"' _ {} \\;" \
+  'find . -name x | xargs -I {} rm {}' \
+  'find . -name -name -delete' \
+  'find . -name -size -delete' \
+  'find . -printf -name -delete' \
+  'find . -name x -name -name -delete' \
+  'find . -iname -path -execdir rm {} +' \
+  'find . -exec cat {} \;>/dev/null -delete' \
+  'find . -exec cat {} \;2>/dev/null -delete' \
+  'find . -exec cat {}>/dev/null \; -delete' \
+  'find . -fprintf f -name -delete' \
+  'find . -fprintf f -name -exec rm {} \;' \
+  'find . -newerma -name -delete' \
+  'find . -newerBt -iname -delete' \
+  'find . -files0-from -name -delete' ; do
+  test_deny "$IRRECOVERABLE" "GH #586: find deletes through a shell body or a spliced action: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  "find . -exec sh -c 'echo \"\$1\"' _ {} \;" \
+  "find . -exec sh -c 'grep -l rm \"\$1\"' _ {} \;" \
+  "find . -name '*.sh' -exec sh -n {} \;" \
+  'find . -name "$(cat pattern)"' \
+  'find . -newer x -exec ls {} \;' \
+  'find . -name x -print' \
+  'find . -name "-$(date +%s)" -print' \
+  'find . -newer "-$(cat f)" -print' \
+  "find . -exec sh -c 'for f do echo \"\$f\"; done' _ {} +" \
+  "find . -ok sh -c 'rm \"\$1\"' _ {} \\;" \
+  'find . -exec echo {} \; -print' ; do
+  test_allow "$IRRECOVERABLE" "GH #586 control: find runs no delete: $_c" "$(bash_payload "$_c")"
+done
+
+# GH #607: the rest of the data-destroying client commands, on argv and on stdin.
+test_deny  "$IRRECOVERABLE" "GH #607: DELETE FROM with no WHERE" "$(bash_payload "psql -c 'DELETE FROM users'")"
+test_deny  "$IRRECOVERABLE" "GH #607: UPDATE SET with no WHERE" "$(bash_payload "psql -c 'UPDATE users SET pw = NULL'")"
+test_deny  "$IRRECOVERABLE" "GH #607: DROP INDEX" "$(bash_payload "mysql -e 'DROP INDEX i ON t'")"
+test_deny  "$IRRECOVERABLE" "GH #607: DELETE FROM echoed into psql" "$(bash_payload "echo 'DELETE FROM t' | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #607: mongosh dropDatabase" "$(bash_payload "mongosh --eval 'db.dropDatabase()'")"
+test_deny  "$IRRECOVERABLE" "GH #607: mongo deleteMany({})" "$(bash_payload "mongo --eval 'db.users.deleteMany({})'")"
+test_deny  "$IRRECOVERABLE" "GH #607: redis-cli FLUSHALL" "$(bash_payload 'redis-cli FLUSHALL')"
+test_ask   "$IRRECOVERABLE" "GH #607: rsync --delete asks" "$(bash_payload 'rsync -a --delete src/ dst/')"
+test_allow "$IRRECOVERABLE" "GH #607 control: DELETE with WHERE" "$(bash_payload "psql -c 'DELETE FROM users WHERE id = 1'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: UPDATE with WHERE on the next line" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nUPDATE t SET a = 1\nWHERE id = 3;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #607 control: mysql FLUSH PRIVILEGES" "$(bash_payload "mysql -e 'FLUSH PRIVILEGES'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: mongosh deleteMany with a filter" "$(bash_payload "mongosh --eval 'db.users.deleteMany({age: 3})'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: rsync without --delete" "$(bash_payload 'rsync -a src/ dst/')"
+_timed_case 'GH #607: 10000 UPDATE ... SET words before a WHERE are read in bounded time' 2 \
+  "psql -c '$(python3 -c "print('UPDATE t SET ' * 10000 + 'WHERE x')")'"
 
 gates_summary
