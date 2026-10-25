@@ -53,91 +53,91 @@ asks() { # asks <content> -- the gate's stdout for a Write of <content>
 # --- true positives: one per vendor pattern -----------------------------
 
 aws1="AKIA$(rnd 16 "$UPPER36" 1)"
-out=$(asks "$aws1"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$aws1"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "AWS access key (AKIA) -> ask" "$ok"
 
 aws2="ASIA$(rnd 16 "$UPPER36" 2)"
-out=$(asks "$aws2"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$aws2"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "AWS session key (ASIA) -> ask" "$ok"
 
 anthropic="sk-ant-api03-$(rnd 40 "$ALNUM_DASH" 3)"
-out=$(asks "$anthropic"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$anthropic"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Anthropic key -> ask" "$ok"
 
 openai="sk-proj-$(rnd 25 "$ALNUM_DASH" 4)T3BlbkFJ$(rnd 25 "$ALNUM_DASH" 5)"
-out=$(asks "$openai"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$openai"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "OpenAI key (marker-anchored) -> ask" "$ok"
 
 ghp="ghp_$(rnd 36 "$ALNUM" 6)"
-out=$(asks "$ghp"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$ghp"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "GitHub ghp_ token -> ask" "$ok"
 
 ghu="ghu_$(rnd 36 "$ALNUM" 7)"
-out=$(asks "$ghu"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$ghu"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "GitHub ghu_ token (round-2 addition) -> ask" "$ok"
 
 ghr="ghr_$(rnd 36 "$ALNUM" 8)"
-out=$(asks "$ghr"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$ghr"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "GitHub ghr_ token (round-2 addition) -> ask" "$ok"
 
 ghfine="github_pat_$(rnd 82 "${ALNUM}_" 9)"
-out=$(asks "$ghfine"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$ghfine"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "GitHub fine-grained PAT -> ask" "$ok"
 
 gitlab="glpat-$(rnd 20 "$ALNUM_DASH" 10)"
-out=$(asks "$gitlab"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$gitlab"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "GitLab PAT -> ask" "$ok"
 
 hf="hf_$(rnd 34 "$ALNUM" 11)"
-out=$(asks "$hf"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$hf"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "HuggingFace token -> ask" "$ok"
 
 slack="xoxb-$(rnd 12 "$DIGITS" 12)-$(rnd 12 "$DIGITS" 13)-$(rnd 24 "$ALNUM" 14)"
-out=$(asks "$slack"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$slack"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Slack token -> ask" "$ok"
 
 stripe_test="sk_test_$(rnd 24 "$ALNUM" 15)"
-out=$(asks "$stripe_test"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$stripe_test"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Stripe sk_test_ -> ask" "$ok"
 
 stripe_live="rk_live_$(rnd 24 "$ALNUM" 16)"
-out=$(asks "$stripe_live"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$stripe_live"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Stripe rk_live_ -> ask" "$ok"
 
 stripe_prod="sk_prod_$(rnd 24 "$ALNUM" 17)"
-out=$(asks "$stripe_prod"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$stripe_prod"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Stripe sk_prod_ (round-2 correction: gitleaks covers prod too) -> ask" "$ok"
 
 google="AIza$(rnd 35 "$ALNUM_DASH" 18)"
-out=$(asks "$google"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$google"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Google API key -> ask" "$ok"
 
 npmtok="npm_$(rnd 36 "$ALNUM" 19)"
-out=$(asks "$npmtok"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$npmtok"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "npm token -> ask" "$ok"
 
 pypitok="pypi-AgEIcHlwaS5vcmc$(rnd 50 "$ALNUM_DASH" 20)"
-out=$(asks "$pypitok"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$pypitok"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "PyPI token -> ask" "$ok"
 
 pem=$'-----BEGIN RSA PRIVATE KEY-----\n'"$(rnd 60 "${ALNUM}+/=" 21)"
-out=$(asks "$pem"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$pem"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "PEM private key with a real base64 body line -> ask" "$ok"
 
 awsE="AKIA$(rnd 16 "$UPPER36" 22)"
 out=$(payload_edit "$FIXTURE/scratch.txt" "placeholder" "$awsE" | bash "$GATE" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Edit new_string introduces AWS key -> ask" "$ok"
 
 # --- Codex round-4 regression: AWS/Anthropic capture group must exist ----
 # (an earlier draft omitted it entirely; match.group(1) would have raised
 # IndexError -> outer fail-open -> total, silent bypass for both vendors.)
 awsCG="AKIA$(rnd 16 "$UPPER36" 23)"
-out=$(asks "$awsCG"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$awsCG"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "AWS key reaches the placeholder-check path without an IndexError -> ask" "$ok"
 
 anthropicCG="sk-ant-api03-$(rnd 40 "$ALNUM_DASH" 24)"
-out=$(asks "$anthropicCG"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$anthropicCG"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Anthropic key reaches the placeholder-check path without an IndexError -> ask" "$ok"
 
 # --- placeholder filter: fully specified round-2 algorithm ---------------
@@ -157,23 +157,23 @@ check "100% ascending-run body -> silent (placeholder)" "$ok"
 
 descBody=$(python3 -c "print(''.join(chr(90-i) for i in range(16)))")
 awsDescending="AKIA${descBody}"
-out=$(asks "$awsDescending"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$awsDescending"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "100% DEscending-run body -> still asks (algorithm is ascending-only, round-2 spec)" "$ok"
 
 # --- Codex round-1 regression: substring word-check bypass stays closed --
 
 sampleBypass="AKIA$(rnd 5 "$UPPER36" 25)SAMPLE$(rnd 5 "$UPPER36" 26)"
-out=$(asks "$sampleBypass"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$sampleBypass"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "realistic token containing substring SAMPLE -> still asks (round-1 bypass stays closed)" "$ok"
 
 yourBypass="AKIA$(rnd 4 "$UPPER36" 27)YOUR$(rnd 8 "$UPPER36" 28)"
-out=$(asks "$yourBypass"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$yourBypass"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "realistic token containing substring YOUR -> still asks (round-1 bypass stays closed)" "$ok"
 
 # --- Codex round-2 regression: a short coincidental run isn't 90% --------
 
 shortRun="AKIA$(rnd 6 "$UPPER36" 29)789$(rnd 7 "$UPPER36" 30)"
-out=$(asks "$shortRun"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$shortRun"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "short 3-char coincidental ascending run inside random body -> still asks (90% threshold holds)" "$ok"
 
 # --- precision: patterns that must NOT match ------------------------------
@@ -230,7 +230,7 @@ check "one suppressed match -> one allow-suppressed row with count 1" "$ok"
 : > "$MH_GATE_JOURNAL_PATH"
 cntTok1="AKIA$(rnd 16 "$UPPER36" 43)"; cntTok2="AKIA$(rnd 16 "$UPPER36" 44)"; cntTok3="AKIA$(rnd 16 "$UPPER36" 45)"
 out=$(asks "${cntTok1} ${cntTok2} # gitleaks:allow"$'\n'"${ghp} // pragma: allowlist secret"$'\n'"${cntTok3}")
-ok=1; [ "$(jrows)" = "allow-suppressed:3 ask:-" ] && echo "$out" | /usr/bin/grep -q 'AWS access/session key (line 3)\.' && ok=0
+ok=1; [ "$(jrows)" = "allow-suppressed:3 ask:-" ] && /usr/bin/grep -q 'AWS access/session key (line 3)\.' <<<"$out" && ok=0
 check "3 suppressed matches on 2 lines + 1 real -> one allow-suppressed row (count 3), then the ask row" "$ok"
 
 : > "$MH_GATE_JOURNAL_PATH"
@@ -245,35 +245,35 @@ check "pragma: allowlist secret on the match's own line -> silent" "$ok"
 
 markerTok="AKIA$(rnd 16 "$UPPER36" 37)"
 out=$(asks $'# gitleaks:allow\n'"${markerTok}")
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "marker on the PREVIOUS line (not the match's own line) -> still asks" "$ok"
 
 nextTok="AKIA$(rnd 16 "$UPPER36" 40)"
 out=$(asks "${nextTok}"$'\n# gitleaks:allow')
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "marker on the NEXT line (not the match's own line) -> still asks" "$ok"
 
 lineTok1="AKIA$(rnd 16 "$UPPER36" 41)"; lineTok2="AKIA$(rnd 16 "$UPPER36" 42)"
 out=$(asks $'a\r\nb\n\n'"x ${lineTok1}"$'\n'"${lineTok2} # gitleaks:allow"$'\n'"${lineTok1}")
-ok=1; echo "$out" | /usr/bin/grep -q 'AWS access/session key (line 4); AWS access/session key (line 6)\.' && ok=0
+ok=1; /usr/bin/grep -q 'AWS access/session key (line 4); AWS access/session key (line 6)\.' <<<"$out" && ok=0
 check "line numbers count CRLF and blank lines, skip the suppressed line (4 and 6)" "$ok"
 
 out=$(asks $'x\n'"$pem")
-ok=1; echo "$out" | /usr/bin/grep -q 'Private key (line 2)\.' && ok=0
+ok=1; /usr/bin/grep -q 'Private key (line 2)\.' <<<"$out" && ok=0
 check "a PEM key spanning lines 2-3 is reported at its first line (2)" "$ok"
 
 # The marker check is cached per line: a suppressed line 2 must not leak onto line 1 for a later pattern.
 out=$(asks "${aws1} ${npmtok}"$'\n'"${ghp} # gitleaks:allow")
-ok=1; echo "$out" | /usr/bin/grep -q 'AWS access/session key (line 1); npm (line 1)\.' && ok=0
+ok=1; /usr/bin/grep -q 'AWS access/session key (line 1); npm (line 1)\.' <<<"$out" && ok=0
 check "per-line marker check: line 1 stays unsuppressed for every pattern when line 2 is suppressed" "$ok"
 
 # --- reason hygiene: the ask reason never contains the actual token -------
 
 hygieneTok="AKIA$(rnd 16 "$UPPER36" 38)"
 out=$(asks "$hygieneTok")
-if echo "$out" | /usr/bin/grep -qF "$hygieneTok"; then ok=1; else ok=0; fi
+if /usr/bin/grep -qF "$hygieneTok" <<<"$out"; then ok=1; else ok=0; fi
 check "ask reason never contains the actual matched token" "$ok"
-ok=1; echo "$out" | /usr/bin/grep -q "AWS access/session key" && ok=0
+ok=1; /usr/bin/grep -q "AWS access/session key" <<<"$out" && ok=0
 check "ask reason names the vendor label" "$ok"
 
 # --- timing: line numbering stays linear ----------------------------------
@@ -313,14 +313,14 @@ print("%.2f %s" % (time.time() - t, out))
 PY
 }
 res=$(timed_scan lines); secs=${res%% *}
-ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && echo "$res" | /usr/bin/grep -q '(line 5); plus 39995 more' && ok=0
+ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && /usr/bin/grep -q '(line 5); plus 39995 more' <<<"$res" && ok=0
 check "40,000 matches on 40,000 lines (2 MB): asks with exact line numbers in ${secs}s (< 4 s)" "$ok"
 res=$(timed_scan oneline); secs=${res%% *}
-ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && echo "$res" | /usr/bin/grep -q 'AWS access/session key (line 1)\.' && ok=0
+ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && /usr/bin/grep -q 'AWS access/session key (line 1)\.' <<<"$res" && ok=0
 check "40,000 matches on one 2 MB line: asks, line 1, in ${secs}s (< 4 s)" "$ok"
 : > "$MH_GATE_JOURNAL_PATH"
 res=$(timed_scan suppressed); secs=${res%% *}
-ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && echo "$res" | /usr/bin/grep -q 'AWS access/session key (line 200000)\.' && ok=0
+ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && /usr/bin/grep -q 'AWS access/session key (line 200000)\.' <<<"$res" && ok=0
 check "199,999 suppressed lines + 1 real token (7.8 MB): asks, line 200000, in ${secs}s (< 4 s)" "$ok"
 ok=1; [ "$(jrows)" = "allow-suppressed:199999 ask:-" ] && ok=0
 check "199,999 suppressed matches journal one counted row, then the ask row" "$ok"
@@ -351,18 +351,18 @@ cp "$GATE" "$NOSIBLING/secret-scan.sh"
 # real exit 0. Documented gotcha, not a bug in the gate itself.
 noSiblingPayload=$(payload_write_content "$FIXTURE/x.txt" "hello")
 err=$(bash "$NOSIBLING/secret-scan.sh" <<<"$noSiblingPayload" 2>&1 >/dev/null); rc=$?
-ok=1; [ "$rc" -eq 0 ] && echo "$err" | /usr/bin/grep -qi "allowing" && ok=0
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -qi "allowing" <<<"$err" && ok=0
 check "missing sibling .py -> allow with a stderr note" "$ok"
 
 # --- the bash fast path (_silent_fastpath.sh) must defer every payload python could ask on ---
 # A \u escape can spell a vendor prefix without the raw text containing it.
 out=$(printf '{"tool_name":"Write","tool_input":{"file_path":"/a/b.py","content":"k = \\u0041KIA%s"}}' "$(rnd 16 "$UPPER36" 7)" | bash "$GATE" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "\\u-escaped AKIA prefix -> ask (fast path defers on \\u)" "$ok"
 
 # Over the fast path's size cap, a secret in the tail still reaches python.
 big="$(python3 -c 'print("x = 1\n" * 7000)')"$'\n'"AKIA$(rnd 16 "$UPPER36" 8)"
-out=$(asks "$big"); ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+out=$(asks "$big"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "secret at the end of a 42 KB Write -> ask" "$ok"
 
 # --- JSON depth: an extra key nested past the decoder's limit raises RecursionError ---
@@ -370,18 +370,18 @@ check "secret at the end of a 42 KB Write -> ask" "$ok"
 # depth 500, not 1000: Python <=3.11 overflows near 986.
 deepen() { python3 -c 'import sys; s = sys.stdin.read().rstrip(); n = int(sys.argv[1]); print(s[:-1] + ", \"x\": " + "[" * n + "]" * n + "}")' "$1"; }
 out=$(payload_write_content "$FIXTURE/scratch.txt" "x = 1" | deepen 1000000 | bash "$GATE" 2>/dev/null); rc=$?
-ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "JSON depth 1e6, clean Write -> ask (payload not checked)" "$ok"
 out=$(payload_write_content "$FIXTURE/scratch.txt" "x = 1" | deepen 500 | bash "$GATE" 2>/dev/null); rc=$?
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
 check "JSON depth 500, clean Write -> still parses, exit 0, no output" "$ok"
 . "$ROOT/tests/_lib/memerr.sh"
 out=$(payload_write_content "$FIXTURE/scratch.txt" "x = 1" | memerr "$GATE" 2>/dev/null); rc=$?
-ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "json.load MemoryError, clean Write -> ask (payload not checked)" "$ok"
 err=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GATE" 2>&1 >/dev/null); rc=$?
 out=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GATE" 2>/dev/null)
-ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && echo "$err" | /usr/bin/grep -q "internal error, allowing" && ok=0
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && /usr/bin/grep -q "internal error, allowing" <<<"$err" && ok=0
 check "truncated JSON -> still allows with the internal-error note (only depth asks)" "$ok"
 
 # Drift guard: secret-scan.sh's fast path lists one literal per PATTERNS entry. A new pattern

@@ -39,7 +39,7 @@ check() { # check <desc> <ok:0|1>
   else echo "  ❌ $1" >&2; fail=$((fail + 1)); fi
 }
 
-is_ask() { echo "$1" | /usr/bin/grep -q '"permissionDecision": "ask"'; }
+is_ask() { /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$1"; }
 
 echo "=== test-integrity gate ==="
 cd "$ROOT" || exit 1

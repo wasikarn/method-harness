@@ -54,7 +54,7 @@ echo ""
 
 # --- vacuous pass: blocks ---
 run '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}'
-echo "$OUT" | grep -q '"decision": *"block"' && ok=0 || ok=1
+grep -q '"decision": *"block"' <<<"$OUT" && ok=0 || ok=1
 check "vacuous pass (no findings, no checked[]) blocks" "$ok"
 [ "$CODE" -eq 0 ]; check "block is still exit 0 (JSON on stdout, not a hook crash)" "$?"
 
@@ -64,12 +64,12 @@ run '{"pass": true, "findings": [], "checked": [{"claim": "x", "evidence": "y"}]
 
 # --- self-contradictory: pass true, scope_ok false ---
 run '{"pass": true, "findings": [], "checked": [{"claim": "x", "evidence": "y"}], "scope_ok": false, "unexpected_files": []}'
-echo "$OUT" | grep -q '"decision": *"block"' && ok=0 || ok=1
+grep -q '"decision": *"block"' <<<"$OUT" && ok=0 || ok=1
 check "pass:true + scope_ok:false blocks" "$ok"
 
 # --- self-contradictory: pass true, unexpected_files non-empty ---
 run '{"pass": true, "findings": [], "checked": [{"claim": "x", "evidence": "y"}], "scope_ok": true, "unexpected_files": ["extra.py"]}'
-echo "$OUT" | grep -q '"decision": *"block"' && ok=0 || ok=1
+grep -q '"decision": *"block"' <<<"$OUT" && ok=0 || ok=1
 check "pass:true + non-empty unexpected_files blocks" "$ok"
 
 # --- oversized message: skipped entirely, even a vacuous pass allows ---
@@ -133,7 +133,7 @@ print(json.dumps(d))
 run_braces 30000
 [ "$CODE" -ne 124 ]; check "30k leading braces: finishes under timeout 5 (rc $CODE, not 124), no silent timeout-drop" "$?"
 run_braces 10000
-echo "$OUT" | grep -q '"decision": *"block"' && ok=0 || ok=1
+grep -q '"decision": *"block"' <<<"$OUT" && ok=0 || ok=1
 check "10k leading braces before a vacuous verdict: still blocks" "$ok"
 
 # --- validator catch, same day: the first budget charged every popped span's
@@ -156,13 +156,13 @@ print(json.dumps(d))
   rm -f "$f"
 }
 run_nested_braces 1500
-echo "$OUT" | grep -q '"decision": *"block"' && ok=0 || ok=1
+grep -q '"decision": *"block"' <<<"$OUT" && ok=0 || ok=1
 check "1500 nested braces before a vacuous verdict: still blocks (rc $CODE), no budget fail-open" "$ok"
 
 # --- 2026-09-21 deep-audit: two IDENTICAL pass-bearing objects were counted
 # as "2 distinct, ambiguous" and allowed; dedupe by canonical JSON first. ---
 run '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []} ... as I said: {"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}'
-echo "$OUT" | grep -q '"decision": *"block"' && ok=0 || ok=1
+grep -q '"decision": *"block"' <<<"$OUT" && ok=0 || ok=1
 check "the same vacuous verdict printed twice: still blocks (identical objects are one verdict, not two)" "$ok"
 run '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []} vs {"pass": true, "findings": [], "checked": [{"claim":"x","evidence":"y"}], "scope_ok": true, "unexpected_files": []}'
 [ -z "$OUT" ]; check "two DISTINCT pass:true objects: still allow (ambiguous)" "$?"
@@ -191,7 +191,7 @@ run_handback() { # run_handback <message> [event] [tool_name] -> $OUT, $CODE
 }
 
 run_handback '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}'
-echo "$OUT" | grep -q '"permissionDecision": *"deny"' && echo "$OUT" | grep -q '"hookEventName": *"PreToolUse"' && ok=0 || ok=1
+grep -q '"permissionDecision": *"deny"' <<<"$OUT" && grep -q '"hookEventName": *"PreToolUse"' <<<"$OUT" && ok=0 || ok=1
 check "PreToolUse SubagentHandback: vacuous pass in tool_input.message denies (hookSpecificOutput deny JSON)" "$ok"
 [ "$CODE" -eq 0 ]; check "PreToolUse deny is exit 0 (JSON on stdout, not an exit-2 crash)" "$?"
 

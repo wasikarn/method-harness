@@ -19,10 +19,15 @@ ran=$(cd "$ROOT" && bash -c "
   $body
   hook_test_files")
 
+# Membership is a string match, never `printf "$ran" | grep -q`: under pipefail, grep -q exits on
+# its first match while bash's printf is still writing line by line, so printf takes SIGPIPE (141)
+# and a listed file reads as missing. That flaked 2 of 4 gauntlet runs (2026-10-23) and is linted
+# by tests/scripts/test-pipefail-grep-q-lint.sh.
+NL=$'\n'
 missing=()
 while IFS= read -r f; do
   rel="${f#"$ROOT/"}"
-  printf '%s\n' "$ran" | /usr/bin/grep -qxF "$rel" || missing+=("$rel")
+  case "$NL$ran$NL" in *"$NL$rel$NL"*) ;; *) missing+=("$rel") ;; esac
 done < <(find "$ROOT/tests" \( -name "test-*.sh" -o -name "test_*.py" \) | sort)
 
 if [ "${#missing[@]}" -eq 0 ]; then
@@ -40,7 +45,7 @@ unrun=()
 for d in "$ROOT"/tests/*/; do
   name=$(basename "$d")
   [ "$name" = _lib ] && continue
-  printf '%s\n' "$ran" | /usr/bin/grep -q "^tests/$name/" && continue
+  case "$NL$ran" in *"${NL}tests/$name/"*) continue ;; esac
   if [ -n "$plugin_test_runner" ] && [ -n "$(find "$d" \( -name '*.test.ts' -o -name '*.test.tsx' \) | head -1)" ]; then
     continue
   fi
