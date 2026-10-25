@@ -2008,6 +2008,9 @@ test_allow "$IRRECOVERABLE" "GH #561 r2 control: an alias loop p -> p (git error
 test_deny  "$IRRECOVERABLE" 'GH #561 r2: git config clean.requireForce ""' "$(bash_payload 'git config clean.requireForce ""')"
 test_deny  "$IRRECOVERABLE" "GH #561 r2: -c clean.requireForce= clean -dx" "$(bash_payload 'git -c clean.requireForce= clean -dx')"
 test_allow "$IRRECOVERABLE" "GH #561 r2 control: git config clean.requireForce true" "$(bash_payload 'git config clean.requireForce true')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: git config clean.requireForce '' (single-quoted)" "$(bash_payload "git config clean.requireForce ''")"
+test_deny  "$IRRECOVERABLE" 'GH #561 r2: git config set clean.requireForce ""' "$(bash_payload 'git config set clean.requireForce ""')"
+test_allow "$IRRECOVERABLE" 'GH #561 r2 control: git config user.name "" (not a risk key)' "$(bash_payload 'git config user.name ""')"
 # Round 3 review: git always runs a built-in and ignores an alias of the same name, so the risk keys
 # are checked against the typed verb and every verb along the alias chain; any deny wins.
 test_deny  "$IRRECOVERABLE" "GH #561 r3: alias.clean='clean -n' does not shadow clean (requireForce=false)" \
