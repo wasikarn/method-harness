@@ -968,6 +968,14 @@ for _c in "env -S -i rm -rf build" "env -S -v git push --force" "env -S -u FOO r
   "env -S '-u FOO -S \"-i rm -rf x\"'"; do
   test_deny "$IRRECOVERABLE" "GH #560: options inside the -S string: $_c" "$(bash_payload "$_c")"
 done
+# GH #560 round 2: env ends the -S string at a word starting with `#` and at `\c`, then reads on
+# from the words after the -S argument (`env -S '-i #' echo RAN` runs echo).
+for _c in "env -S '-i #' rm -rf x" "env -S '-i #' git push --force" "env -S '-u FOO #' rm -rf x" \
+  "env -S '-i -S \"-i #\"' rm -rf x" "env -S '-i \\c' rm -rf x" "env -S '-i #comment -v' rm -rf x"; do
+  test_deny "$IRRECOVERABLE" "GH #560: -S string ended by # or \\c: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" "GH #560 control: env -S '-i #' ls" "$(bash_payload "env -S '-i #' ls -la")"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -S '-i a#b' (mid-word # is no comment)" "$(bash_payload "env -S '-i ls a#b'")"
 test_deny  "$IRRECOVERABLE" "GH #560: subagent: env -S '-i claude -p hi'" "$(bash_agent_payload "env -S '-i claude -p hi'" fork)"
 test_deny  "$IRRECOVERABLE" "GH #560: rm read through two -S levels, under the nesting limit" \
   "$(bash_payload "env -iS env -iS rm -rf x")"

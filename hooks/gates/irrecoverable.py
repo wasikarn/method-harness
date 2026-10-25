@@ -2517,12 +2517,32 @@ _ENV_SPLIT_MAX = 16
 def _env_split_options(body):
     if not body.replace(PH, "").lstrip().startswith("-"):
         return None
+    # GH #560 round 2: env ends the string at `\c` (outside single quotes) and at a word that
+    # starts with `#`, then reads on from the words after the -S argument (`env -S '-i #' rm -rf x`
+    # runs rm). shlex would turn `\c` into a `c` word and keep `#`, the command env never runs.
+    q, k = "", 0
+    while k < len(body):
+        ch = body[k]
+        if ch == "'" and q != '"':
+            q = "" if q else "'"
+        elif ch == '"' and q != "'":
+            q = "" if q else '"'
+        elif ch == "\\" and q != "'":
+            if body[k + 1:k + 2] == "c":
+                body = body[:k]
+                break
+            k += 1
+        k += 1
     lex = shlex.shlex(body, posix=True)
     lex.whitespace_split, lex.commenters = True, ""
     try:
-        return list(lex)
+        words = list(lex)
     except ValueError:
         return None
+    for n, word in enumerate(words):
+        if word.startswith("#"):
+            return words[:n]
+    return words
 
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 def _check_window(_wi, w):
