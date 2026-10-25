@@ -16,10 +16,10 @@ echo "=== stray-procs: name leftover CPU-heavy processes (GH #158) ==="
 # pid etime %cpu command, as `ps -o pid=,etime=,%cpu=,command=` prints them.
 ROWS='82797     04:27:19  99.4 yes
  1234   1-00:00:30  85.0 /usr/bin/python3 stress.py --n 4
- 2222        10:00 250.0 node build
+ 2222        30:00 250.0 node build
  3333        00:30 100.0 yes
  4444     05:00:00   2.0 /bin/zsh
- 5555        09:59  99.0 yes'
+ 5555        29:59  99.0 yes'
 
 # run <ps-body> [env...]: report on stdout+stderr, then "rc=<n>".
 run() {
@@ -32,11 +32,11 @@ stray_procs_report; echo \"rc=\$?\"" 2>&1
 
 out=$(run 'printf "%s\n" "$ROWS"')
 case "$out" in *"pid 82797"*"04:27:19"*"yes"*) ok "a 4 h process at 99% is named with pid, elapsed and command" ;; *) bad "4 h yes not named: $out" ;; esac
-case "$out" in *"pid 1234"*"stress.py --n 4"*) ok "a dd-hh:mm:ss elapsed counts its days (1-00:00:30 is past 600 s), and the full command line is kept" ;; *) bad "1-day row missing: $out" ;; esac
+case "$out" in *"pid 1234"*"stress.py --n 4"*) ok "a dd-hh:mm:ss elapsed counts its days (1-00:00:30 is past 1800 s), and the full command line is kept" ;; *) bad "1-day row missing: $out" ;; esac
 case "$out" in *"pid 2222"*) ok "exactly the minimum age and %CPU above 100 (multi-core) count" ;; *) bad "boundary row missing: $out" ;; esac
 case "$out" in *"pid 3333"*) bad "a 30 s process was named: $out" ;; *) ok "a 30 s process is not named" ;; esac
 case "$out" in *"pid 4444"*) bad "a 2% process was named: $out" ;; *) ok "a long but idle process is not named" ;; esac
-case "$out" in *"pid 5555"*) bad "a 9:59 process was named: $out" ;; *) ok "one second under the minimum age is not named" ;; esac
+case "$out" in *"pid 5555"*) bad "a 29:59 process was named: $out" ;; *) ok "one second under the minimum age is not named" ;; esac
 case "$out" in *"load 6.25"*) ok "the warning states the load average" ;; *) bad "load missing: $out" ;; esac
 case "$out" in *"rc=0") ok "it returns 0 even when it finds strays (a warning, never a gate)" ;; *) bad "non-zero rc: $out" ;; esac
 

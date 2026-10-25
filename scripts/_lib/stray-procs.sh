@@ -4,11 +4,13 @@
 # processes at 100% CPU for about 4 h on 2026-10-25; the load stayed ~6 and every push's timing rows
 # failed until someone spotted them. This shortens detection to the next gauntlet run. Source it, then:
 #   stray_procs_report
-# It prints a warning to stderr listing your processes older than GAUNTLET_STRAY_MIN_SECS (600) at or
+# It prints a warning to stderr listing your processes older than GAUNTLET_STRAY_MIN_SECS (1800) at or
 # above GAUNTLET_STRAY_MIN_CPU percent (80), with the load average. It never kills anything (a
 # process may belong to a peer session's live run; killing it is the operator's call), never returns
 # non-zero, and stays silent when ps fails, so a `set -e` caller is never aborted. Detection is by
 # behaviour, not by name: a long build at full CPU is named too, which is the point of a warning.
+# The 30 min default skips a busy headless `claude` run (named at 13 min on the first live run); the
+# strays this targets ran for hours.
 # Bash 3.2.
 
 _sp_num() {
@@ -24,7 +26,7 @@ _sp_load() {
 
 stray_procs_report() {
   local min_secs min_cpu rows found
-  min_secs=$(_sp_num "${GAUNTLET_STRAY_MIN_SECS:-}" 600)
+  min_secs=$(_sp_num "${GAUNTLET_STRAY_MIN_SECS:-}" 1800)
   min_cpu=$(_sp_num "${GAUNTLET_STRAY_MIN_CPU:-}" 80)
   rows=$(_sp_ps) || return 0
   found=$(printf '%s\n' "$rows" | awk -v ms="$min_secs" -v mc="$min_cpu" '
