@@ -2130,6 +2130,41 @@ done
 test_ask_says "$IRRECOVERABLE" "bypass hunt F5 review: xargs -d'\\n' gh pr merge still asks" \
   "$(bash_payload "ls | xargs -d'\\n' gh pr merge 1 --admin")" "gh pr merge"
 
+# GH #562 follow-up: PR #572 regressed an empty value to a read. The token window drops an empty word, and the
+# word window's git scan dropped it too, so `core.hooksPath ""` read as the key alone. An empty hooksPath
+# unwires every hook. Removing or renaming the core section drops core.hooksPath without naming it.
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath \"\" (empty value unwires every hook)" "$(bash_payload 'git config core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath '' (single-quoted empty value)" "$(bash_payload "git config core.hooksPath ''")"
+test_deny  "$IRRECOVERABLE" "GH #562: git config set core.hooksPath \"\"" "$(bash_payload 'git config set core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --replace-all core.hooksPath \"\"" "$(bash_payload 'git config --replace-all core.hooksPath ""')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config core.hooksPath \"\" git-hooks (git-hooks is the value-pattern)" "$(bash_payload 'git config core.hooksPath "" git-hooks')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --remove-section core" "$(bash_payload 'git config --remove-section core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config remove-section core" "$(bash_payload 'git config remove-section core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --remove-section Core (section names ignore case)" "$(bash_payload 'git config --remove-section Core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rem core (unique prefix)" "$(bash_payload 'git config --rem core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rename-section core x" "$(bash_payload 'git config --rename-section core x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config rename-section core x" "$(bash_payload 'git config rename-section core x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --rename-section x core (renaming onto core writes it)" "$(bash_payload 'git config --rename-section x core')"
+test_deny  "$IRRECOVERABLE" "GH #562: git config --file .git/config --remove-section core" "$(bash_payload 'git config --file .git/config --remove-section core')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config get core.hooksPath" "$(bash_payload 'git config get core.hooksPath')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --remove-section alias" "$(bash_payload 'git config --remove-section alias')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --rename-section alias x" "$(bash_payload 'git config --rename-section alias x')"
+test_allow "$IRRECOVERABLE" "GH #562 control: git config --get core.hooksPath \"\" (a value-pattern on a read)" "$(bash_payload 'git config --get core.hooksPath ""')"
+_hp_pad_cmd="git config core.hooksPath git-hooks$(python3 -c 'print(" \"\"" * 46000)')"
+_timed_case 'GH #562: a 140 KB run of empty words after core.hooksPath is denied in bounded time' 2 "$_hp_pad_cmd"
+
+# GH #562 round 2: git runs no hooks with an empty core.hooksPath (git 2.43, a marker pre-commit hook in a
+# throwaway repo), so a -c pair with an empty value is the same bypass; the rows above use /tmp/evil.
+test_deny  "$IRRECOVERABLE" "GH #562: git -c \"core.hooksPath=\" commit (quoted)" "$(bash_payload 'git -c "core.hooksPath=" commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git --config-env=core.hooksPath=V commit still denies" "$(bash_payload 'git --config-env=core.hooksPath=V commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= still denies" "$(bash_payload 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= git commit -m x')"
+# A section name built at run time counts only when its literal prefix can still become core.
+test_allow "$IRRECOVERABLE" "GH #562 control: --rename-section alias \"x\$Y\" (cannot become core)" "$(bash_payload 'git config --rename-section alias "x$Y"')"
+test_allow "$IRRECOVERABLE" "GH #562 control: --remove-section alias\$(date) (cannot become core)" "$(bash_payload 'git config --remove-section alias$(date)')"
+test_deny  "$IRRECOVERABLE" "GH #562: --remove-section \"\$S\" (may be core)" "$(bash_payload 'git config --remove-section "$S"')"
+test_deny  "$IRRECOVERABLE" "GH #562: --remove-section co\$X (may be core)" "$(bash_payload 'git config --remove-section co$X')"
+test_deny  "$IRRECOVERABLE" "GH #562: --rename-section alias C\$(echo ore) (may be core)" "$(bash_payload 'git config --rename-section alias C$(echo ore)')"
+
 # Empty config values (git 2.43, live-checked): git reads an empty boolean as false, so a stored
 # `clean.requireForce ""` lets a later bare `git clean` delete; the git scan dropped the empty word, so the
 # write read as a key alone. An empty `-c core.hooksPath=` skips every hook (the commit lands past a failing
