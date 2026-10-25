@@ -2376,4 +2376,56 @@ test_allow "$IRRECOVERABLE" "GH #607 control: rsync without --delete" "$(bash_pa
 _timed_case 'GH #607: 10000 UPDATE ... SET words before a WHERE are read in bounded time' 2 \
   "psql -c '$(python3 -c "print('UPDATE t SET ' * 10000 + 'WHERE x')")'"
 
+# GH #587 (bypass hunt 2026-10-23 F10): chmod-world's root-or-home test knew only `/` and `~` (and
+# their `/*`, `/.` forms); a find action applies the mode to every file it finds, as -R does.
+for _c in \
+  'chmod 777 $HOME' \
+  'chmod 777 "$HOME"' \
+  'chmod a+rwx $HOME/' \
+  'chmod 777 ${HOME}' \
+  'chmod 777 "${HOME}"' \
+  'chmod 777 "${HOME:-}"' \
+  'chmod 777 ${HOME%/}' \
+  'echo hi; chmod 777 ${HOME}' \
+  $'chmod 777 \\\n${HOME}' \
+  $'chmod 777 \\\n"${HOME}"' \
+  'chmod 777 ${HOME}>/dev/null' \
+  "bash -c 'chmod 777 \"\${HOME}\"'" \
+  'chmod 777 ${HOME}/' \
+  'chmod 777 $HOME/./' \
+  'chmod 777 $HOME//' \
+  'chmod 777 ~/./' \
+  "find . -exec sh -c 'chmod 777 \"\$1\"' _ {} \\;" \
+  "find . -exec bash -c 'sudo chmod -R a+rwx \"\$0\"' {} \\;" \
+  "chmod 777 $HOME" \
+  "chmod -R 777 $HOME/" \
+  'chmod 777 //' \
+  'find . -exec chmod 777 {} +' \
+  'find . -type f -execdir chmod a+rwx {} \;' \
+  'find . -exec sudo chmod 0777 {} +' \
+  'gchmod -R 777 .' \
+  '/opt/homebrew/bin/gchmod 777 /' ; do
+  test_deny "$IRRECOVERABLE" "GH #587: chmod 777 on home, root or every file find yields: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'chmod 777 f' \
+  'chmod 777 $HOME/f' \
+  "chmod 777 $HOME/project/run.sh" \
+  'chmod 755 $HOME' \
+  'chmod -R 755 .' \
+  'find . -exec chmod 644 {} +' \
+  'find . -name "*.sh" -exec chmod +x {} \;' \
+  'gchmod 644 f' \
+  'chmod 777 ${HOME}/f' \
+  'chmod 777 $HOME/./f' \
+  'chmod 777 "$(mktemp)"; echo ${HOME}' \
+  'chmod 777 $(mktemp) && ls ${HOME}' \
+  'chmod 777 `pwd`; echo ${HOME}' \
+  'chmod 777 ${PWD}; echo ${HOME}' \
+  "find . -exec sh -c 'chmod 644 \"\$1\"' _ {} \\;" \
+  'echo chmod 777 $HOME' ; do
+  test_allow "$IRRECOVERABLE" "GH #587 control: chmod that is not world-writable on home, root or a find set: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary
