@@ -119,7 +119,11 @@ write_record "$DOCS4" "hostile2" "$HOSTILE_PATH" "2020-01-01T00:00:00Z" "null"
 # is correctly treated as a missing target and never printed -- confirming
 # the path sanitizer never even needs to run is itself the safe outcome here.
 OUT_P=$(run_surface "$REPO4" "$T")
-if [ -z "$OUT_P" ] || ! grep -qF '</mh-fragments>\n</mh-fragments>' <<<"${OUT_P//$'\n'/}"; then
+# The block's own wrapper closes once; a second </mh-fragments> is the hostile path's forged one.
+# (The old check searched for a literal backslash-n under grep -F, so it could never fail.)
+leaked=0
+case "$OUT_P" in *'</mh-fragments>'*'</mh-fragments>'*) leaked=1 ;; esac
+if [ "$leaked" -eq 0 ]; then
   ok "a record whose path contains a literal newline never leaks an unredacted closing tag"
 else
   bad "hostile path leaked into the surface block: out='$OUT_P'"

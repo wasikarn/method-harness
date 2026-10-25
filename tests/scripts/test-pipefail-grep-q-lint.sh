@@ -8,20 +8,18 @@
 # and others, only under the gauntlet's parallel load. Race-free forms: `grep -q PAT <<<"$x"`,
 # `grep -q PAT <<<"$(cmd)"` (bash holds the whole output before grep runs), or `case`.
 #
-# Every tracked shell file is linted, pipefail or not: a file without its own `set -o pipefail` can
-# be sourced under one (harness-audit's checks/*.sh run inside audit.sh's `set -euo pipefail`).
+# The check is tests/_lib/pipe_into_grep_q.py, a small shell lexer: two line regexes before it
+# missed sites (`| command grep -q` in hooks/session/memory-health-nudge.sh, continued lines) and
+# flagged `-q` text inside quoted patterns. Every tracked shell file is checked, pipefail or not: a
+# file without its own `set -o pipefail` can be sourced under one (harness-audit's checks/*.sh).
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
+SCAN="$ROOT/tests/_lib/pipe_into_grep_q.py"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-
-# The shape: a single `|` (not `||`) into grep, with -q, --quiet or --silent among grep's own words
-# (they end at | ; & or `)`), on a non-comment line. Any writer counts, multi-stage pipes included,
-# and a `|` inside the writer's arguments does not hide the grep.
-SHAPE='(^|[^|])\|[[:space:]]*(/usr/bin/)?grep([[:space:]]+[^|;&)]*)?[[:space:]](-[[:alpha:]]*q[[:alpha:]]*|--quiet|--silent)([[:space:]]|$)'
-count() { /usr/bin/grep -vE '^[[:space:]]*#' "$1" | /usr/bin/grep -cE "$SHAPE"; }
+count() { python3 -I "$SCAN" "$1" | wc -l | tr -d ' '; }
 
 echo "=== nothing pipes into grep -q (pipefail turns its early exit into a failure) ==="
 
@@ -44,6 +42,7 @@ fi
 probe=$(mktemp -d)
 [ -n "$probe" ] && [ -d "$probe" ] || { echo "  FAIL: mktemp -d failed, probe rows cannot run" >&2; exit 1; }
 trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
+# One race per line, each a shape a past check missed or should catch.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -53,6 +52,16 @@ claude plugin test --help 2>&1 | grep --quiet "Run"
 sed 's/#.*$//' "$f" | grep -e "$name" -q && n=1
 printf '%s|%s\n' a "$b" | grep -q a
 v="$(grep -c x "$f" | grep -qv '^0$' && echo 1)"
+printf '%s' "$OUT" | command grep -qE 'findings: [1-9]'
+x | \grep -q y
+x | egrep -q y
+x | env LC_ALL=C grep -q y
+x |& grep --silent y
+x |
+  grep -q y
+x \
+  | grep -iq y
+v=`x | grep -q y`
 EOF
 cat > "$probe/good.sh" <<'EOF'
 # printf "$r" | grep -q x
@@ -62,25 +71,39 @@ echo "$OUT" | grep -c x
 [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 2 ]
 a || grep -q x "$f"
 grep -q x "$f" | head -1
+x | grep -c " -eq " "$f"
+grep -c x "$f" # a | grep -q b
+echo "a | grep -q b"
+x | grep -e -q "$f"
+echo $((a|b)) | grep -c x
+case "$x" in a|grep) grep -q y "$f" ;; esac
+cat <<'DOC'
+printf x | grep -q y
+DOC
 EOF
 n_bad=$(count "$probe/bad.sh"); n_good=$(count "$probe/good.sh")
-[ "$n_bad" -eq 8 ] && ok "probe: all 8 planted shapes are counted (multi-stage, --quiet, -e PAT -q, | in args)" \
-  || bad "probe: counted $n_bad of 8 planted shapes"
-[ "$n_good" -eq 0 ] && ok "probe: comments, here-strings, grep -c, ||, a later -eq are not counted" \
-  || bad "probe: counted $n_good in the race-free file"
+[ "$n_bad" -eq 16 ] && ok "probe: all 16 planted races are found (command/\\/egrep/env grep, |&, continued pipes, \$(...), backticks)" \
+  || bad "probe: found $n_bad of 16 planted races: $(python3 -I "$SCAN" "$probe/bad.sh" | tr '\n' ' ')"
+[ "$n_good" -eq 0 ] && ok "probe: comments, quoted -q and |, here-strings, grep -c, -e -q, \$((a|b)), case, heredoc bodies are not counted" \
+  || bad "probe: counted $n_good in the race-free file: $(python3 -I "$SCAN" "$probe/good.sh" | tr '\n' ' ')"
 
-checked=0
+files=()
 while IFS= read -r rel; do
   [ -f "$ROOT/$rel" ] || continue
   case "$rel" in tests/scripts/test-pipefail-grep-q-lint.sh) continue ;; esac
-  checked=$((checked + 1))
-  n=$(count "$ROOT/$rel")
-  [ "$n" -eq 0 ] || bad "$rel: $n pipe(s) into grep -q; use grep -q PAT <<<\"\$x\" or <<<\"\$(cmd)\""
+  files+=("$ROOT/$rel")
 done < <(cd "$ROOT" && git ls-files '*.sh' 'git-hooks/*')
 
-[ "$fail" -eq 0 ] && ok "no tracked shell file pipes into grep -q"
-[ "$checked" -ge 100 ] && ok "lint saw $checked shell files (not vacuous)" \
-  || bad "lint saw only $checked shell files; the file listing no longer matches"
+found=$(python3 -I "$SCAN" "${files[@]}")
+if [ -z "$found" ]; then
+  ok "no tracked shell file pipes into grep -q"
+else
+  while IFS= read -r h; do
+    bad "${h#"$ROOT"/} -- use grep -q PAT <<<\"\$x\" or <<<\"\$(cmd)\""
+  done <<<"$found"
+fi
+[ "${#files[@]}" -ge 100 ] && ok "lint saw ${#files[@]} shell files (not vacuous)" \
+  || bad "lint saw only ${#files[@]} shell files; the file listing no longer matches"
 
 echo "=== Summary: $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]
