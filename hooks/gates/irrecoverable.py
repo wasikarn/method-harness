@@ -2526,11 +2526,13 @@ def _check_window(_wi, w):
                 _nonflag = [t for t in scan if not t.startswith("-")]
                 if sub == "push" and any(_is_flag(t, "--mirror", "--prune") for t in scan):
                     deny("git push --mirror/--prune overwrites or deletes remote refs, like --force — confirm with user first", rule="git-push-mirror")
-                if sub == "push" and (
+                # GH #563 review: send-pack (push's plumbing) deletes with the same ":ref" refspec; --delete
+                # and -d are not send-pack options (git rejects them), so mirroring them only over-denies.
+                if sub in ("push", "send-pack") and (
                         any(t.startswith(":") and _protected_ref(t[1:]) for t in _nonflag)
                         or (any(_is_flag(t, "--delete") or _bundled_flag(t, "", "d") for t in scan)
                             and any(_protected_ref(t) for t in _nonflag[1:]))):
-                    deny("git push deleting main/master/develop on the remote — confirm with user first", rule="git-push-delete-protected")
+                    deny(f"git {sub} deleting main/master/develop on the remote — confirm with user first", rule="git-push-delete-protected")
                 if sub == "read-tree" and any(_is_flag(t, "--reset") for t in scan) and "-u" in scan:
                     deny("git read-tree -u --reset discards uncommitted work, like reset --hard — confirm with user first", rule="git-read-tree-reset")
                 if sub == "checkout-index" and any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan):
@@ -2561,7 +2563,12 @@ def _check_window(_wi, w):
                 _force = any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan)
                 if sub == "send-pack" and (any(_is_flag(t, "--force", "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
                     deny("git send-pack --force/--mirror/+refspec overwrites remote history, like push --force — confirm with user first", rule="git-push-force")
-                if sub == "rm" and _force and not any(_is_flag(t, "--cached") for t in scan):
+                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) deletes nothing.
+                # Only options before "--" count (after it "-n" is a path), and --no-dry-run undoes it.
+                _rm_opts = scan[:scan.index("--")] if "--" in scan else scan
+                if sub == "rm" and _force and not any(_is_flag(t, "--cached") for t in scan) and not (
+                        any(_is_flag(t, "--dry-run") or _bundled_flag(t, "", "n") for t in _rm_opts)
+                        and not any(_is_flag(t, "--no-dry-run") for t in _rm_opts)):
                     deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first", rule="git-rm-force")
                 if sub == "branch" and _force and _nonflag and _protected_ref(_nonflag[0]) and not any(
                         t.startswith("-") and not t.startswith("--") and any(c in t for c in "dDmMcC")
