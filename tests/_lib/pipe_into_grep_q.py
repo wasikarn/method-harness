@@ -1,238 +1,83 @@
 """pipe_into_grep_q.py FILE... -- print FILE:LINE for every pipe (`|` or `|&`) into a quiet grep.
 
 Under `set -o pipefail`, `writer | grep -q PAT` races: grep -q exits on its first match, a writer
-still writing dies of SIGPIPE (141), and pipefail turns the match into a failure. The scanner is a
-small shell lexer, not a line regex, because regexes missed sites twice (GH #578, #597):
-- `\\`-newline continuations and a newline after `|` are joined;
-- quoted text is opaque (a `-q` or `|` inside a pattern is not code), but `$(...)` inside double
-  quotes is code, so `"$(cmd | grep -q x)"` is still seen;
-- comments, `$((...))` arithmetic and here-document bodies (data) are skipped;
-- the grep may follow assignments and `command`, `builtin`, `exec` or `env`, may be written `\\grep`,
-  `/usr/bin/grep`, `egrep` or `fgrep`, and is quiet when one of its options is -q, --quiet or
-  --silent (in a cluster such as -iEq; option words end at `--`).
-Exit status: 1 when anything is printed, else 0. Not caught: a grep reached through a function or
-alias, and early-exit readers other than grep -q (`head`, grep -m, a command that skips stdin).
+still writing dies of SIGPIPE (141), and pipefail turns the match into a failure.
+
+The shell is parsed by `shfmt --to-json` (mvdan.cc/sh), not by a regex or a hand-written lexer:
+both missed sites or crashed in review (GH #578, #597, #598). From the syntax tree, a pipe's
+reader is the first command on its right, or every statement of a `{ }` / `( )` group there. That
+command is a quiet grep when, after any `command`/`builtin`/`exec`/`env`/`timeout`/`nice`/`stdbuf`
+wrapper, it is grep, egrep or fgrep (any path, `\\grep` too) and one of its words is -q, --quiet or
+--silent (in a cluster such as -iEq; GNU grep permutes, so options after operands count; option
+words end at `--`). Redirections, quoted text, comments and here-document bodies are not words.
+
+A hit on a line holding `pipe-into-grep-q: deliberate` is not reported (the lint's own race probe).
+Exit status: 0 clean, 1 hits printed, 2 an error (shfmt missing, a file unreadable or unparsable).
+An error is never a clean result. Not caught: a grep reached through a function or alias, and
+early-exit readers other than grep -q (`head`, grep -m, a command that skips stdin).
 """
+import json
 import os
-import re
+import shutil
+import subprocess
 import sys
 
-ASSIGN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
-PREFIX = {'command', 'builtin', 'exec', 'env'}
+PIPES = ('|', '|&')
 GREPS = {'grep', 'egrep', 'fgrep'}
-ARG_OPTS = set('efmABCdD')  # short options whose argument may follow in the same word
+GREP_ARG_OPTS = set('efmABCdD')  # short options whose argument may be the next word
+# wrapper -> (options that take a separate argument, leading positional words to skip)
+WRAPPERS = {
+    'command': (set(), 0), 'builtin': (set(), 0), 'exec': ({'-a'}, 0),
+    'env': ({'-u', '-C', '--unset', '--chdir'}, 0),
+    'timeout': ({'-k', '-s', '--kill-after', '--signal'}, 1),
+    'nice': ({'-n', '--adjustment'}, 0),
+    'stdbuf': ({'-i', '-o', '-e'}, 0),
+}
+DELIBERATE = 'pipe-into-grep-q: deliberate'
 
 
-class Lexer:
-    """Turns shell text into ('w', word, line) / ('op', op, line) tokens."""
-
-    def __init__(self, text):
-        self.s = text
-        self.i = 0
-        self.line = 1
-        self.toks = []
-        self.heredocs = []  # (delimiter, strip_tabs) waiting for the next newline
-
-    def peek(self, k=0):
-        j = self.i + k
-        return self.s[j] if j < len(self.s) else ''
-
-    def adv(self, n=1):
-        for _ in range(n):
-            if self.i < len(self.s) and self.s[self.i] == '\n':
-                self.line += 1
-            self.i += 1
-
-    def op(self, o):
-        self.toks.append(('op', o, self.line))
-
-    def skip_heredocs(self):
-        for delim, strip in self.heredocs:
-            while self.i < len(self.s):
-                end = self.s.find('\n', self.i)
-                end = len(self.s) if end < 0 else end
-                body = self.s[self.i:end]
-                self.adv(end - self.i + 1)
-                if (body.lstrip('\t') if strip else body) == delim:
-                    break
-        self.heredocs = []
-
-    def skip_squote(self):
-        self.adv()
-        while self.i < len(self.s) and self.peek() != "'":
-            self.adv()
-        self.adv()
-
-    def skip_ansi(self):  # $'...'
-        self.adv(2)
-        while self.i < len(self.s) and self.peek() != "'":
-            self.adv(2 if self.peek() == '\\' else 1)
-        self.adv()
-
-    def skip_arith(self):  # $(( ... ))
-        self.adv(3)
-        depth = 0
-        while self.i < len(self.s):
-            if self.peek() == '(':
-                depth += 1
-            elif self.peek() == ')':
-                if depth == 0 and self.peek(1) == ')':
-                    self.adv(2)
-                    return
-                depth -= 1
-            self.adv()
-
-    def dquote(self):
-        """Skip a double-quoted string; lex any $(...) inside it as code."""
-        self.adv()
-        while self.i < len(self.s):
-            c = self.peek()
-            if c == '\\':
-                self.adv(2)
-            elif c == '"':
-                self.adv()
-                return
-            elif c == '$' and self.peek(1) == '(' and self.peek(2) == '(':
-                self.skip_arith()
-            elif c == '$' and self.peek(1) == '(':
-                self.adv(2)
-                self.op('(')
-                self.code(close=')')
-                self.op(')')
-            else:
-                self.adv()
-
-    def heredoc_start(self):
-        """At `<<` (not `<<<`): queue the delimiter; return the redirection as consumed."""
-        self.adv(2)
-        strip = self.peek() == '-'
-        if strip:
-            self.adv()
-        while self.peek() in ' \t':
-            self.adv()
-        delim = ''
-        while self.i < len(self.s) and self.peek() not in ' \t\n;&|<>()':
-            c = self.peek()
-            if c in '\'"':
-                q = c
-                self.adv()
-                while self.i < len(self.s) and self.peek() != q:
-                    delim += self.peek()
-                    self.adv()
-                self.adv()
-            else:
-                if c == '\\':
-                    self.adv()
-                    c = self.peek()
-                delim += c
-                self.adv()
-        if delim:
-            self.heredocs.append((delim, strip))
-
-    def code(self, close=None):
-        word = None
-        depth = 0  # plain ( ) nesting inside this frame
-
-        def flush():
-            nonlocal word
-            if word is not None:
-                self.toks.append(('w', word, wline))
-                word = None
-
-        wline = self.line
-        while self.i < len(self.s):
-            c = self.peek()
-            if c == '\\' and self.peek(1) == '\n':
-                self.adv(2)
-                continue
-            if c == '\n':
-                flush()
-                self.op('nl')
-                self.adv()
-                if self.heredocs:
-                    self.skip_heredocs()
-                continue
-            if c in ' \t':
-                flush()
-                self.adv()
-                continue
-            if c == '#' and word is None:
-                while self.i < len(self.s) and self.peek() != '\n':
-                    self.adv()
-                continue
-            if c == ')' and close == ')' and depth == 0:
-                flush()
-                self.adv()
-                return
-            if word is None:
-                wline = self.line
-            if c == '\\':
-                self.adv()
-                word = (word or '') + self.peek()
-                self.adv()
-            elif c == "'":
-                word = (word or '') + 'Q'
-                self.skip_squote()
-            elif c == '$' and self.peek(1) == "'":
-                word = (word or '') + 'Q'
-                self.skip_ansi()
-            elif c == '"':
-                word = (word or '') + 'Q'
-                self.dquote()
-            elif c == '$' and self.peek(1) == '(' and self.peek(2) == '(':
-                word = (word or '') + 'Q'
-                self.skip_arith()
-            elif c == '$' and self.peek(1) == '(':
-                word = (word or '') + 'Q'
-                flush()
-                self.adv(2)
-                self.op('(')
-                self.code(close=')')
-                self.op(')')
-            elif c == '`':
-                flush()
-                self.adv()
-                self.op('(')
-                start = self.i
-                while self.i < len(self.s) and self.peek() != '`':
-                    self.adv(2 if self.peek() == '\\' else 1)
-                sub = Lexer(self.s[start:self.i])
-                sub.line = self.line
-                sub.code()
-                self.toks.extend(sub.toks)
-                self.adv()
-                self.op(')')
-            elif c == '<' and self.peek(1) == '<' and self.peek(2) != '<':
-                flush()
-                self.heredoc_start()
-            elif c in '|&;()<>':
-                flush()
-                two = c + self.peek(1)
-                if two in ('||', '&&', ';;', '|&', '>>', '<<', '&>', '>&', '<&'):
-                    self.op(two)
-                    self.adv(2)
-                else:
-                    if c == '(':
-                        depth += 1
-                    elif c == ')':
-                        depth -= 1
-                    self.op(c)
-                    self.adv()
-            else:
-                word = (word or '') + c
-                self.adv()
-        flush()
+def literal(word):
+    """A word's text when it holds no expansion, else None (an operand, never an option)."""
+    out = ''
+    for p in word.get('Parts') or []:
+        t = p.get('Type')
+        if t == 'Lit':
+            out += p.get('Value', '')
+        elif t == 'SglQuoted':
+            out += p.get('Value', '')
+        elif t == 'DblQuoted' and all(q.get('Type') == 'Lit' for q in p.get('Parts') or []):
+            out += ''.join(q.get('Value', '') for q in p.get('Parts') or [])
+        else:
+            return None
+    return out
 
 
-def quiet_grep(words):
+def quiet_grep(call):
+    words = [literal(w) for w in call.get('Args') or []]
     k = 0
-    while k < len(words) and (ASSIGN.match(words[k]) or words[k] in PREFIX
-                              or (words[k] == '-i' and k and words[k - 1] == 'env')):
+    while k < len(words) and words[k] is not None:
+        name = os.path.basename(words[k].replace('\\', ''))
+        if name in GREPS:
+            break
+        if name not in WRAPPERS:
+            return False
+        arg_opts, positional = WRAPPERS[name]
         k += 1
-    if k >= len(words) or os.path.basename(words[k]) not in GREPS:
+        while k < len(words) and words[k] is not None and words[k].startswith('-') and words[k] != '--':
+            k += 2 if words[k] in arg_opts else 1
+        if k < len(words) and words[k] == '--':
+            k += 1
+        while k < len(words) and words[k] is not None and '=' in words[k] and name == 'env':
+            k += 1  # env NAME=VALUE
+        k += positional
+    else:
+        return False
+    if k >= len(words) or words[k] is None:
         return False
     rest = iter(words[k + 1:])
     for w in rest:
+        if w is None:
+            continue
         if w == '--':
             return False
         if w in ('--quiet', '--silent'):
@@ -241,8 +86,8 @@ def quiet_grep(words):
             for n, ch in enumerate(w[1:], 1):
                 if ch == 'q':
                     return True
-                if ch in ARG_OPTS:
-                    if n == len(w) - 1:  # `-e PAT`: the next word is the argument, not an option
+                if ch in GREP_ARG_OPTS:
+                    if n == len(w) - 1:  # `-e PAT`: the next word is the argument
                         next(rest, None)
                     break
                 if not ch.isalpha():
@@ -250,41 +95,69 @@ def quiet_grep(words):
     return False
 
 
-def hits(text):
-    lx = Lexer(text)
-    lx.code()
-    toks = lx.toks
+def readers(stmt):
+    """The commands that read the stdin a pipe hands this statement."""
+    cmd = (stmt or {}).get('Cmd') or {}
+    t = cmd.get('Type')
+    if t == 'CallExpr':
+        return [cmd]
+    if t == 'BinaryCmd':
+        return readers(cmd.get('X'))
+    if t in ('Block', 'Subshell'):
+        return [c for s in cmd.get('Stmts') or [] for c in readers(s)]
+    return []
+
+
+def hits(tree):
     out = []
-    for n, (kind, val, _) in enumerate(toks):
-        if kind != 'op' or val not in ('|', '|&'):
-            continue
-        j = n + 1
-        while j < len(toks) and toks[j][:2] == ('op', 'nl'):
-            j += 1
-        words, line = [], None
-        while j < len(toks) and toks[j][0] == 'w':
-            line = line or toks[j][2]
-            words.append(toks[j][1])
-            j += 1
-        if words and quiet_grep(words):
-            out.append(line)
-    return out
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get('Type') == 'BinaryCmd' and n.get('Op') in PIPES:
+                for c in readers(n.get('Y')):
+                    if quiet_grep(c):
+                        out.append(c['Pos']['Line'])
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(tree)
+    return sorted(set(out))
 
 
 def main(paths):
-    found = False
+    shfmt = shutil.which('shfmt')
+    if not shfmt:
+        print('pipe_into_grep_q: shfmt not found on PATH (macOS: brew install shfmt; Linux: '
+              'apt install shfmt, pip install shfmt-py, or go install mvdan.cc/sh/v3/cmd/shfmt@latest)',
+              file=sys.stderr)
+        return 2
+    rc = 0
     for p in paths:
         try:
-            text = open(p, encoding='utf-8', errors='replace').read()
+            with open(p, 'rb') as f:
+                src = f.read()
         except OSError as e:
             print(f'{p}: unreadable ({e})', file=sys.stderr)
-            found = True
+            rc = 2
             continue
-        lines = text.split('\n')
-        for ln in hits(text):
-            found = True
-            print(f'{p}:{ln}: {lines[ln - 1].strip()}')
-    return 1 if found else 0
+        res = subprocess.run([shfmt, '-ln', 'bash', '--to-json'], input=src, capture_output=True)
+        if res.returncode != 0:
+            msg = res.stderr.decode('utf-8', 'replace').strip().splitlines()
+            print(f'{p}: shfmt cannot parse it ({msg[0] if msg else "rc " + str(res.returncode)})',
+                  file=sys.stderr)
+            rc = 2
+            continue
+        lines = src.decode('utf-8', 'replace').split('\n')
+        for ln in hits(json.loads(res.stdout)):
+            text = lines[ln - 1].strip() if 0 < ln <= len(lines) else ''
+            if DELIBERATE in text:
+                continue
+            print(f'{p}:{ln}: {text}')
+            rc = max(rc, 1)
+    return rc
 
 
 if __name__ == '__main__':
