@@ -42,11 +42,11 @@ export MH_GATE_JOURNAL_PATH="$FIXTURE/gate-decisions.jsonl"
 mkdir -p "$FIXTURE/.claude"
 
 out=$(payload_write "$FIXTURE/.claude/settings.local.json" | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "CREATE .claude/settings.local.json (doesn't exist yet) -> ask" "$ok"
 
 out=$(payload_write "$FIXTURE/.claude/settings.json" | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "CREATE .claude/settings.json (doesn't exist yet) -> ask" "$ok"
 
 # Ordinary edit that never touches hooks/enabledPlugins stays frictionless.
@@ -65,7 +65,7 @@ check "MODIFY existing .claude/settings.local.json, no hooks/enabledPlugins touc
 # asks instead of waving through.
 ln -s "$FIXTURE/.claude/does-not-exist-target" "$FIXTURE/.claude/settings.json"
 out=$(payload_write "$FIXTURE/.claude/settings.json" | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "dangling symlink already at settings.json path -> unreadable, cannot verify -> ask" "$ok"
 rm -f "$FIXTURE/.claude/settings.json"
 
@@ -76,7 +76,7 @@ rm -f "$FIXTURE/.claude/settings.json"
 # adversarial verification 2026-08-30.
 printf '{"hooks":{"PreToolUse":[]},\xff\xfe"other":1}' > "$FIXTURE/.claude/settings.json"
 out=$(payload_write_content "$FIXTURE/.claude/settings.json" '{"hooks":{"PreToolUse":[{"id":"evil"}]}}' | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "on-disk file has invalid UTF-8 byte, edit changes hooks -> unreadable, cannot verify -> ask" "$ok"
 rm -f "$FIXTURE/.claude/settings.json"
 
@@ -96,7 +96,7 @@ mkdir -p "$FIXTURE/home/.claude" "$FIXTURE/dot/claude" "$FIXTURE/proj/.claude" "
 echo '{"hooks":{"PreToolUse":[]},"theme":"dark"}' > "$FIXTURE/dot/claude/settings.json"
 ln -s "$FIXTURE/dot/claude/settings.json" "$FIXTURE/home/.claude/settings.json"
 out=$(payload_write_content "$FIXTURE/dot/claude/settings.json" '{"hooks":{"PreToolUse":[{"id":"evil"}]},"theme":"dark"}' | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "real target of a symlinked ~/.claude/settings.json, edit changes hooks -> ask" "$ok"
 
 out=$(payload_edit "$FIXTURE/dot/claude/settings.json" '"theme":"dark"' '"theme":"light"' | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null); rc=$?
@@ -104,18 +104,18 @@ ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
 check "real target of a symlinked ~/.claude/settings.json, unrelated key -> no friction" "$ok"
 
 out=$(payload_write_content "$FIXTURE/dot/claude/settings.json" '{"hooks":{"PreToolUse":[{"id":"evil"}]}}' | HOME="$FIXTURE/home" CLAUDE_CONFIG_DIR="$FIXTURE/home/.claude" bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "CLAUDE_CONFIG_DIR points at the symlinked dir, edit changes hooks -> ask" "$ok"
 
 ln -s "$FIXTURE/dot/claude/settings.local.json" "$FIXTURE/home/.claude/settings.local.json"
 out=$(payload_write "$FIXTURE/dot/claude/settings.local.json" | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "dangling ~/.claude/settings.local.json symlink, Write creates its target -> ask" "$ok"
 
 echo '{"env":{}}' > "$FIXTURE/projdot/settings.json"
 ln -s "$FIXTURE/projdot/settings.json" "$FIXTURE/proj/.claude/settings.json"
 out=$(payload_write_content "$FIXTURE/projdot/settings.json" '{"env":{"MH_ALLOW_MAIN_EDIT":"1"}}' | HOME="$FIXTURE/home" CLAUDE_PROJECT_DIR="$FIXTURE/proj" bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "real target of a symlinked project .claude/settings.json, edit changes env -> ask" "$ok"
 
 out=$(payload_write_content "$FIXTURE/projdot/settings.json" '{"env":{"MH_ALLOW_MAIN_EDIT":"1"}}' | HOME="$FIXTURE/home" bash "$GUARD" 2>/dev/null); rc=$?
@@ -126,12 +126,12 @@ check "settings.json that no known settings location resolves to -> exit 0, no o
 
 echo '{"hooks":{"PreToolUse":[]}}' > "$FIXTURE/.claude/settings.json"
 out=$(payload_write_content "$FIXTURE/.claude/settings.json" '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"evil"}]}]}}' | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Write edit changes hooks key -> ask" "$ok"
 
 echo '{"enabledPlugins":{"mh@wasikarn":true}}' > "$FIXTURE/.claude/settings.json"
 out=$(payload_write_content "$FIXTURE/.claude/settings.json" '{"enabledPlugins":{"mh@wasikarn":false}}' | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Write edit changes enabledPlugins key -> ask" "$ok"
 
 # The matt-skill attack shape: inserting a new array entry next to an
@@ -140,7 +140,7 @@ check "Write edit changes enabledPlugins key -> ask" "$ok"
 # file rather than substring-matching the edited fragment for that word.
 echo '{"hooks":{"PreToolUse":[{"id":"a","matcher":"Bash"}]},"other":1}' > "$FIXTURE/.claude/settings.json"
 out=$(payload_edit "$FIXTURE/.claude/settings.json" '{"id":"a","matcher":"Bash"}]}' '{"id":"a","matcher":"Bash"},{"id":"evil","matcher":"Write"}]}' | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Edit inserts a new hooks.PreToolUse array entry (fragment has no literal 'hooks') -> ask" "$ok"
 
 echo '{"hooks":{"PreToolUse":[]},"theme":"dark"}' > "$FIXTURE/.claude/settings.json"
@@ -155,7 +155,7 @@ check "Edit touches an unrelated key, hooks present elsewhere unchanged -> no fr
 # is the one case that fails if the replace_all branch is dropped.
 echo '{"note":"tag","hooks":{"PreToolUse":[{"id":"tag"}]}}' > "$FIXTURE/.claude/settings.json"
 out=$(payload_edit "$FIXTURE/.claude/settings.json" 'tag' 'evil' 'true' | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Edit with replace_all=true changes hooks via the 2nd occurrence -> ask" "$ok"
 
 # Regression: macOS/APFS is case-insensitive but case-preserving, so
@@ -165,7 +165,7 @@ check "Edit with replace_all=true changes hooks via the 2nd occurrence -> ask" "
 # adversarial verification 2026-08-30.
 echo '{"hooks":{"PreToolUse":[]}}' > "$FIXTURE/.claude/settings.json"
 out=$(payload_write_content "$FIXTURE/.claude/SETTINGS.JSON" '{"hooks":{"PreToolUse":[{"id":"evil"}]}}' | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "uppercase .claude/SETTINGS.JSON resolves to the real file on a case-insensitive FS -> ask" "$ok"
 rm -f "$FIXTURE/.claude/settings.json"
 
@@ -178,19 +178,19 @@ rm -f "$FIXTURE/.claude/settings.json"
 # deep-audit adversarial verification 2026-08-30.
 echo '{"env":{"FOO":"bar"}}' > "$FIXTURE/.claude/settings.json"
 out=$(payload_write_content "$FIXTURE/.claude/settings.json" '{"env":{"FOO":"bar","MH_ALLOW_MAIN_EDIT":"1"}}' | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "Write edit changes env key -> ask" "$ok"
 rm -f "$FIXTURE/.claude/settings.json"
 
 # --- the bash fast path (_silent_fastpath.sh) must defer every payload python could ask on ---
 # "~" expands to $HOME, which can supply the basename the raw payload never spells out.
 out=$(payload_write "~" | HOME="$FIXTURE/home/.claude/settings.json" bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "file_path \"~\" with HOME ending in .claude/settings.json -> ask (fast path defers on ~)" "$ok"
 
 # A \u escape can spell settings.json without the raw text containing it.
 out=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s/.claude/se\\u0074tings.json","content":""}}' "$FIXTURE" | bash "$GUARD" 2>/dev/null)
-ok=1; echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "\\u-escaped settings.json basename -> ask (fast path defers on \\u)" "$ok"
 
 out=$(payload_edit "$FIXTURE/src/app.py" 'x = 1' 'x = 2' | bash "$GUARD" 2>&1); rc=$?
@@ -202,18 +202,18 @@ check "ordinary Edit elsewhere -> exit 0, no output, no stderr" "$ok"
 # depth 500, not 1000: Python <=3.11 overflows near 986.
 deepen() { python3 -c 'import sys; s = sys.stdin.read().rstrip(); n = int(sys.argv[1]); print(s[:-1] + ", \"x\": " + "[" * n + "]" * n + "}")' "$1"; }
 out=$(payload_write "$FIXTURE/src/app.py" | deepen 1000000 | bash "$GUARD" 2>/dev/null); rc=$?
-ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "JSON depth 1e6, Write to a non-settings path -> ask (payload not checked)" "$ok"
 out=$(payload_write "$FIXTURE/src/app.py" | deepen 500 | bash "$GUARD" 2>/dev/null); rc=$?
 ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && ok=0
 check "JSON depth 500, Write to a non-settings path -> still parses, exit 0, no output" "$ok"
 . "$ROOT/tests/_lib/memerr.sh"
 out=$(payload_write "$FIXTURE/src/app.py" | memerr "$GUARD" 2>/dev/null); rc=$?
-ok=1; [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q '"permissionDecision": "ask"' && ok=0
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "json.load MemoryError, Write to a non-settings path -> ask (payload not checked)" "$ok"
 err=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GUARD" 2>&1 >/dev/null); rc=$?
 out=$(printf '{"tool_name":"Write","tool_input":{' | bash "$GUARD" 2>/dev/null)
-ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && echo "$err" | /usr/bin/grep -q "internal error, allowing" && ok=0
+ok=1; [ "$rc" -eq 0 ] && [ -z "$out" ] && /usr/bin/grep -q "internal error, allowing" <<<"$err" && ok=0
 check "truncated JSON -> still allows with the internal-error note (only depth asks)" "$ok"
 
 

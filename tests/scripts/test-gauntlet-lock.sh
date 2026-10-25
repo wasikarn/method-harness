@@ -33,24 +33,24 @@ out=$(run 'gauntlet_lock_acquire; echo "mine=$$ pid=$(cat "$GAUNTLET_LOCK_DIR/pi
 mine=$(printf '%s\n' "$out" | sed -n 's/^mine=\([0-9]*\) pid=.*/\1/p')
 pidf=$(printf '%s\n' "$out" | sed -n 's/^mine=[0-9]* pid=\([0-9]*\)$/\1/p')
 if [ -n "$mine" ] && [ "$mine" = "$pidf" ]; then ok "a free lock is taken and records this process's pid"; else bad "pid file not this process: $out"; fi
-if printf '%s' "$out" | /usr/bin/grep -q '^GONE$'; then ok "release removes the lock"; else bad "lock left behind: $out"; fi
+if /usr/bin/grep -q '^GONE$' <<<"$out"; then ok "release removes the lock"; else bad "lock left behind: $out"; fi
 
 # 2. held by a live process: wait out the cap, then fail open with a message and leave the
 # holder's lock alone.
 sleep 30 & BG=$!
 mkdir "$L"; echo "$BG" > "$L/pid"
 out=$(WAIT=1 run 'gauntlet_lock_acquire; echo "rc=$?"; gauntlet_lock_release')
-if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && printf '%s' "$out" | /usr/bin/grep -qi 'without the lock'; then
+if /usr/bin/grep -q 'rc=0' <<<"$out" && /usr/bin/grep -qi 'without the lock' <<<"$out"; then
   ok "a wait past the cap proceeds (fail open) and says so"
 else bad "no fail-open message: $out"; fi
 if [ "$(cat "$L/pid" 2>/dev/null)" = "$BG" ]; then ok "a fail-open run leaves the live holder's lock alone"; else bad "holder's lock was touched: $(cat "$L/pid" 2>/dev/null)"; fi
-if printf '%s' "$out" | /usr/bin/grep -q 'waiting'; then ok "the waiter announces that it is waiting"; else bad "no waiting message: $out"; fi
+if /usr/bin/grep -q 'waiting' <<<"$out"; then ok "the waiter announces that it is waiting"; else bad "no waiting message: $out"; fi
 
 # 3. reentrant: a child of the lock holder (a test that runs the pre-push hook) must not queue.
 start=$(date +%s)
 out=$(MH_GAUNTLET_LOCK_OWNER="$BG" WAIT=20 run 'gauntlet_lock_acquire; echo "rc=$?"; gauntlet_lock_release')
 elapsed=$(( $(date +%s) - start ))
-if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && [ "$elapsed" -lt 10 ] && [ "$(cat "$L/pid")" = "$BG" ]; then
+if /usr/bin/grep -q 'rc=0' <<<"$out" && [ "$elapsed" -lt 10 ] && [ "$(cat "$L/pid")" = "$BG" ]; then
   ok "a child of the holder skips the queue and leaves the lock"
 else bad "reentrant acquire waited ${elapsed}s or touched the lock: $out"; fi
 kill $BG 2>/dev/null; wait $BG 2>/dev/null; BG=""
@@ -70,7 +70,7 @@ reset
 # 5. a lock dir with no pid file that is old enough is also reclaimed (a crash between mkdir and write).
 mkdir "$L"; touch -t 202601010000 "$L"
 out=$(WAIT=20 GAUNTLET_LOCK_NOPID_SECS=60 run 'gauntlet_lock_acquire; echo "rc=$?"; gauntlet_lock_release')
-if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && ! printf '%s' "$out" | /usr/bin/grep -qi 'without the lock'; then ok "an old lock dir with no pid file is reclaimed"; else bad "old pid-less lock not reclaimed: $out"; fi
+if /usr/bin/grep -q 'rc=0' <<<"$out" && ! /usr/bin/grep -qi 'without the lock' <<<"$out"; then ok "an old lock dir with no pid file is reclaimed"; else bad "old pid-less lock not reclaimed: $out"; fi
 reset
 
 # 6. queueing: a waiter gets the lock after the holder releases, and says it waited.
@@ -85,7 +85,7 @@ for _ in $(seq 1 300); do /usr/bin/grep -q 'waiting' "$T/q.out" 2>/dev/null && b
 touch "$T/go"; wait $W; out=$(cat "$T/q.out")
 mine=$(printf '%s\n' "$out" | sed -n 's/^mine=\([0-9]*\) pid=.*/\1/p')
 pidf=$(printf '%s\n' "$out" | sed -n 's/^mine=[0-9]* pid=\([0-9]*\)$/\1/p')
-if [ -n "$mine" ] && [ "$mine" = "$pidf" ] && printf '%s' "$out" | /usr/bin/grep -q 'waiting'; then
+if [ -n "$mine" ] && [ "$mine" = "$pidf" ] && /usr/bin/grep -q 'waiting' <<<"$out"; then
   ok "a waiter takes the lock after the holder releases"
 else bad "waiter did not get its turn: $out"; fi
 wait $BG 2>/dev/null; BG=""
@@ -99,8 +99,8 @@ if [ ! -w "$RO" ]; then
   out=$(GAUNTLET_LOCK_DIR="$RO/lock" GAUNTLET_LOCK_POLL=0.1 GAUNTLET_LOCK_WAIT_SECS=30 \
     bash -c ". '$LIB'; gauntlet_lock_acquire; echo \"rc=\$?\"; gauntlet_lock_release" 2>&1)
   elapsed=$(( $(date +%s) - start ))
-  if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && [ "$elapsed" -lt 10 ] \
-    && printf '%s' "$out" | /usr/bin/grep -qi 'cannot create' && ! printf '%s' "$out" | /usr/bin/grep -q 'another gauntlet'; then
+  if /usr/bin/grep -q 'rc=0' <<<"$out" && [ "$elapsed" -lt 10 ] \
+    && /usr/bin/grep -qi 'cannot create' <<<"$out" && ! /usr/bin/grep -q 'another gauntlet' <<<"$out"; then
     ok "an uncreatable lock dir fails open at once and says why"
   else bad "uncreatable lock dir stalled ${elapsed}s or blamed another gauntlet: $out"; fi
 else
@@ -119,7 +119,7 @@ if [ "$(LC_ALL=de_DE.UTF-8 awk 'BEGIN { printf "%.1f", 1.5 }' 2>/dev/null)" = "1
   printf '#!/bin/sh\necho "$1" >>"%s/sleeps"\nexec /bin/sleep "$1"\n' "$T" >"$T/bin/sleep"; chmod +x "$T/bin/sleep"
   out=$(PATH="$T/bin:$PATH" LC_ALL=de_DE.UTF-8 GAUNTLET_LOCK_DIR="$L" GAUNTLET_LOCK_POLL=0.2 GAUNTLET_LOCK_WAIT_SECS=2 \
     bash -c "set -euo pipefail; . '$LIB'; gauntlet_lock_acquire; echo rc=\$?" 2>&1)
-  if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && ! printf '%s' "$out" | /usr/bin/grep -qi 'invalid time interval' \
+  if /usr/bin/grep -q 'rc=0' <<<"$out" && ! /usr/bin/grep -qi 'invalid time interval' <<<"$out" \
     && [ -s "$T/sleeps" ] && ! /usr/bin/grep -q ',' "$T/sleeps"; then
     ok "a decimal-comma locale does not break the wait under set -e"
   else bad "locale broke the jittered sleep: $out"; fi
@@ -132,11 +132,11 @@ fi
 # 9. under `set -e`, stray files in the lock dir must not turn a passing run into exit 1, at
 # release or when reclaiming a stale lock.
 out=$(GAUNTLET_LOCK_DIR="$L" bash -c "set -euo pipefail; . '$LIB'; gauntlet_lock_acquire; touch \"\$GAUNTLET_LOCK_DIR/extra\"; gauntlet_lock_release; echo done" 2>&1); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | /usr/bin/grep -q '^done$' && [ ! -e "$L" ]; then ok "release with a stray file in the lock dir still exits 0 and clears the lock"; else bad "release broke under set -e (rc=$rc, lock present=$([ -e "$L" ] && echo y || echo n)): $out"; reset; fi
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q '^done$' <<<"$out" && [ ! -e "$L" ]; then ok "release with a stray file in the lock dir still exits 0 and clears the lock"; else bad "release broke under set -e (rc=$rc, lock present=$([ -e "$L" ] && echo y || echo n)): $out"; reset; fi
 dead=$(bash -c 'echo $$')
 mkdir "$L"; echo "$dead" > "$L/pid"; touch "$L/extra"
 out=$(GAUNTLET_LOCK_DIR="$L" GAUNTLET_LOCK_POLL=0.1 GAUNTLET_LOCK_WAIT_SECS=20 bash -c "set -euo pipefail; . '$LIB'; gauntlet_lock_acquire; echo rc=\$?; gauntlet_lock_release" 2>&1); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && ! printf '%s' "$out" | /usr/bin/grep -qi 'without the lock'; then ok "a stale lock with a stray file is reclaimed under set -e"; else bad "stale reclaim broke under set -e (rc=$rc): $out"; fi
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'rc=0' <<<"$out" && ! /usr/bin/grep -qi 'without the lock' <<<"$out"; then ok "a stale lock with a stray file is reclaimed under set -e"; else bad "stale reclaim broke under set -e (rc=$rc): $out"; fi
 reset
 for d in "$T"/lock.stale.* "$T"/lock.reclaim; do [ -e "$d" ] && bad "leftover $d"; done
 
@@ -166,7 +166,7 @@ mkdir "$L"; echo 999999 >"$L/pid"; mkdir "$L/sub"
 start=$(date +%s)
 out=$(WAIT=1 run 'gauntlet_lock_acquire; echo rc=$?')
 elapsed=$(( $(date +%s) - start ))
-if printf '%s' "$out" | /usr/bin/grep -q 'rc=0' && [ "$elapsed" -le 6 ]; then
+if /usr/bin/grep -q 'rc=0' <<<"$out" && [ "$elapsed" -le 6 ]; then
   ok "a lock that cannot be removed still fails open at the cap (${elapsed}s)"
 else bad "stuck lock spun or stalled (${elapsed}s): $out"; fi
 rm -f "$L/pid"; rmdir "$L/sub" "$L" 2>/dev/null; reset
@@ -175,7 +175,7 @@ sleep 30 & BG=$!
 mkdir "$L"; echo "$BG" > "$L/pid"
 out=$(GAUNTLET_LOCK_MAX_AGE=1h GAUNTLET_LOCK_WAIT_SECS=1 GAUNTLET_LOCK_DIR="$L" GAUNTLET_LOCK_POLL=0.1 \
   bash -c ". '$LIB'; gauntlet_lock_acquire; echo owner=\$(cat '$L/pid')" 2>&1)
-if printf '%s' "$out" | /usr/bin/grep -q "owner=$BG"; then ok "a non-numeric MAX_AGE does not let a waiter take a live lock"
+if /usr/bin/grep -q "owner=$BG" <<<"$out"; then ok "a non-numeric MAX_AGE does not let a waiter take a live lock"
 else bad "live lock taken with MAX_AGE=1h: $out"; fi
 # WAIT_SECS=2s falls back to the 1800 s default, so it must keep waiting quietly, not error each poll.
 GAUNTLET_LOCK_WAIT_SECS=2s GAUNTLET_LOCK_DIR="$L" GAUNTLET_LOCK_POLL=0.1 \

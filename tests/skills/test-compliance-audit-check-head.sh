@@ -44,7 +44,7 @@ ship=$(awk '/^   - `pass` true/{p=1;print;next} p&&/^   - /{exit} p' "$SKILL")
 for pair in "pin:$pin" "ship:$ship"; do
   name=${pair%%:*}; body=${pair#*:}
   if [ -z "$body" ]; then echo "FAIL: $name paragraph not found"; fail=1; continue; fi
-  if printf '%s' "$body" | /usr/bin/grep -q 'check-head.sh'; then
+  if /usr/bin/grep -q 'check-head.sh' <<<"$body"; then
     echo "ok: $name paragraph names check-head.sh"
   else
     echo "FAIL: $name paragraph does not name check-head.sh"; fail=1

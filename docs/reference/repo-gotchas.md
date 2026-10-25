@@ -21,6 +21,13 @@ non-mh sessions is not covered. Builders still build in parallel; only their pus
 checkout's hook, so the lock applies only once that checkout has the new `git-hooks/pre-push`
 (update it after this lands); a relative path uses each worktree's own hook.
 
+Under `set -o pipefail`, never pipe a writer into a reader that may stop early: `echo "$out" | grep
+-q PAT` fails on a match whenever grep exits before bash's line-by-line writes finish (SIGPIPE, rc
+141). Under gauntlet load this flaked the wiring test and other rows, each run naming a different
+file (2026-10-23). Write `grep -q PAT <<<"$out"`; `tests/scripts/test-pipefail-grep-q-lint.sh`
+fails on the piped form. The same applies to a payload piped into a command that may not read it
+(`scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for this reason).
+
 ## Git hooks
 
 Hooks live in `git-hooks/`, not `.git/hooks/`. Wire once per clone with
