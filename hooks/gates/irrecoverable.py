@@ -3032,20 +3032,22 @@ _FIND_VALUE_TESTS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwhol
                      "-lname", "-ilname", "-newer", "-anewer", "-cnewer", "-samefile", "-type", "-xtype", "-user",
                      "-group", "-uid", "-gid", "-perm", "-size", "-mtime", "-atime", "-ctime", "-mmin", "-amin",
                      "-cmin", "-used", "-links", "-inum", "-maxdepth", "-mindepth", "-fstype", "-context",
-                     "-printf", "-fprintf", "-fprint", "-fprint0", "-fls", "-regextype", "-newermt"}
+                     "-printf", "-fprint", "-fprint0", "-fls", "-regextype", "-files0-from"}
+_FIND_NEWER_XY_RE = re.compile(r"-newer[aBcm][aBcmt]")  # -newermt, -newerBt, ...: one value; -fprintf takes two
 
 def _find_actions(rest, *names):
     # True when a word of find's `rest` that is not a test's value may be one of names. Read left to
     # right: a test's value is skipped even when it is itself a test's name (`-name -name -delete`
     # deletes the files named "-name").
-    value = False
+    value = 0
     for t in rest:
         if value:
-            value = False
+            value -= 1
             continue
         if _find_word_may_be(t, *names):
             return True
-        value = t.replace(PH, "") in _FIND_VALUE_TESTS
+        u = t.replace(PH, "")
+        value = 2 if u == "-fprintf" else 1 if u in _FIND_VALUE_TESTS or _FIND_NEWER_XY_RE.fullmatch(u) else 0
     return False
 
 def _shell_body_runs_rm(sub, depth=0):

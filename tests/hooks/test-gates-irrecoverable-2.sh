@@ -2335,7 +2335,12 @@ for _c in \
   'find . -iname -path -execdir rm {} +' \
   'find . -exec cat {} \;>/dev/null -delete' \
   'find . -exec cat {} \;2>/dev/null -delete' \
-  'find . -exec cat {}>/dev/null \; -delete' ; do
+  'find . -exec cat {}>/dev/null \; -delete' \
+  'find . -fprintf f -name -delete' \
+  'find . -fprintf f -name -exec rm {} \;' \
+  'find . -newerma -name -delete' \
+  'find . -newerBt -iname -delete' \
+  'find . -files0-from -name -delete' ; do
   test_deny "$IRRECOVERABLE" "GH #586: find deletes through a shell body or a spliced action: $_c" "$(bash_payload "$_c")"
 done
 for _c in \
