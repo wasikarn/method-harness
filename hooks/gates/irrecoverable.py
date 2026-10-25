@@ -2413,7 +2413,8 @@ def _hooks_path_ok(scan):
 
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
-    # window w set core.hooksPath (key case-insensitive) to a non-empty value?
+    # window w set core.hooksPath (key case-insensitive)? Any value: an empty one (`-c core.hooksPath=`)
+    # unwires every hook (git 2.43, live-checked); a bare `-c core.hooksPath` (no "=") is a git error.
     for idx, t in enumerate(w):
         t_pf = t.replace(PH, "")
         if t_pf == "-c" and idx + 1 < len(w):
@@ -2428,8 +2429,8 @@ def _sets_hooks_path(w):
             kv = t_pf[len("--config-env="):]
         else:
             continue
-        key, _, val = kv.partition("=")
-        if key.lower() == "core.hookspath" and val:
+        key, eq, _ = kv.partition("=")
+        if key.lower() == "core.hookspath" and eq:
             return True
     return False
 
@@ -2505,37 +2506,119 @@ def _git_alias_check(val, args, how):
     elif val and val != "true":
         _scan_body((val[1:] if val.startswith("!") else "git " + val) + (" " + " ".join(args) if args else ""))
 
-# _GIT_CONFIG_VALUE_OPTS (the options that take a value) is defined beside _hooks_path_ok (GH #562).
-# Actions that read, list, edit or remove: their second operand is a value-pattern, not a value written.
-_GIT_CONFIG_NO_WRITE_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
-                             "--unset", "--unset-all", "-l", "--list", "--remove-section", "--rename-section", "-e", "--edit")
+# The second operand of a read, list, edit or remove action is a value-pattern, not a value written.
+# The option lists are GH #562's (_hooks_path_ok), shared rather than repeated.
+_GIT_CONFIG_NO_WRITE_OPTS = _GIT_CONFIG_READ_OPTS + _GIT_CONFIG_EDIT_OPTS + ("--get-color", "--get-colorbool")
 _GIT_CONFIG_NO_WRITE_SUBS = ("get", "list", "unset", "remove-section", "rename-section", "edit")
-def _git_config_write(scan):
+def _git_config_write(words):
     """(key, value) a `git config [set|--add|--replace-all] KEY VALUE` writes, or None.
 
-    scan is the words after `config`, a blanked substitution (PH) still in place: a value built at
-    run time comes back as _GIT_CFG_UNSEEN. None for a read, a list, an edit, an unset (PR #571
-    review: `--unset KEY +HEAD:main` names a value-pattern to remove, it writes nothing) or a key
-    with no dot. Value-taking options (_GIT_CONFIG_VALUE_OPTS) are skipped with their value.
+    words are the raw words after `config` (args, not scan: scan drops an empty word, and an empty
+    boolean is false, so `clean.requireForce ""` is a write), a blanked substitution (PH) in place:
+    a value built at run time comes back as _GIT_CFG_UNSEEN. git config stops reading options at its
+    first plain word (round 2 review, checked on git 2.43), so a read, edit or unset option counts
+    only before it: `--unset KEY +HEAD:main` names a value-pattern to remove and writes nothing, but
+    `KEY VALUE --unset` writes. None for a read, a list, an edit, an unset or a key with no dot.
+    Value-taking options (_GIT_CONFIG_VALUE_OPTS, shared with _hooks_path_ok) are skipped with
+    their value.
     """
-    pos, i = [], 0
-    while i < len(scan):
-        t = scan[i].replace(PH, "")
-        if t in _GIT_CONFIG_VALUE_OPTS:
-            i += 2
-            continue
-        if t in _GIT_CONFIG_NO_WRITE_OPTS:
-            return None
-        if not t.startswith("-"):
-            pos.append(scan[i])
-        i += 1
-    if pos and pos[0].replace(PH, "") in _GIT_CONFIG_NO_WRITE_SUBS:
+    n = len(words)
+    def options(i):
+        # Index of the first plain word from i, and whether a no-write option came before it.
+        no_write = False
+        while i < n:
+            t = words[i].replace(PH, "")
+            if t == "--":
+                return i + 1, no_write
+            if not t.startswith("-") or t == "-":
+                break
+            if t in _GIT_CONFIG_VALUE_OPTS:
+                i += 2
+                continue
+            no_write = no_write or t.split("=", 1)[0] in _GIT_CONFIG_NO_WRITE_OPTS
+            i += 1
+        return i, no_write
+    i, no_write = options(0)
+    if no_write or (i < n and words[i].replace(PH, "") in _GIT_CONFIG_NO_WRITE_SUBS):
         return None
-    if pos and pos[0].replace(PH, "") == "set":
-        pos = pos[1:]
+    if i < n and words[i].replace(PH, "") == "set":
+        i, no_write = options(i + 1)
+        if no_write:
+            return None
+    pos = words[i:]
     if len(pos) < 2 or "." not in pos[0]:
         return None
     return pos[0].replace(PH, ""), _git_cfg_value(pos[1])
+
+def _git_clean_dry_run(words):
+    # Does `git clean <words>` run as a dry run (-n, --dry-run) or ask first (-i, --interactive)?
+    # Read in order, as git does (round 2 review): -e/--exclude takes the next word (or the rest of
+    # its cluster) as a value, and `--` ends the options, so `-e -n` and `-- -n` are not a dry run.
+    # The last of -n/--dry-run and --no-dry-run wins (round 3 review: `-n --no-dry-run` deletes).
+    dry = inter = False
+    i = 0
+    while i < len(words):
+        t = words[i].replace(PH, "")
+        i += 1
+        if t == "--":
+            break
+        if t.startswith("--"):
+            name = t.split("=", 1)[0]
+            if _is_flag(name, "--exclude"):
+                i += 0 if "=" in t else 1
+            elif _is_flag(name, "--dry-run"):
+                dry = True
+            elif _is_flag(name, "--no-dry-run"):
+                dry = False
+            elif _is_flag(name, "--interactive"):
+                inter = True
+            elif _is_flag(name, "--no-interactive"):
+                inter = False
+        elif t.startswith("-"):
+            for k, ch in enumerate(t[1:]):
+                if ch == "e":
+                    i += 1 if k == len(t) - 2 else 0
+                    break
+                if ch == "n":
+                    dry = True
+                elif ch == "i":
+                    inter = True
+    return dry or inter
+
+_GIT_ALIAS_DEPTH = 10
+def _git_alias_chain(aliases, verb):
+    """Follow -c aliases from the typed verb: (steps, how, body).
+
+    steps is [(verb, words)], the typed verb with no words first, then each non-! expansion (its
+    extra words go before the user's). git always runs a built-in and ignores an alias of the same
+    name, and the gate does not know every built-in, so callers check EVERY step and any deny wins
+    (round 3 review: alias.push=status hid a mirror push). how names the last alias used (None:
+    none). body is what ends the chain when it is not a plain verb: a ! shell line, or
+    _GIT_CFG_UNSEEN for a value built at run time or a chain still going after _GIT_ALIAS_DEPTH
+    steps (git follows it further). A loop stops at the first repeat (git errors and runs nothing);
+    each alias is split at most once, so the walk stays linear.
+    """
+    steps, words, seen, how = [(verb, [])], [], set(), None
+    for _ in range(_GIT_ALIAS_DEPTH + 1):
+        name = verb.replace(PH, "").lower()
+        val = aliases.get(name)
+        if val is None or val == "true" or not val.strip() or name in seen:
+            return steps, how, None
+        if len(seen) == _GIT_ALIAS_DEPTH:
+            return steps, how, _GIT_CFG_UNSEEN
+        seen.add(name)
+        how = "git -c alias." + name
+        if val is _GIT_CFG_UNSEEN or val.startswith("!"):
+            return steps, how, val
+        try:
+            exp = shlex.split(val)
+        except ValueError:
+            exp = val.split()
+        if not exp:
+            return steps, how, None
+        verb, words = exp[0], exp[1:] + words
+        steps.append((verb, words))
+    return steps, how, None
 
 # GH #336: chmod making files world-writable (777 / a+rwx) recursively or on / or ~.
 # The tokenizer splits `+` out of a word (`a+rwx` is "a", "+", "rwx"), so the mode is read on the
@@ -3266,7 +3349,7 @@ def _check_window(_wi, w):
                 deny("--no-verify bypasses safety hooks", rule="git-no-verify")
             # -c core.hooksPath=<path> (split or joined "-ccore.hooksPath=X")
             # re-points git at a different hooks dir -- same bypass as
-            # --no-verify. Only a non-empty value trips it.
+            # --no-verify. An empty value trips it too: it unwires every hook.
             # Case-insensitive key match (git config keys are case-insensitive;
             # `-c core.hookspath=` re-points hooks exactly like the canonical
             # spelling, live-confirmed) -- only the KEY is lowercased for the
@@ -3308,21 +3391,41 @@ def _check_window(_wi, w):
                 _deny_ambiguous()
             # GH #561: what a -c pair makes of this subcommand (an alias names it, or a key re-enables a deny).
             _sub = sub.replace(PH, "")
-            # One pass: git keeps the last alias.<name>, so the body is scanned once (PR #571 review: one
-            # scan per alias pair was quadratic). Risk keys are not merged: a remote's name is case-
-            # sensitive, so any dangerous pair counts.
-            _alias, _alias_key = None, "alias." + _sub.lower()
+            # One pass: git keeps the last alias.<name>, so each alias is expanded once (PR #571 review:
+            # one scan per alias pair was quadratic). The risk keys and the verb rules read the typed verb
+            # and every verb along the alias chain, any deny wins (round 3 review: git runs a built-in
+            # over an alias of its name). Risk keys are not merged: a remote's name is case-sensitive,
+            # so any dangerous pair counts.
+            _aliases, _risks = {}, []
             for _k, _v in _git_cfg_pairs(rest[:i]):
-                if _k == _alias_key:
-                    _alias = _v
-                _r = _git_cfg_risk(_k, _v, _sub)
-                if _r == "git-clean-force" and any(
-                        t.replace(PH, "") in ("--dry-run", "--interactive") or _bundled_flag(t.replace(PH, ""), "e", "n")
-                        or _bundled_flag(t.replace(PH, ""), "e", "i") for t in args):
-                    _r = None  # a dry run (clean -n, -xdn) or the prompt deletes nothing unasked
-                if _r:
-                    deny("git -c " + _k + "=" + _v + " makes `git " + _sub + "` do what its denied flag does — confirm with user first", rule=_r)
-            _git_alias_check(_alias, args, "git -c " + _alias_key)
+                if _k.startswith("alias."):
+                    _aliases[_k[len("alias."):]] = _v
+                else:
+                    _risks.append((_k, _v))
+            _steps, _how, _body = _git_alias_chain(_aliases, _sub)
+            for _verb, _pre in _steps:
+                _rverb = _verb.replace(PH, "")
+                for _k, _v in _risks:
+                    _r = _git_cfg_risk(_k, _v, _rverb)
+                    if _r == "git-clean-force" and _git_clean_dry_run(_pre + args):
+                        _r = None  # a dry run (clean -n, -xdn) or the prompt deletes nothing unasked
+                    if _r:
+                        deny("git -c " + _k + "=" + _v + " makes `git " + _rverb + "` do what its denied flag does — confirm with user first", rule=_r)
+            if _body is not None and _body is not _GIT_CFG_UNSEEN:
+                # A ! alias's shell line runs with the -c keys in effect (git passes them on in
+                # GIT_CONFIG_PARAMETERS), so a risky key under one is the risky run (round 3 review).
+                for _k, _v in _risks:
+                    _r = _git_cfg_risk(_k, _v, None)
+                    if _r:
+                        deny("git -c " + _k + "=" + _v + " is in effect for every git the " + _how + " shell line runs — confirm with user first", rule=_r)
+            if _body is not None:
+                _git_alias_check(_body, _steps[-1][1] + args, _how)
+            # git runs the first built-in along the chain, else the last verb. A verb in the middle that
+            # is not a gated built-in only names the next alias, so it is not scanned: one scan per
+            # step with the user's words was 2.7 s on a 130 KB ten-step chain.
+            for _n, (_verb, _pre) in enumerate(_steps[1:], 2):
+                if _n == len(_steps) or _verb.replace(PH, "").lower() in KNOWN_GIT_SUBS + ("config",):
+                    _scan_body("git " + " ".join([_verb] + _pre + args))
             # drop the value token after a free-text flag so message content
             # (e.g. "commit -m ...rm -rf...") is never pattern-matched.
             scan_raw, skip = [], False
@@ -3365,7 +3468,7 @@ def _check_window(_wi, w):
                 # pre-push (same bypass class as --no-verify). The documented
                 # wiring value `git-hooks` stays allowed.
                 # GH #561: a stored alias or key does at the next run what the -c pair above does now.
-                _cw = _git_config_write(scan_raw) if sub == "config" else None
+                _cw = _git_config_write(args) if sub == "config" else None
                 if _cw and _cw[0].lower().startswith("alias."):
                     _git_alias_check(_cw[1], [], "git config " + _cw[0])
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
