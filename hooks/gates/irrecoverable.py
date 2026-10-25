@@ -2342,6 +2342,25 @@ def _hooks_path_ok(scan):
     pos = pos[1:] if pos[:1] == ["set"] else pos
     return len(pos) == 1 or (len(pos) == 2 and pos[1] == "git-hooks" and not any(t == "--value" for t in opts))
 
+def _drops_core_section(words):
+    # GH #562: `git config [--]remove-section core` and `[--]rename-section core X` (or X core) drop or
+    # rewrite core.hooksPath without naming it. Section names ignore case; git takes a unique prefix
+    # of a long option (`--rem`); a name built at run time (a $ or a blanked substitution) may be core.
+    pos, mode, i = [], False, 0
+    while i < len(words):
+        t = words[i].replace(PH, "")
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        if t.startswith("-"):
+            mode = mode or _is_flag(t, "--remove-section", "--rename-section")
+        else:
+            pos.append(words[i])
+        i += 1
+    if pos and pos[0].replace(PH, "") in ("remove-section", "rename-section"):
+        mode, pos = True, pos[1:]
+    return mode and any(PH in w or "$" in w or w.lower() == "core" for w in pos)
+
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
     # window w set core.hooksPath (key case-insensitive)? Any value: an empty one (`-c core.hooksPath=`)
@@ -3401,7 +3420,11 @@ def _check_window(_wi, w):
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
                     deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
                          rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
-                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and not _hooks_path_ok(scan):
+                # GH #562: the decision reads args, not scan: scan drops an empty word, and `core.hooksPath ""`
+                # (an empty value, which unwires every hook) then read as the key alone, a read.
+                _cfg = [t.replace(PH, "") for t in args] if sub == "config" else None
+                if _cfg and ((any(t.lower() == "core.hookspath" for t in _cfg) and not _hooks_path_ok(_cfg))
+                             or _drops_core_section(args)):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
                     deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
