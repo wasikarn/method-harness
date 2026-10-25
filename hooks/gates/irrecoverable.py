@@ -1905,6 +1905,7 @@ _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _MAX_SHELL_DEPTH = 5
 _WDEPTH = {}      # window index -> unwrap depth (absent = 0, an original window)
 _XARGS_HANDOVERS = [0]  # windows appended for `xargs <wrapper> ...` (bounded, see the xargs branch)
+_ENV_PRE570_WINDOWS = set()  # indexes of the GH #560 pre-#570 env -S readings (see the env branch)
 _cur_depth = 0
 
 def _count_handover(what):
@@ -2332,47 +2333,105 @@ def _sets_hooks_path(w):
 # push, clean.requireForce=false is clean -f, and gc's expiry keys at now are reflog expire + prune.
 # Read from `-c KEY=VAL` (and a `git config KEY VALUE` write of the same keys, see _git_config_write).
 _GIT_FALSE = ("false", "no", "off", "0", "")
-def _git_c_pairs(globs):
-    # (lowercased key, value) of each -c KEY=VAL / -cKEY=VAL in git's global flags.
+class _GitCfgUnseen(str):
+    # A config value the gate cannot see (PR #571 review): --config-env's env var, or a value built at
+    # run time ($X, $(...)). Checks read it as the dangerous value, as an unknown value is elsewhere.
+    pass
+_GIT_CFG_UNSEEN = _GitCfgUnseen("<a value built at run time>")
+
+def _git_cfg_value(raw):
+    # The value a config word holds, or _GIT_CFG_UNSEEN when bash builds it at run time: a blanked
+    # $(...)/backtick (PH) anywhere, or a $ parameter as its first word (the verb of an alias).
+    if PH in raw:
+        return _GIT_CFG_UNSEEN
+    first = raw.lstrip("!").split(" ", 1)[0]
+    return _GIT_CFG_UNSEEN if first.startswith("$") else raw
+
+def _git_cfg_pairs(globs):
+    """(lowercased key, value) of each config pair in git's global flags, in command-line order.
+
+    Forms: `-c KEY=VAL`, `-cKEY=VAL`, a bare `-c KEY` (git reads it as KEY=true), and
+    `--config-env KEY=ENVVAR` / `--config-env=KEY=ENVVAR`, whose value is _GIT_CFG_UNSEEN (the gate
+    never sees the env var). A value built at run time is _GIT_CFG_UNSEEN too (_git_cfg_value).
+    One pass over globs: callers must stay linear in it (PR #571 review: a per-pair rescan of the
+    arguments took 9.3 s on 80 KB, past the 8 s hook timeout, which allows).
+    """
     out = []
     for idx, t in enumerate(globs):
         t_pf = t.replace(PH, "")
-        kv = globs[idx + 1] if t_pf == "-c" and idx + 1 < len(globs) else t_pf[2:] if t_pf.startswith("-c") and t_pf != "-c" else None
-        if kv and "=" in kv:
-            key, _, val = kv.replace(PH, "").partition("=")
-            out.append((key.lower(), val))
+        env = t_pf == "--config-env" or t_pf.startswith("--config-env=")
+        if t_pf in ("-c", "--config-env"):
+            kv = globs[idx + 1] if idx + 1 < len(globs) else None
+        elif t_pf.startswith("--config-env="):
+            kv = t[t.index("=") + 1:]
+        elif t_pf.startswith("-c"):
+            kv = t[t.index("c") + 1:]
+        else:
+            continue
+        if not kv:
+            continue
+        key, eq, val = kv.partition("=")
+        key = key.replace(PH, "").lower()
+        out.append((key, _GIT_CFG_UNSEEN if env else _git_cfg_value(val) if eq else "true"))
     return out
 
 def _git_cfg_risk(key, val, sub):
     # The rule a config pair breaks for subcommand sub (None: any later run), or None.
-    now = val.lower() in ("now", "all", "0")
-    if key.startswith("remote.") and key.endswith(".mirror") and val.lower() not in _GIT_FALSE and sub in ("push", None):
+    # An unseen value takes the dangerous reading of every key.
+    unseen = val is _GIT_CFG_UNSEEN
+    now = unseen or val.lower() in ("now", "all", "0")
+    if key.startswith("remote.") and key.endswith(".mirror") and (unseen or val.lower() not in _GIT_FALSE) and sub in ("push", None):
         return "git-push-mirror"
-    if key.startswith("remote.") and key.endswith(".push") and val.startswith("+") and sub in ("push", None):
+    if key.startswith("remote.") and key.endswith(".push") and (unseen or val.startswith("+")) and sub in ("push", None):
         return "git-push-force"
-    if key == "clean.requireforce" and val.lower() in _GIT_FALSE and sub in ("clean", None):
+    if key == "clean.requireforce" and (unseen or val.lower() in _GIT_FALSE) and sub in ("clean", None):
         return "git-clean-force"
     if key in ("gc.pruneexpire", "gc.reflogexpire", "gc.reflogexpireunreachable") and now and sub in ("gc", None):
         return "git-reflog-prune"
     return None
 
+def _git_alias_check(val, args, how):
+    # GH #561: an alias body runs as `git <body> <args>`, or a "!" body as a shell line. A body built
+    # at run time is unseen, so it is denied like --config-env's (git's own reading of a run-time verb,
+    # `git "$(...)" ...`, also takes the denying reading).
+    if val is _GIT_CFG_UNSEEN:
+        deny(how + " runs " + _GIT_CFG_UNSEEN + " — the gate cannot see what it runs; confirm with user first",
+             rule="git-alias-unseen")
+    elif val and val != "true":
+        _scan_body((val[1:] if val.startswith("!") else "git " + val) + (" " + " ".join(args) if args else ""))
+
+# _GIT_CONFIG_VALUE_OPTS (the options that take a value) is defined beside _hooks_path_ok (GH #562).
+# Actions that read, list, edit or remove: their second operand is a value-pattern, not a value written.
+_GIT_CONFIG_NO_WRITE_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+                             "--unset", "--unset-all", "-l", "--list", "--remove-section", "--rename-section", "-e", "--edit")
+_GIT_CONFIG_NO_WRITE_SUBS = ("get", "list", "unset", "remove-section", "rename-section", "edit")
 def _git_config_write(scan):
-    # (key, value) a `git config [set] KEY VALUE` writes, or None (a read, a list, an unset).
-    # scan is the raw args: the git scan drops an empty word, and an empty value is a write (git reads
-    # `clean.requireForce ""` as false), so the empty word must stay; PH is stripped here.
-    scan = [t.replace(PH, "") for t in scan]
+    """(key, value) a `git config [set|--add|--replace-all] KEY VALUE` writes, or None.
+
+    scan is the raw words after `config`: empty words kept (git reads `clean.requireForce ""` as
+    false, and the git scan drops an empty word) and a blanked substitution (PH) still in place: a
+    value built at run time comes back as _GIT_CFG_UNSEEN. None for a read, a list, an edit, an unset
+    (PR #571 review: `--unset KEY +HEAD:main` names a value-pattern to remove, it writes nothing) or a
+    key with no dot. Value-taking options (_GIT_CONFIG_VALUE_OPTS) are skipped with their value.
+    """
     pos, i = [], 0
     while i < len(scan):
-        t = scan[i]
+        t = scan[i].replace(PH, "")
         if t in _GIT_CONFIG_VALUE_OPTS:
             i += 2
             continue
+        if t in _GIT_CONFIG_NO_WRITE_OPTS:
+            return None
         if not t.startswith("-"):
-            pos.append(t)
+            pos.append(scan[i])
         i += 1
-    if pos[:1] == ["set"]:
+    if pos and pos[0].replace(PH, "") in _GIT_CONFIG_NO_WRITE_SUBS:
+        return None
+    if pos and pos[0].replace(PH, "") == "set":
         pos = pos[1:]
-    return (pos[0], pos[1]) if len(pos) >= 2 and "." in pos[0] else None
+    if len(pos) < 2 or "." not in pos[0]:
+        return None
+    return pos[0].replace(PH, ""), _git_cfg_value(pos[1])
 
 # GH #336: chmod making files world-writable (777 / a+rwx) recursively or on / or ~.
 # The tokenizer splits `+` out of a word (`a+rwx` is "a", "+", "rwx"), so the mode is read on the
@@ -2596,6 +2655,40 @@ def _gh_builtin_write(scan):
         return f"{group} {words[0]} {flag}"
     return ""
 
+# GH #560: the words of an `env -S` string when its first word is an env option (env reads on
+# from them), else None (the string is the command line, scanned like a sh -c body). An unbalanced
+# quote is None too, so the string still gets the body scan.
+_ENV_SPLIT_MAX = 16
+def _env_split_options(body):
+    if not body.replace(PH, "").lstrip().startswith("-"):
+        return None
+    # GH #560 round 2: env ends the string at `\c` (outside single quotes) and at a word that
+    # starts with `#`, then reads on from the words after the -S argument (`env -S '-i #' rm -rf x`
+    # runs rm). shlex would turn `\c` into a `c` word and keep `#`, the command env never runs.
+    q, k = "", 0
+    while k < len(body):
+        ch = body[k]
+        if ch == "'" and q != '"':
+            q = "" if q else "'"
+        elif ch == '"' and q != "'":
+            q = "" if q else '"'
+        elif ch == "\\" and q != "'":
+            if body[k + 1:k + 2] == "c":
+                body = body[:k]
+                break
+            k += 1
+        k += 1
+    lex = shlex.shlex(body, posix=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    try:
+        words = list(lex)
+    except ValueError:
+        return None
+    for n, word in enumerate(words):
+        if word.startswith("#"):
+            return words[:n]
+    return words
+
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 # xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
 _XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
@@ -2673,7 +2766,7 @@ def _check_window(_wi, w):
     # separate GH issues (2026-09-20 audit).
     # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
     # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
-    o, via_run_wrapper = 0, False
+    o, env_splits, via_run_wrapper = 0, 0, False
     while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
@@ -2685,7 +2778,17 @@ def _check_window(_wi, w):
             # the first value letter takes the rest of the cluster, or the next word when that is
             # empty (`-iu FOO`). getopt_long also takes an unambiguous prefix (`--split=`); `--s`
             # is the shortest, as no other env long option starts with s.
-            i, body = o, None
+            # GH #560 regression after #570: env keeps reading ITS OWN options from the split words
+            # (`env -S -i rm -rf x` and `env -S '-u FOO rm -rf x'` run rm), so a string whose first
+            # word is an option is split back into this loop, not scanned as a command line.
+            # _ENV_SPLIT_MAX bounds the re-splits: each one copies the tail, and a flood must stay
+            # linear; past it the gate denies, like the sh -c depth limit.
+            # GH #560 round 3: -S splitting has more corners than this models (a quoted or escaped
+            # `#`, `\_`, a quote inside a comment, an empty nested -S, `--unset NAME`), so an env
+            # with -S is ALSO read the way the gate read it before #570 (-S a bare flag, `-u` takes
+            # a value), as one more window at this depth: either reading denies, so no shape that
+            # denied before #570 allows now. _count_handover bounds a chain of them (each copies the tail).
+            i, body, pre_rest, pre_o, split_seen = o, None, rest, o, False
             while i < len(rest):
                 t = rest[i].replace(PH, "")
                 long_name = t[2:].split("=", 1)[0]
@@ -2694,21 +2797,51 @@ def _check_window(_wi, w):
                         body, i = rest[i].split("=", 1)[1], i + 1
                     elif i + 1 < len(rest):
                         body, i = rest[i + 1], i + 2
-                    break
-                m = re.match(r"-[^-CPSu]*([CPSu])", t)
-                if m:
-                    attached = t[m.end():]
-                    if m.group(1) == "S" and (attached or i + 1 < len(rest)):
-                        body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
-                    i += 1 if attached else 2
-                    if body is not None:
+                    else:
                         break
+                    m = None
+                else:
+                    m = re.match(r"-[^-CPSu]*([CPSu])", t)
+                    if m:
+                        attached = t[m.end():]
+                        if m.group(1) == "S" and (attached or i + 1 < len(rest)):
+                            body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
+                        i += 1 if attached else 2
+                if body is not None:
+                    split_seen = True
+                    words = _env_split_options(body)
+                    if words is None:
+                        break
+                    env_splits += 1
+                    if env_splits > _ENV_SPLIT_MAX:
+                        deny("env -S strings that start with an option, more than %d deep - confirm with user first"
+                             % _ENV_SPLIT_MAX)
+                        break
+                    rest, i, body = words + rest[i:], 0, None
+                elif m:
+                    pass
                 elif t.startswith("-"):
                     i += 1
                 elif _assignment(rest[i]):
                     i += 1
                 else:
                     break
+            if split_seen:
+                if _wi in _ENV_PRE570_WINDOWS:  # only a chain of them copies the tail again and again
+                    _count_handover("env -S")
+                j = pre_o
+                while j < len(pre_rest):
+                    t = pre_rest[j].replace(PH, "")
+                    if t == "-u" and j + 1 < len(pre_rest):
+                        j += 2
+                    elif t.startswith("-") or _assignment(pre_rest[j]):
+                        j += 1
+                    else:
+                        break
+                if j < len(pre_rest):
+                    _WDEPTH[len(windows)] = _cur_depth
+                    _ENV_PRE570_WINDOWS.add(len(windows))
+                    windows.append(pre_rest[j:])
             if body is not None:
                 _scan_body(" ".join([body] + rest[i:]))
                 o = len(rest)
@@ -3009,14 +3142,21 @@ def _check_window(_wi, w):
                 _deny_ambiguous()
             # GH #561: what a -c pair makes of this subcommand (an alias names it, or a key re-enables a deny).
             _sub = sub.replace(PH, "")
-            for _k, _v in _git_c_pairs(rest[:i]):
-                if _k == "alias." + _sub.lower() and _v:
-                    _scan_body((_v[1:] if _v.startswith("!") else "git " + _v) + " " + " ".join(args))
+            # One pass: git keeps the last alias.<name>, so the body is scanned once (PR #571 review: one
+            # scan per alias pair was quadratic). Risk keys are not merged: a remote's name is case-
+            # sensitive, so any dangerous pair counts.
+            _alias, _alias_key = None, "alias." + _sub.lower()
+            for _k, _v in _git_cfg_pairs(rest[:i]):
+                if _k == _alias_key:
+                    _alias = _v
                 _r = _git_cfg_risk(_k, _v, _sub)
-                if _r == "git-clean-force" and any(t.replace(PH, "") in ("-n", "--dry-run", "-i", "--interactive") for t in args):
-                    _r = None  # a dry run or the prompt deletes nothing unasked
+                if _r == "git-clean-force" and any(
+                        t.replace(PH, "") in ("--dry-run", "--interactive") or _bundled_flag(t.replace(PH, ""), "e", "n")
+                        or _bundled_flag(t.replace(PH, ""), "e", "i") for t in args):
+                    _r = None  # a dry run (clean -n, -xdn) or the prompt deletes nothing unasked
                 if _r:
                     deny("git -c " + _k + "=" + _v + " makes `git " + _sub + "` do what its denied flag does — confirm with user first", rule=_r)
+            _git_alias_check(_alias, args, "git -c " + _alias_key)
             # drop the value token after a free-text flag so message content
             # (e.g. "commit -m ...rm -rf...") is never pattern-matched.
             scan_raw, skip = [], False
@@ -3060,8 +3200,8 @@ def _check_window(_wi, w):
                 # wiring value `git-hooks` stays allowed.
                 # GH #561: a stored alias or key does at the next run what the -c pair above does now.
                 _cw = _git_config_write(args) if sub == "config" else None
-                if _cw and _cw[0].lower().startswith("alias.") and _cw[1]:
-                    _scan_body(_cw[1][1:] if _cw[1].startswith("!") else "git " + _cw[1])
+                if _cw and _cw[0].lower().startswith("alias."):
+                    _git_alias_check(_cw[1], [], "git config " + _cw[0])
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
                     deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
                          rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))

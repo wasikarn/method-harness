@@ -121,12 +121,12 @@ fi
 
 # Cache only a clean, non-crashed run — a dirty store must keep firing every
 # session until fixed (regression test in tests/hooks/test-memory-health-nudge.sh).
-if ! printf '%s' "$OUT" | command grep -qE 'findings: [1-9]'; then
+if ! command grep -qE 'findings: [1-9]' <<<"$OUT"; then
   touch "$CACHE" 2>/dev/null
 fi
 
 # Emit only when "findings: N" has N >= 1.
-printf '%s' "$OUT" | command grep -qE 'findings: [1-9]' || exit 0
+command grep -qE 'findings: [1-9]' <<<"$OUT" || exit 0
 
 printf '%s\n' \
   "[memory-lint] The memory store has findings (dangling links / orphans / index drift / near-budget):" \

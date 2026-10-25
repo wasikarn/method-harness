@@ -960,6 +960,48 @@ test_allow "$IRRECOVERABLE" "GH #560 control: env -0 (print the environment)" "$
 test_allow "$IRRECOVERABLE" "GH #560 control: env -iu FOO ls" "$(bash_payload 'env -iu FOO ls -la')"
 test_deny  "$IRRECOVERABLE" "GH #560: a chain of 50 env -iS words before rm -rf" \
   "$(bash_payload "$(printf 'env -iS %.0s' $(seq 50))rm -rf x")"
+# GH #560 regression (after #570): GNU env keeps reading its own options from the split words
+# (`env -S -i echo hi` runs echo), so a body that starts with an option is not the command.
+for _c in "env -S -i rm -rf build" "env -S -v git push --force" "env -S -u FOO rm -rf x" \
+  "env -S -0 git clean -fdx" "env --split-string -i rm -rf x" "env -S -i git reset --hard" \
+  "env -S '-i rm -rf build'" "env -S '-i git push --force'" "env -S -C /tmp rm -rf x" \
+  "env -S '-u FOO -S \"-i rm -rf x\"'"; do
+  test_deny "$IRRECOVERABLE" "GH #560: options inside the -S string: $_c" "$(bash_payload "$_c")"
+done
+# GH #560 round 2: env ends the -S string at a word starting with `#` and at `\c`, then reads on
+# from the words after the -S argument (`env -S '-i #' echo RAN` runs echo).
+for _c in "env -S '-i #' rm -rf x" "env -S '-i #' git push --force" "env -S '-u FOO #' rm -rf x" \
+  "env -S '-i -S \"-i #\"' rm -rf x" "env -S '-i \\c' rm -rf x" "env -S '-i #comment -v' rm -rf x"; do
+  test_deny "$IRRECOVERABLE" "GH #560: -S string ended by # or \\c: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" "GH #560 control: env -S '-i #' ls" "$(bash_payload "env -S '-i #' ls -la")"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -S '-i a#b' (mid-word # is no comment)" "$(bash_payload "env -S '-i ls a#b'")"
+# GH #560 round 3: env's -S splitting has more corners than the gate models (quoted or escaped `#`,
+# `\_`, a quote inside a comment, an empty nested -S, `--unset NAME`), so a command with -S is also
+# read the way the gate read it before #570, and either reading denies. One row-set per class.
+_r3_cmds=(
+  "env -S '-u \"#\"' rm -rf x" "env -S '-u \\#' git push --force" "env -S \"-u '#x'\" rm -rf x"
+  "env -S '-i # don'\\''t' rm -rf x" "env -S '-i # it'\\''s' git push --force"
+  "env -S '-i \\_ -v' git reset --hard" "env -S '-v \\_' rm -rf x"
+  "env -S '-S#' rm -rf x" "env -S '-S\\_' rm -rf x" "env -S '-S #c' git clean -fdx"
+  "env -S '--unset FOO' rm -rf x" "env -S '--unset FOO' git push --force"
+)
+for _c in "${_r3_cmds[@]}"; do
+  test_deny "$IRRECOVERABLE" "GH #560: -S corner, both readings checked: $_c" "$(bash_payload "$_c")"
+done
+for _c in "env -i FOO=1 ls" "env -S -i ls -la" "env -S '-i #' ls -la" "env -C /tmp make" "env -S 'ls -la'" \
+  "env -iS 'ls -la'" "env -S '-u \"#\"' ls"; do
+  test_allow "$IRRECOVERABLE" "GH #560 round 3 control: $_c" "$(bash_payload "$_c")"
+done
+test_deny  "$IRRECOVERABLE" "GH #560: subagent: env -S '-i claude -p hi'" "$(bash_agent_payload "env -S '-i claude -p hi'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #560: rm read through two -S levels, under the nesting limit" \
+  "$(bash_payload "env -iS env -iS rm -rf x")"
+for _c in "env -i FOO=1 ls" "env -C /tmp make" "env -S 'ls -la'" "env -u HOME -S 'echo hi'" "env -S '-u FOO echo C'" \
+  "env -S -i ls -la"; do
+  test_allow "$IRRECOVERABLE" "GH #560 control: $_c" "$(bash_payload "$_c")"
+done
+_env_S_dos_cmd="$(python3 -c 'print("env " + "-S -S " * 11000 + " ".join(["-S\x27-i -S\x27"] * 8000) + " ls")')"
+_timed_case 'GH #560: 22000 -S words and 8000 option-only -S strings are read in bounded time' 2 "$_env_S_dos_cmd"
 _env_iS_dos_cmd="$(python3 -c 'print("env -iS ls; " * 10000 + "env -" + "i" * 20000 + "S ls")')"
 _timed_case 'GH #560: 10000 env -iS commands and a 20 KB cluster are read in bounded time' 0 "$_env_iS_dos_cmd"
 # GH #567: a shell reading stdin gets its commands from a heredoc piped in, a here-string, or an echo/printf.
@@ -1939,5 +1981,57 @@ test_allow "$IRRECOVERABLE" "empty value control: git config user.name \"\"" "$(
 test_allow "$IRRECOVERABLE" "empty value control: git config clean.requireForce true" "$(bash_payload 'git config clean.requireForce true')"
 test_allow "$IRRECOVERABLE" "empty value control: git -c user.name= commit" "$(bash_payload 'git -c user.name= commit -m x')"
 
+
+# GH #561 review of PR #571: the -c alias check ran the alias body against every later word once per
+# alias pair (quadratic), so 4000 pairs and 4000 words (80 KB) took 9.3 s, past the 8 s hook timeout
+# that allows. git keeps the last alias.<name>, so one map and one body scan is enough.
+_alias_dos_cmd="$(python3 -c 'print("git" + " -c alias.p=status" * 4000 + " -c alias.p=\"push --force\" p origin main" + " a" * 4000)')"
+_timed_case 'GH #561: 4000 -c alias pairs then 4000 words is judged in bounded time' 2 "$_alias_dos_cmd"
+test_deny  "$IRRECOVERABLE" "GH #561: the last -c alias.p wins (push --force after status)" \
+  "$(bash_payload 'git -c alias.p=status -c alias.p="push --force" p origin main')"
+test_allow "$IRRECOVERABLE" "GH #561 control: the last -c alias.p wins (status after push --force)" \
+  "$(bash_payload 'git -c alias.p="push --force" -c alias.p=status p origin main')"
+# A bare `-c key` (no "=") sets key to true in git.
+test_deny  "$IRRECOVERABLE" "GH #561: bare -c remote.origin.mirror (true) push" "$(bash_payload 'git -c remote.origin.mirror push origin')"
+test_deny  "$IRRECOVERABLE" "GH #561: bare -cremote.origin.mirror (joined, true) push" "$(bash_payload 'git -cremote.origin.mirror push origin')"
+test_allow "$IRRECOVERABLE" "GH #561 control: bare -c color.ui status" "$(bash_payload 'git -c color.ui status')"
+test_allow "$IRRECOVERABLE" "GH #561 control: bare -c clean.requireForce (true) clean -dx stays the plain clean" \
+  "$(bash_payload 'git -c clean.requireForce clean -n')"
+# --config-env=<key>=<envvar> reads the value from an env var the gate cannot see: the dangerous reading.
+test_deny  "$IRRECOVERABLE" "GH #561: --config-env=alias.p=X p" "$(bash_payload 'git --config-env=alias.p=X p origin main')"
+test_deny  "$IRRECOVERABLE" "GH #561: --config-env alias.p=X p (split form)" "$(bash_payload 'git --config-env alias.p=X p origin main')"
+test_deny  "$IRRECOVERABLE" "GH #561: --config-env=remote.origin.mirror=X push" "$(bash_payload 'git --config-env=remote.origin.mirror=X push origin')"
+test_deny  "$IRRECOVERABLE" "GH #561: --config-env=remote.origin.push=X push" "$(bash_payload 'git --config-env=remote.origin.push=X push origin')"
+test_deny  "$IRRECOVERABLE" "GH #561: --config-env=clean.requireForce=X clean" "$(bash_payload 'git --config-env=clean.requireForce=X clean -dx')"
+test_deny  "$IRRECOVERABLE" "GH #561: --config-env=gc.pruneExpire=X gc" "$(bash_payload 'git --config-env=gc.pruneExpire=X gc')"
+test_allow "$IRRECOVERABLE" "GH #561 control: --config-env=user.name=N commit" "$(bash_payload 'git --config-env=user.name=N commit -m x')"
+# A value built at run time ($X, $(...)) is unseen, the same as --config-env: deny, never read it as empty.
+test_deny  "$IRRECOVERABLE" 'GH #561: -c alias.p="$X" p' "$(bash_payload 'git -c alias.p="$X" p origin main')"
+test_deny  "$IRRECOVERABLE" 'GH #561: -c alias.p="$(cat f)" p' "$(bash_payload 'git -c alias.p="$(cat f)" p origin main')"
+test_deny  "$IRRECOVERABLE" 'GH #561: -c remote.origin.mirror="$(cat f)" push' "$(bash_payload 'git -c remote.origin.mirror="$(cat f)" push origin')"
+test_deny  "$IRRECOVERABLE" 'GH #561: -c remote.origin.push="$(cat f)" push' "$(bash_payload 'git -c remote.origin.push="$(cat f)" push origin')"
+test_deny  "$IRRECOVERABLE" 'GH #561: git config alias.p "$X"' "$(bash_payload 'git config alias.p "$X"')"
+test_allow "$IRRECOVERABLE" "GH #561 control: a ! alias using its own \$1" \
+  "$(bash_payload "git -c alias.l='!f() { git log -n \"\$1\"; }; f' l 5")"
+# A dry run deletes nothing, bundled too (clean -xdn), as clean -n / --dry-run already were.
+test_allow "$IRRECOVERABLE" "GH #561 control: requireForce=false clean -xdn (bundled dry run)" \
+  "$(bash_payload 'git -c clean.requireForce=false clean -xdn')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git clean -n" "$(bash_payload 'git clean -n')"
+# --unset's trailing word is a value-pattern that picks entries to remove, not a value written.
+test_allow "$IRRECOVERABLE" "GH #561 control: git config --unset remote.origin.push +HEAD:main" \
+  "$(bash_payload 'git config --unset remote.origin.push +HEAD:main')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git config --unset-all remote.origin.push +HEAD:main" \
+  "$(bash_payload 'git config --unset-all remote.origin.push +HEAD:main')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git config unset remote.origin.push +HEAD:main" \
+  "$(bash_payload 'git config unset remote.origin.push +HEAD:main')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git config --get remote.origin.push +HEAD (value-pattern)" \
+  "$(bash_payload 'git config --get remote.origin.push +HEAD')"
+test_deny  "$IRRECOVERABLE" "GH #561: git config --add remote.origin.push +HEAD:main" \
+  "$(bash_payload 'git config --add remote.origin.push +HEAD:main')"
+test_deny  "$IRRECOVERABLE" "GH #561: git config set remote.origin.mirror true" "$(bash_payload 'git config set remote.origin.mirror true')"
+# Ordinary config use stays allowed.
+test_allow "$IRRECOVERABLE" "GH #561 control: -c alias.co=checkout co -b feat" "$(bash_payload 'git -c alias.co=checkout co -b feat')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git config --get remote.origin.mirror" "$(bash_payload 'git config --get remote.origin.mirror')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git config alias.st status" "$(bash_payload 'git config alias.st status')"
 
 gates_summary

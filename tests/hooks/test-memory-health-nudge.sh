@@ -64,7 +64,7 @@ run_hook_no_cache_clear() {
 
 assert_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if printf '%s' "$haystack" | command grep -qF "$needle"; then
+  if command grep -qF "$needle" <<<"$haystack"; then
     echo "  ✅ CONTAINS \"$needle\": $desc"
     pass=$((pass + 1))
   else
@@ -77,7 +77,7 @@ assert_contains() {
 
 assert_not_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if printf '%s' "$haystack" | command grep -qF "$needle"; then
+  if command grep -qF "$needle" <<<"$haystack"; then
     echo "  ❌ UNEXPECTED \"$needle\" in output: $desc" >&2
     echo "     --- output ---" >&2
     printf '%s\n' "$haystack" | sed 's/^/     /' >&2
