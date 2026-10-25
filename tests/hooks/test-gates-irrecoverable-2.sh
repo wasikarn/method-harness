@@ -1857,6 +1857,22 @@ _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 
 _timed_case 'GH #559 review 2: 5000 bash -c bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
 _sql_pad_cmd="$(python3 -c 'print("bash -c \"" + "echo DROP TABLE x | grep q psql | " * 4000 + "cat\"")')"
 _timed_case 'GH #559 review: a 136 KB bash -c pipeline naming psql and DROP TABLE is scanned in bounded time' 0 "$_sql_pad_cmd"
+# GH #563 review of PR #573: send-pack deletes a protected branch as push does (":main"), and a
+# git rm dry run (-n bundled, --dry-run or a prefix) deletes nothing, so -f there is allowed.
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack :main deletes main on the remote" "$(bash_payload 'git send-pack git@github.com:o/r.git :main')"
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack :refs/heads/main" "$(bash_payload 'git send-pack git@github.com:o/r.git feature :refs/heads/main')"
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack :develop after another flag" "$(bash_payload 'git send-pack --atomic url :develop')"
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack --delete master (mirrors push)" "$(bash_payload 'git send-pack --delete url master')"
+test_allow "$IRRECOVERABLE" "GH #563 control: send-pack a feature branch" "$(bash_payload 'git send-pack url feature')"
+test_allow "$IRRECOVERABLE" "GH #563 control: send-pack :feature deletes only a feature branch" "$(bash_payload 'git send-pack url :feature')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm -nf is a dry run" "$(bash_payload 'git rm -nf a.py')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm -f --dry-run" "$(bash_payload 'git rm -f --dry-run a.py')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm -rf --dry (unique prefix)" "$(bash_payload 'git rm -rf --dry src')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm --cached f" "$(bash_payload 'git rm --cached f')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm f" "$(bash_payload 'git rm f')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -f -- -n (-n after -- is a path)" "$(bash_payload 'git rm -f -- -n')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -nf --no-dry-run (last one wins)" "$(bash_payload 'git rm -nf --no-dry-run a.py')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -f still denies" "$(bash_payload 'git rm -f a.py')"
 
 # Bypass hunt 2026-10-23 F5: `find | xargs rm` is the same delete as `find -exec rm` (denied with no
 # flags at all), but the xargs re-point handed it to the rm-rf rule, which needs both -r and -f.
