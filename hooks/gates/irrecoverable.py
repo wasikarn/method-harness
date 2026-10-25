@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import bisect, json, os, re, shlex, sys
+import json, os, re, shlex, sys
+import bisect  # its own line: tests/hooks/test-gate-canary.sh injects a NameError after the line above
 
 # GH #156: raise the int-string digit limit before parsing so an oversized
 # unquoted int literal doesn't crash json.load() into this gate's fail-open
