@@ -3,7 +3,8 @@
 # and whose base is develop (GH #450). The pre-push gauntlet then ran on the exact tree that merges, so two
 # PRs green alone cannot land red together (#445 + #446). --match-head-commit
 # pins the merge to the checked sha: a push after the check makes GitHub refuse.
-# Checks are local-only; this narrows the race, it does not close it.
+# Checks are local-only; this narrows the race, it does not close it. It also refuses a PR with no
+# fresh review verdict (see check_review).
 # Bash 3.2. Env: MERGE_PR_LOAD_MAX (default 4), MERGE_PR_LOAD_WAIT_SECS (900),
 # MERGE_PR_ALLOW_SAME_VERSION (1 skips the same-manifest-version refusal).
 set -euo pipefail
@@ -88,8 +89,59 @@ check_version() {
     exit 1
   fi
 }
+# Refuse a PR with no current review verdict. On 2026-10-25 #569–#576 and #611 merged while their reviews
+# still said FIX FIRST, and #570 opened a hole (`env -S -i rm -rf build` allowed) that took #602 to close.
+# The verdict is a line "Fresh-context review: MERGE @ <sha>" (or FIX FIRST / CLOSE) in a PR comment,
+# <sha> being the head the reviewer read. The last verdict on the PR must be MERGE, and every commit after
+# <sha> must be a merge of develop or touch only the two manifests (a version bump): a sync before the merge
+# keeps the review, any other change needs a new one. Binding to the sha, not to times, means a commit made
+# before the review but pushed after it, or a backdated one, is still caught. A line inside a ``` fence does
+# not count, and the last verdict line in a comment wins. Only issue comments are read (not PR reviews or the
+# body). This proves a verdict was posted, not who wrote it or that the reviewer had fresh context (CLAUDE.md
+# asks for that), and a conflict resolved inside a merge commit is not checked. There is no opt-out: an
+# operator who must merge without a verdict does it on GitHub.
+REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: false, m: null};
+    if ($l | test("^\\s*(```|~~~)")) then .f = (.f | not)
+    elif .f then .
+    else ((($l | capture("^[#*\\s]*fresh-context review\\s*:\\s*\\**\\s*(?<v>MERGE|FIX FIRST|CLOSE)\\b(?<r>.*)$"; "i")) as $c | .m = $c) // .)
+    end) | .m) as $m
+  | select($m != null)
+  | "\($m.v | ascii_upcase | gsub(" "; "_")) \(($m.r | capture("^[*\\s]*@\\s*`?(?<s>[0-9a-fA-F]{7,40})\\b") | .s) // "-")"'
+check_review() {
+  local verdicts last word sha revs c files
+  verdicts=$(gh api --paginate "repos/{owner}/{repo}/issues/$pr/comments" --jq "$REVIEW_JQ") ||
+    { echo "merge-pr: could not read the comments of PR $pr to find its review verdict; not merging." >&2; exit 1; }
+  last=$(printf '%s\n' "$verdicts" | awk 'NF == 2 { l = $0 } END { print l }')
+  word=${last%% *}; sha=${last#* }
+  if [ -z "$last" ]; then
+    echo "merge-pr: PR $pr has no \"Fresh-context review: MERGE @ <sha>\" comment; get a fresh-context review and post its verdict on the PR first." >&2
+    exit 1
+  fi
+  if [ "$word" != "MERGE" ]; then
+    echo "merge-pr: PR $pr's latest review verdict is ${word//_/ }, not MERGE; fix the findings and get a new review." >&2
+    exit 1
+  fi
+  if [ "$sha" = "-" ]; then
+    echo "merge-pr: PR $pr's MERGE verdict names no reviewed commit; post it as \"Fresh-context review: MERGE @ <head sha>\"." >&2
+    exit 1
+  fi
+  if ! git merge-base --is-ancestor "$sha" "$head" 2>/dev/null; then
+    echo "merge-pr: PR $pr's MERGE verdict reviewed $sha, which is not in the head's history (unknown sha or rewritten history); get a review of $head." >&2
+    exit 1
+  fi
+  revs=$(git rev-list --no-merges "$sha..$head" ^origin/develop) || { echo "merge-pr: git rev-list $sha..$head failed." >&2; exit 1; }
+  for c in $revs; do
+    files=$(git diff-tree --no-commit-id --name-only -r "$c") || { echo "merge-pr: git diff-tree $c failed; not merging." >&2; exit 1; }
+    if printf '%s\n' "$files" |
+      awk '$0 != "" && $0 != ".claude-plugin/plugin.json" && $0 != ".claude-plugin/marketplace.json" { f = 1 } END { exit !f }'; then
+      echo "merge-pr: PR $pr changed after its MERGE review of $sha: commit $c touches more than the manifests; get a review of $head." >&2
+      exit 1
+    fi
+  done
+}
 check_ancestry
 check_version
+check_review
 
 load_max="${MERGE_PR_LOAD_MAX:-4}"
 wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}"
@@ -111,6 +163,7 @@ done
 git fetch origin || { echo "merge-pr: git fetch failed after the load wait; not merging." >&2; exit 1; }
 check_ancestry
 check_version
+check_review
 
 now=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
 if [ "$now" != "develop" ]; then
