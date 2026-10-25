@@ -2306,7 +2306,8 @@ def _hooks_path_ok(scan):
 
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
-    # window w set core.hooksPath (key case-insensitive) to a non-empty value?
+    # window w set core.hooksPath (key case-insensitive)? Any value: an empty one (`-c core.hooksPath=`)
+    # unwires every hook (git 2.43, live-checked); a bare `-c core.hooksPath` (no "=") is a git error.
     for idx, t in enumerate(w):
         t_pf = t.replace(PH, "")
         if t_pf == "-c" and idx + 1 < len(w):
@@ -2321,8 +2322,8 @@ def _sets_hooks_path(w):
             kv = t_pf[len("--config-env="):]
         else:
             continue
-        key, _, val = kv.partition("=")
-        if key.lower() == "core.hookspath" and val:
+        key, eq, _ = kv.partition("=")
+        if key.lower() == "core.hookspath" and eq:
             return True
     return False
 
@@ -2357,6 +2358,9 @@ def _git_cfg_risk(key, val, sub):
 
 def _git_config_write(scan):
     # (key, value) a `git config [set] KEY VALUE` writes, or None (a read, a list, an unset).
+    # scan is the raw args: the git scan drops an empty word, and an empty value is a write (git reads
+    # `clean.requireForce ""` as false), so the empty word must stay; PH is stripped here.
+    scan = [t.replace(PH, "") for t in scan]
     pos, i = [], 0
     while i < len(scan):
         t = scan[i]
@@ -2963,7 +2967,7 @@ def _check_window(_wi, w):
                 deny("--no-verify bypasses safety hooks", rule="git-no-verify")
             # -c core.hooksPath=<path> (split or joined "-ccore.hooksPath=X")
             # re-points git at a different hooks dir -- same bypass as
-            # --no-verify. Only a non-empty value trips it.
+            # --no-verify. An empty value trips it too: it unwires every hook.
             # Case-insensitive key match (git config keys are case-insensitive;
             # `-c core.hookspath=` re-points hooks exactly like the canonical
             # spelling, live-confirmed) -- only the KEY is lowercased for the
@@ -3055,7 +3059,7 @@ def _check_window(_wi, w):
                 # pre-push (same bypass class as --no-verify). The documented
                 # wiring value `git-hooks` stays allowed.
                 # GH #561: a stored alias or key does at the next run what the -c pair above does now.
-                _cw = _git_config_write(scan) if sub == "config" else None
+                _cw = _git_config_write(args) if sub == "config" else None
                 if _cw and _cw[0].lower().startswith("alias.") and _cw[1]:
                     _scan_body(_cw[1][1:] if _cw[1].startswith("!") else "git " + _cw[1])
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
