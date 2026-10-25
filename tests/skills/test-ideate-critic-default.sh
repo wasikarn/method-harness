@@ -19,7 +19,7 @@ check "SKILL.md keeps the host path as an opt-in" \
 check "fanout.md bounds Agent calls at exactly 6" \
   "/usr/bin/grep -qx 'min: 6' '$CASE/graders/fanout.md' && /usr/bin/grep -qx 'max: 6' '$CASE/graders/fanout.md'"
 check "a grader requires the mh:ideate-critic dispatch" \
-  "/usr/bin/grep -lx 'tool: Agent' '$CASE'/graders/*.md | xargs /usr/bin/grep -l 'input_match:.*ideate-critic' | /usr/bin/grep -q ."
+  "[ -n \"\$(/usr/bin/grep -lx 'tool: Agent' '$CASE'/graders/*.md | xargs /usr/bin/grep -l 'input_match:.*ideate-critic')\" ]"
 check "ideate-run prompt allows Bash (rank.py)" \
   "/usr/bin/grep -qE '^allowed_tools: \[.*\bBash\b' '$CASE/prompt.md'"
 
