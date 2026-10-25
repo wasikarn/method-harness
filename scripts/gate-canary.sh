@@ -30,7 +30,11 @@ gates=()
 if [ "$#" -gt 0 ]; then
   for g in "$@"; do gates+=("$dir/${g##*/}"); done
 else
-  for g in "$dir"/*.sh; do [ -f "$g" ] && gates+=("$g"); done
+  # A _*.sh is a helper the gates source (_silent_fastpath.sh), not a gate: never run it as one.
+  for g in "$dir"/*.sh; do
+    case "${g##*/}" in _*) continue ;; esac
+    [ -f "$g" ] && gates+=("$g")
+  done
 fi
 [ "${#gates[@]}" -gt 0 ] || exit 0
 for g in "${gates[@]}"; do

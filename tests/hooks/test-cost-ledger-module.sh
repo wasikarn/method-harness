@@ -12,7 +12,7 @@ if ! command -v claude >/dev/null; then
   echo "SKIP: claude CLI not on PATH; the cost-ledger module tests did not run"
   exit 0
 fi
-if ! claude plugin test --help 2>&1 | /usr/bin/grep -q "Run a mod's tests"; then
+if ! /usr/bin/grep -q "Run a mod's tests" <<<"$(claude plugin test --help 2>&1)"; then
   echo "SKIP: claude $(claude --version 2>&1 | head -1) has no 'plugin test' (mods need 2.1.287+); the cost-ledger module tests did not run"
   exit 0
 fi
