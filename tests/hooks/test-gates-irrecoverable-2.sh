@@ -1720,7 +1720,14 @@ for _c in \
   'echo hi | sudo -u bob claude' \
   'timeout 30 claude hi' \
   'echo hi | xargs -n1 claude' \
-  'echo ${#arr[@]}; claude hi' ; do
+  'echo ${#arr[@]}; claude hi' \
+  'HOME=/tmp claude "hi"' \
+  'echo hi | FOO=a/b claude' \
+  'env PATH=/usr/bin:$PATH claude "hi"' \
+  'env -C /tmp claude "hi"' \
+  'cat f | env -C /tmp claude' \
+  'sudo -p pw: claude "hi"' \
+  'echo {#,a}; claude "hi"' ; do
   test_deny "$IRRECOVERABLE" "bypass hunt F1 review: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in \

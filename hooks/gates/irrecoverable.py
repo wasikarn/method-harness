@@ -501,7 +501,7 @@ def _quote_mask(c):
         elif ch in (SQ, '"'):
             mask[i] = 1
             stack.append(ch)
-        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()" or (c[i - 1] == "{" and c[i - 2:i - 1] != "$")):
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
             mask[i:j] = b"\1" * (j - i)
@@ -590,28 +590,27 @@ def _nested_spawn_text(c, overlap):
 def _spawn_lead_words(lead):
     # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
     # wrapper explains: the anchor's walk skips any words after a wrapper (`time rg claude src/`), fine
-    # for the flag scan but not for reading claude's words as a prompt. A wrapper's flag, the value of
-    # one of its value flags, an assignment, timeout's duration, a keyword or a group open are explained.
+    # for the flag scan but not for reading claude's words as a prompt. Explained: an assignment, a
+    # keyword, a wrapper, a dash word after a wrapper and the one word after that dash word (its value,
+    # if it takes one: `env -C /tmp`, `sudo -p pw:`, `timeout -s KILL`), and timeout's duration.
     words = lead.replace("{", " ").replace("(", " ").split()[:-1]  # the last word is claude
-    names, prev, want = [], None, False
+    names, prev, after_dash = [], None, False
     for t in words:
-        b = t.lstrip("|&;").rsplit("/", 1)[-1]
-        if not b:
+        t = t.lstrip("|&;")
+        if not t or re.match(r"[A-Za-z_]\w*=", t):
             continue
-        if want:
-            want = False
-            continue
-        if b in SHELL_KEYWORDS or b in ("builtin", "--") or re.match(r"[A-Za-z_]\w*=", b):
+        b = t.rsplit("/", 1)[-1]
+        if b in SHELL_KEYWORDS or b in ("builtin", "--"):
             continue
         if b in PREFIX_WRAPPERS or b == "xargs":
-            prev = b
+            prev, after_dash = b, False
             names.append(b)
             continue
-        if prev and b.startswith("-"):
-            want = (b in FLAG_VALUE_WRAPPERS.get(prev, ())
-                    or (prev in ("sudo", "doas") and b in ("-u", "-g", "-C", "--user", "--group"))
-                    or (prev == "env" and b == "-u")
-                    or (prev == "xargs" and not b.startswith("--") and len(b) == 2 and b[1] in "IJRSnPLdsEa"))
+        if prev and t.startswith("-"):
+            after_dash = True
+            continue
+        if after_dash:
+            after_dash = False
             continue
         if prev in ("timeout", "gtimeout") and re.fullmatch(r"[\d.]+[smhd]?", b):
             continue
