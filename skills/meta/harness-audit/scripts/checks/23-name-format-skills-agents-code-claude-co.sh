@@ -17,10 +17,10 @@ for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md "$CLA
   label=${f##*/}; label=${label%.md}; [ "$label" = "SKILL" ] && { _t=${f%/*}; label=${_t##*/}; }
   nm=$(fm_get "$f" "name" --block)
   [ -n "$nm" ] || continue
-  if ! printf '%s' "$nm" | grep -qE '^[a-z0-9-]{1,64}$'; then
+  if ! grep -qE '^[a-z0-9-]{1,64}$' <<<"$nm"; then
     crit "'$label' name='$nm' violates format (lowercase/digits/hyphens, <=64 chars)"
   fi
-  if printf '%s' "$nm" | grep -qE 'anthropic|claude'; then
+  if grep -qE 'anthropic|claude' <<<"$nm"; then
     crit "'$label' name='$nm' contains a reserved word (anthropic/claude — official Agent Skills spec)"
   fi
   # sub-agents.md-only rule: an agent name can't start with a hyphen. The shared
