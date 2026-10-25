@@ -10,8 +10,11 @@ scanner first checks itself: it must find the race in `x | grep -q y`, or it exi
 
 A pipe's readers are the commands that can read the stdin it hands its right side:
 - directly: the command there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a
-  `time`d command, and any `$(...)`/`<(...)` in a reader statement's own words and redirections
-  (`for` lists, `case` subjects, `< <(...)`, assignments): they expand with the pipe as stdin;
+  `time`d command, and any `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies
+  redirections left to right; a simple command expands its words before its redirections, a
+  compound command (`for` list, `case` subject, `for ((...))`) after them. So the words of
+  `echo "$(...)" < f` read the pipe, those of `for x in $(...); do :; done < f` read f, and a
+  substitution in a redirection after `< f` reads f;
 - inside the conditions and bodies of if/while/until/for/case: a grep counts only when it reads
   stdin: no file operand and no -r, or a `-` or `/dev/stdin` operand, or `-f -`
   (`while read -r f; do grep -q p "$f"; done` reads files, not the pipe). This part is a
@@ -85,6 +88,8 @@ ASSIGNING = {'env', 'sudo'}  # wrappers that take NAME=VALUE words before the co
 STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
 # Keys under which shfmt nests statements; a statement's own words are everything else.
 NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
+# Commands that expand their words before their redirections apply.
+SIMPLE = {'CallExpr', 'DeclClause', 'TestClause', 'ArithmCmd', 'LetClause'}
 DELIBERATE = re.compile(r'#\s*pipe-into-grep-q: deliberate\s*$')
 CANARY = b'x | grep -q y\n'
 
@@ -219,7 +224,7 @@ def grep_args(args):
                 value = w.split('=', 1)[1] if inline else next(it, None)
                 if name in ('regexp', 'file'):
                     pattern_given = True
-                    patterns_from_stdin |= name == 'file' and value == '-'
+                    patterns_from_stdin |= name == 'file' and value in ('-', '/dev/stdin')
             continue
         if w.startswith('-') and len(w) > 1:
             for n, ch in enumerate(w[1:], 1):
@@ -231,7 +236,7 @@ def grep_args(args):
                     value = w[n + 1:] or next(it, None)
                     if ch in 'ef':
                         pattern_given = True
-                        patterns_from_stdin |= ch == 'f' and value == '-'
+                        patterns_from_stdin |= ch == 'f' and value in ('-', '/dev/stdin')
                     break
                 if not ch.isalpha():
                     break
@@ -243,40 +248,41 @@ def grep_args(args):
     return quiet, not files and not recursive  # -r with no file searches `.`, not stdin
 
 
-def own_stdin(stmt):
-    """Whether the statement's stdin is redirected away from the pipe."""
-    for r in stmt.get('Redirs') or []:
-        n = (r.get('N') or {}).get('Value', '0')
-        if r.get('Op') not in STDIN_REDIRS or n != '0':
-            continue
-        if r.get('Op') == '<&':
-            target = literal(r.get('Word') or {})
-            if target is None or target == '0':
-                continue  # <&0, or <&"$fd" that may be 0: still (maybe) the pipe
-        return True
-    return False
+def replaces_stdin(r):
+    """Whether this redirection points the statement's stdin away from the pipe."""
+    n = (r.get('N') or {}).get('Value', '0')
+    if r.get('Op') not in STDIN_REDIRS or n != '0':
+        return False
+    if r.get('Op') == '<&':
+        target = literal(r.get('Word') or {})
+        if target is None or target == '0':
+            return False  # <&0, or <&"$fd" that may be 0: still (maybe) the pipe
+    return True
 
 
 def substs(node):
-    """The $(...) and <(...) in a statement's own words and redirections: not in the statements
-    it nests (those run with their own stdin), not inside another substitution."""
+    """The $(...) and <(...) in a command's or redirection's own words: not in the statements it
+    nests (those run with their own stdin), not inside another substitution."""
     out = []
 
-    def walk(n, top=False):
+    def walk(n):
         if isinstance(n, dict):
             t = n.get('Type')
-            if t in ('CmdSubst', 'ProcSubst') and not top:
+            if t in ('CmdSubst', 'ProcSubst'):
                 out.append(n)
                 return
             for k, v in n.items():
-                if k in NESTED or (t == 'BinaryCmd' and k in ('X', 'Y')):
+                # `Cond` holds statements in if/while, but an arithmetic expression in `for ((;;))`.
+                if k in NESTED and not (k == 'Cond' and t not in ('IfClause', 'WhileClause')):
+                    continue
+                if t == 'BinaryCmd' and k in ('X', 'Y'):
                     continue
                 walk(v)
         elif isinstance(n, list):
             for v in n:
                 walk(v)
 
-    walk(node, top=True)
+    walk(node)
     return out
 
 
@@ -288,13 +294,25 @@ def readers(stmt, direct=True):
     def each(stmts, d):
         return [r for s in stmts or [] for r in readers(s, d)]
 
-    # Words and redirections expand before the statement's own redirections apply, so a
-    # substitution in them reads the pipe even when the statement then redirects its stdin.
-    out = [r for sub in substs(stmt) for r in each(sub.get('Stmts'), direct)]
-    if own_stdin(stmt):
-        return out
+    def subst_readers(node):
+        return [r for sub in substs(node) for r in each(sub.get('Stmts'), direct)]
+
+    # Redirections apply left to right: a substitution in one expands with whatever stdin the
+    # earlier ones left, so only those up to the first that replaces stdin can see the pipe.
+    redir_out, replaced = [], False
+    for r in stmt.get('Redirs') or []:
+        if not replaced:
+            redir_out += subst_readers(r)
+        replaced = replaced or replaces_stdin(r)
     cmd = stmt.get('Cmd') or {}
     t = cmd.get('Type')
+    # A simple command expands its words before its redirections apply, so substitutions in them
+    # read the pipe either way; a compound command (for list, case subject) applies them first
+    # (bash: `echo P | for x in $(cat); do echo $x; done < f` prints f's contents).
+    simple = t in SIMPLE
+    out = (subst_readers(cmd) if simple or not replaced else []) + redir_out
+    if replaced:
+        return out
     if t == 'CallExpr':
         return out + [(cmd, direct)]
     if t == 'BinaryCmd':

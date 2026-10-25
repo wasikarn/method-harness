@@ -28,24 +28,31 @@ file (2026-10-23). Write `grep -q PAT <<<"$out"` or `grep -q PAT <<<"$(cmd)"`.
 `tests/scripts/test-pipefail-grep-q-lint.sh` checks every tracked shell file (a file without
 `pipefail` may be sourced under it, as harness-audit's checks are) with
 `tests/_lib/pipe_into_grep_q.py`, which reads shfmt's JSON syntax tree: a line regex and then a
-hand-written lexer each missed sites in review (#578, #597, #598). **The gauntlet needs shfmt >= 3.5**
-(macOS: `brew install shfmt`; Linux: `pip install shfmt-py`, or `apt install shfmt` on Ubuntu 24.04+;
-22.04's 3.4 is too old; cloud sessions get it from the SessionStart hook below, apt 3.8 on 24.04 or
-pip's shfmt-py when apt's is older) and refuses to start without it, as it does without `trash`. shfmt 3.4 only
-has `-tojson`, whose operators are numbers, and once made every file scan clean, so the scanner
-checks itself on `x | grep -q y` first and exits 2 when it cannot read the tree. A file shfmt cannot
-read or parse is also an error, never a clean pass, and hits in the other files are still listed.
+hand-written lexer each missed sites in review (#578, #597, #598). **The gauntlet needs shfmt
+>= 3.5** (macOS: `brew install shfmt`; Linux: `pip install shfmt-py`, or `apt install shfmt` on
+Ubuntu 24.04+; 22.04's 3.4 is too old; cloud sessions get it from the SessionStart hook below, apt
+3.8 on 24.04 or pip's shfmt-py when apt's is older) and refuses to start without it, as it does
+without `trash`. shfmt 3.4 only has `-tojson`, whose operators are numbers, and once made every
+file scan clean, so the scanner checks itself on `x | grep -q y` first and exits 2 when it cannot
+read the tree. A file shfmt cannot read or parse is also an error, never a clean pass, and hits in
+the other files are still listed.
 A pipe's readers are the commands that can read the stdin it hands its right side: the command
 there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a `time`d command, and any
-`$(...)`/`<(...)` in such a statement's own words and redirections (`for` lists, `case` subjects,
-`< <(...)`); in the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a grep that
-reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `-f -`), so
+`$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies redirections left to right, a
+simple command expands its words before its redirections, and a compound command (`for` list,
+`case` subject, `for ((...))`) after them: so `x | echo "$(grep -q y)" < f` and
+`x | cat < <(grep -q y)` race, while `x | for f in $(grep -q y); do ...; done < f` and
+`x | cat < f <<<"$(grep -q y)"` do not (bash: `echo P | for x in $(cat); do echo $x; done < f`
+prints f's contents). In the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a
+grep that reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `-f -`), so
 `while read -r f; do grep -q p "$f"; done` is clean (a heuristic). A statement whose stdin is
-redirected (`<`, `<<<`, `<&N` with a literal N other than 0) is no reader. Wrappers (`command`, `builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`,
-`sudo`, `nohup`, with `NAME=VALUE` for env and sudo) are looked through; long options, grep's and
-the wrappers', resolve as getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`, `--sig` is
-timeout's `--signal`), and the value of `-e`/`--regexp`-style options is not an option. It does not catch a grep reached through a function or alias, nor other
-early-exit readers (`head`, `grep -m`, a command that skips stdin): there, apply the rule by hand.
+redirected (`<`, `<<<`, `<&N` with a literal N other than 0) is no reader. Wrappers (`command`,
+`builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`, `sudo`, `nohup`, with
+`NAME=VALUE` for env and sudo) are looked through; long options, grep's and the wrappers', resolve
+as getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`, `--sig` is timeout's `--signal`),
+and the value of `-e`/`--regexp`-style options is not an option. It does not catch a grep reached
+through a function or alias, nor other early-exit readers (`head`, `grep -m`, a command that skips
+stdin): there, apply the rule by hand.
 (GNU grep 3.11 writing to `>/dev/null` reads all of its input, so that form is safe.) A hit whose
 line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint
 allows one: its own race probe.
