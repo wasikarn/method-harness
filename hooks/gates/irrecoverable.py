@@ -2535,6 +2535,50 @@ def _gh_builtin_write(scan):
     return ""
 
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
+# xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
+_XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
+_XARGS_VALUE_LONG = ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
+                     "--process-slot-var", "--max-lines", "--replace", "--eof")
+
+def _xargs_command(rest):
+    # The index of the command xargs runs in its args: past its flags and their values. A short
+    # cluster is read left to right: the first letter that takes a value takes the rest of the
+    # cluster (`-d'\n'`, `-Is`), or the next word when it is the cluster's last letter (`-tJ x`).
+    j = 0
+    while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
+        t = rest[j].replace(PH, "")
+        j += 1
+        if t == "--":
+            break
+        if t.startswith("--"):
+            j += t in _XARGS_VALUE_LONG and j < len(rest)
+            continue
+        for k, ch in enumerate(t[1:], 1):
+            if ch in _XARGS_VALUE_LETTERS:
+                j += k == len(t) - 1 and j < len(rest)
+                break
+    return j
+
+def _past_wrapper_words(name, rest, i):
+    # The index past a prefix wrapper's own words in rest[i:]: its dash words and their values,
+    # env's and sudo's assignments, timeout's duration. Used inside xargs's command (F5).
+    vals = set(FLAG_VALUE_WRAPPERS.get(name, ()))
+    if name in ("sudo", "doas"):
+        vals |= {"-u", "-g", "-C", "-p", "-D", "-h", "-r", "-t", "-U", "--user", "--group"}
+    if name == "env":
+        vals |= {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}
+    while i < len(rest):
+        t = rest[i].replace(PH, "")
+        if t.startswith("-") and len(t) > 1:
+            i += 2 if t in vals else 1
+        elif _assignment(rest[i]) and name in ("env", "sudo", "doas"):
+            i += 1
+        else:
+            break
+    if name in ("timeout", "gtimeout") and i < len(rest):
+        i += 1  # the DURATION positional
+    return i
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -2772,22 +2816,24 @@ def _check_window(_wi, w):
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(rest[j:])
                 break
+        _xc = _xargs_command(rest)
+        # Bypass hunt 2026-10-23 F5: `find | xargs rm` deletes every path it is fed, the same delete as
+        # `find -exec rm`, which denies with no flags at all. Wrappers between (`xargs sudo -u x rm`,
+        # `xargs nice -n 5 rm`, `xargs env FOO=1 rm`, `xargs timeout 5 rm`) are read past.
+        _xr = _xc
+        while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS:
+            _xr = _past_wrapper_words(basename(rest[_xr]).replace(PH, ""), rest, _xr + 1)
+        if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
+            deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
             if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
         else:
-            # gh only as the command xargs runs (past its flags and their values), since "gh" is also a
-            # common grep pattern: `xargs grep -l gh src` must not read as gh.
-            j = 0
-            while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
-                t = rest[j].replace(PH, "")
-                # A bundled short cluster (-tJ) takes the next word when its last letter takes a value.
-                takes = t in ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
-                              "--process-slot-var") or (not t.startswith("--") and t[-1:] in "IJRSnPLdsEa")
-                j += 2 if takes else 1
-            if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
-                argv0, rest = "gh", rest[j + 1:]
+            # gh only as the command xargs runs, since "gh" is also a common grep pattern: `xargs grep
+            # -l gh src` must not read as gh.
+            if _xc < len(rest) and basename(rest[_xc]).replace(PH, "") == "gh":
+                argv0, rest = "gh", rest[_xc + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
         # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
         # inner command so the SQL check fires on a containerized client.
