@@ -211,7 +211,8 @@ check "JSON depth 500, Write to a non-settings path -> still parses, exit 0, no 
 out=$(payload_write "$FIXTURE/src/app.py" | memerr "$GUARD" 2>/dev/null); rc=$?
 ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "json.load MemoryError, Write to a non-settings path -> ask (payload not checked)" "$ok"
-# A writer still sleeping when the gate exits gets SIGPIPE unless memerr reads stdin; pipefail would make that rc.
+# A writer still sleeping when the gate exits gets EPIPE (python: BrokenPipeError, rc 120) unless memerr reads
+# stdin; pipefail would make that the row's rc.
 out=$( { sleep 0.2; payload_write "$FIXTURE/src/app.py"; } | memerr "$GUARD" 2>/dev/null); rc=$?
 ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "json.load MemoryError, slow writer -> rc 0 and ask (memerr reads stdin)" "$ok"
