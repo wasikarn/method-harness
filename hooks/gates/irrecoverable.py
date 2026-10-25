@@ -401,8 +401,8 @@ def _mid_merge():
 # needs no case). timeout/gtimeout also take one DURATION positional; that is
 # handled where the wrapper is unwrapped. setsid takes bare flags only; exec's
 # `-a name` is the one value flag (GH #227: it hid the wrapped command).
-# Open-ended by nature: a wrapper missing here (watch, flock, strace, ...) still
-# hides its command, the list covers the ones an everyday one-liner uses.
+# Open-ended by nature: a wrapper missing here and from _RUN_WRAPPERS (GH #566 added flock, watch,
+# strace, ...) still hides its command; the lists cover the ones an everyday one-liner uses.
 FLAG_VALUE_WRAPPERS = {
     "nice": ("-n", "--adjustment"),
     "ionice": ("-c", "-n", "--class", "--classdata"),
@@ -425,6 +425,30 @@ _UNWRAP_ONLY = ("builtin",)
 # dispatches to the real tool of that name, so it is classified as that tool.
 _RTK_RUNNERS = ("proxy",)
 _RTK_SHELL_RUNNERS = ("err", "test", "summary")
+# GH #566: more programs that run the command after them, unwrapped in the rule loop only (as `builtin` is):
+# a member of PREFIX_WRAPPERS would also widen the spawn-anchor walk, which runs on a time budget. A subagent's
+# claude spawned through one of them is denied per window instead (see _SPAWN_WINDOW_FLAGS).
+# name -> (flags that take the next word as their value, positionals between the flags and the command,
+#          flags whose value is a shell command line, whether the remaining words are joined into one).
+_RUN_WRAPPERS = {
+    "flock": (("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"), 1, ("-c", "--command"), False),
+    "caffeinate": (("-t", "-w"), 0, (), False),
+    "xcrun": (("-sdk", "--sdk", "-toolchain", "--toolchain", "-log"), 0, (), False),
+    "chronic": ((), 0, (), False), "unbuffer": ((), 0, (), False),
+    "strace": (("-o", "-e", "-p", "-s", "-u", "-E", "-a", "-b", "-I", "-O", "-P", "-S", "-X"), 0, (), False),
+    "ltrace": (("-o", "-e", "-p", "-s", "-u", "-a", "-n", "-A", "-D", "-F", "-l", "-x"), 0, (), False),
+    "watch": (("-n", "--interval", "-q", "--equexit"), 0, (), True),  # watch runs `sh -c "<words>"`
+    "script": (("-E", "--echo", "-o", "--output-limit", "-T", "--log-timing", "-I", "--log-in",
+                "-O", "--log-out", "-B", "--log-io", "-m", "--logging-format"), 0, ("-c", "--command"), False),
+    "su": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"), 0,
+           ("-c", "--command", "-C", "--session-command"), None),  # su's words are a user, not a command
+    "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
+                  "--joblog", "--results", "--delay", "--timeout", "-a", "--arg-file"), 0, (), False),
+    "npx": (("-p", "--package"), 0, ("-c", "--call"), False), "bunx": (("-p", "--package"), 0, (), False),
+}
+# A package runner's package names map to the program they install (`npx @anthropic-ai/claude-code -p x`).
+_PKG_PROGRAMS = {"claude-code": "claude"}
+_SPAWN_WINDOW_FLAGS = ("-p", "--print", "--agent", "--bg", "--worktree")
 # Reserved words that open a command position inside a compound statement
 # ("for x in a; do rm -rf y; done": the segment after ";" starts with "do"), so
 # the real argv0 comes right after them. Stripped at segment start only, never
@@ -2545,6 +2569,50 @@ def _env_split_options(body):
     return words
 
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
+# xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
+_XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
+_XARGS_VALUE_LONG = ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
+                     "--process-slot-var", "--max-lines", "--replace", "--eof")
+
+def _xargs_command(rest):
+    # The index of the command xargs runs in its args: past its flags and their values. A short
+    # cluster is read left to right: the first letter that takes a value takes the rest of the
+    # cluster (`-d'\n'`, `-Is`), or the next word when it is the cluster's last letter (`-tJ x`).
+    j = 0
+    while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
+        t = rest[j].replace(PH, "")
+        j += 1
+        if t == "--":
+            break
+        if t.startswith("--"):
+            j += t in _XARGS_VALUE_LONG and j < len(rest)
+            continue
+        for k, ch in enumerate(t[1:], 1):
+            if ch in _XARGS_VALUE_LETTERS:
+                j += k == len(t) - 1 and j < len(rest)
+                break
+    return j
+
+def _past_wrapper_words(name, rest, i):
+    # The index past a prefix wrapper's own words in rest[i:]: its dash words and their values,
+    # env's and sudo's assignments, timeout's duration. Used inside xargs's command (F5).
+    vals = set(FLAG_VALUE_WRAPPERS.get(name, ()))
+    if name in ("sudo", "doas"):
+        vals |= {"-u", "-g", "-C", "-p", "-D", "-h", "-r", "-t", "-U", "--user", "--group"}
+    if name == "env":
+        vals |= {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}
+    while i < len(rest):
+        t = rest[i].replace(PH, "")
+        if t.startswith("-") and len(t) > 1:
+            i += 2 if t in vals else 1
+        elif _assignment(rest[i]) and name in ("env", "sudo", "doas"):
+            i += 1
+        else:
+            break
+    if name in ("timeout", "gtimeout") and i < len(rest):
+        i += 1  # the DURATION positional
+    return i
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -2577,8 +2645,8 @@ def _check_window(_wi, w):
     # separate GH issues (2026-09-20 audit).
     # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
     # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
-    o, env_splits = 0, 0
-    while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS):
+    o, env_splits, via_run_wrapper = 0, 0, False
+    while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
@@ -2717,6 +2785,40 @@ def _check_window(_wi, w):
                 argv0, o = basename(rest[j]), j + 1
             else:  # an rtk verb that dispatches to the real tool of the same name
                 argv0, o = basename(rest[i]), i + 1
+        elif argv0 in _RUN_WRAPPERS:  # GH #566
+            vals, npos, bodies, join = _RUN_WRAPPERS[argv0]
+            i, body = o, None
+            while i < len(rest) and rest[i].replace(PH, "").startswith("-"):
+                t = rest[i].replace(PH, "")
+                name = t.split("=", 1)[0]
+                if name in bodies:
+                    body = t.split("=", 1)[1] if "=" in t else (rest[i + 1] if i + 1 < len(rest) else None)
+                    break
+                # A body letter bundled in a short cluster (`script -qc 'cmd'`): the rest of the cluster, or the next word.
+                k = next((k for k, ch in enumerate(t[1:], 1) if "-" + ch in bodies), 0) if not t.startswith("--") else 0
+                if k:
+                    body = t[k + 1:] or (rest[i + 1] if i + 1 < len(rest) else None)
+                    break
+                if t == "--":
+                    i += 1
+                    break
+                i += 2 if t in vals else 1
+            if body is None and join is None:
+                break  # su without -c runs a login shell, no command
+            if body is None:
+                i += npos
+            if body is None and i < len(rest) and argv0 == "flock" and rest[i].replace(PH, "") in ("-c", "--command"):
+                body = rest[i + 1] if i + 1 < len(rest) else None
+            if body is not None or join:
+                _scan_body(body if body is not None else " ".join(rest[i:]))
+                o = len(rest)
+                break
+            if i >= len(rest):
+                break
+            argv0, o, via_run_wrapper = basename(rest[i]), i + 1, True
+            if o - 1 < len(rest) and argv0 not in _RUN_WRAPPERS:
+                pkg = re.sub(r"@[^/@]*$", "", rest[o - 1].replace(PH, ""))
+                argv0 = _PKG_PROGRAMS.get(basename(pkg), argv0)
         else:  # command, nohup, time, setsid, builtin — bare flags then the wrapped command
             i = _past_dash_words(rest, o)
             if i >= len(rest):
@@ -2766,22 +2868,24 @@ def _check_window(_wi, w):
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(rest[j:])
                 break
+        _xc = _xargs_command(rest)
+        # Bypass hunt 2026-10-23 F5: `find | xargs rm` deletes every path it is fed, the same delete as
+        # `find -exec rm`, which denies with no flags at all. Wrappers between (`xargs sudo -u x rm`,
+        # `xargs nice -n 5 rm`, `xargs env FOO=1 rm`, `xargs timeout 5 rm`) are read past.
+        _xr = _xc
+        while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS:
+            _xr = _past_wrapper_words(basename(rest[_xr]).replace(PH, ""), rest, _xr + 1)
+        if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
+            deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
             if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
         else:
-            # gh only as the command xargs runs (past its flags and their values), since "gh" is also a
-            # common grep pattern: `xargs grep -l gh src` must not read as gh.
-            j = 0
-            while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
-                t = rest[j].replace(PH, "")
-                # A bundled short cluster (-tJ) takes the next word when its last letter takes a value.
-                takes = t in ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
-                              "--process-slot-var") or (not t.startswith("--") and t[-1:] in "IJRSnPLdsEa")
-                j += 2 if takes else 1
-            if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
-                argv0, rest = "gh", rest[j + 1:]
+            # gh only as the command xargs runs, since "gh" is also a common grep pattern: `xargs grep
+            # -l gh src` must not read as gh.
+            if _xc < len(rest) and basename(rest[_xc]).replace(PH, "") == "gh":
+                argv0, rest = "gh", rest[_xc + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
         # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
         # inner command so the SQL check fires on a containerized client.
@@ -2794,6 +2898,11 @@ def _check_window(_wi, w):
     # GH #336. Outside the candidate loop below: a PH argv0 (`${EDITOR} f`) must not read as mkfs.
     # PH is stripped instead, so a splice inside the word (`mk$(true)fs.ext4`) still matches.
     _a0 = argv0.replace(PH, "")
+    # GH #566: a subagent's claude reached through a wrapper the spawn anchor does not walk (flock, npx, ...).
+    # Only past one of those wrappers: elsewhere the anchor decides, and a window can read `claude` as argv0 where
+    # the shell does not run it (`builtin claude`, `"A=1" claude`).
+    if via_run_wrapper and "agent_id" in d and _a0 == "claude" and any(t.replace(PH, "").split("=", 1)[0] in _SPAWN_WINDOW_FLAGS for t in rest):
+        _deny_nested_spawn()
     if (_a0 in ("mkfs", "mke2fs") or _a0.startswith("mkfs.")) and any(
             not t.replace(PH, "").startswith("-") for t in rest):
         deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")

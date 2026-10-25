@@ -1899,4 +1899,45 @@ test_deny  "$IRRECOVERABLE" "GH #563: git rm -f -- -n (-n after -- is a path)" "
 test_deny  "$IRRECOVERABLE" "GH #563: git rm -nf --no-dry-run (last one wins)" "$(bash_payload 'git rm -nf --no-dry-run a.py')"
 test_deny  "$IRRECOVERABLE" "GH #563: git rm -f still denies" "$(bash_payload 'git rm -f a.py')"
 
+# Bypass hunt 2026-10-23 F5: `find | xargs rm` is the same delete as `find -exec rm` (denied with no
+# flags at all), but the xargs re-point handed it to the rm-rf rule, which needs both -r and -f.
+for _c in \
+  'find . -type f | xargs rm' \
+  'find . -print0 | xargs -0 rm' \
+  "find . -name '*.bak' | xargs -I{} rm {}" \
+  'fd -t f | xargs rm' \
+  'git ls-files | xargs rm -f' \
+  'find . | xargs -n 10 rm' \
+  'find . | xargs /bin/rm' \
+  'find . | xargs sudo rm' \
+  'xargs rm < files.txt' \
+  "bash -c 'find . | xargs rm'" \
+  "find . | xargs -d'\\n' rm" \
+  'find . | xargs -Is rm s' \
+  'find . | xargs nice -n 5 rm' \
+  'find . | xargs timeout 5 rm' \
+  'find . | xargs env FOO=1 rm' \
+  'find . | xargs sudo -u bob rm' ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F5: xargs rm deletes every path it is fed: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'git ls-files | xargs grep -l rm' \
+  'xargs grep rm src < files.txt' \
+  "find . -name '*.o' | xargs ls -l" \
+  'echo a | xargs echo rm' \
+  'find . | xargs -I{} echo rm {}' \
+  'find . -type d -empty | xargs rmdir' \
+  'find . -name x | xargs wc -l' \
+  'ls | xargs sudo -u rm ls' \
+  'ls | xargs env -u rm ls' \
+  "ls | xargs -d '\\n' ls" \
+  'ls | xargs -a rm ls' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F5 control: xargs runs something else: $_c" "$(bash_payload "$_c")"
+done
+
+# The same xargs flag walk finds gh (review of the F5 fix): an attached -d value hid it.
+test_ask_says "$IRRECOVERABLE" "bypass hunt F5 review: xargs -d'\\n' gh pr merge still asks" \
+  "$(bash_payload "ls | xargs -d'\\n' gh pr merge 1 --admin")" "gh pr merge"
+
+
 gates_summary
