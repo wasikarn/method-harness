@@ -915,7 +915,15 @@ test_allow "$IRRECOVERABLE" "main session: bash -c claude -p (no agent_id, not a
   "$(bash_payload "bash -c 'claude -p hi'")"
 test_allow "$IRRECOVERABLE" "sudo bash -c with a harmless body" \
   "$(bash_payload "sudo bash -c 'ls -la'")"
-# Non-goal: cat <<EOF | bash, eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
+# GH #567: a shell reading stdin gets its commands from a heredoc piped in, a here-string, or an echo/printf.
+test_deny  "$IRRECOVERABLE" "GH #567: bash <<< rm -rf" "$(bash_payload "bash <<< 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #567: echo into bash" "$(bash_payload "echo 'git push --force' | bash")"
+test_deny  "$IRRECOVERABLE" "GH #567: printf into bash -s" "$(bash_payload "printf 'git reset --hard\n' | bash -s")"
+test_deny  "$IRRECOVERABLE" "GH #567: heredoc piped into bash" "$(bash_payload "$(printf 'cat <<EOF | bash\nrm -rf build\nEOF')")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into tee" "$(bash_payload "echo 'rm -rf build' | tee notes.txt")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into bash script.sh (stdin is data)" "$(bash_payload 'echo hi | bash x.sh')"
+test_allow "$IRRECOVERABLE" "GH #567 control: heredoc piped into grep bash" "$(bash_payload "$(printf "cat <<'EOF' | grep bash\nrm -rf build\nEOF")")"
+# Non-goal: eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 

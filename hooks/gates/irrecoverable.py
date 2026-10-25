@@ -86,6 +86,41 @@ def _statement_at(line, pos):
     # The pipeline of line that holds line[pos].
     return next(line[s:e] for s, e in _pieces(line) if pos <= e)
 
+# GH #567: a shell reads its commands on stdin too: a heredoc piped into it (cat <<EOF | bash), a here-string
+# (bash <<< 'cmd') or the words an echo/printf pipes into it (echo 'cmd' | sh). Only a shell that reads stdin
+# counts: one with no -c and no script operand (`bash -s args` reads stdin, `bash x.sh` does not).
+_STDIN_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+def _words(seg):
+    try:
+        return shlex.split(seg)
+    except ValueError:
+        return None
+
+def _reads_stdin_shell(seg):
+    w = _words(seg.split("<<<", 1)[0].split("<<", 1)[0])
+    if not w:
+        return False
+    i = 0
+    while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i] in ("sudo", "env", "command", "exec", "nohup", "time")):
+        i += 1
+    if i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+        return False
+    for t in w[i + 1:]:
+        if t == "-s" or (t.startswith("-") and not t.startswith("--") and "s" in t[1:] and "c" not in t[1:]):
+            return True  # -s: the rest are positional parameters, commands come from stdin
+        if not t.startswith(("-", "+")) or (t.startswith("-") and not t.startswith("--") and "c" in t[1:]):
+            return False  # a script operand, or -c
+    return True
+
+def _piped_into_shell(line, pos):
+    # True when the heredoc at line[pos] feeds a pipeline whose later segment is a shell reading stdin.
+    for s, e in _pieces(line):
+        if s <= pos <= e:
+            segs = _pieces(line[s:e], pipe=True)
+            k = next((k for k, (a, b) in enumerate(segs) if s + a <= pos <= s + b), None)
+            return k is not None and any(_reads_stdin_shell(line[s + a:s + b]) for a, b in segs[k + 1:])
+    return False
+
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
@@ -101,7 +136,7 @@ def _strip_heredocs(cmd):
         i += 1
         if not m:
             continue
-        if _INTERPRETER_RE.search(line[:m.start()]):
+        if _INTERPRETER_RE.search(line[:m.start()]) or _piped_into_shell(line, m.start()):
             continue
         strip_tabs, delim = bool(m.group(1)), m.group(3)
         body_start, found = i, False
@@ -1281,6 +1316,29 @@ def _sql_stdin_drop(c):
         if _SQL_DROP_RE.search(" ".join(segs[:k])) or (len(here) > 1 and _SQL_DROP_RE.search(here[1])):
             return True
     return False
+
+def _shell_stdin_bodies(c):
+    # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
+    # right upstream of it. printf's format is read with \n as a newline; its other escapes stay literal.
+    out = []
+    for s, e in _pieces(c):
+        segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
+        for k, g in enumerate(segs):
+            if not _reads_stdin_shell(g):
+                continue
+            if "<<<" in g:
+                w = _words(g.split("<<<", 1)[1])
+                if w:
+                    out.append(w[0])
+            up = _words(segs[k - 1]) if k else None
+            if up and up[0] in ("echo", "printf"):
+                args = up[1:]
+                while up[0] == "echo" and args and re.fullmatch(r"-[neE]+", args[0]):
+                    args = args[1:]
+                out.append(" ".join(args).replace("\\n", "\n") if up[0] == "printf" else " ".join(args))
+    return out
+
+_SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
 
 if _sql_stdin_drop(cmd):
     deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) sent to a SQL client on stdin — confirm with user first", rule="sql-drop")
@@ -2703,6 +2761,8 @@ def _run_words():
         finally:
             _WORD_PHASE[0] = False
 
+for _b in _SHELL_STDIN_BODIES:  # GH #567: each is a command line, like a sh -c body
+    _scan_body(_b)
 _run_windows(0)
 
 # GH #245: the overlapping spawn scan, last (see _SPAWN_ANCHOR_RES).
