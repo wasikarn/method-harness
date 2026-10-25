@@ -2427,17 +2427,41 @@ def _check_window(_wi, w):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
-            i = o
+            # GH #560: -S STRING / --split-string=STRING splits STRING into the command and its first
+            # words, so it is a command line like a `sh -c` body (any words after it are appended).
+            # -C (chdir) and BSD -P (path) take a value like -u.
+            # A short cluster reads like getopt (GH #560 review: `env -iS 'rm -rf x'` ran the string):
+            # the first value letter takes the rest of the cluster, or the next word when that is
+            # empty (`-iu FOO`). getopt_long also takes an unambiguous prefix (`--split=`); `--s`
+            # is the shortest, as no other env long option starts with s.
+            i, body = o, None
             while i < len(rest):
                 t = rest[i].replace(PH, "")
-                if t == "-u" and i + 1 < len(rest):
-                    i += 2
+                long_name = t[2:].split("=", 1)[0]
+                if t.startswith("--") and len(long_name) > 0 and "split-string".startswith(long_name):
+                    if "=" in t:
+                        body, i = rest[i].split("=", 1)[1], i + 1
+                    elif i + 1 < len(rest):
+                        body, i = rest[i + 1], i + 2
+                    break
+                m = re.match(r"-[^-CPSu]*([CPSu])", t)
+                if m:
+                    attached = t[m.end():]
+                    if m.group(1) == "S" and (attached or i + 1 < len(rest)):
+                        body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
+                    i += 1 if attached else 2
+                    if body is not None:
+                        break
                 elif t.startswith("-"):
                     i += 1
                 elif _assignment(rest[i]):
                     i += 1
                 else:
                     break
+            if body is not None:
+                _scan_body(" ".join([body] + rest[i:]))
+                o = len(rest)
+                break
             if i >= len(rest):
                 break
             argv0, o = basename(rest[i]), i + 1
