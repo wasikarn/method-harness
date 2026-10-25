@@ -2178,7 +2178,7 @@ test_deny  "$IRRECOVERABLE" "empty value: git config clean.requireForce \"\$(tru
 test_deny  "$IRRECOVERABLE" "empty value: git config --add clean.requireForce ''" "$(bash_payload "git config --add clean.requireForce ''")"
 test_deny  "$IRRECOVERABLE" "empty value: git config --replace-all clean.requireForce ''" "$(bash_payload "git config --replace-all clean.requireForce ''")"
 test_deny  "$IRRECOVERABLE" "empty value: git config --global clean.requireForce ''" "$(bash_payload "git config --global clean.requireForce ''")"
-test_deny  "$IRRECOVERABLE" "empty value: git config --file F clean.requireForce ''" "$(bash_payload "git config --file .git/config clean.requireForce ''")"
+test_deny  "$IRRECOVERABLE" "empty value: git config --file .git/config clean.requireForce ''" "$(bash_payload "git config --file .git/config clean.requireForce ''")"
 test_deny  "$IRRECOVERABLE" "empty value: git config --type=bool clean.requireForce ''" "$(bash_payload "git config --type=bool clean.requireForce ''")"
 test_deny  "$IRRECOVERABLE" "empty value: git -c core.hooksPath= commit" "$(bash_payload 'git -c core.hooksPath= commit -m x')"
 test_deny  "$IRRECOVERABLE" "empty value: git -c core.hooksPath=\"\" commit" "$(bash_payload 'git -c core.hooksPath="" commit -m x')"
