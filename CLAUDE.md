@@ -37,8 +37,8 @@ Search configured `qmd` collections first (`qmd status`), then `context7` for li
 ## Branching and architecture
 
 `develop` is protected: PR only, from a `feat/`/`claude/` branch, reviewed via
-`mattpocock-skills:code-review`; `scripts/merge-pr.sh` refuses a PR whose latest verdict comment is not
-`Fresh-context review: MERGE`. Worktrees, the shared memory store, and reading
+`mattpocock-skills:code-review`; `scripts/merge-pr.sh` refuses a PR whose last verdict comment is not
+`Fresh-context review: MERGE @ <reviewed sha>`. Worktrees, the shared memory store, and reading
 `origin/develop`'s manifests before writing a version: `docs/reference/branching-model.md`.
 Ships as `mh@wasikarn` from the plugin cache; design: `docs/reference/operating-model.md`; env
 vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-ledger-module.md`.

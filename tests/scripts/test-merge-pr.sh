@@ -5,9 +5,10 @@
 # #492/#493, #496/#497 cut the same number). Stubs gh,
 # git and uptime on PATH; never touches GitHub. Each failing case also checks
 # that `gh pr merge` was never reached (or, for a head mismatch, that it was
-# reached with the checked sha and its refusal propagated). It also needs a "Fresh-context review:
-# MERGE" comment posted after the PR's last substantive commit (2026-10-25: #569-#576 and #611 merged
-# with FIX FIRST reviews open); the gh stub runs the script's own jq on fake comments.
+# reached with the checked sha and its refusal propagated). It also needs a last "Fresh-context review:
+# MERGE @ <sha>" comment whose <sha> is the head or an ancestor followed only by develop merges and
+# manifest-only commits (2026-10-25: #569-#576 and #611 merged with FIX FIRST reviews open); the gh stub
+# runs the script's own jq on fake comments.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../../scripts/merge-pr.sh"
@@ -71,6 +72,8 @@ case "$1" in
     if [ "$n" -gt 1 ] && [ -n "${STUB_FETCH2_FAIL:-}" ]; then echo "fatal: unable to access" >&2; exit 1; fi
     exit 0 ;;
   merge-base)
+    # The reviewed-sha ancestry check (any first ref but origin/develop): STUB_REVIEWED_ANCESTOR, default 0.
+    [ "$3" = "origin/develop" ] || exit "${STUB_REVIEWED_ANCESTOR:-0}"
     n=$(count merge-base)
     if [ "$n" -gt 1 ]; then exit "${STUB_ANCESTOR2:-$STUB_ANCESTOR}"; fi
     exit "$STUB_ANCESTOR" ;;
@@ -84,10 +87,11 @@ case "$1" in
       *) v="$STUB_HEAD_VER" ;;
     esac
     printf '{\n  "version": "%s"\n}\n' "$v" ;;
-  # STUB_COMMITS: space-separated "sha:committer-epoch:file,file" for the PR's non-merge commits.
+  # STUB_COMMITS: space-separated "sha:file,file" for the non-merge commits after the reviewed sha.
   rev-list) for c in $STUB_COMMITS; do echo "${c%%:*}"; done ;;
-  diff-tree) for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { f=${c##*:}; printf '%s\n' ${f//,/ }; }; done ;;
-  log) for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { r=${c#*:}; echo "${r%%:*}"; }; done ;;
+  diff-tree)
+    [ -z "${STUB_DIFFTREE_FAIL:-}" ] || { echo "fatal: bad object" >&2; exit 128; }
+    for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { f=${c#*:}; printf '%s\n' ${f//,/ }; }; done ;;
   *) exit 2 ;;
 esac
 EOF
@@ -104,16 +108,15 @@ run() {
   : >"$LOG"
   rm -f "$STUB/fetch" "$STUB/merge-base" "$STUB/show-develop" "$STUB/api"
   out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_DIR="$STUB" STUB_HEAD=headsha111 \
-    STUB_COMMITS="${STUB_COMMITS-c1:1000:hooks/gates/irrecoverable.py}" \
-    STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict 2000 MERGE)}" \
+    STUB_COMMITS="${STUB_COMMITS-}" STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict 'MERGE @ abc1234')}" \
     STUB_ANCESTOR="$1" STUB_REMOTE_HEAD="$2" STUB_LOAD="$3" \
     STUB_HEAD_VER="${STUB_HEAD_VER-1.1.2}" STUB_DEV_VER="${STUB_DEV_VER-1.1.1}" \
     MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 bash "$SCRIPT" 451 2>&1)
   rc=$?
 }
 merged() { /usr/bin/grep -q '^gh pr merge' "$LOG"; }
-# verdict <epoch> <word>...: one PR comment, created at <epoch>, whose body carries a review verdict line.
-verdict() { jq -nc --argjson t "$1" --arg v "${*:2}" '[{created_at: ($t | todateiso8601), body: ("Some text.\n## Fresh-context review: " + $v + "\nmore")}]'; }
+# verdict <text>: one PR comment whose body carries the line "## Fresh-context review: <text>".
+verdict() { jq -nc --arg v "$1" '[{created_at: "2026-10-25T00:00:00Z", body: ("Some text.\n## Fresh-context review: " + $v + "\nmore")}]'; }
 # comments <json-array>...: concatenate comment arrays, in order.
 comments() { jq -sc 'add' <<<"$*"; }
 
@@ -170,9 +173,9 @@ refuses "empty gh output" "could not read the head sha"
 # 4e. develop moved during the load wait: the first ancestry check passed, the second fails.
 STUB_ANCESTOR2=1 run 0 headsha111 1.50
 refuses "develop moved after the first check" "does not contain origin/develop"
-if [ "$(/usr/bin/grep -c '^git merge-base' "$LOG")" -eq 2 ]; then ok "ancestry re-checked after the wait"; else bad "ancestry not re-checked: $(cat "$LOG")"; fi
-# the re-check must see a fresh develop: a fetch sits between the two merge-base calls.
-second_fetch=$(second_call_line '^git fetch'); second_mb=$(second_call_line '^git merge-base')
+if [ "$(/usr/bin/grep -c '^git merge-base --is-ancestor origin/develop' "$LOG")" -eq 2 ]; then ok "ancestry re-checked after the wait"; else bad "ancestry not re-checked: $(cat "$LOG")"; fi
+# the re-check must see a fresh develop: a fetch sits between the two develop ancestry calls.
+second_fetch=$(second_call_line '^git fetch'); second_mb=$(second_call_line '^git merge-base --is-ancestor origin/develop')
 if [ "$(/usr/bin/grep -c '^git fetch' "$LOG")" -eq 2 ] && [ -n "$second_mb" ] && [ "$second_fetch" -lt "$second_mb" ]; then
   ok "git fetch runs before the second ancestry check"
 else bad "no fetch before the second ancestry check: $(cat "$LOG")"; fi
@@ -233,39 +236,62 @@ STUB_SHOW_FAIL=1 run 0 headsha111 1.50
 refuses "unreadable manifest file" "cannot read"
 
 # 6. review verdict (2026-10-25). No verdict comment at all: refuse, before the load wait.
-STUB_COMMENTS_JSON='[{"created_at":"1970-01-01T01:00:00Z","body":"A fresh-context review of this PR is in progress."}]' run 0 headsha111 7.25
-refuses "no review verdict" "no \"Fresh-context review: MERGE\""
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"A fresh-context review of this PR is in progress."}]' run 0 headsha111 7.25
+refuses "no review verdict" "no \"Fresh-context review: MERGE @ <sha>\""
 if /usr/bin/grep -q 'load' <<<"$out"; then bad "no verdict refused only after the load wait: $out"; else ok "no verdict is refused before the load wait"; fi
 
 # 6b. the latest verdict is FIX FIRST, even with an earlier MERGE: refuse and name it.
-STUB_COMMENTS_JSON=$(comments "$(verdict 2000 MERGE)" "$(verdict 3000 FIX FIRST)") run 0 headsha111 1.50
+STUB_COMMENTS_JSON=$(comments "$(verdict 'MERGE @ abc1234')" "$(verdict 'FIX FIRST')") run 0 headsha111 1.50
 refuses "latest verdict FIX FIRST" "is FIX FIRST, not MERGE"
 
-# 6c. FIX FIRST then a later MERGE (a re-review after the fix): merges.
-STUB_COMMENTS_JSON=$(comments "$(verdict 2000 FIX FIRST)" "$(verdict 3000 MERGE)") run 0 headsha111 1.50
+# 6c. FIX FIRST then a later MERGE on the head (a re-review after the fix): merges.
+STUB_COMMENTS_JSON=$(comments "$(verdict 'FIX FIRST')" "$(verdict 'MERGE @ 0f1e2d3c')") run 0 headsha111 1.50
 if [ "$rc" -eq 0 ] && merged; then ok "FIX FIRST then MERGE merges"; else bad "FIX FIRST then MERGE rc=$rc: $out"; fi
 
-# 6d. MERGE posted before the last substantive commit: stale, refuse.
-STUB_COMMITS="c1:1000:hooks/gates/irrecoverable.py c2:2500:tests/hooks/test-gates.sh" run 0 headsha111 1.50
-refuses "verdict older than the last change" "no \"Fresh-context review: MERGE\""
+# 6d. a substantive commit after the reviewed sha: refuse, whatever its timestamps say (the reviewer's
+# finding: a fix committed before the review but pushed after it used to pass the time comparison).
+STUB_COMMITS="c2:hooks/gates/irrecoverable.py" run 0 headsha111 1.50
+refuses "a change after the reviewed sha" "commit c2 touches more than the manifests"
 
-# 6e. a later manifest-only commit (a version bump after syncing develop) keeps the review.
-STUB_COMMITS="c1:1000:hooks/gates/irrecoverable.py c2:2500:.claude-plugin/plugin.json,.claude-plugin/marketplace.json" run 0 headsha111 1.50
+# 6e. a manifest-only commit after the reviewed sha (a version bump after syncing develop) keeps the review.
+STUB_COMMITS="c2:.claude-plugin/plugin.json,.claude-plugin/marketplace.json" run 0 headsha111 1.50
 if [ "$rc" -eq 0 ] && merged; then ok "a version bump after the review keeps it"; else bad "manifest-only commit lost the review rc=$rc: $out"; fi
+# ...but one that also touches another file does not.
+STUB_COMMITS="c2:.claude-plugin/plugin.json,scripts/merge-pr.sh" run 0 headsha111 1.50
+refuses "a bump plus another file after the review" "commit c2 touches more than the manifests"
 
-# 6f. a lower-case, bold verdict line with trailing words still reads as MERGE; CLOSE refuses.
-STUB_COMMENTS_JSON='[{"created_at":"1970-01-01T00:33:20Z","body":"**fresh-context review: merge** after re-sync"}]' run 0 headsha111 1.50
-if [ "$rc" -eq 0 ]; then ok "case and bold do not hide a MERGE verdict"; else bad "styled MERGE verdict rc=$rc: $out"; fi
-STUB_COMMENTS_JSON=$(verdict 2000 CLOSE) run 0 headsha111 1.50
+# 6f. a lower-case, bold verdict with a backticked sha and trailing words reads as MERGE; CLOSE refuses.
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## **Fresh-context review: merge** @ `abc1234` after re-sync"}]' run 0 headsha111 1.50
+if [ "$rc" -eq 0 ]; then ok "case, bold and a backticked sha do not hide a MERGE verdict"; else bad "styled MERGE verdict rc=$rc: $out"; fi
+STUB_COMMENTS_JSON=$(verdict 'CLOSE') run 0 headsha111 1.50
 refuses "CLOSE verdict" "is CLOSE"
 
 # 6g. a FIX FIRST posted during the load wait: the re-check after the wait refuses.
-STUB_COMMENTS_JSON2=$(comments "$(verdict 2000 MERGE)" "$(verdict 3000 FIX FIRST)") run 0 headsha111 1.50
+STUB_COMMENTS_JSON2=$(comments "$(verdict 'MERGE @ abc1234')" "$(verdict 'FIX FIRST')") run 0 headsha111 1.50
 refuses "FIX FIRST posted during the wait" "is FIX FIRST"
 
 # 6h. the comments cannot be read: refuse, do not treat it as "no verdict needed".
 STUB_API_FAIL=1 run 0 headsha111 1.50
 refuses "unreadable comments" "could not read the comments"
+
+# 6i. a MERGE that names no reviewed commit: refuse and show the expected form.
+STUB_COMMENTS_JSON=$(verdict 'MERGE') run 0 headsha111 1.50
+refuses "MERGE without a sha" "names no reviewed commit"
+
+# 6j. the reviewed sha is not in the head's history (rewritten history, or a sha from another PR).
+STUB_REVIEWED_ANCESTOR=1 run 0 headsha111 1.50
+refuses "reviewed sha not an ancestor" "not in the head's history"
+
+# 6k. a verdict line inside a code fence does not count: a fenced MERGE then a real FIX FIRST is FIX
+# FIRST, and a comment with only a fenced MERGE has no verdict.
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"```\nFresh-context review: MERGE @ abc1234\n```\n## Fresh-context review: FIX FIRST"}]' run 0 headsha111 1.50
+refuses "fenced MERGE before a real FIX FIRST" "is FIX FIRST"
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"~~~\nFresh-context review: MERGE @ abc1234\n~~~"}]' run 0 headsha111 1.50
+refuses "only a fenced MERGE" "no \"Fresh-context review"
+
+# 6l. git diff-tree fails on a commit after the reviewed sha: refuse (it used to read as not substantive).
+STUB_COMMITS="c2:hooks/gates/irrecoverable.py" STUB_DIFFTREE_FAIL=1 run 0 headsha111 1.50
+refuses "diff-tree failure" "diff-tree c2 failed"
 
 # 5. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" 2>&1); rc=$?

@@ -43,18 +43,22 @@ refuses a head whose versions are not plain `X.Y.Z`, whose two manifests disagre
 skips only the equal-version refusal, for a PR that needs no bump; an unreadable manifest or a
 failed fetch after the wait also refuses, with a message naming it), merges with
 `gh pr merge --merge --match-head-commit <checked sha>`, and prints the merge commit sha. On a
-behind-develop refusal, rebase on `origin/develop` and push (on a wrong-base refusal, retarget the PR
+behind-develop refusal, merge `origin/develop` into the branch and push (a rebase rewrites every commit, so
+it also throws away the review verdict below; on a wrong-base refusal, retarget the PR
 with `gh pr edit <PR> --base develop`): the pre-push gauntlet then runs on the exact tree that
 will merge, and the pinned sha makes GitHub refuse a head that moved after the check.
 
-It also refuses a PR without a review verdict (2026-10-25: #569–#576 and #611 merged while their reviews
-still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
-`Fresh-context review: MERGE` (or `FIX FIRST` / `CLOSE`; case and markdown emphasis ignored) in a PR
-comment, and the latest one posted after the PR's last substantive commit must be `MERGE`, checked before
-and after the load wait. A merge of `develop` and a commit touching only the two manifests are not
-substantive, so syncing and bumping before the merge keep the review; any other commit needs a new one.
-Post the reviewer's result as that comment. The check proves a verdict was posted, not who wrote it or
-that the reviewer had fresh context, and a conflict resolved inside a merge commit is not counted. There
+It also refuses a PR without a current review verdict (2026-10-25: #569–#576 and #611 merged while
+their reviews still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
+`Fresh-context review: MERGE @ <sha>` (or `FIX FIRST` / `CLOSE`; case and markdown emphasis ignored) in a
+PR **comment**, `<sha>` being the head the reviewer read; a GitHub PR review or the PR body does not count,
+nor does a line inside a ``` or ~~~ fence, and the last verdict line in a comment wins. The last verdict on
+the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must be a merge
+of `develop` or touch only the two manifests, checked before and after the load wait. So merging `develop`
+and bumping the version keep the review; any other change, a rebase, or a force-push needs a new one. The
+check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
+still caught. Post the reviewer's result as that comment. It proves a verdict was posted, not who wrote it
+or that the reviewer had fresh context, and a conflict resolved inside a merge commit is not checked. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
 The checks are local-only. The script narrows the gap; it does not close it: a push to `develop`
