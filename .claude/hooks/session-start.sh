@@ -15,10 +15,10 @@ if [ "$(id -u)" != 0 ]; then
   command -v sudo >/dev/null || warn "no trash, not root, and no sudo"
   sudo="sudo -n"
 fi
-export DEBIAN_FRONTEND=noninteractive
+# `env` inside sudo: sudo's env_reset drops an exported DEBIAN_FRONTEND. stdin is the hook payload.
+apt() { $sudo env DEBIAN_FRONTEND=noninteractive apt-get -q "$@" </dev/null >&2; }
 # Try without `apt-get update` first: a container with fresh package lists skips the network round trip.
-$sudo apt-get install -y -q trash-cli >&2 \
-  || { $sudo apt-get update -q >&2 && $sudo apt-get install -y -q trash-cli >&2; } \
+apt install -y trash-cli || { apt update && apt install -y trash-cli; } \
   || warn "apt-get install trash-cli failed"
 command -v trash >/dev/null \
   || warn "trash-cli installed without a \`trash\` command (try: pip install trash-cli)"
