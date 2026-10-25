@@ -38,6 +38,7 @@ DENY git -c user.name=$N reset --hard
 DENY git -c core.hooksPath=$H commit -m x
 DENY git -ccore.hooksPath=$H commit -m x
 DENY git --config-env=core.hooksPath=$H commit -m x
+# an empty value unwires every hook (git 2.43, live-checked), so it denies like any other; was an ALLOW control
 DENY git -c core.hooksPath= status
 # 4. other characters shlex splits a word at
 DENY git -c user.email=a@b.c commit --amend -m x

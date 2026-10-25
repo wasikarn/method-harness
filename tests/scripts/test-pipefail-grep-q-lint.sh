@@ -48,10 +48,11 @@ fi
 probe=$(mktemp -d)
 [ -n "$probe" ] && [ -d "$probe" ] || { echo "  FAIL: mktemp -d failed, probe rows cannot run" >&2; exit 1; }
 trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
-# scan FILE: the scanner's hit lines, one per line; rc in $scan_rc.
+# scan FILE: the scanner's stdout; its rc lands in the caller's $?.
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
+hit_lines() { sed -n 's/^[^E][^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }
 
-# One race per statement, each a shape a past check missed.
+# One race per statement (line numbers in want_lines), each a shape a past check missed.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -79,13 +80,32 @@ DOC
 v=`a
 b
 x | grep -q y`
+echo "$o" | grep -E -q 'y'
+printf '%s|%s\n' a "$b" | grep -q a
+x \
+  | grep -iq y
+v=`x | grep -q y`
+out | if grep -q x; then :; fi
+out | while grep -q x; do :; done
+out | until grep -q x; do :; done
+out | time grep -q y
+out | { a || grep -q y; }
+out | case $v in p) grep -q x;; esac
+out | for i in 1; do grep -q x; done
+x | sudo -iu bob grep -q y
+x | nohup grep -q y
+x | env "$V=1" grep -q y
+x | env -S 'grep -q' y
+x | grep --qui y
+echo "pipe-into-grep-q: deliberate" | grep -q x
 EOF
-hits=$(scan "$probe/bad.sh"); scan_rc=$?
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26"
-got_lines=$(printf '%s\n' "$hits" | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//')
-[ "$scan_rc" -eq 1 ] && [ "$got_lines" = "$want_lines" ] \
-  && ok "probe: all 21 planted races found on their own lines (wrappers, groups, redirects, \$(...) in words, backticks in quotes, heredoc code)" \
-  || bad "probe: rc $scan_rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44"
+n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
+out=$(scan "$probe/bad.sh"); rc=$?
+got_lines=$(hit_lines <<<"$out")
+[ "$rc" -eq 1 ] && [ "$got_lines" = "$want_lines" ] \
+  && ok "probe: all $n_want planted races found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code)" \
+  || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
 
 cat > "$probe/good.sh" <<'EOF'
 # printf "$r" | grep -q x
@@ -94,44 +114,65 @@ grep -q x <<<"$(stat --version)"
 echo "$OUT" | grep -c x
 [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 2 ]
 a || grep -q x "$f"
+grep -q x "$f" | head -1
 x | grep -c " -eq " "$f"
 grep -c x "$f" # a | grep -q b
 echo "a | grep -q b"
 x | grep -e -q "$f"
+x | grep --regexp -q "$f"
+x | grep --regexp=-q "$f"
 echo $((a|b)) | grep -c x
+case "$x" in a|grep) grep -q y "$f" ;; esac
 cat <<'DOC'
 printf x | grep -q y
 DOC
-x | grep -q y  # pipe-into-grep-q: deliberate
+x | { grep -q y <<<"$z"; }
+x | grep -q y < "$f"
+x | env FOO=1 sed -n p
 EOF
-hits=$(scan "$probe/good.sh"); scan_rc=$?
-[ "$scan_rc" -eq 0 ] && [ -z "$hits" ] \
-  && ok "probe: comments, quoted text, here-strings, grep -c, -e -q, \$((a|b)), quoted heredoc bodies, the deliberate marker are clean" \
-  || bad "probe: rc $scan_rc on the race-free file: $hits $(cat "$probe/err")"
+out=$(scan "$probe/good.sh"); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] \
+  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects are clean" \
+  || bad "probe: rc $rc on the race-free file: $out $(cat "$probe/err")"
+
+# The exemption counts only as a trailing comment, and is reported, not hidden.
+printf 'x | grep -q y  # pipe-into-grep-q: deliberate\n' > "$probe/exempt.sh"
+out=$(scan "$probe/exempt.sh"); rc=$?
+[ "$rc" -eq 0 ] && /usr/bin/grep -q '^EXEMPT ' <<<"$out" && ok "probe: a trailing deliberate marker exempts the hit and reports it as EXEMPT" \
+  || bad "probe: the trailing marker gave rc $rc: $out"
 
 printf 'if x; then\n' > "$probe/unparsable.sh"
-hits=$(scan "$probe/unparsable.sh"); scan_rc=$?
-[ "$scan_rc" -eq 2 ] && [ -s "$probe/err" ] && ok "probe: an unparsable file is an error (rc 2), never clean" \
-  || bad "probe: an unparsable file gave rc $scan_rc, want 2"
-hits=$(scan "$probe/missing.sh"); scan_rc=$?
-[ "$scan_rc" -eq 2 ] && ok "probe: an unreadable file is an error (rc 2), never clean" \
-  || bad "probe: an unreadable file gave rc $scan_rc, want 2"
+printf 'x | grep -q y\n' > "$probe/race.sh"
+out=$(python3 -I "$SCAN" "$probe/unparsable.sh" "$probe/race.sh" 2>"$probe/err"); rc=$?
+[ "$rc" -eq 2 ] && [ -s "$probe/err" ] && /usr/bin/grep -q 'race.sh:1:' <<<"$out" \
+  && ok "probe: an unparsable file is an error (rc 2), and hits in the other files are still printed" \
+  || bad "probe: unparsable + race gave rc $rc, out [$out], want rc 2 with race.sh:1 listed"
+out=$(scan "$probe/missing.sh"); rc=$?
+[ "$rc" -eq 2 ] && ok "probe: an unreadable file is an error (rc 2), never clean" \
+  || bad "probe: an unreadable file gave rc $rc, want 2"
 
-# The audit's known-bad fixtures are invalid shell on purpose (same exclusion as the lint layer).
+# The audit's known-bad fixtures are invalid shell on purpose (run-gauntlet.sh's lintable() and
+# pre-commit's staged_lint() exclude the same path).
 files=()
 while IFS= read -r rel; do
   [ -f "$ROOT/$rel" ] && files+=("$ROOT/$rel")
 done < <(cd "$ROOT" && git ls-files '*.sh' 'git-hooks/*' ':(exclude)tests/skills/harness-audit/known-bad')
 
-found=$(python3 -I "$SCAN" "${files[@]}" 2>"$probe/err"); scan_rc=$?
-case "$scan_rc" in
-  0) ok "no tracked shell file pipes into grep -q (${#files[@]} files parsed)" ;;
-  1) while IFS= read -r h; do
-       bad "${h#"$ROOT"/} -- use grep -q PAT <<<\"\$x\" or <<<\"\$(cmd)\""
-     done <<<"$found" ;;
-  *) bad "the scanner failed (rc $scan_rc), so the tree was not checked: $(cat "$probe/err")" ;;
-esac
-[ -s "$probe/err" ] && [ "$scan_rc" -le 1 ] && bad "the scanner wrote to stderr: $(cat "$probe/err")"
+out=$(python3 -I "$SCAN" "${files[@]}" 2>"$probe/err"); rc=$?
+[ "$rc" -le 2 ] || bad "the scanner crashed (rc $rc): $(cat "$probe/err")"
+found=$(/usr/bin/grep -v '^EXEMPT ' <<<"$out")
+if [ -n "$found" ]; then
+  while IFS= read -r h; do
+    bad "${h#"$ROOT"/} -- use grep -q PAT <<<\"\$x\" or <<<\"\$(cmd)\""
+  done <<<"$found"
+fi
+[ "$rc" -eq 2 ] && bad "the scanner could not check every file: $(cat "$probe/err")"
+[ "$rc" -eq 0 ] && ok "no tracked shell file pipes into grep -q (${#files[@]} files parsed)"
+[ "$rc" -le 1 ] && [ -s "$probe/err" ] && bad "the scanner wrote to stderr: $(cat "$probe/err")"
+# A ratchet on exemptions: only this file's race probe may carry the marker.
+exempt=$(/usr/bin/grep -c '^EXEMPT ' <<<"$out")
+[ "$exempt" -le 1 ] && ok "deliberate exemptions: $exempt (allowed 1, the race probe above)" \
+  || bad "$exempt deliberate exemptions, allowed 1: $(/usr/bin/grep '^EXEMPT ' <<<"$out" | tr '\n' ' ')"
 [ "${#files[@]}" -ge 100 ] && ok "lint saw ${#files[@]} shell files (not vacuous)" \
   || bad "lint saw only ${#files[@]} shell files; the file listing no longer matches"
 

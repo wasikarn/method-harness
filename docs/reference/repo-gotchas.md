@@ -27,17 +27,22 @@ Under `set -o pipefail`, never pipe a writer into a reader that may stop early: 
 file (2026-10-23). Write `grep -q PAT <<<"$out"` or `grep -q PAT <<<"$(cmd)"`.
 `tests/scripts/test-pipefail-grep-q-lint.sh` checks every tracked shell file (a file without
 `pipefail` may be sourced under it, as harness-audit's checks are) with
-`tests/_lib/pipe_into_grep_q.py`, which reads `shfmt --to-json`'s syntax tree: a line regex and then
-a hand-written lexer each missed sites in review (#578, #597, #598). **The gauntlet needs `shfmt`**
-(macOS: `brew install shfmt`; Linux: `apt install shfmt` or `pip install shfmt-py`); without it that
-lint fails and names the install. A file shfmt cannot parse or read is an error, never a clean pass.
-From the tree, a pipe's reader is the command on its right, or every statement of a `{ }`/`( )` group
-there, after `command`/`builtin`/`exec`/`env`/`timeout`/`nice`/`stdbuf` wrappers. It does not catch a
-grep reached through a function or alias, nor other early-exit readers (`head`, `grep -m`, a command
-that skips stdin): there, apply the rule by hand. (GNU grep 3.11 writing to `>/dev/null` reads all of
-its input, so that form is safe.) A line holding `pipe-into-grep-q: deliberate` is exempt: the lint's
-own race probe. `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for the
-stdin-skipping reason, and skips the `_*.sh` helpers the gates source.
+`tests/_lib/pipe_into_grep_q.py`, which reads shfmt's JSON syntax tree (`--to-json`, or `-tojson`
+on shfmt 3.4): a line regex and then a hand-written lexer each missed sites in review (#578, #597,
+#598). **The gauntlet needs `shfmt`** (macOS: `brew install shfmt`; Linux: `apt install shfmt` or
+`pip install shfmt-py`) and refuses to start without it, as it does without `trash`. A file shfmt
+cannot read or parse is an error, never a clean pass, and hits in the other files are still listed.
+A pipe's readers are every command that can read the stdin it hands its right side: the command
+there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, the conditions and bodies of
+`if`/`while`/`until`/`for`/`case`, and a `time`d command, unless that statement redirects its own
+stdin; wrappers (`command`, `builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`,
+`sudo`, `nohup`) are looked through, and the value of `-e`/`--regexp`-style options is not an option.
+It does not catch a grep reached through a function or alias, nor other early-exit readers (`head`,
+`grep -m`, a command that skips stdin): there, apply the rule by hand. (GNU grep 3.11 writing to
+`>/dev/null` reads all of its input, so that form is safe.) A hit whose line ends in the comment
+`# pipe-into-grep-q: deliberate` is exempt but reported, and the lint allows one: its own race probe.
+`scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for the stdin-skipping reason, and
+skips the `_*.sh` helpers the gates source.
 
 ## Git hooks
 
