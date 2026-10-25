@@ -27,13 +27,17 @@ Under `set -o pipefail`, never pipe a writer into a reader that may stop early: 
 file (2026-10-23). Write `grep -q PAT <<<"$out"` or `grep -q PAT <<<"$(cmd)"`.
 `tests/scripts/test-pipefail-grep-q-lint.sh` checks every tracked shell file (a file without
 `pipefail` may be sourced under it, as harness-audit's checks are) with
-`tests/_lib/pipe_into_grep_q.py`, a small lexer rather than a line regex: it joins continued lines,
-sees `$(...)` and backticks inside quotes, ignores quoted text, comments and here-document bodies, and
-follows `command`/`builtin`/`exec`/`env` prefixes, `\grep`, `egrep`/`fgrep` and `|&`. It does not
-catch a grep reached through a function or alias, nor other early-exit readers (`head`, `grep -m`, a
-command that skips stdin): there, apply the rule by hand. (GNU grep 3.11 writing to `>/dev/null` reads
-all of its input, so that form is safe.) `scripts/gate-canary.sh` feeds gates through
-`< <(printf ...)` for the stdin-skipping reason, and skips the `_*.sh` helpers the gates source.
+`tests/_lib/pipe_into_grep_q.py`, which reads `shfmt --to-json`'s syntax tree: a line regex and then
+a hand-written lexer each missed sites in review (#578, #597, #598). **The gauntlet needs `shfmt`**
+(macOS: `brew install shfmt`; Linux: `apt install shfmt` or `pip install shfmt-py`); without it that
+lint fails and names the install. A file shfmt cannot parse or read is an error, never a clean pass.
+From the tree, a pipe's reader is the command on its right, or every statement of a `{ }`/`( )` group
+there, after `command`/`builtin`/`exec`/`env`/`timeout`/`nice`/`stdbuf` wrappers. It does not catch a
+grep reached through a function or alias, nor other early-exit readers (`head`, `grep -m`, a command
+that skips stdin): there, apply the rule by hand. (GNU grep 3.11 writing to `>/dev/null` reads all of
+its input, so that form is safe.) A line holding `pipe-into-grep-q: deliberate` is exempt: the lint's
+own race probe. `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for the
+stdin-skipping reason, and skips the `_*.sh` helpers the gates source.
 
 ## Git hooks
 
