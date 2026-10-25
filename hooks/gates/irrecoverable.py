@@ -221,6 +221,41 @@ def _feeds_sql_client(line, pos):
             return True
     return False
 
+# GH #567: a shell reads its commands on stdin too: a heredoc piped into it (cat <<EOF | bash), a here-string
+# (bash <<< 'cmd') or the words an echo/printf pipes into it (echo 'cmd' | sh). Only a shell that reads stdin
+# counts: one with no -c and no script operand (`bash -s args` reads stdin, `bash x.sh` does not).
+_STDIN_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+def _split_words(seg):
+    try:
+        return shlex.split(seg)
+    except ValueError:
+        return None
+
+def _reads_stdin_shell(seg):
+    w = _split_words(seg.split("<<<", 1)[0].split("<<", 1)[0])
+    if not w:
+        return False
+    i = 0
+    while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i] in ("sudo", "env", "command", "exec", "nohup", "time")):
+        i += 1
+    if i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+        return False
+    for t in w[i + 1:]:
+        if t == "-s" or (t.startswith("-") and not t.startswith("--") and "s" in t[1:] and "c" not in t[1:]):
+            return True  # -s: the rest are positional parameters, commands come from stdin
+        if not t.startswith(("-", "+")) or (t.startswith("-") and not t.startswith("--") and "c" in t[1:]):
+            return False  # a script operand, or -c
+    return True
+
+def _piped_into_shell(line, pos):
+    # True when the heredoc at line[pos] feeds a pipeline whose later segment is a shell reading stdin.
+    for s, e in _pieces(line):
+        if s <= pos <= e:
+            segs = _pieces(line[s:e], pipe=True)
+            k = next((k for k, (a, b) in enumerate(segs) if s + a <= pos <= s + b), None)
+            return k is not None and any(_reads_stdin_shell(line[s + a:s + b]) for a, b in segs[k + 1:])
+    return False
+
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
@@ -236,7 +271,7 @@ def _strip_heredocs(cmd):
         i += 1
         if not m:
             continue
-        if _INTERPRETER_RE.search(line[:m.start()]):
+        if _INTERPRETER_RE.search(line[:m.start()]) or _piped_into_shell(line, m.start()):
             continue
         strip_tabs, delim = bool(m.group(1)), m.group(3)
         body_start, found = i, False
@@ -401,8 +436,8 @@ def _mid_merge():
 # needs no case). timeout/gtimeout also take one DURATION positional; that is
 # handled where the wrapper is unwrapped. setsid takes bare flags only; exec's
 # `-a name` is the one value flag (GH #227: it hid the wrapped command).
-# Open-ended by nature: a wrapper missing here (watch, flock, strace, ...) still
-# hides its command, the list covers the ones an everyday one-liner uses.
+# Open-ended by nature: a wrapper missing here and from _RUN_WRAPPERS (GH #566 added flock, watch,
+# strace, ...) still hides its command; the lists cover the ones an everyday one-liner uses.
 FLAG_VALUE_WRAPPERS = {
     "nice": ("-n", "--adjustment"),
     "ionice": ("-c", "-n", "--class", "--classdata"),
@@ -425,6 +460,30 @@ _UNWRAP_ONLY = ("builtin",)
 # dispatches to the real tool of that name, so it is classified as that tool.
 _RTK_RUNNERS = ("proxy",)
 _RTK_SHELL_RUNNERS = ("err", "test", "summary")
+# GH #566: more programs that run the command after them, unwrapped in the rule loop only (as `builtin` is):
+# a member of PREFIX_WRAPPERS would also widen the spawn-anchor walk, which runs on a time budget. A subagent's
+# claude spawned through one of them is denied per window instead (see _SPAWN_WINDOW_FLAGS).
+# name -> (flags that take the next word as their value, positionals between the flags and the command,
+#          flags whose value is a shell command line, whether the remaining words are joined into one).
+_RUN_WRAPPERS = {
+    "flock": (("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"), 1, ("-c", "--command"), False),
+    "caffeinate": (("-t", "-w"), 0, (), False),
+    "xcrun": (("-sdk", "--sdk", "-toolchain", "--toolchain", "-log"), 0, (), False),
+    "chronic": ((), 0, (), False), "unbuffer": ((), 0, (), False),
+    "strace": (("-o", "-e", "-p", "-s", "-u", "-E", "-a", "-b", "-I", "-O", "-P", "-S", "-X"), 0, (), False),
+    "ltrace": (("-o", "-e", "-p", "-s", "-u", "-a", "-n", "-A", "-D", "-F", "-l", "-x"), 0, (), False),
+    "watch": (("-n", "--interval", "-q", "--equexit"), 0, (), True),  # watch runs `sh -c "<words>"`
+    "script": (("-E", "--echo", "-o", "--output-limit", "-T", "--log-timing", "-I", "--log-in",
+                "-O", "--log-out", "-B", "--log-io", "-m", "--logging-format"), 0, ("-c", "--command"), False),
+    "su": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"), 0,
+           ("-c", "--command", "-C", "--session-command"), None),  # su's words are a user, not a command
+    "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
+                  "--joblog", "--results", "--delay", "--timeout", "-a", "--arg-file"), 0, (), False),
+    "npx": (("-p", "--package"), 0, ("-c", "--call"), False), "bunx": (("-p", "--package"), 0, (), False),
+}
+# A package runner's package names map to the program they install (`npx @anthropic-ai/claude-code -p x`).
+_PKG_PROGRAMS = {"claude-code": "claude"}
+_SPAWN_WINDOW_FLAGS = ("-p", "--print", "--agent", "--bg", "--worktree")
 # Reserved words that open a command position inside a compound statement
 # ("for x in a; do rm -rf y; done": the segment after ";" starts with "do"), so
 # the real argv0 comes right after them. Stripped at segment start only, never
@@ -471,7 +530,21 @@ def _spawn_anchor_body(wrapper_prefix):
 _SPAWN_ANCHOR_RES = (re.compile(r"(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r")", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r"))", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX_LAZY) + r"))", re.MULTILINE))
-_SPAWN_FLAG_RE = re.compile(r"-p\b|--print\b|--agent\b|--bg\b|--worktree\b")
+_SPAWN_FLAG_RE = re.compile(r"-p\b|--print\b|--agent\b|--bg\b|--background\b|--worktree\b|-w\b")
+# Bypass hunt 2026-10-23 F1/F2: -w and --background are --worktree's and --bg's other spellings, and
+# the Bash tool has no TTY, so `claude <prompt>`, `<input> | claude` and `claude < file` run headless
+# exactly like -p. A version or help word anywhere in argv exits before a session starts (2.1.310).
+# The flag scan above reads every anchor; the prompt/stdin reading (_claude_starts_session) only an
+# anchor outside quotes, since a quoted `;` or `|` in a commit message opens an anchor here too, and
+# `-m "a; claude handles it"` must not read `handles` as a prompt.
+_SPAWN_INFO = ("--version", "-v", "--help", "-h")
+# `claude --help`'s Commands that start no session (2.1.310). Not `agents`, `attach`, `respawn` or
+# `ultrareview`: each one dispatches, opens or restarts a session.
+_CLAUDE_NO_SESSION_SUBS = frozenset({"auth", "auto-mode", "config", "doctor", "gateway", "import", "install",
+                                     "kill", "logs", "mcp", "migrate-installer", "plugin", "plugins", "purge",
+                                     "rm", "setup-token", "stop", "update", "upgrade"})
+_SPAWN_WORDS_CAP = 1024
+_SPAWN_OUT_REDIR_RE = re.compile(r"\d*(?:&>>?|>>?&?|>\|)\s*(?:\"[^\"]*\"|'[^']*'|[^\s;&|()<>]+)?")
 # GH #157: an ODD backslash run directly before a quote escapes that quote
 # in real bash (`claude \" ; othertool -p x` -- the `"` is a literal argument
 # character, not a string opener), so it is captured as one literal token
@@ -630,15 +703,165 @@ def _spawn_statement(tail, work):
         buf.append(t)
     return "".join(buf), work
 
+def _quote_mask(c):
+    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
+    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
+    # per scanned text.
+    mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
+    while i < n:
+        ch, q = c[i], stack[-1]
+        if q == SQ:
+            mask[i] = 1
+            if ch == SQ:
+                stack.pop()
+        elif q == '"':
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == '"':
+                stack.pop()
+            elif ch == "$" and c[i + 1:i + 2] == "(":
+                stack.append("(")
+                i += 1
+            elif ch == "`":
+                stack.append("`")
+        elif q == "$'":
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == SQ:
+                stack.pop()
+        elif ch == "\\" and i + 1 < n:
+            mask[i + 1] = 1
+            i += 1
+        elif ch == "$" and c[i + 1:i + 2] == SQ:
+            mask[i] = mask[i + 1] = 1
+            stack.append("$'")
+            i += 1
+        elif ch in (SQ, '"'):
+            mask[i] = 1
+            stack.append(ch)
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
+            j = c.find("\n", i)  # a comment, to the end of its line
+            j = n if j < 0 else j
+            mask[i:j] = b"\1" * (j - i)
+            i = j
+            continue
+        elif q == "(" and ch in "()":
+            stack.append(ch) if ch == "(" else stack.pop()
+        elif q == "`" and ch == "`":
+            stack.pop()
+        i += 1
+    return mask
+
+_SPAWN_SESSION_SEEN = {}  # the three anchor passes, joined and plain text, re-read the same statements
+
+def _claude_starts_session(stmt, piped):
+    key = (stmt[:_SPAWN_WORDS_CAP + 1], piped)
+    r = _SPAWN_SESSION_SEEN.get(key)
+    if r is None:
+        r = _SPAWN_SESSION_SEEN[key] = _claude_words_start_session(stmt, piped)
+    return r
+
+def _claude_words_start_session(stmt, piped):
+    # F1: stmt is the raw text after an unquoted `claude`. A `<` stdin (not `<(`) or a pipe in is the
+    # prompt; so is any word that is not an option (an option's value too: over-denies `claude --model
+    # sonnet`, which has no prompt and fails anyway), unless a version or help word exits first, or
+    # the first word is a subcommand that starts no session (`claude --model mcp x` is a prompt).
+    # Only a prefix is read: every anchor reads its own statement, and an unclosed `(` makes that the
+    # rest of the command each time. A cut statement that shows no version or help word is a spawn.
+    cut = len(stmt) > _SPAWN_WORDS_CAP
+    stmt = stmt[:_SPAWN_WORDS_CAP]
+    depth = 0
+    for tok in _SPAWN_TOKEN_RE.finditer(stmt):  # a `)` closing `$(claude ...)` ends claude's words
+        depth += (tok.group() == "(") - (tok.group() == ")")
+        if depth < 0:
+            stmt, cut = stmt[:tok.start()], False
+            break
+    # A version or help word inside $(..) or `..` is that command's, not claude's.
+    text = _SPAWN_OUT_REDIR_RE.sub(" ", stmt.replace("<(", " ("))
+    while True:
+        t2 = re.sub(r"\$\([^()]*\)|`[^`]*`", " X ", text)
+        if t2 == text:
+            break
+        text = t2
+    try:
+        words = shlex.split(text, comments=True)
+    except ValueError:
+        words = None
+    if words and any(t in _SPAWN_INFO for t in words):
+        return False
+    if words is None or cut or re.search(r"<(?!\()", stmt):
+        return True
+    if words and words[0] in _CLAUDE_NO_SESSION_SUBS:
+        return False
+    for i, t in enumerate(words):
+        if t == "--":
+            return i + 1 < len(words) or piped
+        if not (t.startswith("-") and len(t) > 1):
+            return True
+    return piped
+
 def _nested_spawn_text(c, overlap):
     if _charge_spawn_anchor(c):
         return True
     work = 0  # shared across every anchor's scan, never reset per-anchor -- see _SPAWN_SCAN_BUDGET above
+    mask = None
     for m in _SPAWN_ANCHOR_RES[overlap].finditer(c):
         stmt, work = _spawn_statement(c[m.end(1):], work)
         if stmt is None or _SPAWN_FLAG_RE.search(stmt):
             return True
+        if mask is None:
+            mask = _quote_mask(c)
+        if mask[m.end(1) - 1]:
+            continue
+        a, lead = m.start(1), m.group(1)
+        lead_words = _spawn_lead_words(lead)
+        if lead_words is None:
+            continue
+        # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
+        # over as words.
+        sep = re.match(r"[|;&(){\s]*", lead).group()
+        piped = re.search(r"(?<!\|)\|&?[\s({]*$", c[:a] + sep) is not None or "xargs" in lead_words
+        if _claude_starts_session(stmt, piped):
+            return True
     return False
+
+def _spawn_lead_words(lead):
+    # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
+    # wrapper explains: the anchor's walk skips any words after a wrapper (`time rg claude src/`), fine
+    # for the flag scan but not for reading claude's words as a prompt. Explained: an assignment, a
+    # keyword, a wrapper, a dash word after a wrapper and the one word after that dash word (its value,
+    # if it takes one: `env -C /tmp`, `sudo -p pw:`, `timeout -s KILL`), and timeout's duration.
+    words = lead.replace("{", " ").replace("(", " ").split()[:-1]  # the last word is claude
+    names, prev, after_dash = [], None, False
+    for t in words:
+        t = t.lstrip("|&;")
+        if not t or re.match(r"[A-Za-z_]\w*=", t):
+            continue
+        b = t.rsplit("/", 1)[-1]
+        if b in SHELL_KEYWORDS or b in ("builtin", "--"):
+            continue
+        if b in PREFIX_WRAPPERS or b == "xargs":
+            prev, after_dash = b, False
+            names.append(b)
+            continue
+        if prev and t.startswith("-"):
+            after_dash = True
+            continue
+        if after_dash:
+            after_dash = False
+            continue
+        if prev in ("timeout", "gtimeout") and re.fullmatch(r"[\d.]+[smhd]?", b):
+            continue
+        return None
+    return names
+
+_SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via Bash (claude with a prompt "
+                      "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "
+                      "main session dispatches")
 
 def _deny_nested_spawn():
     if _spawn_over_budget:
@@ -646,9 +869,7 @@ def _deny_nested_spawn():
               "to a file with the Write tool and run the file, or split it into smaller commands",
               file=sys.stderr)
     else:
-        print("[mh:gate] BLOCKED: a subagent may not spawn a nested Claude Code session via Bash "
-              "(claude -p/--print/--agent/--bg/--worktree) -- only the main session dispatches",
-              file=sys.stderr)
+        print("[mh:gate] BLOCKED: " + _SPAWN_DENY_REASON, file=sys.stderr)
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"))
     sys.exit(2)
 
@@ -1429,6 +1650,29 @@ def _sql_stdin_drop(c):
             return True
     return False
 
+def _shell_stdin_bodies(c):
+    # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
+    # right upstream of it. printf's format is read with \n as a newline; its other escapes stay literal.
+    out = []
+    for s, e in _pieces(c):
+        segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
+        for k, g in enumerate(segs):
+            if not _reads_stdin_shell(g):
+                continue
+            if "<<<" in g:
+                w = _split_words(g.split("<<<", 1)[1])
+                if w:
+                    out.append(w[0])
+            up = _split_words(segs[k - 1]) if k else None
+            if up and up[0] in ("echo", "printf"):
+                args = up[1:]
+                while up[0] == "echo" and args and re.fullmatch(r"-[neE]+", args[0]):
+                    args = args[1:]
+                out.append(" ".join(args).replace("\\n", "\n") if up[0] == "printf" else " ".join(args))
+    return out
+
+_SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
+
 _SQL_BODIES_SEEN = set()  # bash -c / eval bodies already checked by _deny_sql_stdin_drop
 
 def _deny_sql_stdin_drop(c):
@@ -1791,9 +2035,7 @@ def _scan_body(body):
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
     if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)):
-        deny("a subagent may not spawn a nested Claude Code session via Bash "
-             "(claude -p/--print/--agent/--bg/--worktree), inside bash -c / eval either "
-             "-- only the main session dispatches")
+        deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
         if ww:
@@ -2039,6 +2281,29 @@ def _git_words(rest, ph_value=False):
                 out.append(word())
     return out + rest[i:] if (hit if ph_value else joined) else None
 
+# GH #562: `git config` on core.hooksPath: a read (get, list, the key alone) and the one documented write,
+# `core.hooksPath git-hooks` with no value-pattern, are allowed. The word git-hooks anywhere else (a
+# value-pattern, a --comment) allowed `git config core.hooksPath /dev/null git-hooks`, which replaces the
+# git-hooks value with /dev/null.
+_GIT_CONFIG_VALUE_OPTS = ("-f", "--file", "--blob", "--type", "--comment", "--default", "--value")
+_GIT_CONFIG_READ_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list")
+_GIT_CONFIG_EDIT_OPTS = ("--unset", "--unset-all", "--rename-section", "--remove-section", "-e", "--edit")
+def _hooks_path_ok(scan):
+    pos, opts, i = [], [], 0
+    while i < len(scan):
+        t = scan[i]
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        (opts if t.startswith("-") else pos).append(t.split("=", 1)[0] if t.startswith("--") else t)
+        i += 1
+    if any(t in _GIT_CONFIG_EDIT_OPTS for t in opts) or pos[:1] in (["unset"], ["rename-section"], ["remove-section"], ["edit"]):
+        return False
+    if pos[:1] in (["get"], ["list"]) or any(t in _GIT_CONFIG_READ_OPTS for t in opts):
+        return True
+    pos = pos[1:] if pos[:1] == ["set"] else pos
+    return len(pos) == 1 or (len(pos) == 2 and pos[1] == "git-hooks" and not any(t == "--value" for t in opts))
+
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
     # window w set core.hooksPath (key case-insensitive) to a non-empty value?
@@ -2133,9 +2398,7 @@ def _git_alias_check(val, args, how):
     elif val and val != "true":
         _scan_body((val[1:] if val.startswith("!") else "git " + val) + (" " + " ".join(args) if args else ""))
 
-# Options of `git config` that take the next word as their value. PR #572 (core.hooksPath) reuses
-# this and _git_config_write rather than parsing `git config` operands again.
-_GIT_CONFIG_VALUE_OPTS = ("-f", "--file", "--blob", "--type", "--comment", "--default", "--value")
+# _GIT_CONFIG_VALUE_OPTS (the options that take a value) is defined beside _hooks_path_ok (GH #562).
 # Actions that read, list, edit or remove: their second operand is a value-pattern, not a value written.
 _GIT_CONFIG_NO_WRITE_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
                              "--unset", "--unset-all", "-l", "--list", "--remove-section", "--rename-section", "-e", "--edit")
@@ -2390,6 +2653,50 @@ def _gh_builtin_write(scan):
     return ""
 
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
+# xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
+_XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
+_XARGS_VALUE_LONG = ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
+                     "--process-slot-var", "--max-lines", "--replace", "--eof")
+
+def _xargs_command(rest):
+    # The index of the command xargs runs in its args: past its flags and their values. A short
+    # cluster is read left to right: the first letter that takes a value takes the rest of the
+    # cluster (`-d'\n'`, `-Is`), or the next word when it is the cluster's last letter (`-tJ x`).
+    j = 0
+    while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
+        t = rest[j].replace(PH, "")
+        j += 1
+        if t == "--":
+            break
+        if t.startswith("--"):
+            j += t in _XARGS_VALUE_LONG and j < len(rest)
+            continue
+        for k, ch in enumerate(t[1:], 1):
+            if ch in _XARGS_VALUE_LETTERS:
+                j += k == len(t) - 1 and j < len(rest)
+                break
+    return j
+
+def _past_wrapper_words(name, rest, i):
+    # The index past a prefix wrapper's own words in rest[i:]: its dash words and their values,
+    # env's and sudo's assignments, timeout's duration. Used inside xargs's command (F5).
+    vals = set(FLAG_VALUE_WRAPPERS.get(name, ()))
+    if name in ("sudo", "doas"):
+        vals |= {"-u", "-g", "-C", "-p", "-D", "-h", "-r", "-t", "-U", "--user", "--group"}
+    if name == "env":
+        vals |= {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}
+    while i < len(rest):
+        t = rest[i].replace(PH, "")
+        if t.startswith("-") and len(t) > 1:
+            i += 2 if t in vals else 1
+        elif _assignment(rest[i]) and name in ("env", "sudo", "doas"):
+            i += 1
+        else:
+            break
+    if name in ("timeout", "gtimeout") and i < len(rest):
+        i += 1  # the DURATION positional
+    return i
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -2422,8 +2729,8 @@ def _check_window(_wi, w):
     # separate GH issues (2026-09-20 audit).
     # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
     # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
-    o = 0
-    while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS):
+    o, via_run_wrapper = 0, False
+    while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
@@ -2544,6 +2851,40 @@ def _check_window(_wi, w):
                 argv0, o = basename(rest[j]), j + 1
             else:  # an rtk verb that dispatches to the real tool of the same name
                 argv0, o = basename(rest[i]), i + 1
+        elif argv0 in _RUN_WRAPPERS:  # GH #566
+            vals, npos, bodies, join = _RUN_WRAPPERS[argv0]
+            i, body = o, None
+            while i < len(rest) and rest[i].replace(PH, "").startswith("-"):
+                t = rest[i].replace(PH, "")
+                name = t.split("=", 1)[0]
+                if name in bodies:
+                    body = t.split("=", 1)[1] if "=" in t else (rest[i + 1] if i + 1 < len(rest) else None)
+                    break
+                # A body letter bundled in a short cluster (`script -qc 'cmd'`): the rest of the cluster, or the next word.
+                k = next((k for k, ch in enumerate(t[1:], 1) if "-" + ch in bodies), 0) if not t.startswith("--") else 0
+                if k:
+                    body = t[k + 1:] or (rest[i + 1] if i + 1 < len(rest) else None)
+                    break
+                if t == "--":
+                    i += 1
+                    break
+                i += 2 if t in vals else 1
+            if body is None and join is None:
+                break  # su without -c runs a login shell, no command
+            if body is None:
+                i += npos
+            if body is None and i < len(rest) and argv0 == "flock" and rest[i].replace(PH, "") in ("-c", "--command"):
+                body = rest[i + 1] if i + 1 < len(rest) else None
+            if body is not None or join:
+                _scan_body(body if body is not None else " ".join(rest[i:]))
+                o = len(rest)
+                break
+            if i >= len(rest):
+                break
+            argv0, o, via_run_wrapper = basename(rest[i]), i + 1, True
+            if o - 1 < len(rest) and argv0 not in _RUN_WRAPPERS:
+                pkg = re.sub(r"@[^/@]*$", "", rest[o - 1].replace(PH, ""))
+                argv0 = _PKG_PROGRAMS.get(basename(pkg), argv0)
         else:  # command, nohup, time, setsid, builtin — bare flags then the wrapped command
             i = _past_dash_words(rest, o)
             if i >= len(rest):
@@ -2593,22 +2934,24 @@ def _check_window(_wi, w):
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(rest[j:])
                 break
+        _xc = _xargs_command(rest)
+        # Bypass hunt 2026-10-23 F5: `find | xargs rm` deletes every path it is fed, the same delete as
+        # `find -exec rm`, which denies with no flags at all. Wrappers between (`xargs sudo -u x rm`,
+        # `xargs nice -n 5 rm`, `xargs env FOO=1 rm`, `xargs timeout 5 rm`) are read past.
+        _xr = _xc
+        while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS:
+            _xr = _past_wrapper_words(basename(rest[_xr]).replace(PH, ""), rest, _xr + 1)
+        if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
+            deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
             if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
         else:
-            # gh only as the command xargs runs (past its flags and their values), since "gh" is also a
-            # common grep pattern: `xargs grep -l gh src` must not read as gh.
-            j = 0
-            while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
-                t = rest[j].replace(PH, "")
-                # A bundled short cluster (-tJ) takes the next word when its last letter takes a value.
-                takes = t in ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
-                              "--process-slot-var") or (not t.startswith("--") and t[-1:] in "IJRSnPLdsEa")
-                j += 2 if takes else 1
-            if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
-                argv0, rest = "gh", rest[j + 1:]
+            # gh only as the command xargs runs, since "gh" is also a common grep pattern: `xargs grep
+            # -l gh src` must not read as gh.
+            if _xc < len(rest) and basename(rest[_xc]).replace(PH, "") == "gh":
+                argv0, rest = "gh", rest[_xc + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
         # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
         # inner command so the SQL check fires on a containerized client.
@@ -2621,6 +2964,11 @@ def _check_window(_wi, w):
     # GH #336. Outside the candidate loop below: a PH argv0 (`${EDITOR} f`) must not read as mkfs.
     # PH is stripped instead, so a splice inside the word (`mk$(true)fs.ext4`) still matches.
     _a0 = argv0.replace(PH, "")
+    # GH #566: a subagent's claude reached through a wrapper the spawn anchor does not walk (flock, npx, ...).
+    # Only past one of those wrappers: elsewhere the anchor decides, and a window can read `claude` as argv0 where
+    # the shell does not run it (`builtin claude`, `"A=1" claude`).
+    if via_run_wrapper and "agent_id" in d and _a0 == "claude" and any(t.replace(PH, "").split("=", 1)[0] in _SPAWN_WINDOW_FLAGS for t in rest):
+        _deny_nested_spawn()
     if (_a0 in ("mkfs", "mke2fs") or _a0.startswith("mkfs.")) and any(
             not t.replace(PH, "").startswith("-") for t in rest):
         deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")
@@ -2780,7 +3128,7 @@ def _check_window(_wi, w):
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
                     deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
                          rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
-                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and "git-hooks" not in scan:
+                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and not _hooks_path_ok(scan):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
                     deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
@@ -2906,17 +3254,19 @@ def _check_window(_wi, w):
                 _nonflag = [t for t in scan if not t.startswith("-")]
                 if sub == "push" and any(_is_flag(t, "--mirror", "--prune") for t in scan):
                     deny("git push --mirror/--prune overwrites or deletes remote refs, like --force — confirm with user first", rule="git-push-mirror")
-                if sub == "push" and (
+                # GH #563 review: send-pack (push's plumbing) deletes with the same ":ref" refspec; --delete
+                # and -d are not send-pack options (git rejects them), so mirroring them only over-denies.
+                if sub in ("push", "send-pack") and (
                         any(t.startswith(":") and _protected_ref(t[1:]) for t in _nonflag)
                         or (any(_is_flag(t, "--delete") or _bundled_flag(t, "", "d") for t in scan)
                             and any(_protected_ref(t) for t in _nonflag[1:]))):
-                    deny("git push deleting main/master/develop on the remote — confirm with user first", rule="git-push-delete-protected")
+                    deny(f"git {sub} deleting main/master/develop on the remote — confirm with user first", rule="git-push-delete-protected")
                 if sub == "read-tree" and any(_is_flag(t, "--reset") for t in scan) and "-u" in scan:
                     deny("git read-tree -u --reset discards uncommitted work, like reset --hard — confirm with user first", rule="git-read-tree-reset")
                 if sub == "checkout-index" and any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan):
                     deny("git checkout-index -f overwrites working-tree files — confirm with user first", rule="git-checkout-index-force")
                 if sub == "worktree" and _nonflag[:1] == ["remove"] and any(
-                        t == "-f" or _is_flag(t, "--force") for t in scan):
+                        t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan):  # -ff: GH #563
                     deny("git worktree remove --force deletes the worktree's uncommitted changes — confirm with user first", rule="git-worktree-remove-force")
                 # The reflog is the way back after a reset or a branch delete; these empty it now, not in 90 days.
                 _now = lambda v: v.lower() in ("now", "all", "0")
@@ -2935,6 +3285,25 @@ def _check_window(_wi, w):
                         or (any(t == "-m" or t == "-c" or _is_flag(t, "--move", "--copy") for t in scan)
                             and any(t == "-f" or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
                     deny("git branch -M/-C onto main/master/develop overwrites a protected branch — confirm with user first", rule="git-branch-force-move-protected")
+                # GH #563 (2026-10-24 sweep): more verbs with a denied verb's damage. send-pack is push's
+                # plumbing; rm -f drops a tracked file's uncommitted edits (--cached leaves the worktree);
+                # branch -f and update-ref without -d move main/master/develop like branch -M does.
+                _force = any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan)
+                if sub == "send-pack" and (any(_is_flag(t, "--force", "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
+                    deny("git send-pack --force/--mirror/+refspec overwrites remote history, like push --force — confirm with user first", rule="git-push-force")
+                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) deletes nothing.
+                # Only options before "--" count (after it "-n" is a path), and --no-dry-run undoes it.
+                _rm_opts = scan[:scan.index("--")] if "--" in scan else scan
+                if sub == "rm" and _force and not any(_is_flag(t, "--cached") for t in scan) and not (
+                        any(_is_flag(t, "--dry-run") or _bundled_flag(t, "", "n") for t in _rm_opts)
+                        and not any(_is_flag(t, "--no-dry-run") for t in _rm_opts)):
+                    deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first", rule="git-rm-force")
+                if sub == "branch" and _force and _nonflag and _protected_ref(_nonflag[0]) and not any(
+                        t.startswith("-") and not t.startswith("--") and any(c in t for c in "dDmMcC")
+                        or _is_flag(t, "--delete", "--move", "--copy") for t in scan):
+                    deny("git branch -f onto main/master/develop moves a protected branch — confirm with user first", rule="git-branch-force-move-protected")
+                if sub == "update-ref" and not any(t == "-d" or _is_flag(t, "--delete", "--stdin") for t in scan) and _nonflag[:1] and _protected_ref(_nonflag[0]):
+                    deny("git update-ref on main/master/develop moves a protected branch — confirm with user first", rule="git-update-ref-delete-protected")
                 # -A also arrives bundled (-Af, -fA, -vA); add has no value-taking short flag.
                 # --pathspec-from-file's value is a pathspec list the gate cannot read
                 # (GH #200), so any use denies, as in restore/checkout above.
@@ -3019,6 +3388,8 @@ def _run_words():
         finally:
             _WORD_PHASE[0] = False
 
+for _b in _SHELL_STDIN_BODIES:  # GH #567: each is a command line, like a sh -c body
+    _scan_body(_b)
 _run_windows(0)
 
 # GH #245: the overlapping spawn scan, last (see _SPAWN_ANCHOR_RES).

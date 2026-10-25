@@ -25,6 +25,13 @@ test_deny  "$IRRECOVERABLE" "git config --unset core.hooksPath (persistent hook 
   "$(bash_payload 'git config --unset core.hooksPath')"
 test_allow "$IRRECOVERABLE" "git config core.hooksPath git-hooks (documented wiring)" \
   "$(bash_payload 'git config core.hooksPath git-hooks')"
+# GH #562: "git-hooks" anywhere passed the allowlist (a value-pattern replaces the git-hooks value), and a read denied.
+test_deny  "$IRRECOVERABLE" "GH #562: value-pattern git-hooks replaces the documented value" \
+  "$(bash_payload 'git config core.hooksPath /dev/null git-hooks')"
+test_deny  "$IRRECOVERABLE" "GH #562: --comment git-hooks" "$(bash_payload 'git config --comment git-hooks core.hooksPath /dev/null')"
+test_allow "$IRRECOVERABLE" "GH #562: git config core.hooksPath (a read)" "$(bash_payload 'git config core.hooksPath')"
+test_allow "$IRRECOVERABLE" "GH #562: CLAUDE.md's own check" "$(bash_payload 'test -d "$(git config core.hooksPath)"')"
+test_allow "$IRRECOVERABLE" "GH #562: git config --get core.hooksPath" "$(bash_payload 'git config --get core.hooksPath')"
 test_allow "$IRRECOVERABLE" "git -c user.name= (benign -c config, must not over-block)" \
   "$(bash_payload 'git -c user.name=x commit -m y')"
 # 2026-09-20 audit: the -c branch did an exact-case startswith("core.hooksPath=")
@@ -439,7 +446,7 @@ for _c in \
   'cl\aude --version' \
   'claude -\v' \
   '\{claude -p x;}' \
-  'claude --pri\\nt hello' ; do
+  'claude --pri\\nt' ; do
   test_allow "$IRRECOVERABLE" "subagent: GH #322 control, no spawn: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 # Every glued `{` is now a command start that walks a wrapper chain; padded shapes must still be
@@ -955,7 +962,15 @@ test_deny  "$IRRECOVERABLE" "GH #560: a chain of 50 env -iS words before rm -rf"
   "$(bash_payload "$(printf 'env -iS %.0s' $(seq 50))rm -rf x")"
 _env_iS_dos_cmd="$(python3 -c 'print("env -iS ls; " * 10000 + "env -" + "i" * 20000 + "S ls")')"
 _timed_case 'GH #560: 10000 env -iS commands and a 20 KB cluster are read in bounded time' 0 "$_env_iS_dos_cmd"
-# Non-goal: cat <<EOF | bash, eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
+# GH #567: a shell reading stdin gets its commands from a heredoc piped in, a here-string, or an echo/printf.
+test_deny  "$IRRECOVERABLE" "GH #567: bash <<< rm -rf" "$(bash_payload "bash <<< 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #567: echo into bash" "$(bash_payload "echo 'git push --force' | bash")"
+test_deny  "$IRRECOVERABLE" "GH #567: printf into bash -s" "$(bash_payload "printf 'git reset --hard\n' | bash -s")"
+test_deny  "$IRRECOVERABLE" "GH #567: heredoc piped into bash" "$(bash_payload "$(printf 'cat <<EOF | bash\nrm -rf build\nEOF')")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into tee" "$(bash_payload "echo 'rm -rf build' | tee notes.txt")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into bash script.sh (stdin is data)" "$(bash_payload 'echo hi | bash x.sh')"
+test_allow "$IRRECOVERABLE" "GH #567 control: heredoc piped into grep bash" "$(bash_payload "$(printf "cat <<'EOF' | grep bash\nrm -rf build\nEOF")")"
+# Non-goal: eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 
@@ -1012,13 +1027,17 @@ test_deny "$IRRECOVERABLE" "subagent: claude --bg denied" \
 # GH #157: a backslash-escaped quote outside a quoted span is a literal
 # character in real bash, never a string opener -- the tokenizer must not
 # let it swallow the real ";" and credit othertool's -p back to claude.
+# Bypass hunt F1: the escaped quote is a prompt word (`claude \"` starts a session with the prompt `"`),
+# so the leak-back rows carry --version, which keeps them about the -p scan.
 test_allow "$IRRECOVERABLE" "#157: escaped double quote before a real ; is literal, othertool's -p stays with othertool" \
-  "$(bash_agent_payload 'claude \" ; othertool -p "x"' fork)"
+  "$(bash_agent_payload 'claude --version \" ; othertool -p "x"' fork)"
 test_allow "$IRRECOVERABLE" "#157: escaped single quote before a real ; is literal" \
-  "$(bash_agent_payload "claude \\' ; othertool -p 'x'" fork)"
+  "$(bash_agent_payload "claude --version \\' ; othertool -p 'x'" fork)"
 test_allow "$IRRECOVERABLE" "#157 control: escaped quote then claude with no flag" \
   "$(bash_agent_payload 'echo \" ; claude' fork)"
-test_allow "$IRRECOVERABLE" "#157 control: claude with a lone escaped quote and no flag" \
+test_allow "$IRRECOVERABLE" "#157 control: claude --version with a lone escaped quote and no flag" \
+  "$(bash_agent_payload 'claude --version \"' fork)"
+test_deny  "$IRRECOVERABLE" "#157 / bypass hunt F1: claude with a lone escaped quote takes it as the prompt" \
   "$(bash_agent_payload 'claude \"' fork)"
 test_deny  "$IRRECOVERABLE" "#157 control: real -p after a literal escaped quote still denied" \
   "$(bash_agent_payload 'claude \"x\" -p y' fork)"
@@ -1689,6 +1708,94 @@ else
   fail=$((fail + 1))
 fi
 
+# Bypass hunt 2026-10-23 (docs/research/bypass-hunt-2026-10-23.md) F1/F2: with no TTY (the Bash tool
+# has none) `claude <prompt>` and `<input> | claude` run headless, the same as -p; -w is --worktree's
+# short form and --background is --bg's long form. Only the flag list was checked.
+for _c in \
+  "claude 'fix the failing test'" \
+  'claude hi' \
+  'echo hi | claude' \
+  'claude --model sonnet hi' \
+  'claude -w x' \
+  'claude -w' \
+  'claude --background hi' \
+  'env claude hi' \
+  'bash -c "claude hi"' \
+  'echo hi | xargs claude' \
+  'echo hi |& claude' \
+  'claude < prompt.txt' \
+  'claude <<< hi' \
+  $'claude <<EOF\nhi\nEOF' \
+  'claude -- hi' \
+  'claude ultrareview' \
+  'claude $(cat prompt.txt)' \
+  'x=$(claude hi)' \
+  "out=\"\$(claude 'review this')\"" ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F1/F2: subagent claude with a prompt, piped input or a short/long flag alias: $_c" \
+    "$(bash_agent_payload "$_c" fork)"
+done
+for _c in \
+  'claude' \
+  'claude --version' \
+  'claude -v' \
+  'claude --help' \
+  'claude -h' \
+  'claude hi --help' \
+  'claude --version | head -1' \
+  'claude mcp list' \
+  'claude mcp serve' \
+  'claude doctor' \
+  'claude plugin list' \
+  'ls || claude --version' \
+  "echo 'claude hi'" \
+  "rg -n 'claude hi' docs" \
+  'git commit -m "feat(claude): document the gate"' \
+  'git commit -m "a; claude handles it"' \
+  'git commit -m "pipe it | claude"' \
+  'echo "$(claude --version)"' \
+  'x=$(claude)' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F1/F2 control: subagent claude that starts no session: $_c" \
+    "$(bash_agent_payload "$_c" fork)"
+done
+# Fresh-context review of the F1 fix: a prompt or stdin hidden behind a quote in a comment or a $'..'
+# string, a version word in a comment, a pipe into a group; and wrapped commands whose ARGUMENT is
+# `claude`, which the anchor's wrapper walk reached (`time rg claude src/` read `src/` as a prompt).
+for _c in \
+  $'# it\'s a test\nclaude "hi"' \
+  "echo \$'it\\'s'; claude \"hi\"" \
+  'claude "summarize this" # -v' \
+  'claude "x" $(true -v )' \
+  'echo "do x" | { claude; }' \
+  'echo "do x" | (claude)' \
+  'echo hi | sudo -u bob claude' \
+  'timeout 30 claude hi' \
+  'echo hi | xargs -n1 claude' \
+  'echo ${#arr[@]}; claude hi' \
+  'HOME=/tmp claude "hi"' \
+  'echo hi | FOO=a/b claude' \
+  'env PATH=/usr/bin:$PATH claude "hi"' \
+  'env -C /tmp claude "hi"' \
+  'cat f | env -C /tmp claude' \
+  'sudo -p pw: claude "hi"' \
+  'echo {#,a}; claude "hi"' ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F1 review: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in \
+  'time rg claude src/' \
+  'timeout 30 grep -rn claude hooks/' \
+  'env LC_ALL=C grep -c claude README.md' \
+  'sudo grep -r claude /etc' \
+  'git ls-files | xargs grep -l claude' \
+  'nice -n 5 rg --files-with-matches claude' \
+  $'# it\'s fine\nclaude --version' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F1 review control: claude is an argument, or prints its version: $_c" \
+    "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'claude hi' 'echo hi | claude' 'claude -w x' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F1/F2 control: the main session may start one: $_c" \
+    "$(bash_agent_payload "$_c" '')"
+done
+
 # GH #559 review: the SQL client is the command a pipe stage runs (its argv0 past wrappers), not the
 # word "psql" anywhere in the pipeline or on a heredoc's line; and a bash -c / eval body is checked too.
 test_allow "$IRRECOVERABLE" "GH #559 review: grep -v psql downstream of a grep for drop table" \
@@ -1758,6 +1865,63 @@ _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 
 _timed_case 'GH #559 review 2: 5000 bash -c bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
 _sql_pad_cmd="$(python3 -c 'print("bash -c \"" + "echo DROP TABLE x | grep q psql | " * 4000 + "cat\"")')"
 _timed_case 'GH #559 review: a 136 KB bash -c pipeline naming psql and DROP TABLE is scanned in bounded time' 0 "$_sql_pad_cmd"
+# GH #563 review of PR #573: send-pack deletes a protected branch as push does (":main"), and a
+# git rm dry run (-n bundled, --dry-run or a prefix) deletes nothing, so -f there is allowed.
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack :main deletes main on the remote" "$(bash_payload 'git send-pack git@github.com:o/r.git :main')"
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack :refs/heads/main" "$(bash_payload 'git send-pack git@github.com:o/r.git feature :refs/heads/main')"
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack :develop after another flag" "$(bash_payload 'git send-pack --atomic url :develop')"
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack --delete master (mirrors push)" "$(bash_payload 'git send-pack --delete url master')"
+test_allow "$IRRECOVERABLE" "GH #563 control: send-pack a feature branch" "$(bash_payload 'git send-pack url feature')"
+test_allow "$IRRECOVERABLE" "GH #563 control: send-pack :feature deletes only a feature branch" "$(bash_payload 'git send-pack url :feature')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm -nf is a dry run" "$(bash_payload 'git rm -nf a.py')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm -f --dry-run" "$(bash_payload 'git rm -f --dry-run a.py')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm -rf --dry (unique prefix)" "$(bash_payload 'git rm -rf --dry src')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm --cached f" "$(bash_payload 'git rm --cached f')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm f" "$(bash_payload 'git rm f')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -f -- -n (-n after -- is a path)" "$(bash_payload 'git rm -f -- -n')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -nf --no-dry-run (last one wins)" "$(bash_payload 'git rm -nf --no-dry-run a.py')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -f still denies" "$(bash_payload 'git rm -f a.py')"
+
+# Bypass hunt 2026-10-23 F5: `find | xargs rm` is the same delete as `find -exec rm` (denied with no
+# flags at all), but the xargs re-point handed it to the rm-rf rule, which needs both -r and -f.
+for _c in \
+  'find . -type f | xargs rm' \
+  'find . -print0 | xargs -0 rm' \
+  "find . -name '*.bak' | xargs -I{} rm {}" \
+  'fd -t f | xargs rm' \
+  'git ls-files | xargs rm -f' \
+  'find . | xargs -n 10 rm' \
+  'find . | xargs /bin/rm' \
+  'find . | xargs sudo rm' \
+  'xargs rm < files.txt' \
+  "bash -c 'find . | xargs rm'" \
+  "find . | xargs -d'\\n' rm" \
+  'find . | xargs -Is rm s' \
+  'find . | xargs nice -n 5 rm' \
+  'find . | xargs timeout 5 rm' \
+  'find . | xargs env FOO=1 rm' \
+  'find . | xargs sudo -u bob rm' ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F5: xargs rm deletes every path it is fed: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'git ls-files | xargs grep -l rm' \
+  'xargs grep rm src < files.txt' \
+  "find . -name '*.o' | xargs ls -l" \
+  'echo a | xargs echo rm' \
+  'find . | xargs -I{} echo rm {}' \
+  'find . -type d -empty | xargs rmdir' \
+  'find . -name x | xargs wc -l' \
+  'ls | xargs sudo -u rm ls' \
+  'ls | xargs env -u rm ls' \
+  "ls | xargs -d '\\n' ls" \
+  'ls | xargs -a rm ls' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F5 control: xargs runs something else: $_c" "$(bash_payload "$_c")"
+done
+
+# The same xargs flag walk finds gh (review of the F5 fix): an attached -d value hid it.
+test_ask_says "$IRRECOVERABLE" "bypass hunt F5 review: xargs -d'\\n' gh pr merge still asks" \
+  "$(bash_payload "ls | xargs -d'\\n' gh pr merge 1 --admin")" "gh pr merge"
+
 
 # GH #561 review of PR #571: the -c alias check ran the alias body against every later word once per
 # alias pair (quadratic), so 4000 pairs and 4000 words (80 KB) took 9.3 s, past the 8 s hook timeout
