@@ -2436,4 +2436,70 @@ for _c in \
 done
 
 
+# GH #606, #611 review: the -i exception of rule rm-recursive holds only when rm prompts per file
+# and nothing in the command can answer. Finding 1: the command feeds rm's stdin (a pipe, <, <<,
+# <<<, <&, a heredoc, a coproc), read over the whole command since a group, loop or shell body
+# passes its stdin on. Finding 2: the last of -f/-i/-I/--interactive[=WHEN] wins, as GNU rm reads
+# them. Finding 3: a -i after -- is a filename.
+for _c in \
+  'yes | rm -ri build' \
+  'rm -ri build <<< "$(yes | head -1000)"' \
+  'rm -ri build < answers.txt' \
+  'rm -ri build 0<answers.txt' \
+  'rm -ri build <&3' \
+  $'rm -ri build <<EOF\ny\ny\nEOF' \
+  'yes |& rm -ri build' \
+  'yes | (rm -ri build)' \
+  '{ rm -ri build; } <<< y' \
+  'while :; do rm -ri build; done < answers.txt' \
+  "yes | bash -c 'rm -ri build'" \
+  "bash -c 'rm -ri build <<< y'" \
+  'exec 0<answers.txt; rm -ri build' \
+  $'eval $\'yes \\x7c rm -ri build\'' \
+  'coproc rm -ri build; yes >&"${COPROC[1]}"' \
+  'rm -ri --interactive=never build' \
+  'rm -ri -I build' \
+  'rm -i -rI build' \
+  'rm -ri --interactive=once build' \
+  'rm -ri --inter=never build' \
+  'rm -ri --interactive=n build' \
+  'rm -ri --interactive=no build' \
+  'rm -ri --interactive=o build' \
+  'rm -ri --interactive= build' \
+  'rm -ri --interactive=bogus build' \
+  'rm -rfi build' \
+  'rm -ri -f build' \
+  'rm -ri "$OPTS" build' \
+  'rm -ri $(printf %s -f) build' \
+  'rm -r -- -i build' \
+  'rm -r build -- -i' \
+  'POSIXLY_CORRECT=1 rm -r build -i' ; do
+  test_deny "$IRRECOVERABLE" "GH #606/#611 review: rm -r with no per-file prompt nothing answers: $_c" "$(bash_payload "$_c")"
+done
+# xargs rm already denies whatever its flags (rule xargs-rm); GNU xargs gives rm /dev/null as stdin
+# unless -a or -o, so it would answer no, but the rule stays.
+for _c in 'echo build | xargs rm -ri' 'xargs -a list.txt rm -ri' 'find . -name build -exec rm -ri {} +' ; do
+  test_deny "$IRRECOVERABLE" "GH #606/#611 review confirm: xargs/find hand rm its paths: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'rm -ri build' \
+  'rm -r build -i' \
+  'rm -rI -i build' \
+  'rm -r --interactive build' \
+  'rm -r --interactive=always build' \
+  'rm -r --interactive=a build' \
+  'rm -r --interactive=yes build' \
+  'rm -r --inter build' \
+  'rm -r -I --interactive=always build' \
+  'rm -ri build > log.txt 2>&1' \
+  'rm -ri -- build' \
+  'rm -i file.txt' \
+  'rm file.txt' \
+  'rm -d emptydir' \
+  'git rm -r --cached dir' \
+  'echo y | rm -i file.txt' \
+  'yes | rm -f file.txt' ; do
+  test_allow "$IRRECOVERABLE" "GH #606/#611 review control: per-file prompt nothing answers, or not recursive: $_c" "$(bash_payload "$_c")"
+done
+
 gates_summary
