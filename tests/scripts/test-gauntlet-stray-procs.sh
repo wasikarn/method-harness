@@ -4,6 +4,8 @@
 # 2026-10-25 and failed every push's timing rows). Each case sources the library in a fresh
 # `bash -c` and replaces its ps/load readers with fixture text, so no row depends on real CPU time.
 set -uo pipefail
+# An operator may set these in settings.json env; the rows below assume the defaults.
+unset GAUNTLET_STRAY_MIN_SECS GAUNTLET_STRAY_MIN_CPU
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 LIB="$HERE/../../scripts/_lib/stray-procs.sh"
 GAUNTLET="$HERE/../../scripts/run-gauntlet.sh"
