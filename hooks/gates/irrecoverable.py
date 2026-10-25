@@ -537,7 +537,21 @@ def _spawn_anchor_body(wrapper_prefix):
 _SPAWN_ANCHOR_RES = (re.compile(r"(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r")", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r"))", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX_LAZY) + r"))", re.MULTILINE))
-_SPAWN_FLAG_RE = re.compile(r"-p\b|--print\b|--agent\b|--bg\b|--worktree\b")
+_SPAWN_FLAG_RE = re.compile(r"-p\b|--print\b|--agent\b|--bg\b|--background\b|--worktree\b|-w\b")
+# Bypass hunt 2026-10-23 F1/F2: -w and --background are --worktree's and --bg's other spellings, and
+# the Bash tool has no TTY, so `claude <prompt>`, `<input> | claude` and `claude < file` run headless
+# exactly like -p. A version or help word anywhere in argv exits before a session starts (2.1.310).
+# The flag scan above reads every anchor; the prompt/stdin reading (_claude_starts_session) only an
+# anchor outside quotes, since a quoted `;` or `|` in a commit message opens an anchor here too, and
+# `-m "a; claude handles it"` must not read `handles` as a prompt.
+_SPAWN_INFO = ("--version", "-v", "--help", "-h")
+# `claude --help`'s Commands that start no session (2.1.310). Not `agents`, `attach`, `respawn` or
+# `ultrareview`: each one dispatches, opens or restarts a session.
+_CLAUDE_NO_SESSION_SUBS = frozenset({"auth", "auto-mode", "config", "doctor", "gateway", "import", "install",
+                                     "kill", "logs", "mcp", "migrate-installer", "plugin", "plugins", "purge",
+                                     "rm", "setup-token", "stop", "update", "upgrade"})
+_SPAWN_WORDS_CAP = 1024
+_SPAWN_OUT_REDIR_RE = re.compile(r"\d*(?:&>>?|>>?&?|>\|)\s*(?:\"[^\"]*\"|'[^']*'|[^\s;&|()<>]+)?")
 # GH #157: an ODD backslash run directly before a quote escapes that quote
 # in real bash (`claude \" ; othertool -p x` -- the `"` is a literal argument
 # character, not a string opener), so it is captured as one literal token
@@ -696,15 +710,165 @@ def _spawn_statement(tail, work):
         buf.append(t)
     return "".join(buf), work
 
+def _quote_mask(c):
+    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
+    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
+    # per scanned text.
+    mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
+    while i < n:
+        ch, q = c[i], stack[-1]
+        if q == SQ:
+            mask[i] = 1
+            if ch == SQ:
+                stack.pop()
+        elif q == '"':
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == '"':
+                stack.pop()
+            elif ch == "$" and c[i + 1:i + 2] == "(":
+                stack.append("(")
+                i += 1
+            elif ch == "`":
+                stack.append("`")
+        elif q == "$'":
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == SQ:
+                stack.pop()
+        elif ch == "\\" and i + 1 < n:
+            mask[i + 1] = 1
+            i += 1
+        elif ch == "$" and c[i + 1:i + 2] == SQ:
+            mask[i] = mask[i + 1] = 1
+            stack.append("$'")
+            i += 1
+        elif ch in (SQ, '"'):
+            mask[i] = 1
+            stack.append(ch)
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
+            j = c.find("\n", i)  # a comment, to the end of its line
+            j = n if j < 0 else j
+            mask[i:j] = b"\1" * (j - i)
+            i = j
+            continue
+        elif q == "(" and ch in "()":
+            stack.append(ch) if ch == "(" else stack.pop()
+        elif q == "`" and ch == "`":
+            stack.pop()
+        i += 1
+    return mask
+
+_SPAWN_SESSION_SEEN = {}  # the three anchor passes, joined and plain text, re-read the same statements
+
+def _claude_starts_session(stmt, piped):
+    key = (stmt[:_SPAWN_WORDS_CAP + 1], piped)
+    r = _SPAWN_SESSION_SEEN.get(key)
+    if r is None:
+        r = _SPAWN_SESSION_SEEN[key] = _claude_words_start_session(stmt, piped)
+    return r
+
+def _claude_words_start_session(stmt, piped):
+    # F1: stmt is the raw text after an unquoted `claude`. A `<` stdin (not `<(`) or a pipe in is the
+    # prompt; so is any word that is not an option (an option's value too: over-denies `claude --model
+    # sonnet`, which has no prompt and fails anyway), unless a version or help word exits first, or
+    # the first word is a subcommand that starts no session (`claude --model mcp x` is a prompt).
+    # Only a prefix is read: every anchor reads its own statement, and an unclosed `(` makes that the
+    # rest of the command each time. A cut statement that shows no version or help word is a spawn.
+    cut = len(stmt) > _SPAWN_WORDS_CAP
+    stmt = stmt[:_SPAWN_WORDS_CAP]
+    depth = 0
+    for tok in _SPAWN_TOKEN_RE.finditer(stmt):  # a `)` closing `$(claude ...)` ends claude's words
+        depth += (tok.group() == "(") - (tok.group() == ")")
+        if depth < 0:
+            stmt, cut = stmt[:tok.start()], False
+            break
+    # A version or help word inside $(..) or `..` is that command's, not claude's.
+    text = _SPAWN_OUT_REDIR_RE.sub(" ", stmt.replace("<(", " ("))
+    while True:
+        t2 = re.sub(r"\$\([^()]*\)|`[^`]*`", " X ", text)
+        if t2 == text:
+            break
+        text = t2
+    try:
+        words = shlex.split(text, comments=True)
+    except ValueError:
+        words = None
+    if words and any(t in _SPAWN_INFO for t in words):
+        return False
+    if words is None or cut or re.search(r"<(?!\()", stmt):
+        return True
+    if words and words[0] in _CLAUDE_NO_SESSION_SUBS:
+        return False
+    for i, t in enumerate(words):
+        if t == "--":
+            return i + 1 < len(words) or piped
+        if not (t.startswith("-") and len(t) > 1):
+            return True
+    return piped
+
 def _nested_spawn_text(c, overlap):
     if _charge_spawn_anchor(c):
         return True
     work = 0  # shared across every anchor's scan, never reset per-anchor -- see _SPAWN_SCAN_BUDGET above
+    mask = None
     for m in _SPAWN_ANCHOR_RES[overlap].finditer(c):
         stmt, work = _spawn_statement(c[m.end(1):], work)
         if stmt is None or _SPAWN_FLAG_RE.search(stmt):
             return True
+        if mask is None:
+            mask = _quote_mask(c)
+        if mask[m.end(1) - 1]:
+            continue
+        a, lead = m.start(1), m.group(1)
+        lead_words = _spawn_lead_words(lead)
+        if lead_words is None:
+            continue
+        # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
+        # over as words.
+        sep = re.match(r"[|;&(){\s]*", lead).group()
+        piped = re.search(r"(?<!\|)\|&?[\s({]*$", c[:a] + sep) is not None or "xargs" in lead_words
+        if _claude_starts_session(stmt, piped):
+            return True
     return False
+
+def _spawn_lead_words(lead):
+    # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
+    # wrapper explains: the anchor's walk skips any words after a wrapper (`time rg claude src/`), fine
+    # for the flag scan but not for reading claude's words as a prompt. Explained: an assignment, a
+    # keyword, a wrapper, a dash word after a wrapper and the one word after that dash word (its value,
+    # if it takes one: `env -C /tmp`, `sudo -p pw:`, `timeout -s KILL`), and timeout's duration.
+    words = lead.replace("{", " ").replace("(", " ").split()[:-1]  # the last word is claude
+    names, prev, after_dash = [], None, False
+    for t in words:
+        t = t.lstrip("|&;")
+        if not t or re.match(r"[A-Za-z_]\w*=", t):
+            continue
+        b = t.rsplit("/", 1)[-1]
+        if b in SHELL_KEYWORDS or b in ("builtin", "--"):
+            continue
+        if b in PREFIX_WRAPPERS or b == "xargs":
+            prev, after_dash = b, False
+            names.append(b)
+            continue
+        if prev and t.startswith("-"):
+            after_dash = True
+            continue
+        if after_dash:
+            after_dash = False
+            continue
+        if prev in ("timeout", "gtimeout") and re.fullmatch(r"[\d.]+[smhd]?", b):
+            continue
+        return None
+    return names
+
+_SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via Bash (claude with a prompt "
+                      "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "
+                      "main session dispatches")
 
 def _deny_nested_spawn():
     if _spawn_over_budget:
@@ -712,9 +876,7 @@ def _deny_nested_spawn():
               "to a file with the Write tool and run the file, or split it into smaller commands",
               file=sys.stderr)
     else:
-        print("[mh:gate] BLOCKED: a subagent may not spawn a nested Claude Code session via Bash "
-              "(claude -p/--print/--agent/--bg/--worktree) -- only the main session dispatches",
-              file=sys.stderr)
+        print("[mh:gate] BLOCKED: " + _SPAWN_DENY_REASON, file=sys.stderr)
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"))
     sys.exit(2)
 
@@ -1857,9 +2019,7 @@ def _scan_body(body):
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
     if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)):
-        deny("a subagent may not spawn a nested Claude Code session via Bash "
-             "(claude -p/--print/--agent/--bg/--worktree), inside bash -c / eval either "
-             "-- only the main session dispatches")
+        deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
         if ww:
@@ -2105,6 +2265,29 @@ def _git_words(rest, ph_value=False):
                 out.append(word())
     return out + rest[i:] if (hit if ph_value else joined) else None
 
+# GH #562: `git config` on core.hooksPath: a read (get, list, the key alone) and the one documented write,
+# `core.hooksPath git-hooks` with no value-pattern, are allowed. The word git-hooks anywhere else (a
+# value-pattern, a --comment) allowed `git config core.hooksPath /dev/null git-hooks`, which replaces the
+# git-hooks value with /dev/null.
+_GIT_CONFIG_VALUE_OPTS = ("-f", "--file", "--blob", "--type", "--comment", "--default", "--value")
+_GIT_CONFIG_READ_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list")
+_GIT_CONFIG_EDIT_OPTS = ("--unset", "--unset-all", "--rename-section", "--remove-section", "-e", "--edit")
+def _hooks_path_ok(scan):
+    pos, opts, i = [], [], 0
+    while i < len(scan):
+        t = scan[i]
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        (opts if t.startswith("-") else pos).append(t.split("=", 1)[0] if t.startswith("--") else t)
+        i += 1
+    if any(t in _GIT_CONFIG_EDIT_OPTS for t in opts) or pos[:1] in (["unset"], ["rename-section"], ["remove-section"], ["edit"]):
+        return False
+    if pos[:1] in (["get"], ["list"]) or any(t in _GIT_CONFIG_READ_OPTS for t in opts):
+        return True
+    pos = pos[1:] if pos[:1] == ["set"] else pos
+    return len(pos) == 1 or (len(pos) == 2 and pos[1] == "git-hooks" and not any(t == "--value" for t in opts))
+
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
     # window w set core.hooksPath (key case-insensitive) to a non-empty value?
@@ -2156,7 +2339,6 @@ def _git_cfg_risk(key, val, sub):
         return "git-reflog-prune"
     return None
 
-_GIT_CONFIG_VALUE_OPTS = ("-f", "--file", "--blob", "--type", "--comment", "--default", "--value")
 def _git_config_write(scan):
     # (key, value) a `git config [set] KEY VALUE` writes, or None (a read, a list, an unset).
     pos, i = [], 0
@@ -2778,7 +2960,7 @@ def _check_window(_wi, w):
                 if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
                     deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
                          rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
-                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and "git-hooks" not in scan:
+                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and not _hooks_path_ok(scan):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
                     deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
