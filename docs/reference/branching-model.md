@@ -47,6 +47,16 @@ behind-develop refusal, rebase on `origin/develop` and push (on a wrong-base ref
 with `gh pr edit <PR> --base develop`): the pre-push gauntlet then runs on the exact tree that
 will merge, and the pinned sha makes GitHub refuse a head that moved after the check.
 
+It also refuses a PR without a review verdict (2026-10-25: #569–#576 and #611 merged while their reviews
+still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
+`Fresh-context review: MERGE` (or `FIX FIRST` / `CLOSE`; case and markdown emphasis ignored) in a PR
+comment, and the latest one posted after the PR's last substantive commit must be `MERGE`, checked before
+and after the load wait. A merge of `develop` and a commit touching only the two manifests are not
+substantive, so syncing and bumping before the merge keep the review; any other commit needs a new one.
+Post the reviewer's result as that comment. The check proves a verdict was posted, not who wrote it or
+that the reviewer had fresh context, and a conflict resolved inside a merge commit is not counted. There
+is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
+
 The checks are local-only. The script narrows the gap; it does not close it: a push to `develop`
 from another clone between the check and the merge can still race, and nothing stops a merge made
 outside the script. The script's own `gh pr merge` call runs inside the script, so

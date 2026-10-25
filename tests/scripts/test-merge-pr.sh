@@ -5,7 +5,9 @@
 # #492/#493, #496/#497 cut the same number). Stubs gh,
 # git and uptime on PATH; never touches GitHub. Each failing case also checks
 # that `gh pr merge` was never reached (or, for a head mismatch, that it was
-# reached with the checked sha and its refusal propagated).
+# reached with the checked sha and its refusal propagated). It also needs a "Fresh-context review:
+# MERGE" comment posted after the PR's last substantive commit (2026-10-25: #569-#576 and #611 merged
+# with FIX FIRST reviews open); the gh stub runs the script's own jq on fake comments.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../../scripts/merge-pr.sh"
@@ -39,6 +41,14 @@ case "$*" in
   *headRefOid,baseRefName*) [ -n "${STUB_EMPTY:-}" ] || echo "$STUB_HEAD ${STUB_BASE:-develop}" ;;
   *baseRefName*) echo "${STUB_BASE2:-${STUB_BASE:-develop}}" ;;
   *mergeCommit*) echo "mergesha000" ;;
+  *"api --paginate"*comments*)
+    # Apply the script's --jq to STUB_COMMENTS_JSON (STUB_COMMENTS_JSON2 from the second read on), so
+    # the real expression is what the test exercises. STUB_API_FAIL makes the call fail.
+    [ -z "${STUB_API_FAIL:-}" ] || { echo "HTTP 502" >&2; exit 1; }
+    n=0; [ ! -f "$STUB_DIR/api" ] || n=$(cat "$STUB_DIR/api"); n=$((n + 1)); echo "$n" >"$STUB_DIR/api"
+    json="$STUB_COMMENTS_JSON"; if [ "$n" -gt 1 ]; then json="${STUB_COMMENTS_JSON2-$STUB_COMMENTS_JSON}"; fi
+    q=""; prev=""; for a in "$@"; do [ "$prev" = "--jq" ] && q="$a"; prev="$a"; done
+    printf '%s' "$json" | jq -r "$q" ;;
   *) exit 2 ;;
 esac
 EOF
@@ -74,6 +84,10 @@ case "$1" in
       *) v="$STUB_HEAD_VER" ;;
     esac
     printf '{\n  "version": "%s"\n}\n' "$v" ;;
+  # STUB_COMMITS: space-separated "sha:committer-epoch:file,file" for the PR's non-merge commits.
+  rev-list) for c in $STUB_COMMITS; do echo "${c%%:*}"; done ;;
+  diff-tree) for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { f=${c##*:}; printf '%s\n' ${f//,/ }; }; done ;;
+  log) for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { r=${c#*:}; echo "${r%%:*}"; }; done ;;
   *) exit 2 ;;
 esac
 EOF
@@ -88,14 +102,20 @@ chmod +x "$STUB/gh" "$STUB/git" "$STUB/uptime"
 # STUB_DEV_VER2, STUB_SHOW_FAIL) comes from the caller's environment.
 run() {
   : >"$LOG"
-  rm -f "$STUB/fetch" "$STUB/merge-base" "$STUB/show-develop"
+  rm -f "$STUB/fetch" "$STUB/merge-base" "$STUB/show-develop" "$STUB/api"
   out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_DIR="$STUB" STUB_HEAD=headsha111 \
+    STUB_COMMITS="${STUB_COMMITS-c1:1000:hooks/gates/irrecoverable.py}" \
+    STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict 2000 MERGE)}" \
     STUB_ANCESTOR="$1" STUB_REMOTE_HEAD="$2" STUB_LOAD="$3" \
     STUB_HEAD_VER="${STUB_HEAD_VER-1.1.2}" STUB_DEV_VER="${STUB_DEV_VER-1.1.1}" \
     MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 bash "$SCRIPT" 451 2>&1)
   rc=$?
 }
 merged() { /usr/bin/grep -q '^gh pr merge' "$LOG"; }
+# verdict <epoch> <word>...: one PR comment, created at <epoch>, whose body carries a review verdict line.
+verdict() { jq -nc --argjson t "$1" --arg v "${*:2}" '[{created_at: ($t | todateiso8601), body: ("Some text.\n## Fresh-context review: " + $v + "\nmore")}]'; }
+# comments <json-array>...: concatenate comment arrays, in order.
+comments() { jq -sc 'add' <<<"$*"; }
 
 # refuses <label> <message-pattern>: the last run() exited non-zero, never reached gh pr merge,
 # and said why.
@@ -211,6 +231,41 @@ refuses "manifest mismatch" "marketplace"
 # 4k. a manifest missing at the head (git show fails): the script says which one and refuses.
 STUB_SHOW_FAIL=1 run 0 headsha111 1.50
 refuses "unreadable manifest file" "cannot read"
+
+# 6. review verdict (2026-10-25). No verdict comment at all: refuse, before the load wait.
+STUB_COMMENTS_JSON='[{"created_at":"1970-01-01T01:00:00Z","body":"A fresh-context review of this PR is in progress."}]' run 0 headsha111 7.25
+refuses "no review verdict" "no \"Fresh-context review: MERGE\""
+if /usr/bin/grep -q 'load' <<<"$out"; then bad "no verdict refused only after the load wait: $out"; else ok "no verdict is refused before the load wait"; fi
+
+# 6b. the latest verdict is FIX FIRST, even with an earlier MERGE: refuse and name it.
+STUB_COMMENTS_JSON=$(comments "$(verdict 2000 MERGE)" "$(verdict 3000 FIX FIRST)") run 0 headsha111 1.50
+refuses "latest verdict FIX FIRST" "is FIX FIRST, not MERGE"
+
+# 6c. FIX FIRST then a later MERGE (a re-review after the fix): merges.
+STUB_COMMENTS_JSON=$(comments "$(verdict 2000 FIX FIRST)" "$(verdict 3000 MERGE)") run 0 headsha111 1.50
+if [ "$rc" -eq 0 ] && merged; then ok "FIX FIRST then MERGE merges"; else bad "FIX FIRST then MERGE rc=$rc: $out"; fi
+
+# 6d. MERGE posted before the last substantive commit: stale, refuse.
+STUB_COMMITS="c1:1000:hooks/gates/irrecoverable.py c2:2500:tests/hooks/test-gates.sh" run 0 headsha111 1.50
+refuses "verdict older than the last change" "no \"Fresh-context review: MERGE\""
+
+# 6e. a later manifest-only commit (a version bump after syncing develop) keeps the review.
+STUB_COMMITS="c1:1000:hooks/gates/irrecoverable.py c2:2500:.claude-plugin/plugin.json,.claude-plugin/marketplace.json" run 0 headsha111 1.50
+if [ "$rc" -eq 0 ] && merged; then ok "a version bump after the review keeps it"; else bad "manifest-only commit lost the review rc=$rc: $out"; fi
+
+# 6f. a lower-case, bold verdict line with trailing words still reads as MERGE; CLOSE refuses.
+STUB_COMMENTS_JSON='[{"created_at":"1970-01-01T00:33:20Z","body":"**fresh-context review: merge** after re-sync"}]' run 0 headsha111 1.50
+if [ "$rc" -eq 0 ]; then ok "case and bold do not hide a MERGE verdict"; else bad "styled MERGE verdict rc=$rc: $out"; fi
+STUB_COMMENTS_JSON=$(verdict 2000 CLOSE) run 0 headsha111 1.50
+refuses "CLOSE verdict" "is CLOSE"
+
+# 6g. a FIX FIRST posted during the load wait: the re-check after the wait refuses.
+STUB_COMMENTS_JSON2=$(comments "$(verdict 2000 MERGE)" "$(verdict 3000 FIX FIRST)") run 0 headsha111 1.50
+refuses "FIX FIRST posted during the wait" "is FIX FIRST"
+
+# 6h. the comments cannot be read: refuse, do not treat it as "no verdict needed".
+STUB_API_FAIL=1 run 0 headsha111 1.50
+refuses "unreadable comments" "could not read the comments"
 
 # 5. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" 2>&1); rc=$?
