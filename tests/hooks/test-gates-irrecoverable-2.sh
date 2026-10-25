@@ -933,6 +933,35 @@ test_allow "$IRRECOVERABLE" "main session: bash -c claude -p (no agent_id, not a
   "$(bash_payload "bash -c 'claude -p hi'")"
 test_allow "$IRRECOVERABLE" "sudo bash -c with a harmless body" \
   "$(bash_payload "sudo bash -c 'ls -la'")"
+# GH #560: env -S / --split-string runs its string as the command, like a sh -c body; -C takes a value.
+test_deny  "$IRRECOVERABLE" "GH #560: env -S hiding rm -rf" "$(bash_payload "env -S 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env --split-string= hiding push --force" \
+  "$(bash_payload "env --split-string='git push --force'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -S with the flag after the string" "$(bash_payload "env -S 'git push' --force")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -C DIR before rm -rf" "$(bash_payload 'env -C /tmp rm -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #560: subagent: env -S hiding claude -p" "$(bash_agent_payload "env -S 'claude -p hi'" fork)"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -S with a harmless string" "$(bash_payload "env -S 'ls -la'")"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -C DIR ls" "$(bash_payload 'env -C /tmp ls')"
+# GH #560 review: getopt reads -S bundled after env's other short flags (`-iS`, `-vS`), and a value
+# letter inside a cluster (`-iu FOO`, `-iC /tmp`) takes the next word.
+test_deny  "$IRRECOVERABLE" "GH #560: env -iS hiding rm -rf" "$(bash_payload "env -iS 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -vS hiding rm -rf" "$(bash_payload "env -vS 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -i0vS'...' attached hiding rm -rf" "$(bash_payload "env -i0vS'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -iu FOO -S hiding rm -rf" "$(bash_payload "env -iu FOO -S 'rm -rf x'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env -iC DIR before rm -rf" "$(bash_payload 'env -iC /tmp rm -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #560: env --split-string BODY (space) hiding rm -rf" \
+  "$(bash_payload "env --split-string 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #560: env --split= (abbreviated long option) hiding rm -rf" \
+  "$(bash_payload "env --split='rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #560: subagent: env -iS hiding claude -p" "$(bash_agent_payload "env -iS 'claude -p hi'" fork)"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -iS with a harmless string" "$(bash_payload "env -iS 'ls -la'")"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -i ls" "$(bash_payload 'env -i ls')"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -0 (print the environment)" "$(bash_payload 'env -0')"
+test_allow "$IRRECOVERABLE" "GH #560 control: env -iu FOO ls" "$(bash_payload 'env -iu FOO ls -la')"
+test_deny  "$IRRECOVERABLE" "GH #560: a chain of 50 env -iS words before rm -rf" \
+  "$(bash_payload "$(printf 'env -iS %.0s' $(seq 50))rm -rf x")"
+_env_iS_dos_cmd="$(python3 -c 'print("env -iS ls; " * 10000 + "env -" + "i" * 20000 + "S ls")')"
+_timed_case 'GH #560: 10000 env -iS commands and a 20 KB cluster are read in bounded time' 0 "$_env_iS_dos_cmd"
 # Non-goal: cat <<EOF | bash, eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
@@ -1667,5 +1696,74 @@ else
   fail=$((fail + 1))
 fi
 
+# GH #559 review: the SQL client is the command a pipe stage runs (its argv0 past wrappers), not the
+# word "psql" anywhere in the pipeline or on a heredoc's line; and a bash -c / eval body is checked too.
+test_allow "$IRRECOVERABLE" "GH #559 review: grep -v psql downstream of a grep for drop table" \
+  "$(bash_payload "grep -rn 'drop table' . | grep -v psql")"
+test_allow "$IRRECOVERABLE" "GH #559 review: grep psql downstream of a grep for DROP TABLE" \
+  "$(bash_payload "grep -rn 'DROP TABLE' migrations/ | grep psql")"
+test_allow "$IRRECOVERABLE" "GH #559 review: grep for psql upstream of a grep for drop table" \
+  "$(bash_payload "grep -rn psql docs/ | grep -i 'drop table'")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into sudo -u postgres psql" \
+  "$(bash_payload "echo 'DROP TABLE users' | sudo -u postgres psql mydb")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into sudo -iu postgres psql (a clustered value flag)" \
+  "$(bash_payload "echo 'DROP TABLE users' | sudo -iu postgres psql mydb")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into env PGHOST=db /usr/bin/psql" \
+  "$(bash_payload "echo 'DROP TABLE users' | env PGHOST=db /usr/bin/psql mydb")"
+test_allow "$IRRECOVERABLE" "GH #559 review control: a SELECT echoed into psql" \
+  "$(bash_payload "echo 'SELECT * FROM users' | psql mydb")"
+test_allow "$IRRECOVERABLE" "GH #559 review: a gh body heredoc whose title mentions psql" \
+  "$(bash_payload "$(printf "gh issue create --title 'SQL DROP piped to psql passes' --body \"\$(cat <<'EOF'\npsql mydb <<< 'DROP TABLE users' passes\nEOF\n)\"")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: a heredoc psql reads inside \$()" \
+  "$(bash_payload "$(printf "out=\$(psql mydb <<'SQL'\nDROP TABLE users;\nSQL\n)")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: a heredoc cat pipes into psql inside \$()" \
+  "$(bash_payload "$(printf "out=\$(cat <<'SQL' | psql mydb\nDROP TABLE users;\nSQL\n)")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into psql inside bash -c" \
+  "$(bash_payload "bash -c \"echo 'DROP TABLE t' | psql db\"")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into psql inside eval" \
+  "$(bash_payload "eval \"echo 'DROP TABLE t' | psql\"")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: a here-string psql reads inside sh -c" \
+  "$(bash_payload "sh -c \"psql db <<< 'DROP TABLE t'\"")"
+test_allow "$IRRECOVERABLE" "GH #559 review control: a SELECT echoed into psql inside bash -c" \
+  "$(bash_payload "bash -c \"echo 'SELECT 1' | psql db\"")"
+test_allow "$IRRECOVERABLE" "GH #559 review control: grep -v psql inside bash -c" \
+  "$(bash_payload "bash -c \"grep -rn 'drop table' . | grep -v psql\"")"
+# GH #559 review round 2.
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: DROP TABLE echoed into docker exec -i pg psql" \
+  "$(bash_payload "echo 'DROP TABLE t' | docker exec -i pg psql -U postgres")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: a heredoc docker exec -i pg psql reads" \
+  "$(bash_payload "$(printf "docker exec -i pg psql <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: DROP TABLE echoed into docker exec -u postgres pg psql" \
+  "$(bash_payload "echo 'DROP TABLE t' | docker exec -i -u postgres pg psql")"
+test_allow "$IRRECOVERABLE" "GH #559 review 2 control: a SELECT echoed into docker exec psql" \
+  "$(bash_payload "echo 'SELECT 1' | docker exec -i pg psql -U postgres")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: an apostrophe in a comment line before echo DROP | psql" \
+  "$(bash_payload "$(printf "# don't do this\necho 'DROP TABLE t' | psql db")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: a pipeline into psql continued after a trailing |" \
+  "$(bash_payload "$(printf "echo 'DROP TABLE t' |\n  psql db")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: a pipeline into psql continued with a backslash-newline" \
+  "$(bash_payload "$(printf "echo 'DROP TABLE t' | \\\\\n  psql db")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 2: a heredoc into psql whose -- comment mentions DROP TABLE" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\n-- removed the DROP TABLE step\nSELECT 1;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 2: a heredoc into psql with LIKE 'truncate the cache'" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT * FROM logs WHERE msg LIKE 'truncate the cache';\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 2: git diff | grep -v 'DROP TABLE' | psql (a grep pattern is not SQL)" \
+  "$(bash_payload "git diff | grep -v 'DROP TABLE' | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: DROP TABLE after a string literal in a heredoc into psql" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 'it''s';\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: DROP TABLE after a backslash string in a heredoc into psql" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 'a\\\\';\nDROP TABLE t; -- '\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: a quote inside a block comment does not hide DROP TABLE" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\n/* don't */ DROP TABLE t; -- '\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: DROP TABLE echoed through cat into psql" \
+  "$(bash_payload "echo 'DROP TABLE t' | cat | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 2: TRUNCATE of a quoted table name in a heredoc into psql" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nTRUNCATE \"users\";\nSQL")")"
+_sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("eval x%d;" % i for i in range(7000)) + " rm -rf ~")')"
+_timed_case 'GH #559 review 2: 7000 eval bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
+_sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("bash -c x%d;" % i for i in range(5000)) + " rm -rf ~")')"
+_timed_case 'GH #559 review 2: 5000 bash -c bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
+_sql_pad_cmd="$(python3 -c 'print("bash -c \"" + "echo DROP TABLE x | grep q psql | " * 4000 + "cat\"")')"
+_timed_case 'GH #559 review: a 136 KB bash -c pipeline naming psql and DROP TABLE is scanned in bounded time' 0 "$_sql_pad_cmd"
 
 gates_summary
