@@ -1938,4 +1938,19 @@ test_allow "$IRRECOVERABLE" "GH #562 control: git config --get core.hooksPath \"
 _hp_pad_cmd="git config core.hooksPath git-hooks$(python3 -c 'print(" \"\"" * 46000)')"
 _timed_case 'GH #562: a 140 KB run of empty words after core.hooksPath is denied in bounded time' 2 "$_hp_pad_cmd"
 
+# GH #562 round 2: git runs no hooks with an empty core.hooksPath (git 2.43, a marker pre-commit hook in a
+# throwaway repo), so a -c pair with an empty value is the same bypass; the rows above use /tmp/evil.
+test_deny  "$IRRECOVERABLE" "GH #562: git -c core.hooksPath= commit (empty value runs no hooks)" "$(bash_payload 'git -c core.hooksPath= commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git -c core.hooksPath=\"\" commit" "$(bash_payload 'git -c core.hooksPath="" commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git -ccore.hooksPath= commit (joined)" "$(bash_payload 'git -ccore.hooksPath= commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git -c \"core.hooksPath=\" commit (quoted)" "$(bash_payload 'git -c "core.hooksPath=" commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: git --config-env=core.hooksPath=V commit still denies" "$(bash_payload 'git --config-env=core.hooksPath=V commit -m x')"
+test_deny  "$IRRECOVERABLE" "GH #562: GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= still denies" "$(bash_payload 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= git commit -m x')"
+# A section name built at run time counts only when its literal prefix can still become core.
+test_allow "$IRRECOVERABLE" "GH #562 control: --rename-section alias \"x\$Y\" (cannot become core)" "$(bash_payload 'git config --rename-section alias "x$Y"')"
+test_allow "$IRRECOVERABLE" "GH #562 control: --remove-section alias\$(date) (cannot become core)" "$(bash_payload 'git config --remove-section alias$(date)')"
+test_deny  "$IRRECOVERABLE" "GH #562: --remove-section \"\$S\" (may be core)" "$(bash_payload 'git config --remove-section "$S"')"
+test_deny  "$IRRECOVERABLE" "GH #562: --remove-section co\$X (may be core)" "$(bash_payload 'git config --remove-section co$X')"
+test_deny  "$IRRECOVERABLE" "GH #562: --rename-section alias C\$(echo ore) (may be core)" "$(bash_payload 'git config --rename-section alias C$(echo ore)')"
+
 gates_summary

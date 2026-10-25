@@ -2249,7 +2249,8 @@ def _hooks_path_ok(scan):
 def _drops_core_section(words):
     # GH #562: `git config [--]remove-section core` and `[--]rename-section core X` (or X core) drop or
     # rewrite core.hooksPath without naming it. Section names ignore case; git takes a unique prefix
-    # of a long option (`--rem`); a name built at run time (a $ or a blanked substitution) may be core.
+    # of a long option (`--rem`); a name built at run time (a $ or a blanked substitution) may be core
+    # when the literal text before it can still become core (`co$X`, not `x$Y`).
     pos, mode, i = [], False, 0
     while i < len(words):
         t = words[i].replace(PH, "")
@@ -2263,11 +2264,16 @@ def _drops_core_section(words):
         i += 1
     if pos and pos[0].replace(PH, "") in ("remove-section", "rename-section"):
         mode, pos = True, pos[1:]
-    return mode and any(PH in w or "$" in w or w.lower() == "core" for w in pos)
+    return mode and any(_may_be_core(w) for w in pos)
+
+def _may_be_core(w):
+    cut = min((k for k in (w.find(PH), w.find("$")) if k >= 0), default=-1)
+    return w.lower() == "core" if cut < 0 else "core".startswith(w[:cut].lower())
 
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
-    # window w set core.hooksPath (key case-insensitive) to a non-empty value?
+    # window w set core.hooksPath (key case-insensitive)? An empty value counts: git then runs no hooks
+    # (GH #562 round 2, git 2.43 with a marker pre-commit hook).
     for idx, t in enumerate(w):
         t_pf = t.replace(PH, "")
         if t_pf == "-c" and idx + 1 < len(w):
@@ -2283,7 +2289,7 @@ def _sets_hooks_path(w):
         else:
             continue
         key, _, val = kv.partition("=")
-        if key.lower() == "core.hookspath" and val:
+        if key.lower() == "core.hookspath":
             return True
     return False
 
@@ -2924,7 +2930,7 @@ def _check_window(_wi, w):
                 deny("--no-verify bypasses safety hooks", rule="git-no-verify")
             # -c core.hooksPath=<path> (split or joined "-ccore.hooksPath=X")
             # re-points git at a different hooks dir -- same bypass as
-            # --no-verify. Only a non-empty value trips it.
+            # --no-verify. An empty value trips it too: git then runs no hooks.
             # Case-insensitive key match (git config keys are case-insensitive;
             # `-c core.hookspath=` re-points hooks exactly like the canonical
             # spelling, live-confirmed) -- only the KEY is lowercased for the
