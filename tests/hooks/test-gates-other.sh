@@ -638,4 +638,20 @@ test_allow "$IRRECOVERABLE" "GH #561 control: git config alias.lg log" "$(bash_p
 test_allow "$IRRECOVERABLE" "GH #561 control: requireForce=false clean -n" "$(bash_payload 'git -c clean.requireForce=false clean -n')"
 test_allow "$IRRECOVERABLE" "GH #561 control: git config gc.pruneExpire 2.weeks.ago" "$(bash_payload 'git config gc.pruneExpire 2.weeks.ago')"
 
+# GH #608: a command an interpreter one-liner hands to a process API, in a string literal or an argv list.
+test_deny  "$IRRECOVERABLE" "GH #608: python os.system rm -rf" "$(bash_payload "python3 -c 'import os; os.system(\"rm -rf build\")'")"
+test_deny  "$IRRECOVERABLE" "GH #608: python subprocess argv list" \
+  "$(bash_payload "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"--force\"])'")"
+test_deny  "$IRRECOVERABLE" "GH #608: perl system" "$(bash_payload "perl -e 'system(\"git reset --hard\")'")"
+test_deny  "$IRRECOVERABLE" "GH #608: perl qx{}" "$(bash_payload "perl -e 'qx{rm -rf build}'")"
+test_deny  "$IRRECOVERABLE" "GH #608: node execFileSync argv" \
+  "$(bash_payload "node -e \"require('child_process').execFileSync('git', ['push', '--force'])\"")"
+test_deny  "$IRRECOVERABLE" "GH #608: ruby %x()" "$(bash_payload "ruby -e '%x(rm -rf build)'")"
+test_allow "$IRRECOVERABLE" "GH #608 control: print naming rm -rf (no process API)" "$(bash_payload "python3 -c 'print(\"rm -rf is denied\")'")"
+test_allow "$IRRECOVERABLE" "GH #608 control: subprocess git status" \
+  "$(bash_payload "python3 -c 'import subprocess; print(subprocess.check_output([\"git\", \"status\"]))'")"
+test_allow "$IRRECOVERABLE" "GH #608 control: perl -ne matching rm -rf" "$(bash_payload "perl -ne 'print if /rm -rf/' f.txt")"
+_timed_case 'GH #608: 16000 distinct literals in a process-API body are read in bounded time' 0 \
+  "python3 -c 'import os; os.system($(python3 -c "print(''.join('\"l%d\", ' % i for i in range(16000)))")\"x\")'"
+
 gates_summary
