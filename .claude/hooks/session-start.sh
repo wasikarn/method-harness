@@ -24,9 +24,9 @@ pip_shfmt_dir() {
   while IFS= read -r line; do
     case $line in
       "Location: "*) loc=${line#Location: } ;;
-      "  shfmt" | "  "*/shfmt) f=${line#  } ;;
+      "  "*/shfmt) f=${line#  } ;;
     esac
-  done < <(pip show -f shfmt-py </dev/null 2>/dev/null)
+  done < <("$pip" show -f shfmt-py </dev/null 2>/dev/null)
   [ -n "$loc" ] && [ -n "$f" ] || return 0
   f="$loc/$f"
   (cd -P "${f%/*}" 2>/dev/null && pwd)
@@ -58,12 +58,14 @@ if ! shfmt_ok; then
   # No apt for shfmt: no Ubuntu release's package passes (see shfmt_ok). The shfmt-py wheel ships
   # a current upstream build. PIP_BREAK_SYSTEM_PACKAGES: 24.04's pip refuses a system-wide install
   # otherwise (PEP 668); older pip ignores the variable, where a flag would be an error.
-  dir=""
-  if command -v pip >/dev/null; then
+  # -U: an older shfmt-py left by an earlier session would otherwise be "already satisfied".
+  dir="" pip=pip
+  command -v pip >/dev/null || pip=pip3
+  if command -v "$pip" >/dev/null; then
     dir=$(pip_shfmt_dir)
     # Installed by an earlier session but shadowed on PATH: skip pip, just put it first again below.
     if [ -z "$dir" ] || ! shfmt_ok "$dir"; then
-      PIP_BREAK_SYSTEM_PACKAGES=1 pip install -q shfmt-py </dev/null >&2 || note "pip install shfmt-py failed"
+      PIP_BREAK_SYSTEM_PACKAGES=1 "$pip" install -q -U shfmt-py </dev/null >&2 || note "pip install shfmt-py failed"
       hash -r
       dir=$(pip_shfmt_dir)
     fi
@@ -73,7 +75,12 @@ if ! shfmt_ok; then
   elif [ -n "$dir" ] && shfmt_ok "$dir"; then
     shadow=$(command -v shfmt) || shadow="nothing (pip's directory is not on PATH)"
     if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-      printf 'export PATH=%q:"$PATH"\n' "$dir" >> "$CLAUDE_ENV_FILE"
+      line=$(printf 'export PATH=%q:"$PATH"' "$dir") have=""
+      [ -f "$CLAUDE_ENV_FILE" ] && have=$(< "$CLAUDE_ENV_FILE")
+      case $'\n'"$have"$'\n' in
+        *$'\n'"$line"$'\n'*) ;;  # a resumed session may reuse the file: one PATH line is enough
+        *) printf '%s\n' "$line" >> "$CLAUDE_ENV_FILE" ;;
+      esac
       note "pip's $dir/shfmt is usable but PATH finds $shadow first; put $dir first on PATH for this session"
     else
       note "pip's $dir/shfmt is usable but PATH finds $shadow first; put $dir first on PATH or the gauntlet refuses to start"

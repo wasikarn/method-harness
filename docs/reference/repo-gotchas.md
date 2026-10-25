@@ -28,13 +28,13 @@ file (2026-10-23). Write `grep -q PAT <<<"$out"` or `grep -q PAT <<<"$(cmd)"`.
 `tests/scripts/test-pipefail-grep-q-lint.sh` checks every tracked shell file (a file without
 `pipefail` may be sourced under it, as harness-audit's checks are) with
 `tests/_lib/pipe_into_grep_q.py`, which reads shfmt's JSON syntax tree: a line regex and then a
-hand-written lexer each missed sites in review (#578, #597, #598). **The gauntlet needs shfmt >= 3.5**
-(macOS: `brew install shfmt`; Linux: `pip install shfmt-py`, never Ubuntu's apt package: 22.04's 3.4
-is too old and 24.04's 3.8.0 writes operators as numbers, `"Op": 12` for `|`; cloud sessions get
-shfmt-py from the SessionStart hook below) and refuses to start without it, as it does without
-`trash`. Both it and the hook accept a shfmt only if the scanner's own canary passes (the scanner
-run with no files), not by version. shfmt 3.4 only
-has `-tojson`, whose operators are numbers, and once made every file scan clean, so the scanner
+hand-written lexer each missed sites in review (#578, #597, #598). **The gauntlet needs a shfmt whose
+tree the scanner reads** (macOS: `brew install shfmt`; Linux: `pip install shfmt-py`, never Ubuntu's
+apt package: 22.04's 3.4 is too old and 24.04's 3.8.0 writes operators as numbers, `"Op": 12` for
+`|`; cloud sessions get shfmt-py from the SessionStart hook below) and refuses to start without it,
+as it does without `trash`. Both it and the hook accept a shfmt only if the scanner's own canary
+passes (the scanner run with no files), not by version. shfmt 3.4 only has `-tojson`, whose
+operators are numbers too, and once made every file scan clean, so the scanner
 checks itself on `x | grep -q y` first and exits 2 when it cannot read the tree. A file shfmt cannot
 read or parse is also an error, never a clean pass, and hits in the other files are still listed.
 A pipe's readers are the commands that can read the stdin it hands its right side: the command

@@ -23,7 +23,7 @@ STUB="$(mktemp -d)"
 # scanner) and, for the control, a trash stub and a failing mktemp: the control stops at the log
 # dir, right after the preflight.
 ln -s "$(command -v dirname)" "$STUB/dirname"
-ln -s "$(command -v python3)" "$STUB/python3"
+ln -s "$(python3 -c 'import sys; print(sys.executable)')" "$STUB/python3"  # not a pyenv/asdf shim
 
 err=$(PATH="$STUB" "$BASH_BIN" "$GAUNTLET" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'trash not found' <<<"$err"; then

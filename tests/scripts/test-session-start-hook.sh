@@ -8,7 +8,8 @@ set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 HOOK="${SESSION_START_HOOK:-$HERE/../../.claude/hooks/session-start.sh}"
 BASH_BIN="$(command -v bash)"
-PY_BIN="$(command -v python3)"
+# The interpreter itself, not a pyenv/asdf shim that needs its own tools on PATH.
+PY_BIN="$(python3 -c 'import sys; print(sys.executable)')"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
@@ -26,10 +27,10 @@ printf '%s\n' "${GOOD/\"|\"/12}" > "$ROOT_DIR/numeric.json"
 
 # mk_shfmt <path> <kind>: good (upstream 3.14.1), numeric (apt 3.8.0) or old (apt 3.4.3, no --to-json).
 mk_shfmt() {
-  local cat; cat=$(command -v cat)
+  local cat_bin; cat_bin=$(command -v cat)
   case $2 in
-    good) printf '#!/bin/sh\ncase "$*" in *--to-json*) "%s" "%s" ;; *) echo v3.14.1 ;; esac\n' "$cat" "$ROOT_DIR/good.json" ;;
-    numeric) printf '#!/bin/sh\ncase "$*" in *--to-json*) "%s" "%s" ;; *) echo 3.8.0 ;; esac\n' "$cat" "$ROOT_DIR/numeric.json" ;;
+    good) printf '#!/bin/sh\ncase "$*" in *--to-json*) "%s" "%s" ;; *) echo v3.14.1 ;; esac\n' "$cat_bin" "$ROOT_DIR/good.json" ;;
+    numeric) printf '#!/bin/sh\ncase "$*" in *--to-json*) "%s" "%s" ;; *) echo 3.8.0 ;; esac\n' "$cat_bin" "$ROOT_DIR/numeric.json" ;;
     old) printf '#!/bin/sh\ncase "$*" in *--to-json*) echo "flag provided but not defined: -to-json" >&2; exit 2 ;; *) echo v3.4.3 ;; esac\n' ;;
   esac > "$1"
   chmod +x "$1"
@@ -60,9 +61,9 @@ stub_dir() {
       apt-ok)
         printf '#!/bin/sh\necho "Reading package lists..."\necho "FE=$DEBIAN_FRONTEND $*" >> "$LOG"\ncase "$*" in *install*trash-cli*) printf "#!/bin/sh\\n" > "%s/trash"; %s +x "%s/trash" ;; esac\ncase "$*" in *install*shfmt*) %s "%s/shfmt" "%s/shfmt" ;; esac\n' \
           "$d" "$(command -v chmod)" "$d" "$(command -v cp)" "$ROOT_DIR/numeric.shfmt" "$d" > "$d/apt-get" ;;
-      pip) mkdir -p "$d/site"
+      pip|pip3) mkdir -p "$d/site"
         printf '#!/bin/sh\ncase $1 in\n  show) [ -x "%s/pipbin/shfmt" ] || exit 1; printf "Name: shfmt-py\\nLocation: %s/site\\nFiles:\\n  ../pipbin/shfmt\\n  shfmt_py.dist-info/licenses/LICENSE-shfmt\\n" ;;\n  install) echo "PIP $* BSP=$PIP_BREAK_SYSTEM_PACKAGES" >> "$LOG"; %s -p "%s/pipbin"; %s "%s" "%s/pipbin/shfmt" ;;\nesac\n' \
-          "$d" "$d" "$(command -v mkdir)" "$d" "$(command -v cp)" "$ROOT_DIR/good.shfmt" "$d" > "$d/pip" ;;
+          "$d" "$d" "$(command -v mkdir)" "$d" "$(command -v cp)" "$ROOT_DIR/good.shfmt" "$d" > "$d/$t" ;;
       pip-fail) printf '#!/bin/sh\n[ "$1" = install ] || exit 1\necho "PIP $*" >> "$LOG"\nexit 1\n' > "$d/pip" ;;
       shfmt) mk_shfmt "$d/shfmt" good ;;
       shfmt-numeric) mk_shfmt "$d/shfmt" numeric ;;
@@ -93,7 +94,7 @@ run() {
 
 # clean_exit: exit 0 and empty stdout, the hook's contract in every case.
 clean_exit() { [ "$rc" -eq 0 ] && [ -z "$out" ]; }
-PIP_LOG="PIP install -q shfmt-py BSP=1"
+PIP_LOG="PIP install -q -U shfmt-py BSP=1"
 
 echo "=== session-start hook: cloud-only trash-cli and shfmt install ==="
 
@@ -177,6 +178,17 @@ run "$d" true "$d:$d/pipbin"
 if clean_exit && [ -z "$log" ] && [ "$envf" = "$want" ]; then
   ok "remote, shadowed, second run: no pip install, the PATH line is written again"
 else bad "shadowed, second run: rc=$rc out='$out' err='$err' log='$log' envf='$envf'"; fi
+# A resumed session that keeps its CLAUDE_ENV_FILE: the line is not appended twice.
+printf '%s\n' "$want" > "$d.env"
+CLAUDE_CODE_REMOTE=true PATH="$d:$d/pipbin" LOG="$d.log" CLAUDE_ENV_FILE="$d.env" "$BASH_BIN" "$HOOK" </dev/null 2>/dev/null
+if [ "$(cat "$d.env")" = "$want" ]; then
+  ok "remote, shadowed, CLAUDE_ENV_FILE already holds the PATH line: not written twice"
+else bad "shadowed, reused env file: '$(cat "$d.env")'"; fi
+
+d=$(stub_dir 0 env trash shfmt-numeric pip3); run "$d" true
+if clean_exit && [ "$log" = "$PIP_LOG" ] && [ -z "$err" ]; then
+  ok "remote, only pip3 (no pip): pip3 installs shfmt-py"
+else bad "pip3 only: rc=$rc out='$out' err='$err' log='$log'"; fi
 
 d=$(stub_dir 0 env trash shfmt-numeric pip); run "$d" true "$d"
 if clean_exit && [ "$envf" = "export PATH=$d/pipbin:\"\$PATH\"" ]; then
@@ -197,7 +209,7 @@ if clean_exit && /usr/bin/grep -q 'no usable shfmt' <<<"$err" && /usr/bin/grep -
 else bad "numeric shfmt, no pip: rc=$rc out='$out' err='$err' log='$log'"; fi
 
 d=$(stub_dir 0 env trash pip-fail); run "$d" true
-if clean_exit && [ "$log" = "PIP install -q shfmt-py" ] && /usr/bin/grep -q 'pip install shfmt-py failed' <<<"$err" \
+if clean_exit && [ "$log" = "PIP install -q -U shfmt-py" ] && /usr/bin/grep -q 'pip install shfmt-py failed' <<<"$err" \
   && /usr/bin/grep -q 'no usable shfmt' <<<"$err"; then
   ok "remote, pip install fails: a note for pip and one for shfmt, exit 0"
 else bad "pip fails: rc=$rc out='$out' err='$err' log='$log'"; fi
