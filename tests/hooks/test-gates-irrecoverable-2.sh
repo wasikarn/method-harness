@@ -1880,6 +1880,26 @@ test_deny  "$IRRECOVERABLE" "GH #559 review 3: the second heredoc on a line is t
   "$(bash_payload "$(printf "cat <<'A' >/dev/null; psql db <<'B'\nx\nA\nDROP TABLE t;\nB")")"
 test_allow "$IRRECOVERABLE" "GH #559 review 3 control: two heredocs on a line, neither a drop to a client" \
   "$(bash_payload "$(printf "cat <<'A' >/dev/null; psql db <<'B'\nDROP TABLE t;\nA\nSELECT 1;\nB")")"
+# GH #559 review round 4: a heredoc on a compound command feeds every command in it, and a
+# version-suffixed interpreter is one too; the body stays code.
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into { bash; } is code" \
+  "$(bash_payload "$(printf "{ bash; } <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into (bash; :) is code" \
+  "$(bash_payload "$(printf "(bash; :) <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into a while loop running bash is code" \
+  "$(bash_payload "$(printf "while read x; do bash; done <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into an if running sudo bash is code" \
+  "$(bash_payload "$(printf "if true; then sudo bash; fi <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into { cd; bash; } with git push --force is code" \
+  "$(bash_payload "$(printf "{ cd /srv/app; bash; } <<'EOF'\ngit push --force origin develop\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into zsh-5.9 is code" \
+  "$(bash_payload "$(printf "zsh-5.9 <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into python3.12 - is code" \
+  "$(bash_payload "$(printf "python3.12 - <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a backtick is no quote to psql before DROP TABLE" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 1 \`; DROP TABLE t; -- \`\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a [bracket] identifier with an apostrophe before DROP TABLE into sqlite3" \
+  "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT [it's]; DROP TABLE t; -- '\nSQL")")"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"

@@ -50,13 +50,14 @@ _SQL_DROP_RE = re.compile(r"DROP" + _SQL_GAP + r"(TABLE|DATABASE|SCHEMA)|TRUNCAT
 # comments dropped, so text that only mentions a drop (-- removed the DROP TABLE step, LIKE 'truncate x')
 # reads nothing. A backslash ends no literal early here: 'a\'; DROP TABLE t is a drop to PostgreSQL.
 # The -c/-e path in the rule loop keeps its raw match.
-_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|`[^`]*`?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
+_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
 
 # GH #559 review 3: the stripping models plain quotes and comments only. Text holding a construct it does not
 # model ($$ or $tag$ dollar quoting, a backslash, which escapes a quote in MySQL and E'' strings, MySQL's
 # /*! executable comment and # comment, a -- with no blank after it, which MySQL reads as minus minus) is
-# matched raw: such a dialect may run what the stripper would read as a literal or a comment.
-_SQL_UNMODELED_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$|\\|/\*!|#|--(?!\s)")
+# matched raw: such a dialect may run what the stripper would read as a literal or a comment. GH #559
+# review 4: so is a backtick or a [, a quote to MySQL or sqlite3 but plain text to psql.
+_SQL_UNMODELED_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$|\\|/\*!|#|--(?!\s)|[`\[]")
 
 def _sql_drops(sql):
     if not _SQL_UNMODELED_RE.search(sql):
@@ -218,19 +219,18 @@ def _runs_sql_client(stage):
 # GH #559 review 3: every heredoc a line opens is read, in order (cat <<A >/dev/null; psql db <<B), not
 # only the first. A here-string's <<< opens none.
 _HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
-# GH #559 review 3: a heredoc's body is code when an interpreter is a whole word of its own pipe stage
-# before the << (sudo -u app bash <<EOF, ssh host bash <<EOF), not a piece of a word anywhere on the line
-# (psql -h db-node, cd /srv/python/app && psql). A word may be a path, follow ( ` = or a quote.
-_INTERP_WORD_RE = re.compile(r"(?:^|(?<=[\s(`='\";&|]))(?:[^\s;&|()<>'\"`]*/)?"
-                             r"(?:bash|sh|zsh|dash|ksh|python[23]?|perl|ruby|node|nodejs|osascript)"
-                             r"(?=$|[\s);&|<>'\"`])")
+# A heredoc feeding an interpreter is executable code, not inert data: an interpreter word anywhere on the
+# line BEFORE the << counts. GH #559 review 4: not only the heredoc's own pipe stage, since a heredoc on a
+# compound command feeds every command in it ({ bash; } <<EOF, while read x; do bash; done <<EOF), and \b
+# keeps zsh-5.9 and python3.12 interpreters. Matched once per line, at its first interpreter word.
+_INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _HEREDOC_SCAN_BUDGET = [3_000_000]  # chars a $( re-read of heredoc lines may parse; past it, a client is assumed
 
 class _HeredocLine:
     # The statements and pipe stages of one line, parsed once however many heredocs it opens, so a line
     # of 20000 openers costs one parse, not one per opener.
     def __init__(self, line):
-        self.line, self.ends, self.stmts, self.stages, self.interp = line, None, None, {}, {}
+        self.line, self.ends, self.stmts, self.stages = line, None, None, {}
 
     def _stage(self, pos):
         if self.stmts is None:
@@ -247,17 +247,6 @@ class _HeredocLine:
             self.stages[k] = (st, [b for _, b in st], client)
         st, st_ends, client = self.stages[k]
         return k, bisect.bisect_left(st_ends, pos), st, client
-
-    def interpreter(self, pos):
-        # Whether an interpreter is a word of the stage before pos; read on from where the last call on
-        # this stage stopped, so the line is matched once.
-        k, j, st, _ = self._stage(pos)
-        upto, found = self.interp.get((k, j), (st[j][0], False))
-        if not found and pos > upto:
-            found = bool(_INTERP_WORD_RE.search(self.line, upto, pos))
-            upto = pos
-        self.interp[(k, j)] = (upto, found)
-        return found
 
     def client(self, pos):
         _, j, _, client = self._stage(pos)
@@ -298,8 +287,9 @@ def _strip_heredocs(cmd):
             continue
         ctx, views, has_client = _HeredocLine(line), {}, bool(_SQL_CLIENT_RE.search(line))
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
+        interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
         for n_m, m in enumerate(ms):
-            code = ctx.interpreter(m.start())
+            code = bool(interp) and interp.start() < m.start()
             feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
             if code and not feeds and n_m == len(ms) - 1:
                 break  # the body is code: its lines stay, read (and their own heredocs stripped) as lines
