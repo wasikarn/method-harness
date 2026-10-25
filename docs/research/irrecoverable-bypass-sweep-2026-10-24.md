@@ -43,15 +43,24 @@ Severity:
    sample.
 4. Write every fix's test rows first and confirm they fail against develop's gate.
 
+## Status (updated 2026-10-25)
+
+Every finding below is fixed and merged. Three items the first version left out of the contract were
+then covered too (see "Out of the contract"). Merged PRs: #569, #570, #571 and #600, #572, #573, #574,
+#575, #576, #580, #582, #611, #614, #615. Issues #559–#568 and #606–#608 are closed. The one
+"not confirmed" item, an empty `core.hooksPath`, was confirmed as a bypass and fixed in #609/#620. The rest of
+this file keeps the findings as they were on `58a6f08`. Only the Fix column and the sections after the
+table are updated.
+
 ## Findings
 
 | # | Sev | path:line (develop 58a6f08) | Payload | Actual → expected | Issue | Fix |
 |---|---|---|---|---|---|---|
 | 1 | CRITICAL | `irrecoverable.py:43,59` (heredoc body stripped unless an interpreter reads it), `:2603-2609` (SQL rule reads `-c`/`-e` only) | `psql mydb <<'SQL'`⏎`DROP TABLE users;`⏎`SQL`; `echo 'DROP TABLE users' \| psql mydb`; `psql mydb <<< 'DROP TABLE users'`; `dropdb mydb`; `mysqladmin -f drop mydb`; `psql -c 'DROP/**/TABLE users'` | allow → deny | #559 | #569 |
 | 2 | CRITICAL | `irrecoverable.py:2095-2109` (env unwrap skips `-S STRING` as a bare flag) | `env -S 'rm -rf build'`; `env --split-string='git push --force'`; `env -C /tmp rm -rf build`; subagent `env -S 'claude -p hi'` | allow → deny | #560 | #570 |
-| 3 | CRITICAL | `irrecoverable.py:2312-2563` (git rules read flags only; only `core.hooksPath` config is read, `:1816`) | `git -c remote.origin.mirror=true push origin`; `git -c remote.origin.push=+HEAD:refs/heads/main push origin`; `git -c alias.p='push --force' p origin main`; `git -c alias.x='!rm -rf build' x`; `git -c clean.requireForce=false clean -dx`; `git -c gc.reflogExpire=now -c gc.reflogExpireUnreachable=now -c gc.pruneExpire=now gc`; `git config alias.p 'push --force'` | allow → deny | #561 | #571 |
-| 4 | CRITICAL | `irrecoverable.py:223-231` (`PREFIX_WRAPPERS`, also the spawn anchor `:261-290`); `:221-222` already calls the list open-ended | `flock /tmp/l git push --force`; `caffeinate -i git push --force`; `xcrun git reset --hard`; `watch -n1 git reset --hard`; `strace -f rm -rf build`; `script -qc 'rm -rf build' /dev/null`; `parallel rm -rf ::: build`; subagent `npx @anthropic-ai/claude-code -p hi`, `npx claude -p hi` | allow → deny | #566 | not fixed: design choice, see below |
-| 5 | CRITICAL | `irrecoverable.py:43,59` vs `_blank_redirections` `:988-1094` (here-string word blanked) and pipe windows | `bash <<< 'rm -rf build'`; `sh <<< "git reset --hard"`; `echo 'git push --force' \| bash`; `printf 'git reset --hard\n' \| bash -s` (while `bash <<EOF`⏎`rm -rf build`⏎`EOF` denies) | allow → deny | #567 | not fixed: `tests/hooks/test-gates-irrecoverable-2.sh:918` declares `cat <<EOF \| bash` a non-goal |
+| 3 | CRITICAL | `irrecoverable.py:2312-2563` (git rules read flags only; only `core.hooksPath` config is read, `:1816`) | `git -c remote.origin.mirror=true push origin`; `git -c remote.origin.push=+HEAD:refs/heads/main push origin`; `git -c alias.p='push --force' p origin main`; `git -c alias.x='!rm -rf build' x`; `git -c clean.requireForce=false clean -dx`; `git -c gc.reflogExpire=now -c gc.reflogExpireUnreachable=now -c gc.pruneExpire=now gc`; `git config alias.p 'push --force'` | allow → deny | #561 | #571, then #600 (see note) |
+| 4 | CRITICAL | `irrecoverable.py:223-231` (`PREFIX_WRAPPERS`, also the spawn anchor `:261-290`); `:221-222` already calls the list open-ended | `flock /tmp/l git push --force`; `caffeinate -i git push --force`; `xcrun git reset --hard`; `watch -n1 git reset --hard`; `strace -f rm -rf build`; `script -qc 'rm -rf build' /dev/null`; `parallel rm -rf ::: build`; subagent `npx @anthropic-ai/claude-code -p hi`, `npx claude -p hi` | allow → deny | #566 | #580 |
+| 5 | CRITICAL | `irrecoverable.py:43,59` vs `_blank_redirections` `:988-1094` (here-string word blanked) and pipe windows | `bash <<< 'rm -rf build'`; `sh <<< "git reset --hard"`; `echo 'git push --force' \| bash`; `printf 'git reset --hard\n' \| bash -s` (while `bash <<EOF`⏎`rm -rf build`⏎`EOF` denies) | allow → deny | #567 | #582 |
 | 6 | CRITICAL | `irrecoverable.py:1984-1994` (`_GH_BUILTIN_WRITES`, `_GH_BUILTIN_FORCED`) | `gh gist delete 123`; `gh pr update-branch 3 --rebase` | allow → ask | #564 | #574 |
 | 7 | CRITICAL / HIGH / MEDIUM / LOW | no rule (send-pack, rm); `:2536` (worktree `-f` only); `:2551`, `:2549` (branch / update-ref onto protected) | CRITICAL `git send-pack --force <url> main`; HIGH `git rm -rf src`, `git rm -f a.py`; MEDIUM `git worktree remove -ff ../wt`; LOW `git branch -f main HEAD~5`, `git update-ref refs/heads/main HEAD~5` | allow → deny | #563 | #573 |
 | 8 | HIGH | `irrecoverable.py:2401` (`"git-hooks" not in scan`) | `git config core.hooksPath /dev/null git-hooks` (a value-pattern: git-config(1) replaces the matching `git-hooks` value with `/dev/null`); `git config --replace-all core.hooksPath /dev/null git-hooks`; `git config --comment git-hooks core.hooksPath /dev/null` | allow → deny | #562 | #572 |
@@ -66,36 +75,92 @@ Severity:
   SQL client's pipeline reads, and checks the text upstream of the client and its here-string. A client's
   output piped onward (`psql -c '\dt' | grep -i 'drop table'`) stays allowed. `mysql db < drop.sql` is
   still not covered, because the gate does not read files.
+- **#1.** Another session reviewed #569 twice before it merged. The SQL client must now be the command
+  a pipe stage runs (past wrappers, `docker exec`), not the word `psql` anywhere in the pipeline, and
+  `bash -c`/`eval` bodies are checked too.
 - **#3.** Each config key's effect is quoted from git-config(1) in the issue. The fix also checks a
   persisted `git config KEY VALUE` of the same keys, since `git config alias.p 'push --force'` followed
   by `git p` is the two-step form. A dry-run `clean -n` under `requireForce=false` stays allowed.
-- **#4 and #5 are filed, not fixed.** For #4, every wrapper added to `PREFIX_WRAPPERS` widens the
-  spawn-anchor regex walk, whose time budget is GH #245/#246. A fallback that scans each word of an
-  unknown argv0 is a policy change. Either is a design call for the owner. #5 conflicts with a declared
-  non-goal in the tests. Both issues carry a proposed shape.
+  Another session pushed a review fix to #571's branch at 06:30 UTC. That fix adds a linear `-c` alias
+  check, reads a bare `-c` and `--config-env`, denies a run-time value as unseen
+  (`rule=git-alias-unseen`), and stops reading a dry run or `--unset` as a write. #571 had been merged
+  at 06:31, pinned to the sha checked before that push, so the fix landed separately in #600.
+- **#4 (#580).** The operator chose to list the wrappers by name; the other option was to scan every
+  word of an unknown argv0, which would also deny `echo git push --force`. The new wrappers sit in
+  `_RUN_WRAPPERS`, which only the rule loop unwraps, so the spawn-anchor walk and its time budget
+  (GH #245/#246) are unchanged. They are `flock`, `caffeinate`, `xcrun`, `watch`, `strace`, `ltrace`,
+  `script -c`, `su -c`, `parallel`, `chronic`, `unbuffer`, and the package runners `npx`/`bunx`. A
+  subagent's `claude` reached through one of them is denied per window. A wrapper missing from both
+  lists still hides its command.
+- **#5 (#582).** A shell that reads stdin (no `-c`, no script operand; `-s` still reads stdin) now has
+  three inputs scanned: a heredoc piped into it, a here-string, and the words of an `echo`/`printf`
+  piped into it. This lifts the `cat <<EOF | bash` non-goal in `tests/hooks/test-gates-irrecoverable-2.sh`.
+  `echo hi | bash x.sh` stays allowed, because there stdin is the script's data.
+- **#7.** Another session reviewed #573 before it merged. `send-pack` also denies a `:main` delete,
+  and a `git rm` dry run is allowed.
 
-## Out of the contract, not filed
+## Out of the contract
 
-These do the same kind of damage as a denied action but are not named in §1, and widening the row is
-the owner's call:
-- `rm -r build`. The row names `rm -rf`, and `rm -r` without `-f` deletes a directory just as finally.
-- `python3 -c 'import shutil; shutil.rmtree(...)'` and `perl -e 'system("git reset --hard")'`. An
-  interpreter's `-c`/`-e` body is never scanned. The code calls itself "habit-guard, not sandbox" at
-  `:541`.
-- `rsync -a --delete empty/ build/`, `psql -c 'DELETE FROM users'`, `DROP INDEX`/`DROP VIEW`
-  (row 11), `mongosh --eval 'db.dropDatabase()'`, `redis-cli FLUSHALL`.
+These do the same kind of damage as a denied action but were not named in §1. Widening the row was
+the owner's call. On 2026-10-25 the operator chose to cover the first three, and the §1 row now names
+them:
+- **`rm -r build` → #606, #611.** `rm -r` without `-f` deletes a directory just as finally as `-rf`.
+  The new rule `rm-recursive` allows `-i` and `--interactive[=always]`, which prompt for every file
+  while the Bash tool's stdin never answers yes. `-I`, `--interactive=never` and `--interactive=once`
+  still deny.
+- **`rsync -a --delete empty/ build/`, `psql -c 'DELETE FROM users'`, `DROP INDEX`/`DROP VIEW` (row 11),
+  `mongosh --eval 'db.dropDatabase()'`, `redis-cli FLUSHALL` → #607, #614.** The SQL pattern now
+  covers all of these on argv and on stdin:
+  - `DROP` of any stored object
+  - `DELETE FROM` and `UPDATE ... SET` with no `WHERE`
+  - mongo `dropDatabase()`, `drop()`, `deleteMany({})` and `remove({})`
+  - redis `FLUSHALL` and `FLUSHDB`
+
+  `mongosh`, `mongo` and `redis-cli` count as clients. `rsync --delete*` asks. The `UPDATE` check runs
+  per statement in one linear pass, because a tempered regex took 2.4 s on a 130 KB allow case, close
+  to the 8 s hook timeout.
+- **`perl -e 'system("git reset --hard")'` → #608, #615.** The operator chose to have string
+  literals scanned. When a `python -c`, `perl`/`ruby -e` or `node -e` body names a process API
+  (`system`, `subprocess`, `popen`, `exec*`, `spawn*`, `child_process`, `qx`, `%x`, backticks), the
+  gate scans each string literal, and each comma-joined argv list such as `["git", "push", "--force"]`,
+  as a command line. A body with no process API is not read, so `print("rm -rf is denied")` stays
+  allowed.
+
+Still not covered, by choice:
+- `python3 -c 'import shutil; shutil.rmtree(...)'` and other API deletes (`fs.rmSync`, `File::Path`).
+  Only commands passed as strings are scanned.
 - `git checkout src/a.py` (one pathspec) and `git checkout --ours src/a.py`. With one non-flag word the
   gate cannot tell a path from a branch, and `tests/hooks/test-gates.sh:532` allows the branch switch
   on purpose.
 - `gh pr review 3 --approve` and `gh repo create`. Neither is a T3/T4 write under the tiers above.
+- `mysql db < drop.sql`. The gate does not read files.
 
 ## Not confirmed
 
-- `git -c core.hooksPath= commit` (an empty value) is allowed, because `_sets_hooks_path` (`:1816`)
-  requires a non-empty value. Whether git then runs no hooks or the default `.git/hooks` was not checked.
-  Checking it would mean running the payload.
-- `git stash -q drop`: whether git's subcommand parser reads `drop` as the subcommand after a leading
-  `-q` (the gate reads `args[0]`, `:2514`) was not established from the source, so it is left out.
+Nothing is left here. The two open questions were settled on 2026-10-25:
+- `git -c core.hooksPath= commit` (an empty value) **turns off every hook**, so it is a HIGH bypass,
+  the same as `--no-verify`. On `58a6f08` the gate allowed it, because `_sets_hooks_path` (`:1816`)
+  required a non-empty value. At the operator's request it was run in a throwaway repo in the session
+  scratchpad, with git 2.43 and a pre-commit hook in both `git-hooks/` and `.git/hooks` that each log
+  when they run:
+  - a plain commit ran `git-hooks/` with `core.hooksPath git-hooks` set, and `.git/hooks` without it
+  - `-c core.hooksPath=`, `-c core.hookspath=` and `-c core.hooksPath=/nonexistent` ran no hook in
+    either setup
+
+  So an empty value does not fall back to `.git/hooks`. Another session fixed it the same day: in
+  `011fbf2` (merged in #609) and in `8fa1f90` (merged in #620, GH #562). On `develop` all of these now
+  deny:
+  - `-c core.hooksPath=` and `-ccore.hooksPath=`
+  - `-c core.hooksPath=""`
+  - `--config-env=core.hooksPath=…`
+  - `GIT_CONFIG_PARAMETERS` with an empty value
+  - `git config core.hooksPath ''`
+
+  `git -c user.name= commit` stays allowed.
+- `git stash -q drop` is not a bypass. While working on #582, the sweep's own tooling ran
+  `git stash -q push -- <paths>` and git refused it with `fatal: subcommand wasn't specified; 'push'
+  can't be assumed due to unexpected token 'push'`. A flag before the stash subcommand stops the
+  command, so a `-q` cannot slip `drop` past the gate's `args[0]` check.
 
 ## Checked, held
 
@@ -134,13 +199,27 @@ failed on rows the fixes do not touch:
   at 4.13–4.31 s. It ran in 3.1–3.4 s alone.
 
 Those pushes passed with `GAUNTLET_JOBS=2`, the gauntlet's own setting for timing rows on a loaded
-machine (`scripts/run-gauntlet.sh:156`). That secret-scan row has little headroom on a 4-core cloud
-container at the default 4 jobs.
+machine (`scripts/run-gauntlet.sh:156`). #578, from another session, later found the cause: a writer
+piped into `grep -q` under `pipefail` dies of SIGPIPE when grep exits early. After it merged, every push
+passed at the default 4 jobs. Its new lint (`tests/scripts/test-pipefail-grep-q-lint.sh`) needs
+`shfmt`; on this container that came from `pip install shfmt-py`.
 
-## Merge order
+## Merging
 
-The fix PRs bump 1.1.240 (#569) through 1.1.247 (#576), one version each, all off `58a6f08`. Whichever
-merges first takes its version, and each later one needs a fresh bump above `origin/develop`
-(`docs/reference/branching-model.md`). #571 and #572 both touch the `git config` branch of the rule loop
-in different places. #574 and #575 both add rows next to the `gh pr merge` tests. Each pair may need a
-small merge.
+Other sessions merged into `develop` throughout (`develop` went from 1.1.239 to past 1.1.300), so every
+PR was brought up to date right before its merge:
+- merge `origin/develop` into the PR branch
+- resolve the manifests to `develop`+1
+- for the `operating-model.md` §1 row, take `develop`'s version and re-apply the PR's own wording
+- run the gate tests and push (pre-push runs the gauntlet)
+- wait for load below 4, as `scripts/merge-pr.sh` does
+
+The merge itself was pinned to the checked head sha through the GitHub connector, because `gh` could
+not authenticate in this container.
+
+Conflicts beyond the manifests and the row:
+- #572 vs #571 in the `git config` rule: kept both, and dropped a second, identical
+  `_GIT_CONFIG_VALUE_OPTS`.
+- #582 vs the reviewed #569: both sides had defined a `_words` helper, and the later one shadowed
+  develop's and crashed `_stage_cmd`. #582's is now `_split_words`.
+- Test files where both sides appended rows: kept both.
