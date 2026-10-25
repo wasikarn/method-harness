@@ -1935,6 +1935,8 @@ done
 test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git branch -f feat HEAD" "$(bash_payload 'git branch -f feat HEAD')"
 test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git branch -m old new" "$(bash_payload 'git branch -m old new')"
 test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git branch -fm old new" "$(bash_payload 'git branch -fm old new')"
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: git rm -f --end-of-options -n (-n is a path)" "$(bash_payload 'git rm -f --end-of-options -n')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up: git rm --end-of-options -f (-f is a path)" "$(bash_payload 'git rm --end-of-options -f')"
 _rm_pad_cmd="$(python3 -c 'print("git rm " + "-n --no-dry-run --cached --no-cached " * 3800 + "-f a.py")')"
 _timed_case 'GH #563 follow-up: a 140 KB git rm option list is read in bounded time' 2 "$_rm_pad_cmd"
 

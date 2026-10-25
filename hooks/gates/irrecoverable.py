@@ -2193,7 +2193,7 @@ def _rm_forced(scan):
         if skip:
             skip = False
             continue
-        if t == "--":
+        if t in ("--", "--end-of-options"):  # git >= 2.24 reads --end-of-options as "--"
             break
         if t.startswith("--"):
             name = t.split("=", 1)[0]
