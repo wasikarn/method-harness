@@ -7,6 +7,10 @@
 set -uo pipefail
 # A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+# The operator's own git config (a global core.hooksPath from husky and the like, or `git -c` pairs a
+# hook inherits) must not leak into the sandbox repos; one case sets GIT_CONFIG_GLOBAL on purpose.
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 HOOK="$HERE/../../.claude/hooks/session-start.sh"
 BASH_BIN="$(command -v bash)"
@@ -30,6 +34,7 @@ ROOT_DIR="$(mktemp -d)"
 #   trash    an already-installed trash
 #   shfmt    an already-installed shfmt 3.8.0; shfmt-old: 3.4.3
 #   git      the real git
+#   git-fail the real git, except that a core.hooksPath write fails
 stub_dir() {
   local d uid=$1; shift
   d=$(mktemp -d "$ROOT_DIR/s.XXXXXX") || return 1
@@ -48,6 +53,7 @@ stub_dir() {
       apt-fail) printf '#!/bin/sh\necho "Reading package lists..."\necho "FE=$DEBIAN_FRONTEND $*" >> "$LOG"\nexit 1\n' > "$d/apt-get" ;;
       trash) printf '#!/bin/sh\n' > "$d/trash" ;;
       git) ln -s "$(command -v git)" "$d/git" ;;
+      git-fail) printf '#!/bin/sh\ncase "$*" in *"core.hooksPath git-hooks"*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v git)" > "$d/git" ;;
     esac
   done
   chmod +x "$d"/*
@@ -150,7 +156,7 @@ mk_repo() {
   [ -n "${2:-}" ] && git -C "$r" config core.hooksPath "$2"
   printf '%s' "$r"
 }
-hooks_path() { git -C "$1" config --get core.hooksPath; }
+hooks_path() { git -C "$1" config --local --get core.hooksPath; }
 
 r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r"
 if clean_exit && [ "$(hooks_path "$r")" = git-hooks ] && /usr/bin/grep -q 'set core.hooksPath to git-hooks' <<<"$err"; then
@@ -172,10 +178,32 @@ if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
   ok "remote, no git-hooks dir in the project: core.hooksPath left unset, silent"
 else bad "no git-hooks dir: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
 
-r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); run "$d" true
+# Run from inside the repo, so a fallback to $PWD or the cwd's top level would wire it.
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); pushd "$r" >/dev/null || exit 1; run "$d" true; popd >/dev/null || exit 1
 if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
-  ok "remote, CLAUDE_PROJECT_DIR empty: no repo touched, silent"
-else bad "no project dir: rc=$rc out='$out' err='$err'"; fi
+  ok "remote, CLAUDE_PROJECT_DIR empty, cwd inside a repo: that repo is not touched, silent"
+else bad "no project dir: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+g="$ROOT_DIR/global.gitconfig"; printf '[core]\n\thooksPath = /shared/hooks\n' > "$g"
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); GIT_CONFIG_GLOBAL="$g" run "$d" true "$r"
+if clean_exit && [ "$(hooks_path "$r")" = git-hooks ]; then
+  ok "remote, core.hooksPath set only globally: the repo's own value is still wired to git-hooks"
+else bad "global hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo); mkdir "$r/sub"; d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r/sub"
+if clean_exit && [ "$(hooks_path "$r")" = git-hooks ]; then
+  ok "remote, project dir is a subdir: git-hooks found at the work tree's top, wired"
+else bad "subdir project: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo no); mkdir -p "$r/sub/git-hooks"; d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r/sub"
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, git-hooks only under the project subdir, not at the top: left unset (git would not find it)"
+else bad "subdir git-hooks: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git-fail); run "$d" true "$r"
+if clean_exit && /usr/bin/grep -q 'git config core.hooksPath git-hooks failed' <<<"$err" && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, the config write fails: one stderr note, exit 0"
+else bad "write fails: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
 
 safe_trash "$ROOT_DIR"
 echo "session-start hook: $pass passed, $fail failed"

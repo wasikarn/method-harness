@@ -21,12 +21,16 @@ shfmt_ok() {
 note() { echo "session-start: $*" >&2; }
 
 # A fresh cloud clone has no core.hooksPath, so its commits and pushes run zero gates (there is no
-# CI). Wire the relative path CLAUDE.md requires; a value already set, even a broken one, is left
-# for the operator (docs/reference/repo-gotchas.md "Git hooks").
+# CI). Wire the relative path CLAUDE.md requires; a repo value already set, even a broken one, is
+# left for the operator (docs/reference/repo-gotchas.md "Git hooks"). Only the repo's own config
+# counts: a global hooksPath would run its hooks instead of git-hooks. git resolves a relative
+# hooksPath from the top of the work tree, so git-hooks is looked for there.
 proj=${CLAUDE_PROJECT_DIR:-}
-if [ -n "$proj" ] && [ -d "$proj/git-hooks" ] && command -v git >/dev/null \
-  && ! git -C "$proj" config --get core.hooksPath >/dev/null 2>&1; then
-  if git -C "$proj" config core.hooksPath git-hooks </dev/null >&2; then
+top=""
+[ -n "$proj" ] && command -v git >/dev/null && top=$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$top" ] && [ -d "$top/git-hooks" ] \
+  && ! git -C "$top" config --local --get core.hooksPath >/dev/null 2>&1; then
+  if git -C "$top" config --local core.hooksPath git-hooks </dev/null >&2; then
     note "set core.hooksPath to git-hooks (it was unset, so no git hook would run)"
   else
     note "git config core.hooksPath git-hooks failed; commits will run no hooks"
