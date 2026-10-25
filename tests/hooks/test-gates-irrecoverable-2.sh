@@ -2077,6 +2077,23 @@ done
 test_ask_says "$IRRECOVERABLE" "bypass hunt F5 review: xargs -d'\\n' gh pr merge still asks" \
   "$(bash_payload "ls | xargs -d'\\n' gh pr merge 1 --admin")" "gh pr merge"
 
+# Empty config values (git 2.43, live-checked): git reads an empty boolean as false, so a stored
+# `clean.requireForce ""` lets a later bare `git clean` delete; the git scan dropped the empty word, so the
+# write read as a key alone. An empty `-c core.hooksPath=` skips every hook (the commit lands past a failing
+# pre-commit); the -c check required a non-empty value.
+test_deny  "$IRRECOVERABLE" "empty value: git config clean.requireForce \"\"" "$(bash_payload 'git config clean.requireForce ""')"
+test_deny  "$IRRECOVERABLE" "empty value: git config clean.requireForce ''" "$(bash_payload "git config clean.requireForce ''")"
+test_deny  "$IRRECOVERABLE" "empty value: git config set clean.requireForce \"\"" "$(bash_payload 'git config set clean.requireForce ""')"
+test_deny  "$IRRECOVERABLE" "empty value: git config clean.requireForce \"\$(true)\" (blanks to empty)" \
+  "$(bash_payload 'git config clean.requireForce "$(true)"')"
+test_deny  "$IRRECOVERABLE" "empty value: git -c core.hooksPath= commit" "$(bash_payload 'git -c core.hooksPath= commit -m x')"
+test_deny  "$IRRECOVERABLE" "empty value: git -c core.hooksPath=\"\" commit" "$(bash_payload 'git -c core.hooksPath="" commit -m x')"
+test_deny  "$IRRECOVERABLE" "empty value: git -ccore.hooksPath= commit (joined)" "$(bash_payload 'git -ccore.hooksPath= commit -m x')"
+test_deny  "$IRRECOVERABLE" "empty value: git --config-env=core.hooksPath= commit" "$(bash_payload 'git --config-env=core.hooksPath= commit -m x')"
+test_allow "$IRRECOVERABLE" "empty value control: git config user.name \"\"" "$(bash_payload 'git config user.name ""')"
+test_allow "$IRRECOVERABLE" "empty value control: git config clean.requireForce true" "$(bash_payload 'git config clean.requireForce true')"
+test_allow "$IRRECOVERABLE" "empty value control: git -c user.name= commit" "$(bash_payload 'git -c user.name= commit -m x')"
+
 # GH #563 follow-up review of PR #573: send-pack's -f is --force (bundled too); git rm reads its
 # options in order with last-wins for each pair (--cached/--no-cached, -n/--no-dry-run, -f/--no-force),
 # stops at "--", and --pathspec-from-file takes the next word; branch -f bundled with -m/-c onto main.
