@@ -37,13 +37,14 @@ checks itself on `x | grep -q y` first and exits 2 when it cannot read the tree.
 read or parse is also an error, never a clean pass, and hits in the other files are still listed.
 A pipe's readers are the commands that can read the stdin it hands its right side: the command
 there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a `time`d command, and any
-`$(...)`/`<(...)` inside such a command; in the conditions and bodies of `if`/`while`/`until`/`for`/
-`case`, only a grep with no file operand counts (so `while read -r f; do grep -q p "$f"; done` is
-clean; a heuristic). A statement whose stdin is redirected (`<`, `<<<`, `<&N` but not `<&0`) is no
-reader. Wrappers (`command`, `builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`,
-`sudo`, `nohup`, with `NAME=VALUE` for env and sudo) are looked through; long options resolve as
-getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`), and the value of `-e`/`--regexp`-style
-options is not an option. It does not catch a grep reached through a function or alias, nor other
+`$(...)`/`<(...)` in such a statement's own words and redirections (`for` lists, `case` subjects,
+`< <(...)`); in the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a grep that
+reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `-f -`), so
+`while read -r f; do grep -q p "$f"; done` is clean (a heuristic). A statement whose stdin is
+redirected (`<`, `<<<`, `<&N` with a literal N other than 0) is no reader. Wrappers (`command`, `builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`,
+`sudo`, `nohup`, with `NAME=VALUE` for env and sudo) are looked through; long options, grep's and
+the wrappers', resolve as getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`, `--sig` is
+timeout's `--signal`), and the value of `-e`/`--regexp`-style options is not an option. It does not catch a grep reached through a function or alias, nor other
 early-exit readers (`head`, `grep -m`, a command that skips stdin): there, apply the rule by hand.
 (GNU grep 3.11 writing to `>/dev/null` reads all of its input, so that form is safe.) A hit whose
 line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint
