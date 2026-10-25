@@ -1660,5 +1660,37 @@ else
   fail=$((fail + 1))
 fi
 
+# GH #559 review: the SQL client is the command a pipe stage runs (its argv0 past wrappers), not the
+# word "psql" anywhere in the pipeline or on a heredoc's line; and a bash -c / eval body is checked too.
+test_allow "$IRRECOVERABLE" "GH #559 review: grep -v psql downstream of a grep for drop table" \
+  "$(bash_payload "grep -rn 'drop table' . | grep -v psql")"
+test_allow "$IRRECOVERABLE" "GH #559 review: grep psql downstream of a grep for DROP TABLE" \
+  "$(bash_payload "grep -rn 'DROP TABLE' migrations/ | grep psql")"
+test_allow "$IRRECOVERABLE" "GH #559 review: grep for psql upstream of a grep for drop table" \
+  "$(bash_payload "grep -rn psql docs/ | grep -i 'drop table'")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into sudo -u postgres psql" \
+  "$(bash_payload "echo 'DROP TABLE users' | sudo -u postgres psql mydb")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into env PGHOST=db /usr/bin/psql" \
+  "$(bash_payload "echo 'DROP TABLE users' | env PGHOST=db /usr/bin/psql mydb")"
+test_allow "$IRRECOVERABLE" "GH #559 review control: a SELECT echoed into psql" \
+  "$(bash_payload "echo 'SELECT * FROM users' | psql mydb")"
+test_allow "$IRRECOVERABLE" "GH #559 review: a gh body heredoc whose title mentions psql" \
+  "$(bash_payload "$(printf "gh issue create --title 'SQL DROP piped to psql passes' --body \"\$(cat <<'EOF'\npsql mydb <<< 'DROP TABLE users' passes\nEOF\n)\"")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: a heredoc psql reads inside \$()" \
+  "$(bash_payload "$(printf "out=\$(psql mydb <<'SQL'\nDROP TABLE users;\nSQL\n)")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: a heredoc cat pipes into psql inside \$()" \
+  "$(bash_payload "$(printf "out=\$(cat <<'SQL' | psql mydb\nDROP TABLE users;\nSQL\n)")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into psql inside bash -c" \
+  "$(bash_payload "bash -c \"echo 'DROP TABLE t' | psql db\"")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into psql inside eval" \
+  "$(bash_payload "eval \"echo 'DROP TABLE t' | psql\"")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: a here-string psql reads inside sh -c" \
+  "$(bash_payload "sh -c \"psql db <<< 'DROP TABLE t'\"")"
+test_allow "$IRRECOVERABLE" "GH #559 review control: a SELECT echoed into psql inside bash -c" \
+  "$(bash_payload "bash -c \"echo 'SELECT 1' | psql db\"")"
+test_allow "$IRRECOVERABLE" "GH #559 review control: grep -v psql inside bash -c" \
+  "$(bash_payload "bash -c \"grep -rn 'drop table' . | grep -v psql\"")"
+_sql_pad_cmd="$(python3 -c 'print("bash -c \"" + "echo DROP TABLE x | grep q psql | " * 4000 + "cat\"")')"
+_timed_case 'GH #559 review: a 136 KB bash -c pipeline naming psql and DROP TABLE is scanned in bounded time' 0 "$_sql_pad_cmd"
 
 gates_summary

@@ -82,9 +82,90 @@ def _pieces(text, pipe=False):
     out.append((start, n))
     return out
 
-def _statement_at(line, pos):
-    # The pipeline of line that holds line[pos].
-    return next(line[s:e] for s, e in _pieces(line) if pos <= e)
+# GH #559 review: the client is the command a pipe stage runs, not the word anywhere in it: "grep -v psql"
+# and a gh title naming psql read no SQL. A stage's argv0 is its first word past shell keywords, VAR=x
+# assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
+# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
+# are defined. A wrapper missing here hides the client, as it does in the rule loop.
+_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb")
+_SQL_STAGE_WRAPPERS = {
+    "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
+    "builtin": (), "setsid": (), "rtk": (), "doas": ("-u", "-C"), "exec": ("-a",),
+    "sudo": ("-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "-R", "--user", "--group", "--host",
+             "--prompt", "--close-from", "--chdir", "--role", "--type", "--other-user", "--command-timeout"),
+    "nice": ("-n", "--adjustment"), "ionice": ("-c", "-n", "--class", "--classdata"),
+    "stdbuf": ("-i", "-o", "-e", "--input", "--output", "--error"),
+    "timeout": ("-s", "-k", "--signal", "--kill-after"), "gtimeout": ("-s", "-k", "--signal", "--kill-after"),
+}
+_SQL_STAGE_KEYWORDS = ("!", "{", "if", "elif", "then", "else", "do", "while", "until", "coproc")
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_]\w*\+?=")
+
+def _words(text):
+    # The words of text split at unquoted blanks, quotes removed, one at a time (a caller that needs only the
+    # first few stops early). An unclosed quote runs to the end of text.
+    w, q, has, i, n = [], None, False, 0, len(text)
+    while i < n:
+        c = text[i]
+        if q:
+            if c == q:
+                q = None
+            elif c == "\\" and q == '"' and i + 1 < n:
+                i += 1
+                w.append(text[i])
+            else:
+                w.append(c)
+        elif c in " \t\n":
+            if has:
+                yield "".join(w)
+                w, has = [], False
+        elif c in "'\"":
+            q, has = c, True
+        else:
+            if c == "\\" and i + 1 < n:
+                i += 1
+                c = text[i]
+            w.append(c)
+            has = True
+        i += 1
+    if has:
+        yield "".join(w)
+
+def _runs_sql_client(stage):
+    # Whether the pipe stage's argv0 (see _SQL_STAGE_WRAPPERS above) is a SQL client.
+    wrap, skip, duration = None, False, False
+    for t in _words(stage):
+        t = t.lstrip("$({`").rstrip(")}`;")
+        if skip:
+            skip = False
+            continue
+        if not t or t in _SQL_STAGE_KEYWORDS:
+            continue
+        if wrap and t.startswith("-"):
+            skip = t in _SQL_STAGE_WRAPPERS[wrap]
+            continue
+        if duration:
+            duration = False
+            continue
+        if _ASSIGNMENT_RE.match(t):
+            continue
+        b = t.rsplit("/", 1)[-1]
+        if b in _SQL_STAGE_WRAPPERS or (wrap == "rtk" and b in ("proxy", "run", "err", "test", "summary")):
+            wrap, duration = b, b in ("timeout", "gtimeout")
+            continue
+        return b in _SQL_CLIENTS
+    return False
+
+def _feeds_sql_client(line, pos):
+    # Whether the heredoc opened at line[pos] is read by a SQL client: its own pipe stage or one downstream
+    # runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest ( or `
+    # before pos: a $( the heredoc sits in is no separator to _pieces, and a quote may hold it
+    # (gh --body "$(cat <<EOF").
+    for o in {0, max(line.rfind("(", 0, pos), line.rfind("`", 0, pos)) + 1}:
+        text, p = line[o:], pos - o
+        s, e = next((s, e) for s, e in _pieces(text) if p <= e)
+        if any(_runs_sql_client(text[s + a:s + b]) for a, b in _pieces(text[s:e], pipe=True) if s + b >= p):
+            return True
+    return False
 
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
@@ -115,7 +196,7 @@ def _strip_heredocs(cmd):
             # Unmatched closing delimiter: put the scanned lines BACK rather
             # than silently eat a real write statement that followed.
             out.extend(lines[body_start:i])
-        elif _SQL_CLIENT_RE.search(_statement_at(line, m.start())):
+        elif _SQL_CLIENT_RE.search(line) and _feeds_sql_client(line, m.start()):
             _SQL_HEREDOC_BODIES.append("\n".join(lines[body_start:i - 1]))
     return "\n".join(out)
 
@@ -1274,7 +1355,7 @@ def _sql_stdin_drop(c):
         return False
     for s, e in _pieces(c):
         segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
-        k = next((k for k, g in enumerate(segs) if _SQL_CLIENT_RE.search(g)), None)
+        k = next((k for k, g in enumerate(segs) if _runs_sql_client(g)), None)
         if k is None:
             continue
         here = segs[k].split("<<<", 1)
@@ -1282,8 +1363,11 @@ def _sql_stdin_drop(c):
             return True
     return False
 
-if _sql_stdin_drop(cmd):
-    deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) sent to a SQL client on stdin — confirm with user first", rule="sql-drop")
+def _deny_sql_stdin_drop(c):
+    if _sql_stdin_drop(c):
+        deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) sent to a SQL client on stdin — confirm with user first", rule="sql-drop")
+
+_deny_sql_stdin_drop(cmd)
 
 # GH #309: bash, ksh and zsh (not dash) expand a brace inside a word before anything reads it, so
 # "git {,\"reset\"} --hard", "--fo{r,}{ce,}" and "r{m,} -rf" hid a verb or flag from every check below,
@@ -1630,6 +1714,9 @@ def _scan_body(body):
         return
     if _cur_depth >= _MAX_SHELL_DEPTH:
         deny("shell -c / eval body nested more than %d levels deep - confirm with user first" % _MAX_SHELL_DEPTH)
+    # GH #559 review: SQL a client reads on stdin inside the body (bash -c "echo 'DROP TABLE t' | psql db"),
+    # which the top-level check above read as one quoted word. Heredocs in the body count too.
+    _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
     if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)):
