@@ -1723,7 +1723,7 @@ _AMBIG_FLAG_RE = re.compile(r"--h(?:a(?:r(?:d)?)?)?\b|--fo(?:r(?:c(?:e)?)?)?\b|(
 GIT_VALUE_GLOBALS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--attr-source", "--config-env")
 _AMBIG_UNIT = (r"(?:[^\n;|&'\"\\$`]|\"[^\"\n]{0,200}\"|'[^'\n]{0,200}'|\\."
                r"|\$\([^)\n]{0,200}\)|\$(?!\()|`[^`\n]{0,200}`)")
-_AMBIG_SEG_RE = re.compile(r"(?<![\w.-])(rm|dd|find|git)(?=\s)" + _AMBIG_UNIT + r"*[^\n;|&]*")
+_AMBIG_SEG_RE = re.compile(r"(?<![\w.-])(rm|g?dd|find|git)(?=\s)" + _AMBIG_UNIT + r"*[^\n;|&]*")
 # GH #269 F3: a sub word may sit inside a brace token ("{a=b,push}", "{push,}"), so "{" and "," may precede it.
 _AMBIG_GIT_SUB_RE = re.compile(r"(?<![\w.\-/])(push|reset|clean|checkout|restore|switch|branch|stash)\b")
 # GH #275 follow-up / GH #284: a bundle like -fu counts as a force flag, and a run of 201+ letters counts as a hit.
@@ -2076,9 +2076,15 @@ def _body_readings(body):
         _DEPTH_BUDGET_BLOWN[0] = saved or r[1]
     return r
 
+# GH #585: devices dd may write to (the `dd ... of=/dev/null` benchmark), and an `of=` value under a
+# directory variable that names no device (`of=$PWD/out.img`); a `..` after it could climb to /dev.
+# `${HOME}` is blanked to a substitution before the rules read it, so only the plain spelling counts.
+_DD_SAFE_DEVICES = ("/dev/null", "/dev/zero", "/dev/stdout", "/dev/stderr", "/dev/tty")
+_DD_SAFE_VAR_RE = re.compile(r"\$(?:PWD|HOME|TMPDIR)/(?:(?!\.\.)[^$`])*$")
+
 # Candidate names for placeholder-splice duplication: the exact argv0 basenames
 # and git subcommands any check below dispatches on by exact string match.
-KNOWN_DANGEROUS = ("rm", "find", "git", "gh", "dd", "mysql", "psql", "sqlite3", "mariadb")
+KNOWN_DANGEROUS = ("rm", "find", "git", "gh", "dd", "gdd", "mysql", "psql", "sqlite3", "mariadb")
 # A pathspec that names the whole tree (GH #289, #308, #315). Magic is parsed as git does: ":(...)",
 # or ":" then a run of "/", "!", "^" ended by an optional ":" ("::.", "://", ":/:"). The rest is
 # collapsed lexically as git does ("x/.." drops x, "." and "//" drop out); nothing left, or one
@@ -3189,7 +3195,7 @@ def _check_window(_wi, w):
         if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
             deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
-            if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
+            if basename(t).replace(PH, "") in ("rm", "find", "dd", "gdd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
         else:
@@ -3617,8 +3623,23 @@ def _check_window(_wi, w):
                 ask(f"gh {gh_scan[0]} is not a built-in gh command — an alias or extension can run "
                     "gh api out of sight. Confirm what it runs.", rule="gh-unknown-subcommand")
 
-        if argv0 == "dd" and any(t.replace(PH, "").startswith("of=/dev/") for t in rest):
-            deny("dd writing to a raw device — irrecoverable disk-level destruction", rule="dd-device")
+        if argv0 in ("dd", "gdd"):  # gdd: GNU dd from Homebrew coreutils (GH #585)
+            for t in rest:
+                key, eq, target = t.partition("=")
+                if not eq or key.replace(PH, "") != "of":  # `$(true)of=` is `of=` (an empty splice)
+                    continue
+                # GH #585: the target as far as the text shows it, up to a variable or substitution.
+                # `//dev/x` and `/./dev/x` name /dev/x too (POSIX keeps a leading `//`; macOS and Linux
+                # resolve it to `/`), so the path is collapsed before the prefix test.
+                shown = re.split(r"[$`" + PH + "]", target, 1)[0]
+                path = os.path.normpath(re.sub("/+", "/", shown)) if shown else ""
+                opaque = shown != target
+                in_dev = path == "/dev" or path.startswith("/dev/")  # `of=/dev/$DISK` shows only `/dev/`
+                if in_dev and path not in _DD_SAFE_DEVICES and not path.startswith("/dev/fd/"):
+                    deny("dd writing to a raw device — irrecoverable disk-level destruction", rule="dd-device")
+                elif opaque and not in_dev and not _DD_SAFE_VAR_RE.match(target):
+                    ask("dd writes to a target the command does not show (a variable or substitution) — "
+                        "confirm it is not a raw device", rule="dd-device")
 
         if argv0 in ("mysql", "psql", "sqlite3", "mariadb"):
             # SQL genuinely lives inside -e/-c values, so DO scan them, but only

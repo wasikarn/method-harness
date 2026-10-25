@@ -2140,4 +2140,44 @@ for _c in \
 done
 
 
+# GH #585 (bypass hunt 2026-10-23 F8): dd-device matched the literal prefix `of=/dev/` on argv0 `dd`.
+for _c in \
+  'dd if=x of=//dev/disk2' \
+  'dd if=x of=/./dev/disk2' \
+  'dd if=x of=/dev//disk2' \
+  'gdd if=/dev/zero of=/dev/disk2' \
+  'sudo gdd if=x of=/dev/rdisk2' \
+  '/opt/homebrew/bin/gdd if=x of=/dev/disk2' \
+  'dd of=/dev/$DISK' \
+  'sudo dd if=img of=/dev/rdisk${N} bs=4m' \
+  'dd of="/dev/disk$N"' \
+  'dd of=/dev/$(echo disk2)' \
+  'find /dev -name sda | xargs gdd if=/dev/zero of=/dev/sda' ; do
+  test_deny "$IRRECOVERABLE" "GH #585: dd to a raw device by another spelling: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'dd if=x of=$DISK' \
+  'dd if=x of="$DISK"' \
+  'dd if=x of=$(echo /dev/disk2)' \
+  'dd if=x of=${TARGET}' \
+  'dd if=x of=${HOME}/disk.img' \
+  'dd if=x of=$PWD/../../dev/sda' ; do
+  test_ask_says "$IRRECOVERABLE" "GH #585: dd to a target the text does not show asks: $_c" "$(bash_payload "$_c")" "dd"
+done
+for _c in \
+  'dd if=/dev/zero of=out.img bs=1m count=1' \
+  'dd if=disk.img of=copy.img' \
+  'dd if=/dev/disk2 of=backup.img' \
+  'dd if=x of=./dev/disk2' \
+  'gdd if=x of=y.img' \
+  'echo of=$DISK' \
+  'dd if=/dev/zero of=/dev/null bs=1m count=100' \
+  'dd if=x of=/dev/stdout' \
+  'dd if=x of=$PWD/out.img' \
+  'dd if=x of="$TMPDIR/out.img"' \
+  'dd if=x of=$HOME/disk.img' ; do
+  test_allow "$IRRECOVERABLE" "GH #585 control: dd to a file, or no dd: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary
