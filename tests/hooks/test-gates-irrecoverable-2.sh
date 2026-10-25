@@ -1975,4 +1975,33 @@ test_allow "$IRRECOVERABLE" "GH #561 control: -c alias.co=checkout co -b feat" "
 test_allow "$IRRECOVERABLE" "GH #561 control: git config --get remote.origin.mirror" "$(bash_payload 'git config --get remote.origin.mirror')"
 test_allow "$IRRECOVERABLE" "GH #561 control: git config alias.st status" "$(bash_payload 'git config alias.st status')"
 
+# GH #584 (bypass hunt 2026-10-23 F6): only `docker exec <flags> <container> <cmd>` re-pointed argv0 to
+# the command run inside, so SQL (or any rule) behind compose or kubectl passed; so did a docker exec
+# value flag (`-u postgres` read as the container) and a shell body run in the container.
+for _c in \
+  "docker compose exec db psql -c 'DROP TABLE users'" \
+  "docker compose -f prod.yml exec -T db psql -c 'DROP TABLE users'" \
+  "docker-compose exec db mysql -e 'DROP DATABASE prod'" \
+  "kubectl exec db -- psql -c 'DROP TABLE users'" \
+  "kubectl -n prod exec -it db-0 -c pg -- psql -c 'DROP TABLE users'" \
+  "kubectl exec db-0 -n prod -- sh -c \"psql -c 'DROP TABLE users'\"" \
+  "kubectl exec db -- rm -rf /data" \
+  "docker exec -u postgres db psql -c 'DROP TABLE users'" \
+  "docker exec -e PGPASSWORD=x -w /tmp db psql -c 'DROP TABLE users'" \
+  "docker exec db sh -c 'rm -rf /data'" \
+  "podman exec db psql -c 'DROP TABLE users'" ; do
+  test_deny "$IRRECOVERABLE" "GH #584: a rule's command run inside a container: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  "docker compose exec db psql -c 'select 1'" \
+  "kubectl exec db -- psql -c 'select 1'" \
+  'kubectl exec db -- ls /data' \
+  "docker compose exec db echo 'DROP TABLE users'" \
+  'docker compose logs db' \
+  'kubectl get pods -n prod' \
+  'docker exec -u postgres db ls' ; do
+  test_allow "$IRRECOVERABLE" "GH #584 control: nothing destructive runs in the container: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary

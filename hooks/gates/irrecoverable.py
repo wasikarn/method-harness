@@ -2697,6 +2697,60 @@ def _past_wrapper_words(name, rest, i):
         i += 1  # the DURATION positional
     return i
 
+# GH #584 (bypass hunt F6): the container tools whose exec runs a command, and each one's options
+# that take the next word as a value (an attached `--user=x` or `-upostgres` is one word anyway).
+_CONTAINER_TOOLS = ("docker", "podman", "docker-compose", "kubectl")
+_DOCKER_GLOBAL_VALUES = {"-H", "--host", "-c", "--context", "--config", "-l", "--log-level", "--url",
+                         "--connection", "--identity", "--root", "--runroot"}
+_DOCKER_EXEC_VALUES = {"-e", "--env", "--env-file", "-u", "--user", "-w", "--workdir", "--detach-keys",
+                       "--preserve-fd"}
+_COMPOSE_GLOBAL_VALUES = {"-f", "--file", "-p", "--project-name", "--profile", "--env-file",
+                          "--project-directory", "--ansi", "--parallel", "--progress"}
+_COMPOSE_EXEC_VALUES = {"-e", "--env", "-u", "--user", "-w", "--workdir", "--index"}
+_KUBECTL_VALUES = {"-n", "--namespace", "--context", "--cluster", "--kubeconfig", "-s", "--server", "--user",
+                   "--as", "--as-group", "--request-timeout", "-c", "--container", "-f", "--filename",
+                   "--pod-running-timeout"}
+
+def _past_options(rest, i, values):
+    # The index of the first word in rest[i:] that is not an option or an option's value.
+    while i < len(rest):
+        t = rest[i].replace(PH, "")
+        if not t.startswith("-") or t in ("-", "--"):
+            break
+        i += 2 if t in values else 1
+    return i
+
+def _container_exec_command(tool, rest):
+    # The words of the command `tool ... exec ...` runs in a container, or None when rest is not an exec.
+    def word(i):
+        return rest[i].replace(PH, "") if i < len(rest) else None
+    if tool == "kubectl":
+        i = _past_options(rest, 0, _KUBECTL_VALUES)
+        if word(i) != "exec":
+            return None
+        tail = rest[i + 1:]
+        if "--" in tail:  # `kubectl exec POD [flags] -- CMD`
+            return tail[tail.index("--") + 1:] or None
+        i = _past_options(tail, 0, _KUBECTL_VALUES) + 1  # the legacy form, CMD right after POD
+        return tail[_past_options(tail, i, _KUBECTL_VALUES):] or None
+    if tool == "docker-compose":
+        i, compose = 0, True
+    else:
+        i = _past_options(rest, 0, _DOCKER_GLOBAL_VALUES)
+        compose = word(i) == "compose"
+        if compose:
+            i += 1
+        elif word(i) == "container" and word(i + 1) == "exec":
+            i += 1
+    if compose:
+        i = _past_options(rest, i, _COMPOSE_GLOBAL_VALUES)
+    if word(i) != "exec":
+        return None
+    i = _past_options(rest, i + 1, _COMPOSE_EXEC_VALUES if compose else _DOCKER_EXEC_VALUES)
+    if word(i) == "--":
+        i += 1
+    return rest[i + 1:] or None  # past the container or service name
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -2952,14 +3006,13 @@ def _check_window(_wi, w):
             # -l gh src` must not read as gh.
             if _xc < len(rest) and basename(rest[_xc]).replace(PH, "") == "gh":
                 argv0, rest = "gh", rest[_xc + 1:]
-    elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
-        # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
-        # inner command so the SQL check fires on a containerized client.
-        j = _past_dash_words(rest, 1)
-        if j < len(rest):
-            j += 1  # skip the container name/id
-        if j < len(rest):
-            argv0, rest = basename(rest[j]), rest[j + 1:]
+    elif argv0 in _CONTAINER_TOOLS:
+        # The command a container tool runs inside (`docker exec db psql ...`) becomes argv0, so every
+        # rule, and the shell unwrap, reads it as if it ran here (GH #584).
+        inner = _container_exec_command(argv0, rest)
+        if inner:
+            argv0, rest = basename(inner[0]), inner[1:]
+            _unwrap_shell(argv0.replace(PH, ""), rest)
 
     # GH #336. Outside the candidate loop below: a PH argv0 (`${EDITOR} f`) must not read as mkfs.
     # PH is stripped instead, so a splice inside the word (`mk$(true)fs.ext4`) still matches.
