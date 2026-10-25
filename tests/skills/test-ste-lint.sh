@@ -49,8 +49,8 @@ trap 'trash "$TMP" "$OUTSIDE" 2>/dev/null || true' EXIT
   # Unreadable file: reported as an error (exit 2), not a crash.
   printf 'Do not use this; it is not allowed.\n' > unreadable.md
   chmod 000 unreadable.md
-  # Root reads a mode-000 file anyway: the row would test nothing there, so it skips aloud.
-  if [ -r unreadable.md ]; then
+  # Root (or a filesystem ignoring mode bits) reads a mode-000 file anyway: a real read probes it, and the row skips aloud.
+  if cat unreadable.md >/dev/null 2>&1; then
     echo "SKIP: unreadable file (chmod 000 leaves it readable here, e.g. as root)"
   else
     python3 "$SCRIPT" unreadable.md --json > /dev/null 2>&1
@@ -134,7 +134,7 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" 2>/dev/null || true' EXIT
   mkdir noaccess
   printf 'Do not use this; it is not allowed.\n' > noaccess/x.md
   chmod 000 noaccess
-  if [ -r noaccess ]; then
+  if ls noaccess >/dev/null 2>&1; then
     echo "SKIP: unreadable directory (chmod 000 leaves it listable here, e.g. as root)"
   else
     python3 "$SCRIPT" noaccess --json > /dev/null 2>&1
