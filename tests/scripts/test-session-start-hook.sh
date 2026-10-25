@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-session-start-hook.sh — .claude/hooks/session-start.sh (PR #581) installs the gauntlet's
-# tools, trash-cli and shfmt >= 3.5, only in cloud sessions and never blocks one: every case exits 0
-# with empty stdout (SessionStart stdout is injected into the model's context). PATH holds only
-# stubs, so no real apt-get, sudo or pip ever runs.
+# tools, trash-cli and shfmt >= 3.5, and wires an unset core.hooksPath to git-hooks, only in cloud
+# sessions and never blocks one: every case exits 0 with empty stdout (SessionStart stdout is
+# injected into the model's context). PATH holds only stubs, so no real apt-get, sudo or pip ever
+# runs; the hooksPath cases link the real git and point CLAUDE_PROJECT_DIR at a throwaway repo.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 HOOK="$HERE/../../.claude/hooks/session-start.sh"
@@ -26,6 +27,7 @@ ROOT_DIR="$(mktemp -d)"
 #   pip      pip that logs its call and creates a shfmt 3.10.0
 #   trash    an already-installed trash
 #   shfmt    an already-installed shfmt 3.8.0; shfmt-old: 3.4.3
+#   git      the real git
 stub_dir() {
   local d uid=$1; shift
   d=$(mktemp -d "$ROOT_DIR/s.XXXXXX") || return 1
@@ -43,20 +45,22 @@ stub_dir() {
       shfmt-old) printf '#!/bin/sh\necho v3.4.3\n' > "$d/shfmt" ;;
       apt-fail) printf '#!/bin/sh\necho "Reading package lists..."\necho "FE=$DEBIAN_FRONTEND $*" >> "$LOG"\nexit 1\n' > "$d/apt-get" ;;
       trash) printf '#!/bin/sh\n' > "$d/trash" ;;
+      git) ln -s "$(command -v git)" "$d/git" ;;
     esac
   done
   chmod +x "$d"/*
   printf '%s' "$d"
 }
 
-# run <stub dir> <remote value or "unset">: sets rc, out, err, log.
+# run <stub dir> <remote value or "unset"> [project dir]: sets rc, out, err, log. CLAUDE_PROJECT_DIR
+# is the project dir, else empty, so a session's own value never points the hook at this repo.
 run() {
-  local d=$1 remote=$2 e="$ROOT_DIR/err"
+  local d=$1 remote=$2 proj=${3:-} e="$ROOT_DIR/err"
   : > "$d.log"
   if [ "$remote" = unset ]; then
-    out=$(env -u CLAUDE_CODE_REMOTE PATH="$d" LOG="$d.log" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
+    out=$(env -u CLAUDE_CODE_REMOTE CLAUDE_PROJECT_DIR="$proj" PATH="$d" LOG="$d.log" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
   else
-    out=$(CLAUDE_CODE_REMOTE="$remote" PATH="$d" LOG="$d.log" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
+    out=$(CLAUDE_CODE_REMOTE="$remote" CLAUDE_PROJECT_DIR="$proj" PATH="$d" LOG="$d.log" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
   fi
   err=$(cat "$e"); log=$(cat "$d.log")
 }
@@ -132,6 +136,44 @@ d=$(stub_dir 0 env trash apt-old); run "$d" true
 if clean_exit && /usr/bin/grep -q 'no shfmt >= 3.5' <<<"$err"; then
   ok "remote, shfmt 3.4 from apt and no pip: one note naming shfmt >= 3.5, exit 0"
 else bad "old shfmt, no pip: rc=$rc out='$out' err='$err' log='$log'"; fi
+
+echo "=== session-start hook: core.hooksPath wiring ==="
+
+# mk_repo [hooks dir: yes|no] [preset core.hooksPath]: a throwaway repo; prints its path.
+mk_repo() {
+  local r
+  r=$(mktemp -d "$ROOT_DIR/r.XXXXXX") || return 1
+  git init -q "$r" || return 1
+  [ "${1:-yes}" = yes ] && mkdir "$r/git-hooks"
+  [ -n "${2:-}" ] && git -C "$r" config core.hooksPath "$2"
+  printf '%s' "$r"
+}
+hooks_path() { git -C "$1" config --get core.hooksPath; }
+
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r"
+if clean_exit && [ "$(hooks_path "$r")" = git-hooks ] && /usr/bin/grep -q 'set core.hooksPath to git-hooks' <<<"$err"; then
+  ok "remote, core.hooksPath unset: set to the relative git-hooks, one stderr note"
+else bad "unset hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); run "$d" unset "$r"
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "CLAUDE_CODE_REMOTE unset: core.hooksPath left unset (local clones are never touched)"
+else bad "local hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo yes /no/such/dir); d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r"
+if clean_exit && [ -z "$err" ] && [ "$(hooks_path "$r")" = /no/such/dir ]; then
+  ok "remote, core.hooksPath already set (even to a missing dir): left as is, silent"
+else bad "preset hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo no); d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r"
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, no git-hooks dir in the project: core.hooksPath left unset, silent"
+else bad "no git-hooks dir: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); run "$d" true
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, CLAUDE_PROJECT_DIR empty: no repo touched, silent"
+else bad "no project dir: rc=$rc out='$out' err='$err'"; fi
 
 safe_trash "$ROOT_DIR"
 echo "session-start hook: $pass passed, $fail failed"

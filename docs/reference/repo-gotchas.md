@@ -61,6 +61,9 @@ path no longer exists, it runs no hooks. Confirmed 2026-08-26 when renaming this
 commit and one push running zero gates. Verify with `test -d "$(git config core.hooksPath)"`.
 There is no CI (GitHub Actions removed 2026-10-03), so a broken `core.hooksPath` means the gauntlet
 never runs at all and nothing server-side notices. Run the verify command above after any rename.
+A cloud session's fresh clone starts with no `core.hooksPath`; the project SessionStart hook
+(`.claude/hooks/session-start.sh`) sets it to `git-hooks` when it is unset, and leaves a value
+already set alone.
 
 ## Repo and commit hygiene
 
