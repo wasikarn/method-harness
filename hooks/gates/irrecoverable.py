@@ -1983,6 +1983,75 @@ _LONG_VALUE_OPTS = ("--rcfile", "--init-file")  # bash long options that take a 
 _SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (True,), "sh": (False, True)}
 
 
+# GH #608: an interpreter one-liner (python -c, perl/ruby -e, node -e/-p) runs a command through a string it
+# hands to a process API: os.system("rm -rf x"), subprocess.run(["git", "push", "--force"]), `git reset
+# --hard` in perl/ruby. When the body names such an API, each string literal, and each comma-separated run
+# of literals (an argv list) joined by blanks, is scanned as a shell command line. A body with no process API
+# is not read, so print("rm -rf is denied") stays allowed. API deletes (shutil.rmtree, fs.rmSync) are unseen.
+_INTERP_BODY_FLAGS = {"python": ("-c",), "perl": ("-e", "-E"), "ruby": ("-e",), "node": ("-e", "--eval", "-p", "--print")}
+_INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)[\d.]*|(node)(?:js)?")
+_INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
+                             r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`")
+_INTERP_LIT_RE = re.compile("'''(?:.|\\n)*?'''|\"\"\"(?:.|\\n)*?\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`[^`]*`"
+                            r"|\bqx\s*([{(\[<|/!])|%x\s*([{(\[<|/!])")
+_INTERP_CLOSE = {"{": "}", "(": ")", "[": "]", "<": ">"}
+
+def _interp_body(argv0, rest):
+    m = _INTERP_NAME_RE.fullmatch(argv0)
+    if not m:
+        return None
+    flags = _INTERP_BODY_FLAGS[next(g for g in m.groups() if g)]
+    for i, t in enumerate(rest):
+        t = t.replace(PH, "")
+        if t == "--":
+            return None
+        name, eq, val = t.partition("=")
+        if t in flags or (name in flags and name.startswith("--") and eq):
+            return val if eq else (rest[i + 1] if i + 1 < len(rest) else None)
+        # a short cluster holding the body letter (perl -ne, -pe), the body attached after it (python -cprint(1))
+        if t.startswith("-") and not t.startswith("--"):
+            for f in flags:
+                if not f.startswith("--") and f[1] in t[1:]:
+                    k = t.index(f[1], 1)
+                    return t[k + 1:] or (rest[i + 1] if i + 1 < len(rest) else None)
+        if not t.startswith("-"):
+            return None  # a script file: its code is unseen
+    return None
+
+def _interp_commands(body):
+    # The command lines a process-API body may run: each literal, and each comma-joined run of literals.
+    if not _INTERP_PROC_RE.search(body):
+        return []
+    lits, i, out = [], 0, []
+    while True:
+        m = _INTERP_LIT_RE.search(body, i)
+        if not m:
+            break
+        if m.group(1) or m.group(2):  # qx{...} / %x(...): read to the matching closer
+            op = m.group(1) or m.group(2)
+            j = body.find(_INTERP_CLOSE.get(op, op), m.end())
+            j = len(body) if j < 0 else j
+            lits.append((m.start(), j + 1, body[m.end():j]))
+            i = j + 1
+            continue
+        t = m.group()
+        q = 3 if t[:3] in ("'''", '"""') else 1
+        lits.append((m.start(), m.end(), t[q:len(t) - q]))
+        i = m.end()
+    run = []
+    for k, (a, b, text) in enumerate(lits):
+        out.append(text)
+        # a comma between two literals, with brackets around it: ("git", ["push", "--force"]) is one argv
+        if run and re.fullmatch(r"[\s\[\](){}]*,[\s\[\](){}]*", body[lits[k - 1][1]:a]):
+            run.append(text)
+        else:
+            if len(run) > 1:
+                out.append(" ".join(run))
+            run = [text]
+    if len(run) > 1:
+        out.append(" ".join(run))
+    return out
+
 def _unwrap_shell(argv0, rest):
     if argv0 == "eval":
         bodies = [" ".join(rest)] if rest else []
@@ -3063,6 +3132,10 @@ def _check_window(_wi, w):
     rest = rest[o:]
 
     _unwrap_shell(argv0.replace(PH, ""), rest)  # `s$(true)h -c` is still sh
+    _ib = _interp_body(argv0.replace(PH, ""), rest)  # GH #608
+    if _ib:
+        for _c in _interp_commands(_ib):
+            _scan_body(_c)
 
     if argv0 == "find":
         # GH #227: find -exec sh -c '<body>' \; hides the body in one token. The shell is the
