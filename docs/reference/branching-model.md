@@ -62,9 +62,10 @@ refuses on any change. It:
    checks the push by `git ls-remote`, not the exit code (exit 141 is an idle SSH drop after the
    hook), and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
    on the local branch: fix, commit, rerun (a fix commit that touches more than the manifests needs
-   a new review verdict). If the tree changed while the gauntlet ran, it refuses the merge; a rerun
-   finds origin already at that head and does not push again, so run `bash scripts/run-gauntlet.sh`
-   on the clean checkout first;
+   a new review verdict). If the tree changed while the gauntlet ran, it refuses the merge. When
+   origin already has the head (an earlier run pushed it, or an older PR is already up to date and
+   above develop), the script runs the pre-push hook itself on the clean tree instead of pushing,
+   and refuses if there is no executable hook;
 7. fetches; if `origin/develop` moved (a merge made outside the script), goes back to step 4, three
    rounds at most;
 8. re-checks the version (plain `X.Y.Z`, both manifests equal, above `origin/develop`'s), the review

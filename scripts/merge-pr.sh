@@ -286,6 +286,28 @@ remote_head() {
   printf '%s\n' "${line%%[[:space:]]*}"
 }
 
+require_unchanged_after_gauntlet() {
+  local dirty
+  dirty=$(git status --porcelain) || die "git status failed."
+  if [ -n "$dirty" ]; then
+    die "the checkout changed while the pre-push gauntlet ran, so its result does not cover $head. Clean the checkout and run merge-pr.sh again; it runs the gauntlet again first."
+  fi
+}
+
+# run_gauntlet_here: origin already has $head, pushed by an earlier run or by the PR's author (who may
+# have edited the tree during that gauntlet, or pushed with hooks off), so run the pre-push hook on this
+# clean tree before merging it.
+run_gauntlet_here() {
+  local hook
+  hook=$(git rev-parse --git-path hooks/pre-push) || die "cannot find the pre-push hook path."
+  if [ ! -x "$hook" ]; then
+    die "no executable pre-push hook at $hook, so nothing would run the gauntlet on $head; set core.hooksPath (git config core.hooksPath git-hooks)."
+  fi
+  echo "merge-pr: origin already has $head; running the pre-push gauntlet on it before merging." >&2
+  env -u MH_GAUNTLET_LOCK_OWNER "$hook" origin origin </dev/null || die "the pre-push gauntlet failed on $head; fix it, commit, and run merge-pr.sh again (a fix commit needs a new review verdict)."
+  require_unchanged_after_gauntlet
+}
+
 # push_head: push HEAD to the PR branch (the pre-push gauntlet runs on this tree) and wait until GitHub
 # shows it as the PR head. A push that exits non-zero after the hook passed (exit 141, an idle SSH
 # drop) still counts when origin has the commit.
@@ -297,13 +319,7 @@ push_head() {
   if [ "$remote" != "$head" ]; then
     die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push gauntlet failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch, and a fix commit needs a new review verdict."
   fi
-  # shortcut: a rerun finds origin already at $head and merges without a new gauntlet; enforcing one
-  # would need state kept between runs, so the message tells the caller to run it by hand.
-  local dirty
-  dirty=$(git status --porcelain) || die "git status failed."
-  if [ -n "$dirty" ]; then
-    die "the checkout changed while the pre-push gauntlet ran, so its result does not cover $head. Clean the checkout, run bash scripts/run-gauntlet.sh on it, then run merge-pr.sh again."
-  fi
+  require_unchanged_after_gauntlet
   [ "$rc" -eq 0 ] || echo "merge-pr: git push exited $rc but origin has $head; going on." >&2
   until [ "$(gh pr view "$pr" --json headRefOid -q .headRefOid)" = "$head" ]; do
     n=$((n + 1))
@@ -331,9 +347,11 @@ while :; do
   check_version
   check_review
   remote=$(remote_head) || exit 1
+  require_clean "before the gauntlet"
   if [ "$remote" != "$head" ]; then
-    require_clean "before the push"
     push_head
+  else
+    run_gauntlet_here
   fi
   # A merge made outside this script lands no matter the lock: fetch, and sync again if it did.
   git fetch origin || die "git fetch failed after the push; not merging."

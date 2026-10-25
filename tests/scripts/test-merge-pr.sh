@@ -239,12 +239,21 @@ if [ "$(w log -1 --format=%s)" = "chore: bump mh to 1.1.2" ] && [ "$(w rev-parse
   ok "a plain bump commit on the PR head"
 else bad "commit shape: $(w log --oneline -3)"; fi
 
-# 3. an older PR already above develop and up to date: no commit, no push, merged as it is.
+# 3. an older PR already above develop and up to date: no commit and no push, but the script runs the
+#    pre-push hook itself on that head (its author may have pushed with hooks off), then merges.
 setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
 before=$(remote_tip feat/x)
 run
 merges "self-bumped PR"
-if [ "$(remote_tip feat/x)" = "$before" ] && [ "$(pushes)" = 0 ]; then ok "a head above develop is kept (1.1.100 over 1.1.99)"; else bad "self-bumped PR was rewritten"; fi
+if [ "$(remote_tip feat/x)" = "$before" ]; then ok "a head above develop is kept (1.1.100 over 1.1.99)"; else bad "self-bumped PR was rewritten"; fi
+if [ "$(pushes)" = 1 ] && /usr/bin/grep -qx "head=$before" "$F/prepush.log"; then ok "the gauntlet runs on a head the script did not push"; else bad "no gauntlet on an unpushed head: $(pushes)"; fi
+# ...and refuses when that gauntlet is red, or when there is no hook to run it.
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_PREPUSH_FAIL=1 run
+refuses "red gauntlet on an unpushed head" "the pre-push gauntlet failed on"
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100; work; w config --unset core.hooksPath
+run
+refuses "no pre-push hook" "no executable pre-push hook"
 
 # 3b. versions order per number: develop at 1.1.99 is cut to 1.1.100, not 1.1.910.
 setup 1.1.99; on develop "peer" append c.txt peer
@@ -326,6 +335,11 @@ STUB_PREPUSH_DIRTY=1 run
 if [ "$rc" -ne 0 ] && /usr/bin/grep -q "changed while the pre-push gauntlet ran" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ]; then
   ok "an edit during the gauntlet refuses the merge"
 else bad "edit during the gauntlet rc=$rc: $out"; fi
+# The push already landed; a rerun on the cleaned tree must run the gauntlet again, not merge on trust.
+w restore b.txt
+run
+merges "rerun after an edit during the gauntlet"
+if [ "$(pushes)" = 2 ]; then ok "the rerun runs the gauntlet again"; else bad "rerun gauntlets: $(pushes)"; fi
 
 # 10d. a red pre-commit hook on the sync or the bump commit: refuse, abort the merge, restore the manifests.
 setup; on develop "peer" set_ver 1.1.2
