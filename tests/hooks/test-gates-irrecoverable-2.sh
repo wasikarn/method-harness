@@ -2308,4 +2308,42 @@ test_allow "$IRRECOVERABLE" "GH #562 control: git config --get core.hooksPath \"
 _hp_pad_cmd="git config core.hooksPath git-hooks$(python3 -c 'print(" \"\"" * 46000)')"
 _timed_case 'GH #562: a 140 KB run of empty words after core.hooksPath is denied in bounded time' 2 "$_hp_pad_cmd"
 
+# GH #586 (bypass hunt 2026-10-23 F9): find-exec-rm needed an `rm` word among find's own words, and
+# find-delete compared a word to `-delete` exactly.
+for _c in \
+  "find . -exec sh -c 'rm \"\$1\"' _ {} \;" \
+  "find . -exec bash -c 'rm -- \"\$0\"' {} \;" \
+  "find . -execdir sh -c 'rm {}' \;" \
+  "find . -exec sh -c 'echo \"\$1\"; rm \"\$1\"' _ {} \;" \
+  "find . -exec sh -c 'sudo rm \"\$1\"' _ {} +" \
+  'find . -$(echo delete)' \
+  'find . -de$(echo l)ete' \
+  'find . -$(echo exec) rm {} \;' \
+  "find . -exec echo {} \\; -exec sh -c 'rm \"\$1\"' _ {} \\;" \
+  'find . -exec cat {} \; -delete' \
+  'find . -exec echo {} \; -exec rm -rf {} \;' \
+  'find . -exec find {} -exec rm {} \; \;' \
+  "find . -exec sh -c 'for f do rm \"\$f\"; done' _ {} +" \
+  "find . -exec sh -c 'sh -c \"rm \\\$1\"' _ x \\;" \
+  "find . -exec sh -c 'eval rm \"\$1\"' _ {} \\;" \
+  "find . -exec sh -c 'busybox rm \"\$1\"' _ {} \\;" \
+  'find . -name x | xargs -I {} rm {}' ; do
+  test_deny "$IRRECOVERABLE" "GH #586: find deletes through a shell body or a spliced action: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  "find . -exec sh -c 'echo \"\$1\"' _ {} \;" \
+  "find . -exec sh -c 'grep -l rm \"\$1\"' _ {} \;" \
+  "find . -name '*.sh' -exec sh -n {} \;" \
+  'find . -name "$(cat pattern)"' \
+  'find . -newer x -exec ls {} \;' \
+  'find . -name x -print' \
+  'find . -name "-$(date +%s)" -print' \
+  'find . -newer "-$(cat f)" -print' \
+  "find . -exec sh -c 'for f do echo \"\$f\"; done' _ {} +" \
+  "find . -ok sh -c 'rm \"\$1\"' _ {} \\;" \
+  'find . -exec echo {} \; -print' ; do
+  test_allow "$IRRECOVERABLE" "GH #586 control: find runs no delete: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary
