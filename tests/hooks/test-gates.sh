@@ -1221,4 +1221,13 @@ test_allow "$IRRECOVERABLE" "GH #563 control: git rm a file" "$(bash_payload 'gi
 test_allow "$IRRECOVERABLE" "GH #563 control: branch -f feature" "$(bash_payload 'git branch -f feature x')"
 test_allow "$IRRECOVERABLE" "GH #563 control: update-ref on a feature branch" "$(bash_payload 'git update-ref refs/heads/feature x')"
 
+# GH #606: rm -r without -f deletes the tree as finally as rm -rf; -i (per-file prompt) is the one exception.
+test_deny  "$IRRECOVERABLE" "GH #606: rm -r" "$(bash_payload 'rm -r build')"
+test_deny  "$IRRECOVERABLE" "GH #606: rm --recursive" "$(bash_payload 'rm --recursive build')"
+test_deny  "$IRRECOVERABLE" "GH #606: rm -rI (asks once, then deletes)" "$(bash_payload 'rm -rI build')"
+test_deny  "$IRRECOVERABLE" "GH #606: rm -r --interactive=never" "$(bash_payload 'rm -r --interactive=never build')"
+test_allow "$IRRECOVERABLE" "GH #606 control: rm -ri (asks per file)" "$(bash_payload 'rm -ri build')"
+test_allow "$IRRECOVERABLE" "GH #606 control: rm -f a file" "$(bash_payload 'rm -f a.txt')"
+test_allow "$IRRECOVERABLE" "GH #606 control: git rm -r --cached" "$(bash_payload 'git rm -r --cached build')"
+
 gates_summary
