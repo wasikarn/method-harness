@@ -607,4 +607,20 @@ else
   echo "  ❌ GH #382: corpus replayed $_got382 of $_want382 cases" >&2; fail=$((fail + 1))
 fi
 
+# GH #561: config a -c pair gives a git run (or a `git config` write stores) re-enables a denied action.
+test_deny  "$IRRECOVERABLE" "GH #561: -c remote.origin.mirror=true push" "$(bash_payload 'git -c remote.origin.mirror=true push origin')"
+test_deny  "$IRRECOVERABLE" "GH #561: -c remote.origin.push=+ refspec push" \
+  "$(bash_payload 'git -c remote.origin.push=+HEAD:refs/heads/main push origin')"
+test_deny  "$IRRECOVERABLE" "GH #561: -c alias running push --force" "$(bash_payload "git -c alias.p='push --force' p origin main")"
+test_deny  "$IRRECOVERABLE" "GH #561: -c ! alias running rm -rf" "$(bash_payload "git -c alias.x='!rm -rf build' x")"
+test_deny  "$IRRECOVERABLE" "GH #561: -c clean.requireForce=false clean" "$(bash_payload 'git -c clean.requireForce=false clean -dx')"
+test_deny  "$IRRECOVERABLE" "GH #561: -c gc expiry at now" \
+  "$(bash_payload 'git -c gc.reflogExpire=now -c gc.reflogExpireUnreachable=now -c gc.pruneExpire=now gc')"
+test_deny  "$IRRECOVERABLE" "GH #561: git config storing a push --force alias" "$(bash_payload "git config alias.p 'push --force'")"
+test_deny  "$IRRECOVERABLE" "GH #561: git config remote.origin.mirror true" "$(bash_payload 'git config remote.origin.mirror true')"
+test_allow "$IRRECOVERABLE" "GH #561 control: -c alias.st=status st" "$(bash_payload 'git -c alias.st=status st')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git config alias.lg log" "$(bash_payload "git config alias.lg 'log --oneline --graph'")"
+test_allow "$IRRECOVERABLE" "GH #561 control: requireForce=false clean -n" "$(bash_payload 'git -c clean.requireForce=false clean -n')"
+test_allow "$IRRECOVERABLE" "GH #561 control: git config gc.pruneExpire 2.weeks.ago" "$(bash_payload 'git config gc.pruneExpire 2.weeks.ago')"
+
 gates_summary
