@@ -39,15 +39,21 @@ checks itself on `x | grep -q y` first and exits 2 when it cannot read the tree.
 read or parse is also an error, never a clean pass, and hits in the other files are still listed.
 A pipe's readers are the commands that can read the stdin it hands its right side: the command
 there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a `time`d command, and any
-`$(...)`/`<(...)` in such a statement's own words and redirections (`for` lists, `case` subjects,
-`< <(...)`); in the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a grep that
-reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `-f -`), so
+`$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies redirections left to right, a
+simple command expands its words before its redirections, and a compound command (`for` list,
+`case` subject, `for ((...))`) after them: so `x | echo "$(grep -q y)" < f` and
+`x | cat < <(grep -q y)` race, while `x | for f in $(grep -q y); do ...; done < f` and
+`x | cat < f <<<"$(grep -q y)"` do not (bash: `echo P | for x in $(cat); do echo $x; done < f`
+prints f's contents). In the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a
+grep that reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `-f -`), so
 `while read -r f; do grep -q p "$f"; done` is clean (a heuristic). A statement whose stdin is
-redirected (`<`, `<<<`, `<&N` with a literal N other than 0) is no reader. Wrappers (`command`, `builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`,
-`sudo`, `nohup`, with `NAME=VALUE` for env and sudo) are looked through; long options, grep's and
-the wrappers', resolve as getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`, `--sig` is
-timeout's `--signal`), and the value of `-e`/`--regexp`-style options is not an option. It does not catch a grep reached through a function or alias, nor other
-early-exit readers (`head`, `grep -m`, a command that skips stdin): there, apply the rule by hand.
+redirected (`<`, `<<<`, `<&N` with a literal N other than 0) is no reader. Wrappers (`command`,
+`builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`, `sudo`, `nohup`, with
+`NAME=VALUE` for env and sudo) are looked through; long options, grep's and the wrappers', resolve
+as getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`, `--sig` is timeout's `--signal`),
+and the value of `-e`/`--regexp`-style options is not an option. It does not catch a grep reached
+through a function or alias, nor other early-exit readers (`head`, `grep -m`, a command that skips
+stdin): there, apply the rule by hand.
 (GNU grep 3.11 writing to `>/dev/null` reads all of its input, so that form is safe.) A hit whose
 line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint
 allows one: its own race probe.
