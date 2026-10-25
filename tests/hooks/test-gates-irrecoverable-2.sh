@@ -962,7 +962,15 @@ test_deny  "$IRRECOVERABLE" "GH #560: a chain of 50 env -iS words before rm -rf"
   "$(bash_payload "$(printf 'env -iS %.0s' $(seq 50))rm -rf x")"
 _env_iS_dos_cmd="$(python3 -c 'print("env -iS ls; " * 10000 + "env -" + "i" * 20000 + "S ls")')"
 _timed_case 'GH #560: 10000 env -iS commands and a 20 KB cluster are read in bounded time' 0 "$_env_iS_dos_cmd"
-# Non-goal: cat <<EOF | bash, eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
+# GH #567: a shell reading stdin gets its commands from a heredoc piped in, a here-string, or an echo/printf.
+test_deny  "$IRRECOVERABLE" "GH #567: bash <<< rm -rf" "$(bash_payload "bash <<< 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #567: echo into bash" "$(bash_payload "echo 'git push --force' | bash")"
+test_deny  "$IRRECOVERABLE" "GH #567: printf into bash -s" "$(bash_payload "printf 'git reset --hard\n' | bash -s")"
+test_deny  "$IRRECOVERABLE" "GH #567: heredoc piped into bash" "$(bash_payload "$(printf 'cat <<EOF | bash\nrm -rf build\nEOF')")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into tee" "$(bash_payload "echo 'rm -rf build' | tee notes.txt")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into bash script.sh (stdin is data)" "$(bash_payload 'echo hi | bash x.sh')"
+test_allow "$IRRECOVERABLE" "GH #567 control: heredoc piped into grep bash" "$(bash_payload "$(printf "cat <<'EOF' | grep bash\nrm -rf build\nEOF")")"
+# Non-goal: eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 
@@ -1925,5 +1933,46 @@ test_deny  "$IRRECOVERABLE" "GH #561: git config set remote.origin.mirror true" 
 test_allow "$IRRECOVERABLE" "GH #561 control: -c alias.co=checkout co -b feat" "$(bash_payload 'git -c alias.co=checkout co -b feat')"
 test_allow "$IRRECOVERABLE" "GH #561 control: git config --get remote.origin.mirror" "$(bash_payload 'git config --get remote.origin.mirror')"
 test_allow "$IRRECOVERABLE" "GH #561 control: git config alias.st status" "$(bash_payload 'git config alias.st status')"
+
+# Bypass hunt 2026-10-23 F5: `find | xargs rm` is the same delete as `find -exec rm` (denied with no
+# flags at all), but the xargs re-point handed it to the rm-rf rule, which needs both -r and -f.
+for _c in \
+  'find . -type f | xargs rm' \
+  'find . -print0 | xargs -0 rm' \
+  "find . -name '*.bak' | xargs -I{} rm {}" \
+  'fd -t f | xargs rm' \
+  'git ls-files | xargs rm -f' \
+  'find . | xargs -n 10 rm' \
+  'find . | xargs /bin/rm' \
+  'find . | xargs sudo rm' \
+  'xargs rm < files.txt' \
+  "bash -c 'find . | xargs rm'" \
+  "find . | xargs -d'\\n' rm" \
+  'find . | xargs -Is rm s' \
+  'find . | xargs nice -n 5 rm' \
+  'find . | xargs timeout 5 rm' \
+  'find . | xargs env FOO=1 rm' \
+  'find . | xargs sudo -u bob rm' ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F5: xargs rm deletes every path it is fed: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'git ls-files | xargs grep -l rm' \
+  'xargs grep rm src < files.txt' \
+  "find . -name '*.o' | xargs ls -l" \
+  'echo a | xargs echo rm' \
+  'find . | xargs -I{} echo rm {}' \
+  'find . -type d -empty | xargs rmdir' \
+  'find . -name x | xargs wc -l' \
+  'ls | xargs sudo -u rm ls' \
+  'ls | xargs env -u rm ls' \
+  "ls | xargs -d '\\n' ls" \
+  'ls | xargs -a rm ls' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F5 control: xargs runs something else: $_c" "$(bash_payload "$_c")"
+done
+
+# The same xargs flag walk finds gh (review of the F5 fix): an attached -d value hid it.
+test_ask_says "$IRRECOVERABLE" "bypass hunt F5 review: xargs -d'\\n' gh pr merge still asks" \
+  "$(bash_payload "ls | xargs -d'\\n' gh pr merge 1 --admin")" "gh pr merge"
+
 
 gates_summary
