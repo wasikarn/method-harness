@@ -65,6 +65,11 @@ never runs at all and nothing server-side notices. Run the verify command above 
 - **Never `rm -rf`.** Use `trash` (`trash-put` on Linux; neither installed means ask the user).
   `run-gauntlet.sh` needs the `trash` command itself, since the tests call it by that name, and
   stops without it: on Linux, `pip install trash-cli` provides `trash` alongside `trash-put`.
+  Single-repo Claude Code cloud sessions (not Project threads or multi-repo sessions, which skip
+  repo hooks) get it from the project SessionStart hook in `.claude/settings.json`
+  (`.claude/hooks/session-start.sh`, apt `trash-cli`, only when `CLAUDE_CODE_REMOTE=true`); it is
+  for developing this repo and is not part of the shipped plugin's `hooks/` (which sessions read
+  repo settings: code.claude.com/docs/en/settings, "Settings in cloud sessions").
   Enforced by `gate:bash:irrecoverable`. Validate the argument is non-empty before any `trash`
   call: an empty glob result once trashed the whole repo. A template `mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX"`
   prints "" when TMPDIR names a missing directory (a plain `mktemp -d` falls back on macOS), and `set -u`
