@@ -24,7 +24,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 echo "=== nothing pipes into grep -q (pipefail turns its early exit into a failure) ==="
 
 if ! command -v shfmt >/dev/null 2>&1; then
-  bad "shfmt not found on PATH, so this lint cannot run (macOS: brew install shfmt; Linux: apt install shfmt or pip install shfmt-py)"
+  bad "shfmt not found on PATH, so this lint cannot run (shfmt >= 3.5; macOS: brew install shfmt; Linux: pip install shfmt-py, or apt install shfmt on Ubuntu 24.04+)"
   echo "=== Summary: $pass passed, $fail failed ==="
   exit 1
 fi
@@ -50,7 +50,7 @@ probe=$(mktemp -d)
 trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
 # scan FILE: the scanner's stdout; its rc lands in the caller's $?.
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
-hit_lines() { sed -n 's/^[^E][^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }
+hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }
 
 # One race per statement (line numbers in want_lines), each a shape a past check missed.
 cat > "$probe/bad.sh" <<'EOF'
@@ -98,8 +98,17 @@ x | env "$V=1" grep -q y
 x | env -S 'grep -q' y
 x | grep --qui y
 echo "pipe-into-grep-q: deliberate" | grep -q x
+x | grep -q y 0<&0
+x | env -S 'FOO=1 grep -q' y
+x | env -iS 'grep -q' y
+x | sudo FOO=1 grep -q y
+x | v=$(grep -q y)
+x | echo "$(grep -q y && echo ok)"
+x | diff <(grep -q y) f
+x | while read -r f; do grep -q pat; done
+x | while read -r f; do grep -q pat -; done
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
@@ -129,10 +138,14 @@ DOC
 x | { grep -q y <<<"$z"; }
 x | grep -q y < "$f"
 x | env FOO=1 sed -n p
+x | grep --reg -q y
+x | grep -q y <&3
+x | while read -r f; do grep -q pat "$f"; done
+x | for f in a b; do grep -q -e pat "$f"; done
 EOF
 out=$(scan "$probe/good.sh"); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] \
-  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects are clean" \
+  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp/--reg -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects, loop greps on files are clean" \
   || bad "probe: rc $rc on the race-free file: $out $(cat "$probe/err")"
 
 # The exemption counts only as a trailing comment, and is reported, not hidden.
@@ -150,6 +163,20 @@ out=$(python3 -I "$SCAN" "$probe/unparsable.sh" "$probe/race.sh" 2>"$probe/err")
 out=$(scan "$probe/missing.sh"); rc=$?
 [ "$rc" -eq 2 ] && ok "probe: an unreadable file is an error (rc 2), never clean" \
   || bad "probe: an unreadable file gave rc $rc, want 2"
+
+# The scanner checks its shfmt first: shfmt 3.4 rejects --to-json, and its -tojson encodes operators
+# as numbers, which once made every file scan clean. Both must be an error, never a clean pass.
+real_shfmt=$(command -v shfmt)
+mkdir -p "$probe/old" "$probe/numeric"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --to-json ] && { echo "flag provided but not defined: -to-json" >&2; exit 2; }; done\nexec "%s" "$@"\n' "$real_shfmt" > "$probe/old/shfmt"
+printf '#!/bin/sh\n"%s" "$@" | sed '"'"'s/"Op": "|"/"Op": 12/g'"'"'\n' "$real_shfmt" > "$probe/numeric/shfmt"
+chmod +x "$probe/old/shfmt" "$probe/numeric/shfmt"
+for kind in old numeric; do
+  out=$(PATH="$probe/$kind:$PATH" python3 -I "$SCAN" "$probe/race.sh" 2>"$probe/err"); rc=$?
+  [ "$rc" -eq 2 ] && /usr/bin/grep -q 'shfmt >= 3.5 is needed' "$probe/err" \
+    && ok "probe: a shfmt whose tree the scanner cannot read ($kind) is an error (rc 2), never clean" \
+    || bad "probe: $kind shfmt gave rc $rc, want 2 naming shfmt >= 3.5: $out $(cat "$probe/err")"
+done
 
 # The audit's known-bad fixtures are invalid shell on purpose (run-gauntlet.sh's lintable() and
 # pre-commit's staged_lint() exclude the same path).
