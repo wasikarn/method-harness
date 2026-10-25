@@ -2716,7 +2716,7 @@ _ROOT_OR_HOME = ("/", "/*", "/.", "~", "~/", "~/*", "~/.")
 # `${HOME}` (and `${HOME:-}`, `${HOME%/}`, ...) is blanked to a substitution before the rules read it,
 # so a placeholder target is matched against the raw text of a chmod's own arguments (the text after
 # `chmod` up to its statement's end), never against another statement's `echo ${HOME}`.
-_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']?\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']?(?=[\s;&|)]|$)")
+_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?=[\s;&|)<>]|$)")
 _CHMOD_ARGS_RAW_RE = re.compile(r"(?<![\w.-])g?chmod(?![\w.-])([^;&|\n]*)")
 def _root_or_home_word(rest):
     words, cur = [], []
@@ -2732,7 +2732,8 @@ def _root_or_home_word(rest):
         if w in _ROOT_OR_HOME:
             return True
         if PH in w and w.strip(PH + "/.*") == "" and any(
-                _HOME_BRACED_RAW_RE.search(m.group(1)) for m in _CHMOD_ARGS_RAW_RE.finditer(cmd)):
+                _HOME_BRACED_RAW_RE.search(m.group(1))
+                for m in _CHMOD_ARGS_RAW_RE.finditer(cmd.replace("\\\n", " "))):  # `\`-newline joins a line
             return True
         # `$HOME/./`, `~/..`: the home prefix is read as the home dir, then the path is normalised.
         for pre in ("$HOME", "~"):

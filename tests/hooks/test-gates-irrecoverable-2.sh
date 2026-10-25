@@ -2387,6 +2387,10 @@ for _c in \
   'chmod 777 "${HOME:-}"' \
   'chmod 777 ${HOME%/}' \
   'echo hi; chmod 777 ${HOME}' \
+  $'chmod 777 \\\n${HOME}' \
+  $'chmod 777 \\\n"${HOME}"' \
+  'chmod 777 ${HOME}>/dev/null' \
+  "bash -c 'chmod 777 \"\${HOME}\"'" \
   'chmod 777 ${HOME}/' \
   'chmod 777 $HOME/./' \
   'chmod 777 $HOME//' \
