@@ -959,7 +959,7 @@ test_deny "$IRRECOVERABLE" "git add --all DENIED with no cwd in the payload (fal
 # that follows must be distinguishable from a genuine "not mid-merge" deny.
 mid_merge_err=$(bash_cwd_payload 'git add -A' "/nonexistent/kbg-mid-merge-probe-$$" | bash "$IRRECOVERABLE" 2>&1 1>/dev/null)
 mid_merge_rc=$(bash_cwd_payload 'git add -A' "/nonexistent/kbg-mid-merge-probe-$$" | bash "$IRRECOVERABLE" >/dev/null 2>/dev/null; echo $?)
-if [[ "$mid_merge_rc" == "2" ]] && printf '%s' "$mid_merge_err" | /usr/bin/grep -q "mid-merge check itself failed"; then
+if [[ "$mid_merge_rc" == "2" ]] && /usr/bin/grep -q "mid-merge check itself failed" <<<"$mid_merge_err"; then
   echo "  ✅ DENY + diagnostic: git add -A with an unreachable cwd denies AND names that the mid-merge check itself failed"
   pass=$((pass + 1))
 else
