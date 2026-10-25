@@ -45,10 +45,39 @@ _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
 # 2026-10-24 sweep: a SQL client reads SQL on stdin too (a heredoc, a here-string, a pipe), where the
 # -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
 # checked with the stdin text further down (_sql_stdin_drop). A SQL comment separates words like a blank.
-_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb)(?![\w.-])")
+_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb|mongosh|mongo|redis-cli)(?![\w.-])")
 _SQL_GAP = r"(?:\s|/\*[^*]{0,200}\*/|--[^\n]{0,200}\n)+"
-_SQL_DROP_RE = re.compile(r"DROP" + _SQL_GAP + r"(TABLE|DATABASE|SCHEMA)|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w",
-                          re.IGNORECASE)
+# GH #607: the rest of the data-destroying statements a client takes: DROP of any stored object (and
+# ALTER ... DROP COLUMN), DELETE FROM and UPDATE ... SET with no WHERE before the statement ends, mongo's
+# dropDatabase(), drop(), deleteMany({}) and remove({}), and redis FLUSHALL / FLUSHDB.
+_SQL_DROP_OBJECTS = (r"TABLE|DATABASE|SCHEMA|INDEX|VIEW|MATERIALIZED" + _SQL_GAP + r"VIEW|USER|ROLE|FUNCTION|PROCEDURE|"
+                     r"TRIGGER|SEQUENCE|TYPE|EXTENSION|OWNED|COLUMN|EVENT|COLLECTION")
+_SQL_DROP_RE = re.compile(
+    r"DROP" + _SQL_GAP + r"(?:" + _SQL_DROP_OBJECTS + r")\b|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w"
+    r"|\bDELETE" + _SQL_GAP + r"FROM" + _SQL_GAP + r"[\w.\"`\[\]]+(?:" + _SQL_GAP + r"(?:AS" + _SQL_GAP + r")?\w+)?"
+    r"\s*(?:[;|'\"]|$|\bRETURNING\b)"  # a pipe or a closing quote ends the statement too
+    r"|\.dropDatabase\s*\(|\.drop\s*\(\s*\)|\.(?:deleteMany|remove)\s*\(\s*\{\s*\}\s*\)"
+    r"|\bFLUSH(?:ALL|DB)\b",
+    re.IGNORECASE)
+# UPDATE ... SET with no WHERE is read per statement in one linear pass, not in the regex above: a tempered
+# "no WHERE up to ;" pattern rescans the rest of the text from every UPDATE (2.4 s on 130 KB, near the 8 s
+# hook timeout, which allows).
+_SQL_UPDATE_RE = re.compile(r"\bUPDATE" + _SQL_GAP + r"[\w.\"`\[\]]+" + _SQL_GAP + r"SET\b", re.IGNORECASE)
+_SQL_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
+class _SqlDestroys:
+    # Same .search(text) interface as the regex it wraps, so every caller of _SQL_DROP_RE reads both.
+    def __init__(self, rx):
+        self.rx = rx
+    def search(self, text):
+        if self.rx.search(text):
+            return True
+        for stmt in re.split(r"[;|]", text):
+            ups = [m.end() for m in _SQL_UPDATE_RE.finditer(stmt)]
+            for k, at in enumerate(ups):
+                if not _SQL_WHERE_RE.search(stmt, at, ups[k + 1] if k + 1 < len(ups) else len(stmt)):
+                    return True
+        return False
+_SQL_DROP_RE = _SqlDestroys(_SQL_DROP_RE)
 # GH #559 review 2: SQL a client reads on stdin is matched with its string literals as one word and its
 # comments dropped, so text that only mentions a drop (-- removed the DROP TABLE step, LIKE 'truncate x')
 # reads nothing. A backslash ends no literal early here: 'a\'; DROP TABLE t is a drop to PostgreSQL.
@@ -108,7 +137,7 @@ def _pieces(text, pipe=False):
 # assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
 # A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
 # are defined. A wrapper missing here hides the client, as it does in the rule loop.
-_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb")
+_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb", "mongosh", "mongo", "redis-cli")  # mongo, redis: GH #607
 _SQL_STAGE_WRAPPERS = {
     "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
     "builtin": (), "setsid": (), "rtk": (), "doas": ("-u", "-C"), "exec": ("-a",),
@@ -3460,12 +3489,13 @@ def _check_window(_wi, w):
         if argv0 == "dd" and any(t.replace(PH, "").startswith("of=/dev/") for t in rest):
             deny("dd writing to a raw device — irrecoverable disk-level destruction", rule="dd-device")
 
-        if argv0 in ("mysql", "psql", "sqlite3", "mariadb"):
+        if argv0 in _SQL_CLIENTS:
             # SQL genuinely lives inside -e/-c values, so DO scan them, but only
             # for known-dangerous statements. TABLE is optional in TRUNCATE
             # grammar. Full PH removal: a splice can land mid-keyword (DR$(true)OP).
             if _SQL_DROP_RE.search(" ".join(rest).replace(PH, "")):
-                deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) detected — confirm with user first", rule="sql-drop")
+                deny("destructive data command (DROP, TRUNCATE, DELETE or UPDATE with no WHERE, dropDatabase/drop/deleteMany({}), "
+                     "FLUSHALL/FLUSHDB) detected — confirm with user first", rule="sql-drop")
 
     # 2026-10-24 sweep: the client tools that drop a database without SQL. dropdb drops the user's own
     # database when no name is given, so anything but a help or version request denies.
@@ -3473,6 +3503,11 @@ def _check_window(_wi, w):
         deny("dropdb drops a database — confirm with user first", rule="sql-drop")
     if _a0 in ("mysqladmin", "mariadb-admin") and any(t.replace(PH, "").lower() == "drop" for t in rest):
         deny("mysqladmin drop drops a database — confirm with user first", rule="sql-drop")
+    # GH #607: rsync --delete (and --del, --delete-after, --delete-excluded, ...) removes every file in the
+    # destination the source lacks. A mirror is often what was meant, so it asks.
+    if _a0 == "rsync" and any(t.replace(PH, "") == "--del" or t.replace(PH, "").startswith("--delete") for t in rest):
+        ask("rsync --delete removes every destination file the source lacks — confirm the source and destination",
+            rule="rsync-delete")
 
 def _run_windows(i):
     while i < len(windows):  # a window's checks may append more (bash -c / eval bodies, find, xargs)

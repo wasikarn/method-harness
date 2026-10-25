@@ -2042,4 +2042,22 @@ test_allow "$IRRECOVERABLE" "GH #561 control: -c alias.co=checkout co -b feat" "
 test_allow "$IRRECOVERABLE" "GH #561 control: git config --get remote.origin.mirror" "$(bash_payload 'git config --get remote.origin.mirror')"
 test_allow "$IRRECOVERABLE" "GH #561 control: git config alias.st status" "$(bash_payload 'git config alias.st status')"
 
+# GH #607: the rest of the data-destroying client commands, on argv and on stdin.
+test_deny  "$IRRECOVERABLE" "GH #607: DELETE FROM with no WHERE" "$(bash_payload "psql -c 'DELETE FROM users'")"
+test_deny  "$IRRECOVERABLE" "GH #607: UPDATE SET with no WHERE" "$(bash_payload "psql -c 'UPDATE users SET pw = NULL'")"
+test_deny  "$IRRECOVERABLE" "GH #607: DROP INDEX" "$(bash_payload "mysql -e 'DROP INDEX i ON t'")"
+test_deny  "$IRRECOVERABLE" "GH #607: DELETE FROM echoed into psql" "$(bash_payload "echo 'DELETE FROM t' | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #607: mongosh dropDatabase" "$(bash_payload "mongosh --eval 'db.dropDatabase()'")"
+test_deny  "$IRRECOVERABLE" "GH #607: mongo deleteMany({})" "$(bash_payload "mongo --eval 'db.users.deleteMany({})'")"
+test_deny  "$IRRECOVERABLE" "GH #607: redis-cli FLUSHALL" "$(bash_payload 'redis-cli FLUSHALL')"
+test_ask   "$IRRECOVERABLE" "GH #607: rsync --delete asks" "$(bash_payload 'rsync -a --delete src/ dst/')"
+test_allow "$IRRECOVERABLE" "GH #607 control: DELETE with WHERE" "$(bash_payload "psql -c 'DELETE FROM users WHERE id = 1'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: UPDATE with WHERE on the next line" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nUPDATE t SET a = 1\nWHERE id = 3;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #607 control: mysql FLUSH PRIVILEGES" "$(bash_payload "mysql -e 'FLUSH PRIVILEGES'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: mongosh deleteMany with a filter" "$(bash_payload "mongosh --eval 'db.users.deleteMany({age: 3})'")"
+test_allow "$IRRECOVERABLE" "GH #607 control: rsync without --delete" "$(bash_payload 'rsync -a src/ dst/')"
+_timed_case 'GH #607: 10000 UPDATE ... SET words before a WHERE are read in bounded time' 2 \
+  "psql -c '$(python3 -c "print('UPDATE t SET ' * 10000 + 'WHERE x')")'"
+
 gates_summary
