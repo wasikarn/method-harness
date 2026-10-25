@@ -2271,7 +2271,6 @@ done
 for _c in \
   'dd if=x of=$DISK' \
   'dd if=x of="$DISK"' \
-  'dd if=x of=$(echo /dev/disk2)' \
   'dd if=x of=${TARGET}' \
   'dd if=x of=${HOME}/disk.img' \
   'dd if=x of=$PWD/../../dev/sda' ; do
@@ -2511,6 +2510,68 @@ done
 for _c in '$(echo claude) -p hi' 'find . -exec claude -p hi \;' ; do
   test_allow "$IRRECOVERABLE" "GH #588 control: the main session may start one: $_c" "$(bash_agent_payload "$_c" '')"
 done
+
+
+# GH #589 (bypass hunt 2026-10-23 F12): a substitution in a flag position blanks to a placeholder with no
+# flag letters, so rm's recursive flag (rm-rf, rm-recursive) was never seen. The "subst-literal" view reads
+# the command again with each literal substitution replaced by what it prints.
+for _c in \
+  'rm $(echo -rf) build' \
+  'rm `echo -rf` build' \
+  'rm -${X:-rf} build' \
+  'rm ${F:--rf} build' \
+  'rm ${F:+-rf} build' \
+  'rm $(printf -- -rf) build' \
+  'rm $(echo -r) build' \
+  'rm "$(echo -rf)" build' \
+  '/bin/rm $(echo -rf) build' \
+  'rm --$(echo recursive) build' \
+  'rm $(cat l) "a;b" $(echo -rf) build' \
+  'rm $(echo -r) x; rm $(echo -i) y' \
+  'sudo rm $(echo -rf) /data' \
+  'rm $( echo -rf ) x' \
+  'rm ` echo -rf` x' \
+  'rm ${X:-${Y:--rf}} x' \
+  'rm $(echo $(echo -rf)) x' \
+  'rm $(command echo -rf) x' \
+  'rm $(/bin/echo -rf) x' \
+  'rm ${F:-"-rf"} /tmp/x' \
+  "rm \${F:-'-rf'} /tmp/x" \
+  "rm \${F:-'-r'}f /tmp/x" \
+  'rm -${F:-"r"}f /tmp/x' \
+  'git reset ${M:-"--hard"}' \
+  'rm "${F:-"-rf"}" /tmp/x' \
+  'rm "${F:-\\"x"}" ${G:-"-rf"} /' \
+  'rm "${F:-\\"x"}" ${G:--rf} /' \
+  'git reset "${F:-\\"x"}" ${M:-"--hard"}' \
+  'rm "${F:-\\\\"x"}" ${G:-"-rf"} /' ; do
+  test_deny "$IRRECOVERABLE" "GH #589: rm's recursive flag held in a substitution: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'rm $(cat list.txt)' \
+  'rm $(echo build.log)' \
+  'rm -${X:-i} build.log' \
+  'rm -f $(git ls-files -d)' \
+  'rm $(echo -ri) build' \
+  'echo rm $(echo -rf)' \
+  'rm $(cat list); echo rm -rf $(date)' \
+  'git rm $(git ls-files -d)' \
+  'rm "${TMPDIR:-/tmp}/x"' \
+  'rm ${X:-build}' \
+  'git commit -m "${MSG:-"chore: x && git reset --hard"}"' \
+  'echo "${X:-"a && git reset --hard"}"' \
+  "printf '%s\\n' \"\${Q:-\\\"}\" \"; git push --force origin main; \" \"\${Q:-\\\"}\"" ; do
+  test_allow "$IRRECOVERABLE" "GH #589 control: rm with no recursive delete: $_c" "$(bash_payload "$_c")"
+done
+
+# GH #589 x #585: the subst-literal view shows dd's target, so a device named by a literal echo denies.
+# The main reading asks first (a substitution target), so stdout holds that ask: exit 2 is what blocks.
+_rc=$(bash_payload 'dd if=x of=$(echo /dev/disk2)' | bash "$IRRECOVERABLE" >/dev/null 2>&1; echo $?)
+if [[ "$_rc" == "2" ]]; then
+  echo "  ✅ DENY (exit 2): GH #589: dd if=x of=\$(echo /dev/disk2)"; pass=$((pass + 1))
+else
+  echo "  ❌ exit 2 EXPECTED, got $_rc: GH #589: dd if=x of=\$(echo /dev/disk2)" >&2; fail=$((fail + 1))
+fi
 
 
 gates_summary
