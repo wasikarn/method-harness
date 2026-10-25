@@ -109,8 +109,12 @@ DENY rm -r --forc ./build
 DENY rm --r --f ./build
 DENY rm --recursive --fo ./build
 ALLOW rm --dir --force ./build
-ALLOW rm -r --forcex ./build
-ALLOW rm --rec --verbose ./build
+# rm -r alone denies too (rule rm-recursive, 2026-10-25), so these prefix rows deny whatever the long option is
+DENY rm -r --forcex ./build
+DENY rm --rec --verbose ./build
+ALLOW rm --dir --forcex ./build
+DENY rm --verbose --re ./build
+ALLOW rm --verbose --dir ./build
 DENY echo `date` $(rm --rec --forc ./build)
 ALLOW echo `date` $(rm --verbose ./build)
 ALLOW mkfs.ext4 -V
