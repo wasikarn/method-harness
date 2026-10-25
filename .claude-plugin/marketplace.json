@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "mh",
-      "version": "1.1.248",
+      "version": "1.1.256",
       "source": ".",
       "description": "A Claude Code harness that composes mattpocock-skills instead of duplicating it. Nine computational deny/ask gates (irrecoverable commands, subagent git guard, subagent spawn guard, task-complete separation, test integrity, config-write guard, secret-content scan, codex-setup guard, routine-trigger guard) plus a SubagentStop verdict-check gate, a 4 KB METHODOLOGY injected at SessionStart, and memory-lint for the auto-memory store.",
       "author": {

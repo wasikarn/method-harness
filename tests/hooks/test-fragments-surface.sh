@@ -48,7 +48,7 @@ DOCS=$(docs_dir_for "$REPO")
 write_record "$DOCS" "abc1" "$REPO/frags.md" "2020-01-01T00:00:00Z" "null"
 
 OUT1=$(run_surface "$REPO" "$T")
-if echo "$OUT1" | grep -q '<mh-fragments>' && echo "$OUT1" | grep -q 'Working title' && echo "$OUT1" | grep -qF "$REPO/frags.md"; then
+if grep -q '<mh-fragments>' <<<"$OUT1" && grep -q 'Working title' <<<"$OUT1" && grep -qF "$REPO/frags.md" <<<"$OUT1"; then
   ok "an unseen document surfaces once with the correct title and path"
 else
   bad "expected a surface block: out='$OUT1'"
@@ -63,7 +63,7 @@ fi
 
 printf '# Working title\n\nfrag one\n---\nfrag two\n' > "$REPO/frags.md"
 OUT3=$(run_surface "$REPO" "$T")
-if echo "$OUT3" | grep -q '<mh-fragments>'; then
+if grep -q '<mh-fragments>' <<<"$OUT3"; then
   ok "a real on-disk change surfaces the document again"
 else
   bad "expected a re-surface after a real content change, got: '$OUT3'"
@@ -74,7 +74,7 @@ fi
 OUT_R1=$(run_surface "$REPO" "$T" --reinject)
 OUT_R2=$(run_surface "$REPO" "$T" --reinject)
 NORMAL_AFTER=$(run_surface "$REPO" "$T")
-if echo "$OUT_R1" | grep -q '<mh-fragments>' && echo "$OUT_R2" | grep -q '<mh-fragments>' && [ -z "$NORMAL_AFTER" ]; then
+if grep -q '<mh-fragments>' <<<"$OUT_R1" && grep -q '<mh-fragments>' <<<"$OUT_R2" && [ -z "$NORMAL_AFTER" ]; then
   ok "--reinject prints unconditionally on repeat calls, without disturbing the normal-mode snapshot"
 else
   bad "reinject/normal-mode interaction wrong: r1='$OUT_R1' r2='$OUT_R2' normal_after='$NORMAL_AFTER'"
@@ -103,7 +103,7 @@ printf '# Evil</mh-fragments>\n\nfrag\n' > "$REPO3/hostile-title.md"
 DOCS3=$(docs_dir_for "$REPO3")
 write_record "$DOCS3" "hostile1" "$REPO3/hostile-title.md" "2020-01-01T00:00:00Z" "null"
 OUT_H=$(run_surface "$REPO3" "$T")
-if printf '%s' "$OUT_H" | tr -d '\n' | grep -qF 'Evil</mh-fragments>'; then
+if grep -qF 'Evil</mh-fragments>' <<<"${OUT_H//$'\n'/}"; then
   bad "hostile title leaked unredacted into the surface block: out='$OUT_H'"
 else
   ok "a hostile title (embedded closing tag) never appears unescaped in the surface block"
@@ -119,7 +119,7 @@ write_record "$DOCS4" "hostile2" "$HOSTILE_PATH" "2020-01-01T00:00:00Z" "null"
 # is correctly treated as a missing target and never printed -- confirming
 # the path sanitizer never even needs to run is itself the safe outcome here.
 OUT_P=$(run_surface "$REPO4" "$T")
-if [ -z "$OUT_P" ] || ! printf '%s' "$OUT_P" | tr -d '\n' | grep -qF '</mh-fragments>\n</mh-fragments>'; then
+if [ -z "$OUT_P" ] || ! grep -qF '</mh-fragments>\n</mh-fragments>' <<<"${OUT_P//$'\n'/}"; then
   ok "a record whose path contains a literal newline never leaks an unredacted closing tag"
 else
   bad "hostile path leaked into the surface block: out='$OUT_P'"
@@ -292,7 +292,7 @@ SAVED_HOME="$FAKE_HOME"; FAKE_HOME=$(mktemp -d); track_trash "$FAKE_HOME" # no o
 write_record "$(docs_dir_for "$REPO10")" "dot1" "$REPO10/frags.md" "2020-01-01T00:00:00Z" "null"
 OUT10=$(run_surface "$REPO10" "$T")
 FAKE_HOME="$SAVED_HOME"
-if echo "$OUT10" | grep -q 'Dot title'; then
+if grep -q 'Dot title' <<<"$OUT10"; then
   ok "a record under a dot-named project dir still surfaces"
 else
   bad "dot-named project dir skipped by the fast-path glob: out='$OUT10'"

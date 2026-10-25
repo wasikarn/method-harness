@@ -124,9 +124,9 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 total=$(printf '%s' "$out" | /usr/bin/grep '^total:' | /usr/bin/grep -oE '\$[0-9.]+' | tr -d '$')
 [[ "$rc" == "0" && "$total" == "10.0000" ]] \
-  && printf '%s' "$out" | /usr/bin/grep -q 'By agent type' \
-  && printf '%s' "$out" | /usr/bin/grep -q 'mh:code-reviewer' \
-  && printf '%s' "$out" | /usr/bin/grep -q 'Explore' && ok=1 || ok=0
+  && /usr/bin/grep -q 'By agent type' <<<"$out" \
+  && /usr/bin/grep -q 'mh:code-reviewer' <<<"$out" \
+  && /usr/bin/grep -q 'Explore' <<<"$out" && ok=1 || ok=0
 assert "two subagent rows (same session+model+stream, DIFFERENT agent_type) both survive dedup, sum to \$10, and appear in the By agent type section (got total=\$${total:-?})" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -154,11 +154,11 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 agent_section=$(printf '%s' "$out" | awk '/=== By agent type/{f=1;next} /^$/{f=0} f')
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$agent_section" | /usr/bin/grep -q 'Explore' \
-  && printf '%s' "$agent_section" | /usr/bin/grep -q '\$2.0000' \
-  && ! printf '%s' "$agent_section" | /usr/bin/grep -q '1000' \
-  && printf '%s' "$agent_section" | /usr/bin/grep -q '\$3.0000.*(unknown)$' \
-  && printf '%s' "$agent_section" | /usr/bin/grep -qE '\b7 tok  Explore$' \
+  && /usr/bin/grep -q 'Explore' <<<"$agent_section" \
+  && /usr/bin/grep -q '\$2.0000' <<<"$agent_section" \
+  && ! /usr/bin/grep -q '1000' <<<"$agent_section" \
+  && /usr/bin/grep -q '\$3.0000.*(unknown)$' <<<"$agent_section" \
+  && /usr/bin/grep -qE '\b7 tok  Explore$' <<<"$agent_section" \
   && [[ "$(printf '%s\n' "$agent_section" | /usr/bin/grep -oE '\(unknown\)|Explore' | tr '\n' ' ')" == "(unknown) Explore " ]] && ok=1 || ok=0
 assert "By agent type shows the typed subagent row's \$2.0000 and the untyped subagent row as its own \$3.0000 (unknown) line, never the orchestrator's \$1000, with a tok column, ranked by cost desc ((unknown) \$3 above Explore \$2 despite reverse insertion order)" "$ok"
 trash "$fake_home" 2>/dev/null || true
@@ -179,8 +179,8 @@ EOF
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$out" | /usr/bin/grep -q '^note: 1 of 3 rows predate dedup_usage.*turns, tokens, and cost run ~2.4x high' \
-  && printf '%s' "$out" | /usr/bin/grep -q '^note: 1 of 3 rows predate usage_pick.*output_tokens (and cost) run ~39% low' && ok=1 || ok=0
+  && /usr/bin/grep -q '^note: 1 of 3 rows predate dedup_usage.*turns, tokens, and cost run ~2.4x high' <<<"$out" \
+  && /usr/bin/grep -q '^note: 1 of 3 rows predate usage_pick.*output_tokens (and cost) run ~39% low' <<<"$out" && ok=1 || ok=0
 assert "era notes: the pre-dedup row's note names cost as inflated, the first-line row gets the output-low note, and the modern row triggers neither (1 of 3 each)" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -198,7 +198,7 @@ EOF
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$out" | /usr/bin/grep -q '^note: 1 of 2 rows predate the 1h/5m cache-write split' && ok=1 || ok=0
+  && /usr/bin/grep -q '^note: 1 of 2 rows predate the 1h/5m cache-write split' <<<"$out" && ok=1 || ok=0
 assert "third era note fires once for the pre-#162 row with real cache writes, not for the post-#162 zero-1h row" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -219,7 +219,7 @@ EOF
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$out" | /usr/bin/grep -q '^note: 1 of 4 rows are claude-opus-5-5 from before the missing rate-table branch' && ok=1 || ok=0
+  && /usr/bin/grep -q '^note: 1 of 4 rows are claude-opus-5-5 from before the missing rate-table branch' <<<"$out" && ok=1 || ok=0
 assert "fourth era note fires once for the pre-1.1.116 opus-5-5 row only, not the fixed opus-5-5 row, the pre-1.1.116 sonnet row, or the version-less row (1.1.9 < 1.1.116 compared numerically, not lexically)" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -246,7 +246,7 @@ cat > "$metrics_dir/costs.jsonl" <<'EOF'
 EOF
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
-[[ "$rc" == "0" ]] && ! printf '%s' "$out" | /usr/bin/grep -q '^note:' && ok=1 || ok=0
+[[ "$rc" == "0" ]] && ! /usr/bin/grep -q '^note:' <<<"$out" && ok=1 || ok=0
 assert "modern-only data prints no era note" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -266,10 +266,10 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 hv_section=$(printf '%s' "$out" | awk '/=== Handoff cost/{f=1;next} /^$/{f=0} f')
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$out" | /usr/bin/grep -q '^total:     \$6.0000' \
-  && printf '%s' "$hv_section" | /usr/bin/grep -q 'returns per orchestrator turn: 0.30' \
-  && printf '%s' "$hv_section" | /usr/bin/grep -qE '300 med +500 p90 +3 returns  all subagents$' \
-  && ! printf '%s' "$hv_section" | /usr/bin/grep -qi 'untagged\|(unknown)' && ok=1 || ok=0
+  && /usr/bin/grep -q '^total:     \$6.0000' <<<"$out" \
+  && /usr/bin/grep -q 'returns per orchestrator turn: 0.30' <<<"$hv_section" \
+  && /usr/bin/grep -qE '300 med +500 p90 +3 returns  all subagents$' <<<"$hv_section" \
+  && ! /usr/bin/grep -qi 'untagged\|(unknown)' <<<"$hv_section" && ok=1 || ok=0
 assert "Handoff cost section: returns/turn 0.30, all-subagents med 300 p90 500 over 3 returns; legacy row without verify_per_return skipped, total still \$6" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -285,7 +285,7 @@ EOF
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 total=$(printf '%s' "$out" | /usr/bin/grep '^total:' | /usr/bin/grep -oE '\$[0-9.]+' | tr -d '$')
-[[ "$rc" == "0" && "$total" == "1.5000" ]] && ! printf '%s' "$out" | /usr/bin/grep -q '=== Handoff cost' && ok=1 || ok=0
+[[ "$rc" == "0" && "$total" == "1.5000" ]] && ! /usr/bin/grep -q '=== Handoff cost' <<<"$out" && ok=1 || ok=0
 assert "row without verify_per_return: no Handoff section, total unaffected by the restored fields (got total=\$${total:-?})" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -303,8 +303,8 @@ EOF
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$out" | /usr/bin/grep -q '^warning: 2 jq_failed sentinel rows for session deadbeef' \
-  && printf '%s' "$out" | /usr/bin/grep -q '^total:     \$0.0000  (0 sessions)' && ok=1 || ok=0
+  && /usr/bin/grep -q '^warning: 2 jq_failed sentinel rows for session deadbeef' <<<"$out" \
+  && /usr/bin/grep -q '^total:     \$0.0000  (0 sessions)' <<<"$out" && ok=1 || ok=0
 assert "sentinel-only session prints one warning (count 2, id prefix) and is not counted as a \$0 session (0 sessions)" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -320,7 +320,7 @@ cat > "$metrics_dir/costs.jsonl" <<'EOF'
 EOF
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
-[[ "$rc" == "0" ]] && printf '%s' "$out" | /usr/bin/grep -q 'returns per orchestrator turn: 0.10  (2 returns / 20 turns)' && ok=1 || ok=0
+[[ "$rc" == "0" ]] && /usr/bin/grep -q 'returns per orchestrator turn: 0.10  (2 returns / 20 turns)' <<<"$out" && ok=1 || ok=0
 assert "returns per orchestrator turn counts a zero-return orchestrator row's turns in the denominator (2/20 = 0.10)" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -329,7 +329,7 @@ trash "$fake_home" 2>/dev/null || true
 fake_home=$(mktemp -d)
 out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
-[[ "$rc" == "0" ]] && printf '%s' "$out" | /usr/bin/grep -q '^Cost tracker not set up:' && ok=1 || ok=0
+[[ "$rc" == "0" ]] && /usr/bin/grep -q '^Cost tracker not set up:' <<<"$out" && ok=1 || ok=0
 assert "missing costs.jsonl prints the 'Cost tracker not set up' line and exits 0" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -348,8 +348,8 @@ rc=$?
 header="$(printf '%s\n' "$out" | head -1)"
 row="$(printf '%s\n' "$out" | tail -1)"
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$header" | /usr/bin/grep -q 'cache_write_tokens_1h' \
-  && printf '%s' "$row" | /usr/bin/grep -q ',100,900,' && ok=1 || ok=0
+  && /usr/bin/grep -q 'cache_write_tokens_1h' <<<"$header" \
+  && /usr/bin/grep -q ',100,900,' <<<"$row" && ok=1 || ok=0
 assert "csv mode's header and row both carry cache_write_tokens_1h (100 5m, 900 1h)" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -385,7 +385,7 @@ rc=$?
 line=$(printf '%s\n' "$out" | /usr/bin/grep '^ledger cross-check:')
 [[ "$rc" == "0" && "$line" == 'ledger cross-check: transcript $8.0000 vs ledger $11.0000 over 1 sessions; unattributed $3.0000 (27.3% of ledger)' ]] && ok=1 || ok=0
 assert "cross-check recomputes the ledger from the usd sequence across a reload and a reset (\$11), against the deduped transcript total (\$8) (got: ${line:-none})" "$ok"
-printf '%s\n' "$out" | /usr/bin/grep -q '^warning: 1 cost-ledger error rows' && ok=1 || ok=0
+/usr/bin/grep -q '^warning: 1 cost-ledger error rows' <<<"$out" && ok=1 || ok=0
 assert "a cost-ledger error row is left out of the ledger total and counted in a warning line" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -452,7 +452,7 @@ rc=$?
 line=$(printf '%s\n' "$out" | /usr/bin/grep '^ledger cross-check:')
 [[ "$rc" == "0" && "$line" == 'ledger cross-check: transcript $1.5000 vs ledger $1.5000 over 1 sessions; unattributed $0.0000 (0.0% of ledger)' ]] && ok=1 || ok=0
 assert "a null, empty, string or missing usd is skipped, not read as a \$0 reset (\$1.50, not \$2.50) (got: ${line:-none})" "$ok"
-printf '%s\n' "$out" | /usr/bin/grep -q '^warning: 4 cost-ledger rows with no finite usd were skipped' && ok=1 || ok=0
+/usr/bin/grep -q '^warning: 4 cost-ledger rows with no finite usd were skipped' <<<"$out" && ok=1 || ok=0
 assert "the skipped non-finite usd rows are counted in a warning line" "$ok"
 trash "$fake_home" 2>/dev/null || true
 
@@ -479,9 +479,9 @@ rc=$?
 line=$(printf '%s\n' "$out" | /usr/bin/grep '^module loaded:')
 [[ "$rc" == "0" && "$line" == 'module loaded: 1 of 2 sessions since the first load marker'* ]] && ok=1 || ok=0
 assert "module loaded counts sessions with a load marker over sessions since the first marker (got: ${line:-none})" "$ok"
-printf '%s\n' "$out" | /usr/bin/grep -q 'no finite usd' && ok=0 || ok=1
+/usr/bin/grep -q 'no finite usd' <<<"$out" && ok=0 || ok=1
 assert "a load marker row is not counted as a row with no finite usd" "$ok"
-printf '%s\n' "$out" | /usr/bin/grep -q '^ledger cross-check: no ledger data' && ok=1 || ok=0
+/usr/bin/grep -q '^ledger cross-check: no ledger data' <<<"$out" && ok=1 || ok=0
 assert "a marker-only ledger file still reads 'no ledger data' for the cross-check" "$ok"
 # No marker at all (modules off since the module change, or an older mh): say so, never 0 of N.
 printf '%s\n' '{"t":"2026-10-03T00:00:01Z","session_id":"mk-a","turn_id":"t1","usd":1,"delta":1,"reset":false}' > "$metrics_dir/cost-ledger.jsonl"

@@ -36,24 +36,24 @@ else
   else
     bad "layer exited 0 with a failing file"
   fi
-  if printf '%s\n' "$line" | /usr/bin/grep -qF "$FIX/test-red.sh"; then
+  if /usr/bin/grep -qF "$FIX/test-red.sh" <<<"$line"; then
     ok "a 'failing:' line names the failing file"
   else
     bad "no 'failing:' line naming $FIX/test-red.sh; got: <$line>"
   fi
-  if printf '%s\n' "$line" | /usr/bin/grep -qF "test-green.sh"; then
+  if /usr/bin/grep -qF "test-green.sh" <<<"$line"; then
     bad "the 'failing:' line also names the passing file: <$line>"
   else
     ok "the 'failing:' line leaves out the passing file"
   fi
   # GH #158: the failing row itself, so a load flake reads differently from a regression.
   at=$(printf '%s\n' "$out" | /usr/bin/grep '^failed-at:')
-  if printf '%s\n' "$at" | /usr/bin/grep -qF "test-red.sh" && printf '%s\n' "$at" | /usr/bin/grep -qF 'finishes inside 8 s (rc 124)'; then
+  if /usr/bin/grep -qF "test-red.sh" <<<"$at" && /usr/bin/grep -qF 'finishes inside 8 s (rc 124)' <<<"$at"; then
     ok "a 'failed-at:' line names the failing file and its failing row"
   else
     bad "no 'failed-at:' line with the failing row; got: <$at>"
   fi
-  if printf '%s\n' "$at" | /usr/bin/grep -qF "fine row"; then
+  if /usr/bin/grep -qF "fine row" <<<"$at"; then
     bad "the 'failed-at:' line includes a passing row: <$at>"
   else
     ok "the 'failed-at:' line leaves out passing rows"
@@ -73,12 +73,12 @@ else
   printf -- '--- tests/x.sh\nnoise\nfailed-at: tests/scripts/test-red.sh: ❌ row\nfailing: tests/scripts/test-red.sh\n' >"$LOGDIR/tests"
   out=$(bash -c "LOG='$LOGDIR'; fail=1; $TAIL" 2>&1)
   last=$(printf '%s\n' "$out" | tail -n 1)
-  if printf '%s\n' "$last" | /usr/bin/grep -qF 'failing: tests/scripts/test-red.sh'; then
+  if /usr/bin/grep -qF 'failing: tests/scripts/test-red.sh' <<<"$last"; then
     ok "the last line of a failed run repeats the failing: list"
   else
     bad "the last line of a failed run does not name the file: <$last>"
   fi
-  if printf '%s\n' "$out" | /usr/bin/grep -qF 'failed-at: tests/scripts/test-red.sh: ❌ row'; then
+  if /usr/bin/grep -qF 'failed-at: tests/scripts/test-red.sh: ❌ row' <<<"$out"; then
     ok "a failed run repeats the failed-at: rows above the failing: list"
   else
     bad "a failed run does not repeat the failed-at: rows: <$out>"
@@ -92,7 +92,7 @@ out2=$(bash -c "
   hook_test_files() { printf '%s\n' '$FIX/test-red.sh'; }
   run_hook_tests
 " 2>&1)
-if printf '%s\n' "$out2" | /usr/bin/grep '^failed-at:' | /usr/bin/grep -qF 'real regression row'; then
+if /usr/bin/grep -q '^failed-at:.*real regression row' <<<"$out2"; then
   ok "failed-at keeps the failing row when passing rows also say FAIL"
 else
   bad "failed-at hid the failing row behind passing rows: <$out2>"

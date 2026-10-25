@@ -109,7 +109,7 @@ PATH="$TRASHSHIM2:$PATH" bash -c "
 LEAKED4=$(cat "$ROOT_LOG4" 2>/dev/null)
 [ -n "$LEAKED4" ] && LEAKED_ROOTS+=("$LEAKED4")
 LOGGED=$(cat "$TRASH_LOG2" 2>/dev/null)
-if printf '%s' "$LOGGED" | /usr/bin/grep -qF "$FAKE_REAL_HOME" && printf '%s' "$LOGGED" | /usr/bin/grep -qF "$FAKE_REAL_EXTRA" && ! printf '%s' "$LOGGED" | /usr/bin/grep -qx ''; then
+if /usr/bin/grep -qF "$FAKE_REAL_HOME" <<<"$LOGGED" && /usr/bin/grep -qF "$FAKE_REAL_EXTRA" <<<"$LOGGED" && ! /usr/bin/grep -qx '' <<<"$LOGGED"; then
   ok "_cleanup_trash trashes every real target, mixed with empties, without an empty argv element"
 else
   bad "_cleanup_trash real-target pass failed: logged='$LOGGED'"
