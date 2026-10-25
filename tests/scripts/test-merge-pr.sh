@@ -59,9 +59,18 @@ case "$*" in
   *) exit 2 ;;
 esac
 EOF
+# uptime runs in the work clone after the lock is taken; STUB_DIRTY_DURING has it leave a stray file
+# there, as a caller still editing the checkout during the wait would.
 cat >"$STUB/uptime" <<'EOF'
 #!/usr/bin/env bash
+[ -z "${STUB_DIRTY_DURING:-}" ] || echo stray >stray.txt
 echo "10:00  up 1 day, 2 users, load averages: $STUB_LOAD 2.00 2.00"
+EOF
+# A pre-commit hook that fails when STUB_PRECOMMIT_FAIL is set (a red lint on the sync or bump commit).
+cat >"$STUB/hooks/pre-commit" <<'EOF'
+#!/usr/bin/env bash
+[ -z "${STUB_PRECOMMIT_FAIL:-}" ] || { echo "pre-commit: red" >&2; exit 1; }
+exit 0
 EOF
 # The work clone's pre-push hook stands in for the gauntlet: it records the tree it ran on and the lock
 # variables it saw, fails when STUB_PREPUSH_FAIL is set, and on its first call with STUB_PREPUSH_PEER
@@ -73,8 +82,10 @@ n=0; [ ! -f "$STUB_DIR/prepush.n" ] || n=$(cat "$STUB_DIR/prepush.n"); n=$((n + 
   echo "head=$(git rev-parse HEAD)"
   echo "dirty=$(git status --porcelain | tr '\n' ' ')"
   echo "lockdir=${GAUNTLET_LOCK_DIR-} owner=${MH_GAUNTLET_LOCK_OWNER-}"
+  if [ -d "$MERGE_PR_LOCK_DIR" ]; then echo "mergelock=held"; else echo "mergelock=free"; fi
 } >>"$STUB_DIR/prepush.log"
 [ -z "${STUB_PREPUSH_FAIL:-}" ] || { echo "gauntlet: red" >&2; exit 1; }
+[ -z "${STUB_PREPUSH_DIRTY:-}" ] || echo edit >>b.txt
 if [ -n "${STUB_PREPUSH_PEER:-}" ] && [ "$n" -eq 1 ]; then
   (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; bash "$STUB_PEER")
 fi
@@ -98,7 +109,7 @@ echo peer >>c.txt
 git commit -qam peer-during-gauntlet
 git push -q origin develop
 EOF
-chmod +x "$STUB/gh" "$STUB/uptime" "$STUB/hooks/pre-push"
+chmod +x "$STUB/gh" "$STUB/uptime" "$STUB/hooks/pre-push" "$STUB/hooks/pre-commit"
 
 PLUGIN=.claude-plugin/plugin.json
 MARKET=.claude-plugin/marketplace.json
@@ -217,6 +228,7 @@ if /usr/bin/grep -qx "head=$(remote_tip feat/x)" "$F/prepush.log" && /usr/bin/gr
   ok "the pre-push gauntlet ran on the clean tree that merges"
 else bad "pre-push saw: $(cat "$F/prepush.log")"; fi
 if /usr/bin/grep -qx "lockdir= owner=" "$F/prepush.log"; then ok "the merge lock does not leak into the pre-push hook"; else bad "hook env: $(cat "$F/prepush.log")"; fi
+if /usr/bin/grep -qx "mergelock=held" "$F/prepush.log"; then ok "the merge lock is held while the gauntlet runs"; else bad "lock during push: $(cat "$F/prepush.log")"; fi
 if w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then ok "the merged head contains origin/develop"; else bad "head misses develop"; fi
 
 # 2. up to date with develop, same version: a plain bump commit on the PR head.
@@ -248,6 +260,12 @@ merges "version-only conflict"
 if [ "$(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")" = "1.1.4 1.1.4" ] && [ "$(desc_of "$F/work/$MARKET")" = "PR desc" ]; then
   ok "version conflict resolved, PR's description kept"
 else bad "manifests: $(cat "$F/work/$MARKET")"; fi
+
+# 4b. a deliberate minor bump in the PR survives the version conflict: 1.2.0 over develop's 1.1.2.
+setup; on feat/x "minor" set_ver 1.2.0; on develop "peer" set_ver 1.1.2
+run
+merges "deliberate minor bump"
+if [ "$(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")" = "1.2.0 1.2.0" ]; then ok "the PR's higher version is kept"; else bad "minor bump became $(ver_of "$F/work/$PLUGIN")"; fi
 
 # 5. a real conflict in another file: refuse, nothing committed or pushed.
 setup; on feat/x "pr a" append a.txt pr; on develop "dev a" append a.txt dev
@@ -291,7 +309,33 @@ run
 refuses "wrong branch" "checkout of PR 451's branch feat/x"
 setup; work; printf 'x\n' >"$F/work/stray.txt"
 run
-if [ "$rc" -ne 0 ] && /usr/bin/grep -q "untracked" <<<"$out" && ! merged; then ok "an untracked file refuses"; else bad "untracked rc=$rc: $out"; fi
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "untracked" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ]; then ok "an untracked file refuses"; else bad "untracked rc=$rc: $out"; fi
+untouched "untracked file"
+
+# 10b. the caller edits the checkout during the lock or load wait: refuse before syncing or pushing.
+setup; on develop "peer" set_ver 1.1.2
+STUB_DIRTY_DURING=1 run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "after the lock and load waits" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ]; then
+  ok "an edit during the wait refuses"
+else bad "edit during the wait rc=$rc: $out"; fi
+untouched "edit during the wait"
+
+# 10c. the checkout changes while the gauntlet runs: its result does not cover the tree, so no merge.
+setup
+STUB_PREPUSH_DIRTY=1 run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "changed while the pre-push gauntlet ran" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ]; then
+  ok "an edit during the gauntlet refuses the merge"
+else bad "edit during the gauntlet rc=$rc: $out"; fi
+
+# 10d. a red pre-commit hook on the sync or the bump commit: refuse, abort the merge, restore the manifests.
+setup; on develop "peer" set_ver 1.1.2
+STUB_PRECOMMIT_FAIL=1 run
+refuses "red pre-commit on the sync" "git commit of the sync failed"
+untouched "red pre-commit on the sync"
+setup
+STUB_PRECOMMIT_FAIL=1 run
+refuses "red pre-commit on the bump" "git commit of the version bump failed"
+untouched "red pre-commit on the bump"
 setup; work; on feat/x "pushed elsewhere" append b.txt more
 run
 refuses "local branch behind the PR head" "pull the branch first"

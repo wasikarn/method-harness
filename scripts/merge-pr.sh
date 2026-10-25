@@ -78,10 +78,16 @@ cur=$(git symbolic-ref --quiet --short HEAD) || cur=""
 if [ "$cur" != "$branch" ]; then
   die "run this from a checkout of PR $pr's branch $branch (this one is on ${cur:-a detached HEAD}): the script commits the sync and the version there and pushes them."
 fi
-dirty=$(git status --porcelain) || die "git status failed."
-if [ -n "$dirty" ]; then
-  die "the checkout has uncommitted or untracked files; the pre-push gauntlet runs on this tree, so it must match the commit that merges. Commit or move them first."
-fi
+# require_clean <when>: checked at the start, at each round, and before and after the push, since the
+# lock and load waits leave the caller time to edit this checkout.
+require_clean() {
+  local dirty
+  dirty=$(git status --porcelain) || die "git status failed."
+  if [ -n "$dirty" ]; then
+    die "the checkout has uncommitted or untracked files $1; the pre-push gauntlet runs on this tree, so it must match the commit that merges. Commit or move them, and do not edit this checkout while merge-pr.sh runs."
+  fi
+}
+require_clean "at the start"
 rc=0
 git merge-base --is-ancestor "$head" HEAD || rc=$?
 if [ "$rc" -ne 0 ]; then
@@ -115,11 +121,12 @@ version_lt() {
 
 # A PR made before the version moved here still bumps its own version, and merging develop conflicts on
 # that line alone. Merge each conflicted manifest again with the version set to one placeholder on all
-# three sides, so the PR's other edits in the file survive; sync_and_bump then writes the real number.
+# three sides, so the PR's other edits in the file survive, then put the PR's own version back, so
+# sync_and_bump keeps a deliberate higher one (a minor bump) and cuts develop + 1 otherwise.
 # Any other conflict refuses.
 placeholder_blob() { git show ":$1:$2" | with_version 0.0.0-merge | git hash-object -w --stdin; }
 resolve_manifest_conflicts() {
-  local files f b o t merged
+  local files f b o t merged ours mrc
   files=$(git diff --name-only --diff-filter=U) || die "cannot list the conflicted files."
   [ -n "$files" ] || die "git merge origin/develop failed without a conflict (see above)."
   while IFS= read -r f; do
@@ -131,8 +138,16 @@ resolve_manifest_conflicts() {
   while IFS= read -r f; do
     { b=$(placeholder_blob 1 "$f") && o=$(placeholder_blob 2 "$f") && t=$(placeholder_blob 3 "$f"); } ||
       die "cannot read the merge stages of $f."
-    merged=$(git merge-file -p --object-id "$o" "$b" "$t") ||
+    mrc=0
+    merged=$(git merge-file -p --object-id "$o" "$b" "$t") || mrc=$?
+    # merge-file exits with the conflict count, or 128+ on an error (--object-id needs git 2.43+).
+    [ "$mrc" -lt 128 ] || die "git merge-file failed on $f (rc=$mrc; it needs git 2.43 or later)."
+    [ "$mrc" -eq 0 ] ||
       die "$f still conflicts with the version set aside (another edit in it clashes). Merge origin/develop by hand, commit, push, then run merge-pr.sh again."
+    ours=$(git show ":2:$f" | first_version) || die "cannot read the PR's version of $f."
+    if is_xyz "$ours"; then
+      merged=$(printf '%s\n' "$merged" | with_version "$ours") || die "cannot rewrite the version in $f."
+    fi
     printf '%s\n' "$merged" >"$f"
     git add -- "$f"
     echo "merge-pr: $f conflicted only on the version; merged the rest." >&2
@@ -280,7 +295,14 @@ push_head() {
   env -u MH_GAUNTLET_LOCK_OWNER git push origin "HEAD:refs/heads/$branch" || rc=$?
   remote=$(remote_head) || exit 1
   if [ "$remote" != "$head" ]; then
-    die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push gauntlet failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch."
+    die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push gauntlet failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch, and a fix commit needs a new review verdict."
+  fi
+  # shortcut: a rerun finds origin already at $head and merges without a new gauntlet; enforcing one
+  # would need state kept between runs, so the message tells the caller to run it by hand.
+  local dirty
+  dirty=$(git status --porcelain) || die "git status failed."
+  if [ -n "$dirty" ]; then
+    die "the checkout changed while the pre-push gauntlet ran, so its result does not cover $head. Clean the checkout, run bash scripts/run-gauntlet.sh on it, then run merge-pr.sh again."
   fi
   [ "$rc" -eq 0 ] || echo "merge-pr: git push exited $rc but origin has $head; going on." >&2
   until [ "$(gh pr view "$pr" --json headRefOid -q .headRefOid)" = "$head" ]; do
@@ -303,12 +325,16 @@ git fetch origin || die "git fetch failed after taking the merge lock; not mergi
 round=1
 while :; do
   wait_for_load
+  require_clean "after the lock and load waits"
   sync_and_bump
   head=$(git rev-parse HEAD)
   check_version
   check_review
   remote=$(remote_head) || exit 1
-  [ "$remote" = "$head" ] || push_head
+  if [ "$remote" != "$head" ]; then
+    require_clean "before the push"
+    push_head
+  fi
   # A merge made outside this script lands no matter the lock: fetch, and sync again if it did.
   git fetch origin || die "git fetch failed after the push; not merging."
   rc=0

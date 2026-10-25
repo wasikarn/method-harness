@@ -39,7 +39,9 @@ at merge time** (2026-10-25: while each PR bumped itself, every peer merge re-co
 on the two manifest lines, and #581 took about six re-sync and gauntlet cycles to land).
 
 Run it from the PR's own checkout, on its branch, with a clean tree (untracked files count), and
-start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. It:
+start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. Do not edit that
+checkout while it runs; it re-checks the tree after each wait and before and after its push, and
+refuses on any change. It:
 
 1. refuses unless the PR's base is `develop`, the checkout is on the PR's head branch, the tree is
    clean, and the local branch contains the PR head (a rerun after a red gauntlet carries the
@@ -54,11 +56,15 @@ start it with `run_in_background`: one run can span a lock wait plus a full gaun
    (`Merge origin/develop into <branch>; bump mh to N`), or `chore: bump mh to N` when no sync was
    needed. An older PR that still bumps its own version conflicts on that line: when the only
    conflicts are the manifests, the script merges them again with the version set aside, so the
-   PR's other manifest edits survive; any other conflict refuses (merge by hand, push, rerun);
+   PR's other manifest edits survive, then keeps the PR's own version if it is higher (a deliberate
+   minor bump); any other conflict refuses (merge by hand, push, rerun);
 6. pushes to the PR branch, so the pre-push gauntlet runs on the exact tree that will merge. It
    checks the push by `git ls-remote`, not the exit code (exit 141 is an idle SSH drop after the
    hook), and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
-   on the local branch: fix, commit, rerun;
+   on the local branch: fix, commit, rerun (a fix commit that touches more than the manifests needs
+   a new review verdict). If the tree changed while the gauntlet ran, it refuses the merge; a rerun
+   finds origin already at that head and does not push again, so run `bash scripts/run-gauntlet.sh`
+   on the clean checkout first;
 7. fetches; if `origin/develop` moved (a merge made outside the script), goes back to step 4, three
    rounds at most;
 8. re-checks the version (plain `X.Y.Z`, both manifests equal, above `origin/develop`'s), the review
