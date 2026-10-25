@@ -5,6 +5,8 @@
 # injected into the model's context). PATH holds only stubs, so no real apt-get, sudo or pip ever
 # runs; the hooksPath cases link the real git and point CLAUDE_PROJECT_DIR at a throwaway repo.
 set -uo pipefail
+# A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 HOOK="$HERE/../../.claude/hooks/session-start.sh"
 BASH_BIN="$(command -v bash)"
