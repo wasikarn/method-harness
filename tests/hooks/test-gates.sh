@@ -67,6 +67,26 @@ test_deny  "$IRRECOVERABLE" "mysql -e drop table: the SQL verb in lower case" \
   "$(bash_payload 'mysql -e "drop table users"')"
 test_deny  "$IRRECOVERABLE" "psql -c DROP SCHEMA: a schema drop, not just table/database" \
   "$(bash_payload 'psql -c "DROP SCHEMA public CASCADE"')"
+# GH #559: SQL a client reads on stdin, and the client tools that drop a database without SQL.
+test_deny  "$IRRECOVERABLE" "GH #559: DROP TABLE in a heredoc psql reads" \
+  "$(bash_payload "$(printf "psql mydb <<'SQL'\nDROP TABLE users;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559: TRUNCATE in a heredoc piped into psql" \
+  "$(bash_payload "$(printf 'cat <<EOF | psql mydb\nTRUNCATE users;\nEOF')")"
+test_deny  "$IRRECOVERABLE" "GH #559: DROP TABLE echoed into psql" \
+  "$(bash_payload "echo 'DROP TABLE users' | psql mydb")"
+test_deny  "$IRRECOVERABLE" "GH #559: DROP TABLE in a here-string psql reads" \
+  "$(bash_payload "psql mydb <<< 'DROP TABLE users'")"
+test_deny  "$IRRECOVERABLE" "GH #559: a SQL comment between DROP and TABLE" \
+  "$(bash_payload "psql -c 'DROP/**/TABLE users'")"
+test_deny  "$IRRECOVERABLE" "GH #559: dropdb" "$(bash_payload 'sudo -u postgres dropdb prod')"
+test_deny  "$IRRECOVERABLE" "GH #559: mysqladmin drop" "$(bash_payload 'mysqladmin -f drop mydb')"
+test_allow "$IRRECOVERABLE" "GH #559 control: psql output piped to grep for drop table" \
+  "$(bash_payload "psql -c '\\dt' | grep -i 'drop table'")"
+test_allow "$IRRECOVERABLE" "GH #559 control: a heredoc into a file mentioning DROP TABLE" \
+  "$(bash_payload "$(printf "cat <<'EOF' > notes.md\nDROP TABLE users resets it\nEOF")")"
+test_allow "$IRRECOVERABLE" "GH #559 control: a SELECT heredoc into psql" \
+  "$(bash_payload "$(printf "psql mydb <<'SQL'\nSELECT * FROM users;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #559 control: dropdb --help" "$(bash_payload 'dropdb --help')"
 test_deny  "$IRRECOVERABLE" "git config core.HooksPath: the hook-bypass key in any case" \
   "$(bash_payload 'git config core.HooksPath /dev/null')"
 test_deny  "$IRRECOVERABLE" "git add -A (was prose-only)" \
@@ -1189,5 +1209,16 @@ test_allow "$IRRECOVERABLE" "a short xargs env xargs chain, benign (audit of #22
   "$(bash_payload "echo a | xargs env xargs env git status")"
 _timed_case "25 nested find -exec find stays fast and allowed (audit of #227)" 0 \
   "$(python3 -c "print('find . ' + '-exec find . ' * 25 + '-print')")"
+
+# GH #563: git verbs with a denied verb's damage.
+test_deny  "$IRRECOVERABLE" "GH #563: send-pack --force" "$(bash_payload 'git send-pack --force git@github.com:o/r.git main')"
+test_deny  "$IRRECOVERABLE" "GH #563: git rm -rf drops uncommitted edits" "$(bash_payload 'git rm -rf src')"
+test_deny  "$IRRECOVERABLE" "GH #563: worktree remove -ff" "$(bash_payload 'git worktree remove -ff ../wt')"
+test_deny  "$IRRECOVERABLE" "GH #563: branch -f main" "$(bash_payload 'git branch -f main HEAD~5')"
+test_deny  "$IRRECOVERABLE" "GH #563: update-ref moving main" "$(bash_payload 'git update-ref refs/heads/main HEAD~5')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm --cached -f" "$(bash_payload 'git rm -r --cached -f build')"
+test_allow "$IRRECOVERABLE" "GH #563 control: git rm a file" "$(bash_payload 'git rm a.txt')"
+test_allow "$IRRECOVERABLE" "GH #563 control: branch -f feature" "$(bash_payload 'git branch -f feature x')"
+test_allow "$IRRECOVERABLE" "GH #563 control: update-ref on a feature branch" "$(bash_payload 'git update-ref refs/heads/feature x')"
 
 gates_summary

@@ -37,7 +37,7 @@ else
   fi
 fi
 case "$_norm$_norm_nows" in
-  *rm*|*find*|*git*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*) : ;;  # candidate -> python
+  *rm*|*find*|*git*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*) : ;;  # candidate -> python
   *) [ "$_has_subst" -eq 1 ] || exit 0 ;;                          # no destructive token possible -> allow (unless obfuscated)
 esac
 
