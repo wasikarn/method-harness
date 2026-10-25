@@ -46,7 +46,7 @@ for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md; do
     # to gate routing. Block-scalar descriptions ARE matched (fm_get --block returns
     # the full body, not just the `|` marker line), so a `Use when…` clause anywhere
     # in a multi-line description satisfies the check.
-    if [ -n "$desc" ] && ! echo "$desc" | grep -qiE "Use when|Use this skill when|Use PROACTIVELY when|Use after|Trigger when|Auto-loads when|ALWAYS trigger|ALWAYS run|Trigger on|Invoke when"; then
+    if [ -n "$desc" ] && ! grep -qiE "Use when|Use this skill when|Use PROACTIVELY when|Use after|Trigger when|Auto-loads when|ALWAYS trigger|ALWAYS run|Trigger on|Invoke when" <<<"$desc"; then
       warn "skill '$name' missing trigger pattern (e.g. 'Use when…') in description"
     fi
   fi

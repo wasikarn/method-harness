@@ -35,7 +35,7 @@ echo "=== gate-report ==="
 
 # Wiring guard: the skill must invoke this exact script, not a copy.
 assert "SKILL.md references scripts/gate-report.py" \
-  "$(grep -c 'scripts/gate-report.py' "$SKILL_MD" | grep -qv '^0$' && echo 1 || echo 0)"
+  "$(grep -q 'scripts/gate-report.py' "$SKILL_MD" && echo 1 || echo 0)"
 
 JOURNAL="$TMPDIR_TEST/gate-decisions.jsonl"
 cat > "$JOURNAL" <<'EOF'

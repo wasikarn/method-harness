@@ -89,8 +89,8 @@ else
   out=$(PATH="$SHIM:$PATH" bash -c "set -uo pipefail; $LOG_LINE; echo \"fell-through LOG=<\$LOG>\"" 2>&1)
   rc=$?
   safe_trash "$SHIM"
-  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | /usr/bin/grep -q 'mktemp' \
-     && ! printf '%s\n' "$out" | /usr/bin/grep -q 'fell-through'; then
+  if [ "$rc" -ne 0 ] && /usr/bin/grep -q 'mktemp' <<<"$out" \
+     && ! /usr/bin/grep -q 'fell-through' <<<"$out"; then
     ok "a failed mktemp -d aborts before any layer can use an empty LOG (rc=$rc)"
   else
     bad "a failed mktemp -d did not abort (rc=$rc): $(printf '%s' "$out" | tr '\n' '|')"

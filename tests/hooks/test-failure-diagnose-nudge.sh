@@ -60,7 +60,7 @@ fi
 # at all) nudges -- this is what a genuine Bash failure sends ---
 out=$(posttoolusefailure_payload "make build" "Command failed with exit code 1" | bash "$SENSOR" "$STATE")
 rc=$?
-if [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge'; then
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out"; then
   ok "PostToolUseFailure shape -- nudge emitted, exit 0 (never blocks)"
 else
   bad "PostToolUseFailure shape should emit the nudge and exit 0, got rc=$rc out='$out'"
@@ -83,7 +83,7 @@ else
   bad "is_interrupt: true should produce no output and exit 0, got rc=$rc out='$out'"
 fi
 out=$(posttoolusefailure_payload "interrupted-cmd" "Command failed" | bash "$SENSOR" "$STATE")
-if echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge'; then
+if /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out"; then
   ok "an interrupt does not spend the command's cap -- a later real failure still nudges"
 else
   bad "a real failure after an interrupt of the same command should still nudge, got '$out'"
@@ -94,7 +94,7 @@ trash "$STATE" 2>/dev/null || true
 nudge_count=0
 for _ in 1 2 3 4 5; do
   out=$(posttoolusefailure_payload "flaky-cmd --retry" "Command failed" | bash "$SENSOR" "$STATE")
-  echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge' && nudge_count=$((nudge_count + 1))
+  /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out" && nudge_count=$((nudge_count + 1))
 done
 if [ "$nudge_count" -eq 1 ]; then
   ok "cap enforcement: exactly 1 nudge across 5 identical failures (was uncapped in the trialed plugin)"
@@ -104,7 +104,7 @@ fi
 
 # --- a DIFFERENT failing command gets its own fresh cap ---
 out=$(posttoolusefailure_payload "a-completely-different-command" "Command failed" | bash "$SENSOR" "$STATE")
-if echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge'; then
+if /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out"; then
   ok "a different failing command is not affected by another command's exhausted cap"
 else
   bad "a fresh distinct command should still nudge even after a different command's cap is exhausted"
@@ -155,7 +155,7 @@ out=$(
 )
 rc=$?
 expected_state="$FAKE_TMPDIR/mh-sensors/failure-nudge-sess-xyz.json"
-if [ "$rc" -eq 0 ] && [ -f "$expected_state" ] && echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge'; then
+if [ "$rc" -eq 0 ] && [ -f "$expected_state" ] && /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out"; then
   ok "default_state_path uses the payload's session_id, staying session-scoped without the env var"
 else
   bad "expected state file at $expected_state, got rc=$rc out='$out'"
@@ -202,9 +202,9 @@ for sid in '"x/../../../victim"' '"a\u0000b"' '""' '["/../../../victim"]' '42' '
     *) sid_run "bad-sid-cmd-$i" "$sid" ""; label="session_id $sid" ;;
   esac
   after=$(sid_tree)
-  if [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge' \
-     && printf '%s' "$err" | /usr/bin/grep -q '\[mh:sensor\]' \
-     && ! printf '%s' "$err" | /usr/bin/grep -q 'Traceback' \
+  if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out" \
+     && /usr/bin/grep -q '\[mh:sensor\]' <<<"$err" \
+     && ! /usr/bin/grep -q 'Traceback' <<<"$err" \
      && [ "$after" = "$before" ]; then
     ok "$label -- nudge still sent, [mh:sensor] diagnostic, no traceback, no file written anywhere"
   else
@@ -213,7 +213,7 @@ for sid in '"x/../../../victim"' '"a\u0000b"' '""' '["/../../../victim"]' '42' '
 done
 UUID="3f2b6c1e-8a4d-4b7e-9c2a-1d5e6f7a8b9c"
 sid_run "good-sid-cmd" "\"$UUID\"" ""
-if [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge' \
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out" \
    && [ -f "$SID_TMP/mh-sensors/failure-nudge-$UUID.json" ] && [ -z "$err" ]; then
   ok "a UUID session_id still gets its own counter file under mh-sensors, no diagnostic"
 else
@@ -240,7 +240,7 @@ print(json.dumps(d))' "$1" "$2" "$UUID" > "$STATE_DIR/agent-payload.json"
   rc=$?
   err=$(cat "$STATE_DIR/agent-err.txt")
 }
-nudged() { echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge'; }
+nudged() { /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out"; }
 agent_run "shared-cmd" ""
 main1=0; nudged && main1=1
 agent_run "shared-cmd" ""
@@ -258,7 +258,7 @@ else
 fi
 for aid in 'null' '""' '"x/../../../victim"'; do
   agent_run "bad-agent-cmd-$aid" "$aid"
-  if [ "$rc" -eq 0 ] && nudged && printf '%s' "$err" | /usr/bin/grep -q '\[mh:sensor\]'; then
+  if [ "$rc" -eq 0 ] && nudged && /usr/bin/grep -q '\[mh:sensor\]' <<<"$err"; then
     ok "agent_id $aid present but not a safe id -- nudge still sent, [mh:sensor] diagnostic"
   else
     bad "agent_id $aid should fail open with a diagnostic; got rc=$rc out='$out' err='$err'"
@@ -273,9 +273,9 @@ sid_payload "no-lib-cmd" "\"$UUID\"" > "$STATE_DIR/sid-payload.json"
 out=$(env -u CLAUDE_CODE_SESSION_ID TMPDIR="$SID_TMP" bash "$NOLIB/failure-diagnose-nudge.sh" < "$STATE_DIR/sid-payload.json" 2>"$STATE_DIR/sid-err.txt")
 rc=$?
 err=$(cat "$STATE_DIR/sid-err.txt")
-if [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q 'mh-failure-diagnose-nudge' \
-   && printf '%s' "$err" | /usr/bin/grep -q '\[mh:sensor\].*cannot load scripts/_lib/hook_payload.py' \
-   && ! printf '%s' "$err" | /usr/bin/grep -q 'Traceback'; then
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'mh-failure-diagnose-nudge' <<<"$out" \
+   && /usr/bin/grep -q '\[mh:sensor\].*cannot load scripts/_lib/hook_payload.py' <<<"$err" \
+   && ! /usr/bin/grep -q 'Traceback' <<<"$err"; then
   ok "missing scripts/_lib/hook_payload.py -- nudge still sent, [mh:sensor] diagnostic, no traceback"
 else
   bad "missing hook_payload.py should fail open with a diagnostic; got rc=$rc out='$out' err='$err'"
