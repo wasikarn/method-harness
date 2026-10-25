@@ -1004,7 +1004,15 @@ _env_S_dos_cmd="$(python3 -c 'print("env " + "-S -S " * 11000 + " ".join(["-S\x2
 _timed_case 'GH #560: 22000 -S words and 8000 option-only -S strings are read in bounded time' 2 "$_env_S_dos_cmd"
 _env_iS_dos_cmd="$(python3 -c 'print("env -iS ls; " * 10000 + "env -" + "i" * 20000 + "S ls")')"
 _timed_case 'GH #560: 10000 env -iS commands and a 20 KB cluster are read in bounded time' 0 "$_env_iS_dos_cmd"
-# Non-goal: cat <<EOF | bash, eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
+# GH #567: a shell reading stdin gets its commands from a heredoc piped in, a here-string, or an echo/printf.
+test_deny  "$IRRECOVERABLE" "GH #567: bash <<< rm -rf" "$(bash_payload "bash <<< 'rm -rf build'")"
+test_deny  "$IRRECOVERABLE" "GH #567: echo into bash" "$(bash_payload "echo 'git push --force' | bash")"
+test_deny  "$IRRECOVERABLE" "GH #567: printf into bash -s" "$(bash_payload "printf 'git reset --hard\n' | bash -s")"
+test_deny  "$IRRECOVERABLE" "GH #567: heredoc piped into bash" "$(bash_payload "$(printf 'cat <<EOF | bash\nrm -rf build\nEOF')")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into tee" "$(bash_payload "echo 'rm -rf build' | tee notes.txt")"
+test_allow "$IRRECOVERABLE" "GH #567 control: echo into bash script.sh (stdin is data)" "$(bash_payload 'echo hi | bash x.sh')"
+test_allow "$IRRECOVERABLE" "GH #567 control: heredoc piped into grep bash" "$(bash_payload "$(printf "cat <<'EOF' | grep bash\nrm -rf build\nEOF")")"
+# Non-goal: eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 
