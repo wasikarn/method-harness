@@ -439,7 +439,7 @@ for _c in \
   'cl\aude --version' \
   'claude -\v' \
   '\{claude -p x;}' \
-  'claude --pri\\nt hello' ; do
+  'claude --pri\\nt' ; do
   test_allow "$IRRECOVERABLE" "subagent: GH #322 control, no spawn: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 # Every glued `{` is now a command start that walks a wrapper chain; padded shapes must still be
@@ -977,13 +977,17 @@ test_deny "$IRRECOVERABLE" "subagent: claude --bg denied" \
 # GH #157: a backslash-escaped quote outside a quoted span is a literal
 # character in real bash, never a string opener -- the tokenizer must not
 # let it swallow the real ";" and credit othertool's -p back to claude.
+# Bypass hunt F1: the escaped quote is a prompt word (`claude \"` starts a session with the prompt `"`),
+# so the leak-back rows carry --version, which keeps them about the -p scan.
 test_allow "$IRRECOVERABLE" "#157: escaped double quote before a real ; is literal, othertool's -p stays with othertool" \
-  "$(bash_agent_payload 'claude \" ; othertool -p "x"' fork)"
+  "$(bash_agent_payload 'claude --version \" ; othertool -p "x"' fork)"
 test_allow "$IRRECOVERABLE" "#157: escaped single quote before a real ; is literal" \
-  "$(bash_agent_payload "claude \\' ; othertool -p 'x'" fork)"
+  "$(bash_agent_payload "claude --version \\' ; othertool -p 'x'" fork)"
 test_allow "$IRRECOVERABLE" "#157 control: escaped quote then claude with no flag" \
   "$(bash_agent_payload 'echo \" ; claude' fork)"
-test_allow "$IRRECOVERABLE" "#157 control: claude with a lone escaped quote and no flag" \
+test_allow "$IRRECOVERABLE" "#157 control: claude --version with a lone escaped quote and no flag" \
+  "$(bash_agent_payload 'claude --version \"' fork)"
+test_deny  "$IRRECOVERABLE" "#157 / bypass hunt F1: claude with a lone escaped quote takes it as the prompt" \
   "$(bash_agent_payload 'claude \"' fork)"
 test_deny  "$IRRECOVERABLE" "#157 control: real -p after a literal escaped quote still denied" \
   "$(bash_agent_payload 'claude \"x\" -p y' fork)"
@@ -1653,6 +1657,60 @@ else
   echo "  ❌ GH #340: an ambiguity sub word has no narrow piece, or a missing piece does not fail closed" >&2
   fail=$((fail + 1))
 fi
+
+# Bypass hunt 2026-10-23 (docs/research/bypass-hunt-2026-10-23.md) F1/F2: with no TTY (the Bash tool
+# has none) `claude <prompt>` and `<input> | claude` run headless, the same as -p; -w is --worktree's
+# short form and --background is --bg's long form. Only the flag list was checked.
+for _c in \
+  "claude 'fix the failing test'" \
+  'claude hi' \
+  'echo hi | claude' \
+  'claude --model sonnet hi' \
+  'claude -w x' \
+  'claude -w' \
+  'claude --background hi' \
+  'env claude hi' \
+  'bash -c "claude hi"' \
+  'echo hi | xargs claude' \
+  'echo hi |& claude' \
+  'claude < prompt.txt' \
+  'claude <<< hi' \
+  $'claude <<EOF\nhi\nEOF' \
+  'claude -- hi' \
+  'claude ultrareview' \
+  'claude $(cat prompt.txt)' \
+  'x=$(claude hi)' \
+  "out=\"\$(claude 'review this')\"" ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F1/F2: subagent claude with a prompt, piped input or a short/long flag alias: $_c" \
+    "$(bash_agent_payload "$_c" fork)"
+done
+for _c in \
+  'claude' \
+  'claude --version' \
+  'claude -v' \
+  'claude --help' \
+  'claude -h' \
+  'claude hi --help' \
+  'claude --version | head -1' \
+  'claude mcp list' \
+  'claude mcp serve' \
+  'claude doctor' \
+  'claude plugin list' \
+  'ls || claude --version' \
+  "echo 'claude hi'" \
+  "rg -n 'claude hi' docs" \
+  'git commit -m "feat(claude): document the gate"' \
+  'git commit -m "a; claude handles it"' \
+  'git commit -m "pipe it | claude"' \
+  'echo "$(claude --version)"' \
+  'x=$(claude)' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F1/F2 control: subagent claude that starts no session: $_c" \
+    "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'claude hi' 'echo hi | claude' 'claude -w x' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F1/F2 control: the main session may start one: $_c" \
+    "$(bash_agent_payload "$_c" '')"
+done
 
 
 gates_summary
