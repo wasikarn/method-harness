@@ -2384,6 +2384,9 @@ for _c in \
   'chmod a+rwx $HOME/' \
   'chmod 777 ${HOME}' \
   'chmod 777 "${HOME}"' \
+  'chmod 777 "${HOME:-}"' \
+  'chmod 777 ${HOME%/}' \
+  'echo hi; chmod 777 ${HOME}' \
   'chmod 777 ${HOME}/' \
   'chmod 777 $HOME/./' \
   'chmod 777 $HOME//' \
@@ -2411,6 +2414,10 @@ for _c in \
   'gchmod 644 f' \
   'chmod 777 ${HOME}/f' \
   'chmod 777 $HOME/./f' \
+  'chmod 777 "$(mktemp)"; echo ${HOME}' \
+  'chmod 777 $(mktemp) && ls ${HOME}' \
+  'chmod 777 `pwd`; echo ${HOME}' \
+  'chmod 777 ${PWD}; echo ${HOME}' \
   "find . -exec sh -c 'chmod 644 \"\$1\"' _ {} \\;" \
   'echo chmod 777 $HOME' ; do
   test_allow "$IRRECOVERABLE" "GH #587 control: chmod that is not world-writable on home, root or a find set: $_c" "$(bash_payload "$_c")"

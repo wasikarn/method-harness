@@ -2713,9 +2713,11 @@ def _chmod_world_mode(s):
 _ROOT_OR_HOME = ("/", "/*", "/.", "~", "~/", "~/*", "~/.")
 # GH #587: `$HOME` / `"$HOME"` (shlex cuts it into "$", "HOME", so it is read on the joined words), and
 # a path that normalises to / or to this machine's home (taken from the environment at run time).
-# `${HOME}` is blanked to a substitution before the rules read it, so a placeholder word is matched
-# against the raw text instead (over-denies a `${HOME}` written elsewhere in the same chmod command).
-_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']?\$\{HOME\}(?:/[./*]*)?[\"']?(?=[\s;&|)]|$)")
+# `${HOME}` (and `${HOME:-}`, `${HOME%/}`, ...) is blanked to a substitution before the rules read it,
+# so a placeholder target is matched against the raw text of a chmod's own arguments (the text after
+# `chmod` up to its statement's end), never against another statement's `echo ${HOME}`.
+_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']?\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']?(?=[\s;&|)]|$)")
+_CHMOD_ARGS_RAW_RE = re.compile(r"(?<![\w.-])g?chmod(?![\w.-])([^;&|\n]*)")
 def _root_or_home_word(rest):
     words, cur = [], []
     for t in rest:
@@ -2729,7 +2731,8 @@ def _root_or_home_word(rest):
     for w in words:
         if w in _ROOT_OR_HOME:
             return True
-        if PH in w and w.strip(PH + "/.*") == "" and _HOME_BRACED_RAW_RE.search(cmd):
+        if PH in w and w.strip(PH + "/.*") == "" and any(
+                _HOME_BRACED_RAW_RE.search(m.group(1)) for m in _CHMOD_ARGS_RAW_RE.finditer(cmd)):
             return True
         # `$HOME/./`, `~/..`: the home prefix is read as the home dir, then the path is normalised.
         for pre in ("$HOME", "~"):
