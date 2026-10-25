@@ -4135,6 +4135,27 @@ def _default_subst(v, quoted=True):
         return unq(w) if mask[e.start()] else w
     return _DEFAULT_SUBST_RE.sub(put, v)
 
+# GH #590: a shell, or source / `.`, whose script is a process substitution printing literal text runs
+# that text: `bash <(echo rm -rf build)` and `bash < <(echo ...)` read in the view as `eval rm -rf build`,
+# which the eval unwrap scans. The shell name must start a word (`\bash` too), so a long word is not
+# rescanned from every position; up to 32 options may come before the script, only a cluster ending in o/O
+# (`-o`, `-eo`), --rcfile and --init-file taking a value (`bash -x script.sh <(...)` runs script.sh, so its psub is only an argument).
+_PSUB_SCRIPT_RE = re.compile(r"(?<![^\s;&|(){])\\?(?:[^\s;&|()<>]*/)?(?:bash|sh|zsh|dash|ksh|source|\.)"
+                             r"(?:[ \t]+(?:[-+][A-Za-z]*[oO][ \t]+[^\s;&|()<>]+|--(?:rcfile|init-file)[ \t]+[^\s;&|()<>]+"
+                             r"|[-+][^\s;&|()<>]*)){0,32}?"
+                             r"[ \t]+(?:<[ \t]*)?<\(" + _ECHO_WORD + r"((?:[ \t]+[^\s()$`]+)*)[ \t]*\)")
+
+def _psub_eval(e):
+    try:
+        words = shlex.split(e.group(1))
+    except ValueError:
+        words = e.group(1).split()
+    if words[:1] == ["--"]:
+        words = words[1:]
+    if words and "%" in words[0]:  # printf's format (`'%s\n'`, `'%s %s\n'`): the text is its arguments
+        words = words[1:]
+    return "eval " + " ".join(words)
+
 def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
@@ -4155,11 +4176,11 @@ def _views():
     # far as the parser does, like ifs-split (a substitution in rm's flags hid `-rf` from every rule).
     # A second copy leaves every quoted default as written: a view whose quotes do not balance is dropped
     # unread, so a misread quoted default must not hide an unquoted one (`${G:--rf}`) in the same command.
-    if "$" in cmd or "`" in cmd:
+    if "$" in cmd or "`" in cmd or "<(" in cmd:
         for quoted in (True, False):
             v = cmd
             for _ in range(3):  # inside out: `${X:-${Y:--rf}}`, `$(echo $(echo -rf))`
-                w = _default_subst(_LITERAL_SUBST_RE.sub(_literal_subst_words, v), quoted)
+                w = _default_subst(_LITERAL_SUBST_RE.sub(_literal_subst_words, _PSUB_SCRIPT_RE.sub(_psub_eval, v)), quoted)
                 if w == v:
                     break
                 v = w
