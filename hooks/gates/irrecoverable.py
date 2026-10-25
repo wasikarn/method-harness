@@ -2478,52 +2478,71 @@ def _git_clean_dry_run(words):
     # Does `git clean <words>` run as a dry run (-n, --dry-run) or ask first (-i, --interactive)?
     # Read in order, as git does (round 2 review): -e/--exclude takes the next word (or the rest of
     # its cluster) as a value, and `--` ends the options, so `-e -n` and `-- -n` are not a dry run.
+    # The last of -n/--dry-run and --no-dry-run wins (round 3 review: `-n --no-dry-run` deletes).
+    dry = inter = False
     i = 0
     while i < len(words):
         t = words[i].replace(PH, "")
         i += 1
         if t == "--":
-            return False
+            break
         if t.startswith("--"):
             name = t.split("=", 1)[0]
             if _is_flag(name, "--exclude"):
                 i += 0 if "=" in t else 1
-            elif _is_flag(name, "--dry-run", "--interactive"):
-                return True
+            elif _is_flag(name, "--dry-run"):
+                dry = True
+            elif _is_flag(name, "--no-dry-run"):
+                dry = False
+            elif _is_flag(name, "--interactive"):
+                inter = True
+            elif _is_flag(name, "--no-interactive"):
+                inter = False
         elif t.startswith("-"):
             for k, ch in enumerate(t[1:]):
                 if ch == "e":
                     i += 1 if k == len(t) - 2 else 0
                     break
-                if ch in "ni":
-                    return True
-    return False
+                if ch == "n":
+                    dry = True
+                elif ch == "i":
+                    inter = True
+    return dry or inter
 
-def _git_alias_resolve(aliases, verb):
-    """Follow -c aliases from verb as git does: (verb, words, how, body).
+_GIT_ALIAS_DEPTH = 10
+def _git_alias_chain(aliases, verb):
+    """Follow -c aliases from the typed verb: (steps, how, body).
 
-    A non-! alias is replaced by its expansion, its extra words going before the user's; a chain is
-    followed at most 10 steps (git itself errors on a loop). how names the last alias used (None:
-    none). body is the alias value that ends the chain when it is a ! shell line or _GIT_CFG_UNSEEN,
-    else None. Constant work per step, so the -c walk stays linear (round 2 review: a chain
-    `alias.p=q`, `alias.q="push --force"` and a risk key under `alias.p=push` were read as verb p).
+    steps is [(verb, words)], the typed verb with no words first, then each non-! expansion (its
+    extra words go before the user's). git always runs a built-in and ignores an alias of the same
+    name, and the gate does not know every built-in, so callers check EVERY step and any deny wins
+    (round 3 review: alias.push=status hid a mirror push). how names the last alias used (None:
+    none). body is what ends the chain when it is not a plain verb: a ! shell line, or
+    _GIT_CFG_UNSEEN for a value built at run time or a chain still going after _GIT_ALIAS_DEPTH
+    steps (git follows it further). A loop stops at the first repeat (git errors and runs nothing);
+    each alias is split at most once, so the walk stays linear.
     """
-    words, how = [], None
-    for _ in range(10):
-        val = aliases.get(verb.replace(PH, "").lower())
-        if val is None or val == "true" or not val.strip():
-            break
-        how = "git -c alias." + verb.replace(PH, "").lower()
+    steps, words, seen, how = [(verb, [])], [], set(), None
+    for _ in range(_GIT_ALIAS_DEPTH + 1):
+        name = verb.replace(PH, "").lower()
+        val = aliases.get(name)
+        if val is None or val == "true" or not val.strip() or name in seen:
+            return steps, how, None
+        if len(seen) == _GIT_ALIAS_DEPTH:
+            return steps, how, _GIT_CFG_UNSEEN
+        seen.add(name)
+        how = "git -c alias." + name
         if val is _GIT_CFG_UNSEEN or val.startswith("!"):
-            return verb, words, how, val
+            return steps, how, val
         try:
             exp = shlex.split(val)
         except ValueError:
             exp = val.split()
         if not exp:
-            break
+            return steps, how, None
         verb, words = exp[0], exp[1:] + words
-    return verb, words, how, None
+        steps.append((verb, words))
+    return steps, how, None
 
 # GH #336: chmod making files world-writable (777 / a+rwx) recursively or on / or ~.
 # The tokenizer splits `+` out of a word (`a+rwx` is "a", "+", "rwx"), so the mode is read on the
@@ -3293,27 +3312,40 @@ def _check_window(_wi, w):
             # GH #561: what a -c pair makes of this subcommand (an alias names it, or a key re-enables a deny).
             _sub = sub.replace(PH, "")
             # One pass: git keeps the last alias.<name>, so each alias is expanded once (PR #571 review:
-            # one scan per alias pair was quadratic). Every rule reads the verb the aliases resolve to
-            # (round 2 review). Risk keys are not merged: a remote's name is case-sensitive, so any
-            # dangerous pair counts.
+            # one scan per alias pair was quadratic). The risk keys and the verb rules read the typed verb
+            # and every verb along the alias chain, any deny wins (round 3 review: git runs a built-in
+            # over an alias of its name). Risk keys are not merged: a remote's name is case-sensitive,
+            # so any dangerous pair counts.
             _aliases, _risks = {}, []
             for _k, _v in _git_cfg_pairs(rest[:i]):
                 if _k.startswith("alias."):
                     _aliases[_k[len("alias."):]] = _v
                 else:
                     _risks.append((_k, _v))
-            _verb, _pre, _how, _body = _git_alias_resolve(_aliases, _sub)
-            _rverb, _rargs = _verb.replace(PH, ""), _pre + args
-            for _k, _v in _risks:
-                _r = _git_cfg_risk(_k, _v, _rverb)
-                if _r == "git-clean-force" and _git_clean_dry_run(_rargs):
-                    _r = None  # a dry run (clean -n, -xdn) or the prompt deletes nothing unasked
-                if _r:
-                    deny("git -c " + _k + "=" + _v + " makes `git " + _rverb + "` do what its denied flag does — confirm with user first", rule=_r)
+            _steps, _how, _body = _git_alias_chain(_aliases, _sub)
+            for _verb, _pre in _steps:
+                _rverb = _verb.replace(PH, "")
+                for _k, _v in _risks:
+                    _r = _git_cfg_risk(_k, _v, _rverb)
+                    if _r == "git-clean-force" and _git_clean_dry_run(_pre + args):
+                        _r = None  # a dry run (clean -n, -xdn) or the prompt deletes nothing unasked
+                    if _r:
+                        deny("git -c " + _k + "=" + _v + " makes `git " + _rverb + "` do what its denied flag does — confirm with user first", rule=_r)
+            if _body is not None and _body is not _GIT_CFG_UNSEEN:
+                # A ! alias's shell line runs with the -c keys in effect (git passes them on in
+                # GIT_CONFIG_PARAMETERS), so a risky key under one is the risky run (round 3 review).
+                for _k, _v in _risks:
+                    _r = _git_cfg_risk(_k, _v, None)
+                    if _r:
+                        deny("git -c " + _k + "=" + _v + " is in effect for every git the " + _how + " shell line runs — confirm with user first", rule=_r)
             if _body is not None:
-                _git_alias_check(_body, _rargs, _how)
-            elif _how:
-                _scan_body("git " + " ".join([_verb] + _rargs))
+                _git_alias_check(_body, _steps[-1][1] + args, _how)
+            # git runs the first built-in along the chain, else the last verb. A verb in the middle that
+            # is not a gated built-in only names the next alias, so it is not scanned: one scan per
+            # step with the user's words was 2.7 s on a 130 KB ten-step chain.
+            for _n, (_verb, _pre) in enumerate(_steps[1:], 2):
+                if _n == len(_steps) or _verb.replace(PH, "").lower() in KNOWN_GIT_SUBS + ("config",):
+                    _scan_body("git " + " ".join([_verb] + _pre + args))
             # drop the value token after a free-text flag so message content
             # (e.g. "commit -m ...rm -rf...") is never pattern-matched.
             scan_raw, skip = [], False
