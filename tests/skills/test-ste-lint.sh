@@ -25,32 +25,32 @@ trap 'trash "$TMP" "$OUTSIDE" 2>/dev/null || true' EXIT
   printf 'hello\n' > clean.md
   git add clean.md && git commit -q -m init
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q '"files": \[\]' || { echo "FAIL: zero-changed-files, got: $out"; exit 1; }
+  /usr/bin/grep -q '"files": \[\]' <<<"$out" || { echo "FAIL: zero-changed-files, got: $out"; exit 1; }
 
   # Odd filenames: a space and a leading dash, both untracked.
   printf 'Do not use this; it is not allowed.\n' > "has space.md"
   printf 'Do not use this; it is not allowed.\n' > ./-dashfile.md
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q 'has space.md' || { echo "FAIL: space-filename not scanned"; exit 1; }
-  echo "$out" | /usr/bin/grep -q -- '-dashfile.md' || { echo "FAIL: dash-filename not scanned"; exit 1; }
+  /usr/bin/grep -q 'has space.md' <<<"$out" || { echo "FAIL: space-filename not scanned"; exit 1; }
+  /usr/bin/grep -q -- '-dashfile.md' <<<"$out" || { echo "FAIL: dash-filename not scanned"; exit 1; }
 
   # Symlink escaping the repo root must not be followed.
   printf 'Do not use this; it is not allowed.\n' > "$OUTSIDE"
   ln -s "$OUTSIDE" escape.md
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q '"path": "escape.md"' && { echo "FAIL: escaping symlink was scanned"; exit 1; }
+  /usr/bin/grep -q '"path": "escape.md"' <<<"$out" && { echo "FAIL: escaping symlink was scanned"; exit 1; }
 
   # Symlink staying inside the repo root must be followed like a normal file.
   printf 'Do not use this; it is not allowed.\n' > real-inside.md
   ln -s real-inside.md inside-link.md
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q '"path": "inside-link.md"' || { echo "FAIL: in-repo symlink was not scanned"; exit 1; }
+  /usr/bin/grep -q '"path": "inside-link.md"' <<<"$out" || { echo "FAIL: in-repo symlink was not scanned"; exit 1; }
 
   # Unreadable file: reported as an error (exit 2), not a crash.
   printf 'Do not use this; it is not allowed.\n' > unreadable.md
   chmod 000 unreadable.md
-  # Root reads a mode-000 file anyway: the row would test nothing there, so it skips aloud.
-  if [ -r unreadable.md ]; then
+  # Root (or a filesystem ignoring mode bits) reads a mode-000 file anyway: a real read probes it, and the row skips aloud.
+  if cat unreadable.md >/dev/null 2>&1; then
     echo "SKIP: unreadable file (chmod 000 leaves it readable here, e.g. as root)"
   else
     python3 "$SCRIPT" unreadable.md --json > /dev/null 2>&1
@@ -82,7 +82,7 @@ assert lines == [1], lines
   mkdir -p docs
   printf 'Do not use this; it is not allowed.\n' > docs/METHODOLOGY.md
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q 'METHODOLOGY.md' && { echo "FAIL: docs/METHODOLOGY.md was scanned by default sweep"; exit 1; }
+  /usr/bin/grep -q 'METHODOLOGY.md' <<<"$out" && { echo "FAIL: docs/METHODOLOGY.md was scanned by default sweep"; exit 1; }
 
   # Report-only: scanning never changes the target file's bytes.
   before=$(shasum -a 256 mixed.md)
@@ -103,7 +103,7 @@ assert lines == [1], lines
   trash replaced
   ln -s "$OUTSIDE-dir" replaced
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q 'replaced/child.md' && { echo "FAIL: ancestor-symlink escape was scanned"; exit 1; }
+  /usr/bin/grep -q 'replaced/child.md' <<<"$out" && { echo "FAIL: ancestor-symlink escape was scanned"; exit 1; }
   true
 ) || FAIL=1
 
@@ -121,7 +121,7 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" 2>/dev/null || true' EXIT
   printf 'Do not use this; it is not allowed.\n' > staged.md
   git add staged.md
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q '"path": "staged.md"' || { echo "FAIL: staged.md not found in a repo with no HEAD yet"; exit 1; }
+  /usr/bin/grep -q '"path": "staged.md"' <<<"$out" || { echo "FAIL: staged.md not found in a repo with no HEAD yet"; exit 1; }
 
   # An explicit path that does not exist is a tool error (exit 2), never a
   # silent "clean" (files: [], exit 0).
@@ -134,7 +134,7 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" 2>/dev/null || true' EXIT
   mkdir noaccess
   printf 'Do not use this; it is not allowed.\n' > noaccess/x.md
   chmod 000 noaccess
-  if [ -r noaccess ]; then
+  if ls noaccess >/dev/null 2>&1; then
     echo "SKIP: unreadable directory (chmod 000 leaves it listable here, e.g. as root)"
   else
     python3 "$SCRIPT" noaccess --json > /dev/null 2>&1
@@ -154,7 +154,7 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" 2>/dev/null || true' EXIT
   git add docs/research/real.md && git commit -q -m "add frozen research file"
   ln -s docs/research/real.md alias.md
   out=$(python3 "$SCRIPT" --json)
-  echo "$out" | /usr/bin/grep -q '"path": "alias.md"' && { echo "FAIL: symlink alias into a frozen dir was scanned"; exit 1; }
+  /usr/bin/grep -q '"path": "alias.md"' <<<"$out" && { echo "FAIL: symlink alias into a frozen dir was scanned"; exit 1; }
   true
 ) || FAIL=1
 

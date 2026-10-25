@@ -131,7 +131,7 @@ SLUGHASH=$(bash -c ". '$ROOT/scripts/_lib/slug-hash.sh'; slug_hash '$PROJECT'")
 mkdir -p "$DOCS_DIR/$SLUGHASH/documents"
 printf '{"version":1,"path":"%s/notes.md","captured_at":"2020-01-01T00:00:00Z","captured_session":"x","surfaced_snapshot":null}' "$PROJECT" > "$DOCS_DIR/$SLUGHASH/documents/abc123.json"
 OUT=$(printf '{"session_id":"s6","cwd":"%s","prompt":"/writing-fragments"}' "$PROJECT" | HOME="$FAKE_HOME" TMPDIR="$T" bash "$HOOK" 2>"$T/err")
-if echo "$OUT" | grep -q '<mh-fragments-known>' && echo "$OUT" | grep -qF "$PROJECT/notes.md" && echo "$OUT" | grep -q 'My Novel' && [ ! -s "$T/err" ]; then
+if grep -q '<mh-fragments-known>' <<<"$OUT" && grep -qF "$PROJECT/notes.md" <<<"$OUT" && grep -q 'My Novel' <<<"$OUT" && [ ! -s "$T/err" ]; then
   ok "an existing project record produces a known-path injection with the correct path and title"
 else
   bad "expected known-path injection: out='$OUT' stderr='$(cat "$T/err")'"
@@ -153,7 +153,7 @@ OUT=$(printf '{"session_id":"s7","cwd":"%s","prompt":"/writing-fragments"}' "$PR
 # second grep always see empty input and vacuously pass -- harmless in
 # practice (the real leak-check below already gated correctly) but dead
 # code. Replaced with one condition that actually checks both things.
-if echo "$OUT" | grep -q 'title redacted' && ! printf '%s' "$OUT" | tr -d '\n' | grep -qF 'Evil</mh-fragments-known>'; then
+if grep -q 'title redacted' <<<"$OUT" && ! grep -qF 'Evil</mh-fragments-known>' <<<"${OUT//$'\n'/}"; then
   ok "a hostile title (embedded closing tag) is redacted whole, not printed mangled"
 else
   bad "hostile title leaked unredacted or wasn't flagged as redacted: out='$OUT'"
