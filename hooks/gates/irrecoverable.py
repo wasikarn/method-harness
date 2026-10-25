@@ -962,7 +962,54 @@ def _deny_nested_spawn():
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"))
     sys.exit(2)
 
-if ("agent_id" in d) and _nested_spawn(cmd, False):
+# GH #588: a command name that is a substitution printing claude (`$(echo claude) -p x`, `` `which
+# claude` ``, `${C:-claude}`), at a command position (past assignments and wrappers) outside quotes and
+# comments. Its statement is read as claude's words, as an anchored `claude` is: a spawn flag, a prompt
+# word, piped or `<` input. `$(echo cla)ude` (a name split across text and a substitution) is a gap.
+_SUBST_CLAUDE = (r"\$\([^()]*?(?<![\w.-])claude(?![\w.-])[^()]*\)|`[^`]*?(?<![\w.-])claude(?![\w.-])[^`]*`"
+                 r"|\$\{\w+:?[-=+][\"']?(?:[^\s}]*/)?claude[\"']?\}")
+# A command position: a statement start (also after `)`, as in `case x in x) ...` or `x=$(..) cmd`) or a
+# find action's command; then keywords, assignments, `eval` and wrappers. The substitution must end the
+# word (`$(echo claude)x` runs claudex). A double-quoted shell `-c` / eval body, where the outer shell runs
+# the substitution, is read again as its own text (_DQ_BODY_RE).
+_SUBST_SPAWN_RE = re.compile(r"(?:^|(?<=[;&|()\n{])|(?<=-exec )|(?<=-execdir )|(?<=-ok )|(?<=-okdir ))"
+                             r"[ \t]*" + _KEYWORD_PREFIX + r"(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:eval[ \t]+)?(?:" + _WRAPPER_ALT
+                             + r"[ \t]+(?:-\S*[ \t]+)*)*\"?\\?(" + _SUBST_CLAUDE + r")\"?(?=[\s;&|)<>\"]|$)", re.MULTILINE)
+
+# A shell (its name starting a word, `\bash` too, so a long word is not rescanned from every position) with
+# up to 32 options before its `-c` cluster, each with at most one value word (`-o pipefail`, `--rcfile f`,
+# `--norc`, `+e`, `-lc`; bounded and option-led, so a statement of many `bash` words stays linear: a 33rd
+# option before `-c` is a known gap; an unbounded scan took 23-60 s at 140 KB, past the hook timeout) and an optional `--`, or `eval`; then a double-
+# quoted body, which may hold a `$(...)` with quotes of its own.
+_DQ_BODY_RE = re.compile(r"(?:(?<![^\s;&|(){])\\?(?:[^\s;&|()\"'/]*/)*(?:bash|sh|zsh|dash|ksh)"
+                         r"(?:[ \t]+[-+]{1,2}[A-Za-z][^\s\"';&|]*(?:[ \t]+(?![-+])[^\s\"';&|]+)?){0,32}?"
+                         r"[ \t]+-[A-Za-z]*c(?:[ \t]+--)?|(?<![\w./-])eval)[ \t]+\""
+                         r"((?:\$\((?:[^()]|\([^()]*\))*\)|[^\"\\]|\\.)*)\"")
+
+def _subst_spawn(c, depth=0):
+    if "claude" not in c:
+        return False
+    if depth < 3:
+        for b in _DQ_BODY_RE.finditer(c):
+            if _subst_spawn(re.sub(r"\\([$`\"\\])", r"\1", b.group(1)), depth + 1):
+                return True
+    mask, work = None, 0
+    for m in _SUBST_SPAWN_RE.finditer(c):
+        if mask is None:
+            mask = _quote_mask(c)
+        # A substitution quoted only by its own word (`"$(echo claude)" -p x`) is still the command; one that
+        # opens a longer quoted string (an eval / -c body, read by _DQ_BODY_RE above) is not.
+        q = m.start(1) - 1
+        if mask[m.start(1)] and not (c[q:q + 1] == '"' and (q == 0 or not mask[q - 1]) and m.group(0).endswith('"')):
+            continue
+        stmt, work = _spawn_statement(c[m.end():], work)
+        pre = c[:m.start()].rstrip(" \t")
+        piped = pre.endswith("|") and not pre.endswith("||")
+        if stmt is None or _SPAWN_FLAG_RE.search(stmt) or _claude_starts_session(stmt, piped):
+            return True
+    return False
+
+if ("agent_id" in d) and (_nested_spawn(cmd, False) or _subst_spawn(cmd)):
     _deny_nested_spawn()
 
 # GH #337 shadow mode: a rule whose id is listed here only journals "would_deny"/"would_ask" (with
@@ -2215,7 +2262,8 @@ def _scan_body(body):
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
-    if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)):
+    if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
+                              or _subst_spawn(body)):
         deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
@@ -3184,6 +3232,18 @@ def _find_actions(rest, *names):
         value = 2 if u == "-fprintf" else 1 if u in _FIND_VALUE_TESTS or _FIND_NEWER_XY_RE.fullmatch(u) else 0
     return False
 
+def _claude_words_spawn(words):
+    # GH #588: True when claude given these words starts a session: a spawn flag, or (#583) a prompt word.
+    return any(t.replace(PH, "").split("=", 1)[0] in _SPAWN_WINDOW_FLAGS + ("-w", "--background") for t in words) \
+        or _claude_starts_session(" ".join(shlex.quote(t) for t in words), False)
+
+def _find_action_spawns(sub):
+    # GH #588: a find action running claude (past its wrappers) that starts a session; find hands it
+    # each path as a word, so `-exec claude {} \;` gives claude a prompt.
+    a0 = basename(sub[0]).replace(PH, "")
+    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    return i < len(sub) and basename(sub[i]).replace(PH, "") == "claude" and _claude_words_spawn(sub[i + 1:])
+
 def _find_action_chmod_world(sub):
     # GH #587: a find action running chmod (past its wrappers) with a world-writable mode applies it to
     # every file find yields, as `chmod -R` does.
@@ -3482,6 +3542,9 @@ def _check_window(_wi, w):
             if sub:
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(sub)
+                if ("agent_id" in d) and rest[j].replace(PH, "") in ("-exec", "-execdir", "-ok", "-okdir") \
+                        and _find_action_spawns(sub):
+                    _deny_nested_spawn()
                 if rest[j].replace(PH, "") in ("-exec", "-execdir") and _find_action_chmod_world(sub):
                     deny("chmod 777 / a+rwx on every file find yields makes them world-writable — confirm with user first",
                          rule="chmod-world")

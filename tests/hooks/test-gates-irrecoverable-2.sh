@@ -2436,4 +2436,81 @@ for _c in \
 done
 
 
+# GH #588 (bypass hunt 2026-10-23 F11): the spawn anchor reads the literal word `claude` at a command
+# position, so a name made by a substitution, or claude run by a find action, passed.
+for _c in \
+  '$(echo claude) -p hi' \
+  '`echo claude` -p hi' \
+  '${C:-claude} -p hi' \
+  "\$(echo claude) 'fix the test'" \
+  'env $(echo claude) --print hi' \
+  'find . -maxdepth 0 -exec claude -p hi \;' \
+  'find . -exec env claude -p x \;' \
+  'find . -exec claude hi \;' \
+  'find . -name x -execdir claude --bg {} +' \
+  'cat p | $(which claude)' \
+  'echo hi | $(echo claude)' \
+  '$(echo claude) <<< hi' \
+  '$(echo /usr/local/bin/claude) -p x' \
+  '${C:-"claude"} -p x' \
+  'ls; $(echo claude) -p x' \
+  '"$(echo claude)" "-p" x' \
+  '"$(echo claude)" -p x' \
+  'if $(echo claude) -p x; then :; fi' \
+  '! $(echo claude) -p x' \
+  'for i in 1; do $(echo claude) -p x; done' \
+  'case x in x) $(echo claude) -p x;; esac' \
+  'x=$(echo hi) $(echo claude) -p x' \
+  'bash -c "\$(echo claude) -p x"' \
+  'bash -c "$(echo claude) -p x"' \
+  'eval "$(echo claude) -p x"' \
+  'find . -exec $(echo claude) -p x \;' \
+  'sh -c "echo hi; $(echo claude) -p x"' \
+  'sh -c "x=1 $(echo claude) -p x"' \
+  'sh -c "if true; then $(echo claude) -p x; fi"' \
+  'bash -lc "$(echo claude) -p x"' \
+  'bash -c  "$(echo claude) -p x"' \
+  'eval $(echo claude) -p x' \
+  'bash -o pipefail -c "$(echo claude) -p x"' \
+  'bash -O extglob -c "$(echo claude) -p x"' \
+  'bash --norc -c "$(echo claude) -p x"' \
+  'bash +e -c "$(echo claude) -p x"' \
+  'bash -c -- "$(echo claude) -p x"' \
+  'bash -c "$(echo "claude") -p x"' \
+  'bash -c "$(printf %s "claude") -p x"' \
+  '\bash -c "$(echo claude) -p hi"' \
+  'true; \sh -c "$(echo claude) -p hi"' \
+  'bash -e -e -e -e -e -e -e -e -e -c "$(echo claude) -p x"' \
+  'bash -o pipefail -o errexit -o nounset -O a -O b -O c -O d -O e -c "$(echo claude) -p x"' \
+  'bash --rcfile /dev/null -c "$(echo claude) -p x"' \
+  'bash --init-file x -c "$(echo claude) -p x"' ; do
+  test_deny "$IRRECOVERABLE" "GH #588: subagent spawn behind a substitution or a find action: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in \
+  '$(echo claude) --version' \
+  '$(which claude) --help' \
+  '$(cat claude.txt) -p x' \
+  '$(git rev-parse --show-toplevel)/run.sh -p x' \
+  'find . -exec claude --version \;' \
+  'find . -name claude -print' \
+  'find . -exec grep -l claude {} +' \
+  'V=$(claude --version); $(which python3) run.py' \
+  'ls $(echo claude); $(npm bin) hi' \
+  '$(which python3) run.py # `which claude`' \
+  '$(which claude) mcp list' \
+  '$(echo claude)x -p hi' \
+  'if [ -x "$(which claude)" ]; then echo ok; fi' \
+  'bash -c "$(which claude) --version"' \
+  'grep -c "$(echo claude)" file' \
+  'du -c "$(which claude)" "$(which node)"' \
+  'foo -c "$(which claude)" -p' \
+  'eval "$(echo claude) --help"; eval "$(echo claude) --help"' \
+  'echo "$(echo claude) is installed"; ls' ; do
+  test_allow "$IRRECOVERABLE" "GH #588 control: no session is started: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in '$(echo claude) -p hi' 'find . -exec claude -p hi \;' ; do
+  test_allow "$IRRECOVERABLE" "GH #588 control: the main session may start one: $_c" "$(bash_agent_payload "$_c" '')"
+done
+
+
 gates_summary
