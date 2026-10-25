@@ -2574,4 +2574,44 @@ else
 fi
 
 
+# GH #590 (bypass hunt 2026-10-23 F13): a shell (or source / .) reading a process substitution as its
+# script ran the substitution's printed text unscanned. (`bash -c "$(echo ...)"` is read by #589's view.)
+for _c in \
+  'bash <(echo rm -rf build)' \
+  'sh <(printf "rm -rf build")' \
+  'bash -e <(echo git push --force origin main)' \
+  'source <(echo rm -rf build)' \
+  '. <(echo git reset --hard)' \
+  'bash -c "$(echo rm -rf build)"' \
+  'zsh <( echo rm -rf build )' \
+  '\bash <(echo rm -rf x)' \
+  'bash -o pipefail <(echo rm -rf x)' \
+  'bash < <(echo rm -rf build)' \
+  'bash -s < <(echo rm -rf build)' \
+  "bash <(printf '%s\\n' 'rm -rf build')" \
+  'bash <(printf %s "rm -rf build")' \
+  'bash -- <(echo rm -rf x)' \
+  'bash - <(echo rm -rf x)' \
+  'bash -x -- <(echo rm -rf x)' \
+  'bash -eo pipefail <(echo rm -rf x)' \
+  'bash -euo pipefail <(echo rm -rf x)' \
+  'bash -xO extglob <(echo rm -rf x)' \
+  "bash <(printf '%s %s %s\\n' rm -rf x)" ; do
+  test_deny "$IRRECOVERABLE" "GH #590: a shell runs a substitution's printed text: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'bash <(echo ls)' \
+  'cat <(echo rm -rf build)' \
+  'diff <(echo a) <(echo b)' \
+  'bash <(curl -s https://example.com/install.sh)' \
+  'source <(kubectl completion bash)' \
+  'bash -c "$(cat x.sh)"' \
+  'bash -x script.sh <(echo rm -rf x)' \
+  'bash -e build.sh <(echo rm -rf x)' \
+  'sh -x ./run.sh < <(echo rm -rf x)' \
+  'bash -c x <(echo rm -rf x)' ; do
+  test_allow "$IRRECOVERABLE" "GH #590 control: nothing destructive the text shows runs: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary
