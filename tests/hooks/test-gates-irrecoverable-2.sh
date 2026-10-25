@@ -1901,6 +1901,59 @@ test_deny  "$IRRECOVERABLE" "GH #559 review 2: DROP TABLE echoed through cat int
   "$(bash_payload "echo 'DROP TABLE t' | cat | psql db")"
 test_deny  "$IRRECOVERABLE" "GH #559 review 2: TRUNCATE of a quoted table name in a heredoc into psql" \
   "$(bash_payload "$(printf "psql db <<'SQL'\nTRUNCATE \"users\";\nSQL")")"
+# GH #559 review round 3.
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a heredoc psql -h db-node reads (node in a host name)" \
+  "$(bash_payload "$(printf "psql -h db-node db <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a heredoc psql reads after cd into a python path" \
+  "$(bash_payload "$(printf "cd /srv/python/app && psql db <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3 control: a heredoc sudo bash reads after a cd is still code" \
+  "$(bash_payload "$(printf "cd /srv/app && sudo -u app bash <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3 control: a heredoc ssh host bash reads is still code" \
+  "$(bash_payload "$(printf "ssh host bash <<'EOF'\nrm -rf ~\nEOF")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 3: rtk proxy -v psql with a SELECT heredoc" \
+  "$(bash_payload "$(printf "rtk proxy -v psql db <<'SQL'\nSELECT 1;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 3: a heredoc piped into rtk run -q grep psql" \
+  "$(bash_payload "$(printf "cat <<'E' | rtk run -q grep psql\nhello\nE")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: rtk proxy -v psql with a DROP heredoc" \
+  "$(bash_payload "$(printf "rtk proxy -v psql db <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a dollar-quoted apostrophe before DROP TABLE" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT \$\$it's\$\$; DROP TABLE t; -- '\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a backslash-escaped quote before DROP TABLE into mysql" \
+  "$(bash_payload $'echo "SELECT \'\\\\\'\'; DROP TABLE t; -- \'" | mysql db')"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: MySQL 1--1 is no comment before DROP TABLE" \
+  "$(bash_payload "echo 'SELECT 1--1; DROP TABLE t;' | mysql db")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a MySQL /*! */ executable comment holding DROP TABLE" \
+  "$(bash_payload "echo '/*! DROP TABLE t */' | mysql db")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: a MySQL # comment with an apostrophe before DROP TABLE" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT 1 # don't\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 3: the second heredoc on a line is the one psql reads" \
+  "$(bash_payload "$(printf "cat <<'A' >/dev/null; psql db <<'B'\nx\nA\nDROP TABLE t;\nB")")"
+test_allow "$IRRECOVERABLE" "GH #559 review 3 control: two heredocs on a line, neither a drop to a client" \
+  "$(bash_payload "$(printf "cat <<'A' >/dev/null; psql db <<'B'\nDROP TABLE t;\nA\nSELECT 1;\nB")")"
+# GH #559 review round 4: a heredoc on a compound command feeds every command in it, and a
+# version-suffixed interpreter is one too; the body stays code.
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into { bash; } is code" \
+  "$(bash_payload "$(printf "{ bash; } <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into (bash; :) is code" \
+  "$(bash_payload "$(printf "(bash; :) <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into a while loop running bash is code" \
+  "$(bash_payload "$(printf "while read x; do bash; done <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into an if running sudo bash is code" \
+  "$(bash_payload "$(printf "if true; then sudo bash; fi <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into { cd; bash; } with git push --force is code" \
+  "$(bash_payload "$(printf "{ cd /srv/app; bash; } <<'EOF'\ngit push --force origin develop\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into zsh-5.9 is code" \
+  "$(bash_payload "$(printf "zsh-5.9 <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into python3.12 - is code" \
+  "$(bash_payload "$(printf "python3.12 - <<'EOF'\nrm -rf ~\nEOF")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a backtick is no quote to psql before DROP TABLE" \
+  "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 1 \`; DROP TABLE t; -- \`\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #559 review 4: a [bracket] identifier with an apostrophe before DROP TABLE into sqlite3" \
+  "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT [it's]; DROP TABLE t; -- '\nSQL")")"
+_sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
+_timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
+_sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
+_timed_case 'GH #559 review 3: 15000 heredocs into a file on a psql line finish in bounded time' 0 "$_sql_many_heredocs_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("eval x%d;" % i for i in range(7000)) + " rm -rf ~")')"
 _timed_case 'GH #559 review 2: 7000 eval bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("bash -c x%d;" % i for i in range(5000)) + " rm -rf ~")')"
