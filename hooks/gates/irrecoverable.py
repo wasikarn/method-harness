@@ -4112,6 +4112,33 @@ _PLAIN_ASSIGN_RE = re.compile(
     r"(?<![\w$])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
 _VIEW_LEN_CAP = 20_000
 
+# GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
+# `command echo`, `/bin/echo`) and the backtick forms (WORDS with no further substitution in them) print WORDS; `${X:-W}`, `${X-W}`, `${X:=W}`,
+# `${X=W}`, `${X:+W}` and `${X+W}` may expand to W. `$(cat list)` prints nothing the text shows.
+_ECHO_WORD = r"[ \t]*(?:command[ \t]+)?(?:[^\s()$`/]*/)*(?:echo|printf)"
+_LITERAL_SUBST_RE = re.compile(r"\$\(" + _ECHO_WORD + r"((?:[ \t]+[^\s()$`]+)*)[ \t]*\)|`" + _ECHO_WORD
+                               + r"((?:[ \t]+[^\s`$]+)*)[ \t]*`")
+_DEFAULT_SUBST_RE = re.compile(r"\$\{\w+:?[-=+]([^{}$`]*)\}")
+
+def _default_subst(v, quoted=True):
+    # A default goes in as written (`${F:-"-rf"}` -> `"-rf"`, whose quotes the tokenizer then removes, as the
+    # shell does), except inside "...": there its unescaped double quotes are dropped (`\"` stays), so it
+    # stays part of the outer string (`"${M:-"a && b"}"` is one string to the shell; its `&&` stays quoted).
+    # quoted=False leaves a default holding a quote as written (the second, safe copy of the view).
+    mask = _quote_mask(v)
+    # A quote is escaped only after an odd run of backslashes (`\\"` is a backslash, then a real quote).
+    unq = lambda w: re.sub(r'(\\*)"', lambda q: q.group(1) if len(q.group(1)) % 2 == 0 else q.group(0), w)
+    def put(e):
+        w = e.group(1)
+        if not quoted and ('"' in w or "'" in w):
+            return e.group(0)
+        return unq(w) if mask[e.start()] else w
+    return _DEFAULT_SUBST_RE.sub(put, v)
+
+def _literal_subst_words(e):
+    words = (e.group(1) or e.group(2) or "").split()
+    return " ".join(words[1:] if words[:1] == ["--"] else words)
+
 def _views():
     out = []
     # GH #309: the command with every brace group expanded as the shell does. Shadow first (GH #337):
@@ -4124,6 +4151,20 @@ def _views():
         v = _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", cmd))
         if v != cmd:
             out.append(("ifs-split", v))
+    # GH #589: the command with each literal substitution replaced by what it prints. Enforced, and read as
+    # far as the parser does, like ifs-split (a substitution in rm's flags hid `-rf` from every rule).
+    # A second copy leaves every quoted default as written: a view whose quotes do not balance is dropped
+    # unread, so a misread quoted default must not hide an unquoted one (`${G:--rf}`) in the same command.
+    if "$" in cmd or "`" in cmd:
+        for quoted in (True, False):
+            v = cmd
+            for _ in range(3):  # inside out: `${X:-${Y:--rf}}`, `$(echo $(echo -rf))`
+                w = _default_subst(_LITERAL_SUBST_RE.sub(_literal_subst_words, v), quoted)
+                if w == v:
+                    break
+                v = w
+            if v != cmd and ("subst-literal", v) not in out:
+                out.append(("subst-literal", v))
     if len(cmd) > _VIEW_LEN_CAP:
         return out
     vals = {}
