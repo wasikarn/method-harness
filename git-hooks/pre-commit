@@ -49,7 +49,7 @@ while IFS= read -r -d '' f; do
 done < <(staged_z | LC_ALL=C xargs -0 -r git --literal-pathspecs grep --cached -z -a -l -E '/Users/[A-Za-z]|-Users-[A-Za-z]' --)
 
 # 5. METHODOLOGY.md is injected whole every session: hard cap 4096 bytes
-if staged docs/METHODOLOGY.md | /usr/bin/grep -q .; then
+if [ -n "$(staged docs/METHODOLOGY.md)" ]; then
   n=$(git show :docs/METHODOLOGY.md | wc -c | tr -d ' ')
   [ "$n" -le 4096 ] || { echo "pre-commit: docs/METHODOLOGY.md is ${n}B, cap 4096" >&2; fail=1; }
 fi

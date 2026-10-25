@@ -24,9 +24,13 @@ checkout's hook, so the lock applies only once that checkout has the new `git-ho
 Under `set -o pipefail`, never pipe a writer into a reader that may stop early: `echo "$out" | grep
 -q PAT` fails on a match whenever grep exits before bash's line-by-line writes finish (SIGPIPE, rc
 141). Under gauntlet load this flaked the wiring test and other rows, each run naming a different
-file (2026-10-23). Write `grep -q PAT <<<"$out"`; `tests/scripts/test-pipefail-grep-q-lint.sh`
-fails on the piped form. The same applies to a payload piped into a command that may not read it
-(`scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for this reason).
+file (2026-10-23). Write `grep -q PAT <<<"$out"` or `grep -q PAT <<<"$(cmd)"`.
+`tests/scripts/test-pipefail-grep-q-lint.sh` fails on any single `|` into a grep whose own words
+include `-q`/`--quiet`/`--silent`, in every tracked shell file (a file without `pipefail` may be
+sourced under it, as harness-audit's checks are). It does not catch a quoted grep pattern that holds
+`|` or `)` before the `-q`, nor other early-exit readers (`head`, a command that skips stdin): there,
+apply the rule by hand. `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for that last
+reason, and skips the `_*.sh` helpers the gates source.
 
 ## Git hooks
 

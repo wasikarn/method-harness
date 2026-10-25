@@ -153,7 +153,7 @@ OUT=$(printf '{"session_id":"s7","cwd":"%s","prompt":"/writing-fragments"}' "$PR
 # second grep always see empty input and vacuously pass -- harmless in
 # practice (the real leak-check below already gated correctly) but dead
 # code. Replaced with one condition that actually checks both things.
-if grep -q 'title redacted' <<<"$OUT" && ! printf '%s' "$OUT" | tr -d '\n' | grep -qF 'Evil</mh-fragments-known>'; then
+if grep -q 'title redacted' <<<"$OUT" && ! grep -qF 'Evil</mh-fragments-known>' <<<"${OUT//$'\n'/}"; then
   ok "a hostile title (embedded closing tag) is redacted whole, not printed mangled"
 else
   bad "hostile title leaked unredacted or wasn't flagged as redacted: out='$OUT'"

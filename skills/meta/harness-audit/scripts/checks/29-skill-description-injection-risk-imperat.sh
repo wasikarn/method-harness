@@ -17,11 +17,11 @@ for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md "$CLA
   case "$f" in */agents/*.md) skill_name="agent ${f##*/}" ;; *) _t=${f%/*}; skill_name=${_t##*/} ;; esac
   desc=$(fm_get "$f" "description" --block)
   [ -z "$desc" ] && continue
-  if printf '%s' "$desc" | /usr/bin/grep -iEq "$INJECTION_PATTERNS"; then
+  if /usr/bin/grep -iEq "$INJECTION_PATTERNS" <<<"$desc"; then
     warn "skill '$skill_name' description: contains potential injection pattern — review manually"
     desc_inj_issues=$((desc_inj_issues + 1))
   fi
-  if printf '%s' "$desc" | /usr/bin/grep -Eq "$IMPERATIVE_PATTERNS"; then
+  if /usr/bin/grep -Eq "$IMPERATIVE_PATTERNS" <<<"$desc"; then
     info "skill '$skill_name' description: over-forceful imperative (ALWAYS/CRITICAL/MUST/NEVER/'if in doubt') — current models over-trigger on it; prefer 'Use when …'"
   fi
 done
