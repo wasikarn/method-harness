@@ -462,8 +462,8 @@ def _spawn_statement(tail, work):
     return "".join(buf), work
 
 def _quote_mask(c):
-    # One flag per character of c: quoted ('..' or "..", its quotes included) or backslash-escaped. A
-    # $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
+    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
+    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
     # per scanned text.
     mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
     while i < n:
@@ -484,12 +484,29 @@ def _quote_mask(c):
                 i += 1
             elif ch == "`":
                 stack.append("`")
+        elif q == "$'":
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == SQ:
+                stack.pop()
         elif ch == "\\" and i + 1 < n:
             mask[i + 1] = 1
+            i += 1
+        elif ch == "$" and c[i + 1:i + 2] == SQ:
+            mask[i] = mask[i + 1] = 1
+            stack.append("$'")
             i += 1
         elif ch in (SQ, '"'):
             mask[i] = 1
             stack.append(ch)
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()" or (c[i - 1] == "{" and c[i - 2:i - 1] != "$")):
+            j = c.find("\n", i)  # a comment, to the end of its line
+            j = n if j < 0 else j
+            mask[i:j] = b"\1" * (j - i)
+            i = j
+            continue
         elif q == "(" and ch in "()":
             stack.append(ch) if ch == "(" else stack.pop()
         elif q == "`" and ch == "`":
@@ -521,8 +538,15 @@ def _claude_words_start_session(stmt, piped):
         if depth < 0:
             stmt, cut = stmt[:tok.start()], False
             break
+    # A version or help word inside $(..) or `..` is that command's, not claude's.
+    text = _SPAWN_OUT_REDIR_RE.sub(" ", stmt.replace("<(", " ("))
+    while True:
+        t2 = re.sub(r"\$\([^()]*\)|`[^`]*`", " X ", text)
+        if t2 == text:
+            break
+        text = t2
     try:
-        words = shlex.split(_SPAWN_OUT_REDIR_RE.sub(" ", stmt.replace("<(", " (")))
+        words = shlex.split(text, comments=True)
     except ValueError:
         words = None
     if words and any(t in _SPAWN_INFO for t in words):
@@ -552,13 +576,47 @@ def _nested_spawn_text(c, overlap):
         if mask[m.end(1) - 1]:
             continue
         a, lead = m.start(1), m.group(1)
-        # A pipe in: `|` that is not `||`, or `|&` (the anchor starts at its `&`); xargs hands its
-        # input over as words.
-        piped = (lead[:1] == "|" and lead[1:2] != "|" and c[a - 1:a] != "|") or \
-                (lead[:1] == "&" and c[a - 1:a] == "|") or re.search(r"(?<![\w./-])xargs\s", lead) is not None
+        lead_words = _spawn_lead_words(lead)
+        if lead_words is None:
+            continue
+        # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
+        # over as words.
+        sep = re.match(r"[|;&(){\s]*", lead).group()
+        piped = re.search(r"(?<!\|)\|&?[\s({]*$", c[:a] + sep) is not None or "xargs" in lead_words
         if _claude_starts_session(stmt, piped):
             return True
     return False
+
+def _spawn_lead_words(lead):
+    # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
+    # wrapper explains: the anchor's walk skips any words after a wrapper (`time rg claude src/`), fine
+    # for the flag scan but not for reading claude's words as a prompt. A wrapper's flag, the value of
+    # one of its value flags, an assignment, timeout's duration, a keyword or a group open are explained.
+    words = lead.replace("{", " ").replace("(", " ").split()[:-1]  # the last word is claude
+    names, prev, want = [], None, False
+    for t in words:
+        b = t.lstrip("|&;").rsplit("/", 1)[-1]
+        if not b:
+            continue
+        if want:
+            want = False
+            continue
+        if b in SHELL_KEYWORDS or b in ("builtin", "--") or re.match(r"[A-Za-z_]\w*=", b):
+            continue
+        if b in PREFIX_WRAPPERS or b == "xargs":
+            prev = b
+            names.append(b)
+            continue
+        if prev and b.startswith("-"):
+            want = (b in FLAG_VALUE_WRAPPERS.get(prev, ())
+                    or (prev in ("sudo", "doas") and b in ("-u", "-g", "-C", "--user", "--group"))
+                    or (prev == "env" and b == "-u")
+                    or (prev == "xargs" and not b.startswith("--") and len(b) == 2 and b[1] in "IJRSnPLdsEa"))
+            continue
+        if prev in ("timeout", "gtimeout") and re.fullmatch(r"[\d.]+[smhd]?", b):
+            continue
+        return None
+    return names
 
 _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via Bash (claude with a prompt "
                       "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "

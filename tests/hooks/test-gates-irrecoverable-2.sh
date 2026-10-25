@@ -1707,6 +1707,33 @@ for _c in \
   test_allow "$IRRECOVERABLE" "bypass hunt F1/F2 control: subagent claude that starts no session: $_c" \
     "$(bash_agent_payload "$_c" fork)"
 done
+# Fresh-context review of the F1 fix: a prompt or stdin hidden behind a quote in a comment or a $'..'
+# string, a version word in a comment, a pipe into a group; and wrapped commands whose ARGUMENT is
+# `claude`, which the anchor's wrapper walk reached (`time rg claude src/` read `src/` as a prompt).
+for _c in \
+  $'# it\'s a test\nclaude "hi"' \
+  "echo \$'it\\'s'; claude \"hi\"" \
+  'claude "summarize this" # -v' \
+  'claude "x" $(true -v )' \
+  'echo "do x" | { claude; }' \
+  'echo "do x" | (claude)' \
+  'echo hi | sudo -u bob claude' \
+  'timeout 30 claude hi' \
+  'echo hi | xargs -n1 claude' \
+  'echo ${#arr[@]}; claude hi' ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F1 review: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in \
+  'time rg claude src/' \
+  'timeout 30 grep -rn claude hooks/' \
+  'env LC_ALL=C grep -c claude README.md' \
+  'sudo grep -r claude /etc' \
+  'git ls-files | xargs grep -l claude' \
+  'nice -n 5 rg --files-with-matches claude' \
+  $'# it\'s fine\nclaude --version' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F1 review control: claude is an argument, or prints its version: $_c" \
+    "$(bash_agent_payload "$_c" fork)"
+done
 for _c in 'claude hi' 'echo hi | claude' 'claude -w x' ; do
   test_allow "$IRRECOVERABLE" "bypass hunt F1/F2 control: the main session may start one: $_c" \
     "$(bash_agent_payload "$_c" '')"
