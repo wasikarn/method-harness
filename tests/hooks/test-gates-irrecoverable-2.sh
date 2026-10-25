@@ -1896,7 +1896,7 @@ test_deny  "$IRRECOVERABLE" "GH #561: bare -c remote.origin.mirror (true) push" 
 test_deny  "$IRRECOVERABLE" "GH #561: bare -cremote.origin.mirror (joined, true) push" "$(bash_payload 'git -cremote.origin.mirror push origin')"
 test_allow "$IRRECOVERABLE" "GH #561 control: bare -c color.ui status" "$(bash_payload 'git -c color.ui status')"
 test_allow "$IRRECOVERABLE" "GH #561 control: bare -c clean.requireForce (true) clean -dx stays the plain clean" \
-  "$(bash_payload 'git -c clean.requireForce clean -n')"
+  "$(bash_payload 'git -c clean.requireForce clean -dx')"
 # --config-env=<key>=<envvar> reads the value from an env var the gate cannot see: the dangerous reading.
 test_deny  "$IRRECOVERABLE" "GH #561: --config-env=alias.p=X p" "$(bash_payload 'git --config-env=alias.p=X p origin main')"
 test_deny  "$IRRECOVERABLE" "GH #561: --config-env alias.p=X p (split form)" "$(bash_payload 'git --config-env alias.p=X p origin main')"
@@ -1933,6 +1933,39 @@ test_deny  "$IRRECOVERABLE" "GH #561: git config set remote.origin.mirror true" 
 test_allow "$IRRECOVERABLE" "GH #561 control: -c alias.co=checkout co -b feat" "$(bash_payload 'git -c alias.co=checkout co -b feat')"
 test_allow "$IRRECOVERABLE" "GH #561 control: git config --get remote.origin.mirror" "$(bash_payload 'git config --get remote.origin.mirror')"
 test_allow "$IRRECOVERABLE" "GH #561 control: git config alias.st status" "$(bash_payload 'git config alias.st status')"
+# Round 2 review of the hotfix. git config stops reading options at its first plain word, so an
+# option after KEY VALUE is more value and git still writes (checked on git 2.43).
+test_deny  "$IRRECOVERABLE" "GH #561 r2: git config alias.p 'push --force' -l still writes" \
+  "$(bash_payload 'git config alias.p "push --force" -l')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: git config remote.origin.push +HEAD:main --unset still writes" \
+  "$(bash_payload 'git config remote.origin.push +HEAD:main --unset')"
+# The clean dry-run exemption reads clean's options in order: -e/--exclude takes a value, -- ends options.
+test_deny  "$IRRECOVERABLE" "GH #561 r2: requireForce=false clean -xd -e -xdn (-xdn is -e's value)" \
+  "$(bash_payload 'git -c clean.requireForce=false clean -xd -e -xdn')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: requireForce=false clean -xd -- -xdn (-xdn is a path)" \
+  "$(bash_payload 'git -c clean.requireForce=false clean -xd -- -xdn')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: requireForce=false clean -xd -e -n (-n is -e's value)" \
+  "$(bash_payload 'git -c clean.requireForce=false clean -xd -e -n')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: requireForce=false clean -xd --exclude -n" \
+  "$(bash_payload 'git -c clean.requireForce=false clean -xd --exclude -n')"
+test_allow "$IRRECOVERABLE" "GH #561 r2 control: requireForce=false clean -xd -eFOO -n" \
+  "$(bash_payload 'git -c clean.requireForce=false clean -xd -eFOO -n')"
+test_allow "$IRRECOVERABLE" "GH #561 r2 control: requireForce=false clean --exclude=x -n" \
+  "$(bash_payload 'git -c clean.requireForce=false clean --exclude=x -n')"
+# A non-! alias resolves to its expansion (chains followed, bounded), and every rule reads the resolved verb.
+test_deny  "$IRRECOVERABLE" "GH #561 r2: alias chain p -> q -> push --force" \
+  "$(bash_payload 'git -c alias.q="push --force" -c alias.p=q p origin main')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: alias p=push with remote.origin.mirror" \
+  "$(bash_payload 'git -c alias.p=push -c remote.origin.mirror p origin')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: alias p=clean with requireForce=false" \
+  "$(bash_payload 'git -c alias.p=clean -c clean.requireForce=false p -dx')"
+test_allow "$IRRECOVERABLE" "GH #561 r2 control: alias chain p -> q -> status" \
+  "$(bash_payload 'git -c alias.q=status -c alias.p=q p')"
+test_allow "$IRRECOVERABLE" "GH #561 r2 control: an alias loop p -> p (git errors)" "$(bash_payload 'git -c alias.p=p p')"
+# An empty boolean is false in git: clean then runs without -f.
+test_deny  "$IRRECOVERABLE" 'GH #561 r2: git config clean.requireForce ""' "$(bash_payload 'git config clean.requireForce ""')"
+test_deny  "$IRRECOVERABLE" "GH #561 r2: -c clean.requireForce= clean -dx" "$(bash_payload 'git -c clean.requireForce= clean -dx')"
+test_allow "$IRRECOVERABLE" "GH #561 r2 control: git config clean.requireForce true" "$(bash_payload 'git config clean.requireForce true')"
 
 # Bypass hunt 2026-10-23 F5: `find | xargs rm` is the same delete as `find -exec rm` (denied with no
 # flags at all), but the xargs re-point handed it to the rm-rf rule, which needs both -r and -f.
