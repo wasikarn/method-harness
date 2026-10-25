@@ -1905,6 +1905,7 @@ _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _MAX_SHELL_DEPTH = 5
 _WDEPTH = {}      # window index -> unwrap depth (absent = 0, an original window)
 _XARGS_HANDOVERS = [0]  # windows appended for `xargs <wrapper> ...` (bounded, see the xargs branch)
+_ENV_PRE570_WINDOWS = set()  # indexes of the GH #560 pre-#570 env -S readings (see the env branch)
 _cur_depth = 0
 
 def _count_handover(what):
@@ -2652,6 +2653,40 @@ def _gh_builtin_write(scan):
         return f"{group} {words[0]} {flag}"
     return ""
 
+# GH #560: the words of an `env -S` string when its first word is an env option (env reads on
+# from them), else None (the string is the command line, scanned like a sh -c body). An unbalanced
+# quote is None too, so the string still gets the body scan.
+_ENV_SPLIT_MAX = 16
+def _env_split_options(body):
+    if not body.replace(PH, "").lstrip().startswith("-"):
+        return None
+    # GH #560 round 2: env ends the string at `\c` (outside single quotes) and at a word that
+    # starts with `#`, then reads on from the words after the -S argument (`env -S '-i #' rm -rf x`
+    # runs rm). shlex would turn `\c` into a `c` word and keep `#`, the command env never runs.
+    q, k = "", 0
+    while k < len(body):
+        ch = body[k]
+        if ch == "'" and q != '"':
+            q = "" if q else "'"
+        elif ch == '"' and q != "'":
+            q = "" if q else '"'
+        elif ch == "\\" and q != "'":
+            if body[k + 1:k + 2] == "c":
+                body = body[:k]
+                break
+            k += 1
+        k += 1
+    lex = shlex.shlex(body, posix=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    try:
+        words = list(lex)
+    except ValueError:
+        return None
+    for n, word in enumerate(words):
+        if word.startswith("#"):
+            return words[:n]
+    return words
+
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 # xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
 _XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
@@ -2729,7 +2764,7 @@ def _check_window(_wi, w):
     # separate GH issues (2026-09-20 audit).
     # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
     # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
-    o, via_run_wrapper = 0, False
+    o, env_splits, via_run_wrapper = 0, 0, False
     while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
@@ -2741,7 +2776,17 @@ def _check_window(_wi, w):
             # the first value letter takes the rest of the cluster, or the next word when that is
             # empty (`-iu FOO`). getopt_long also takes an unambiguous prefix (`--split=`); `--s`
             # is the shortest, as no other env long option starts with s.
-            i, body = o, None
+            # GH #560 regression after #570: env keeps reading ITS OWN options from the split words
+            # (`env -S -i rm -rf x` and `env -S '-u FOO rm -rf x'` run rm), so a string whose first
+            # word is an option is split back into this loop, not scanned as a command line.
+            # _ENV_SPLIT_MAX bounds the re-splits: each one copies the tail, and a flood must stay
+            # linear; past it the gate denies, like the sh -c depth limit.
+            # GH #560 round 3: -S splitting has more corners than this models (a quoted or escaped
+            # `#`, `\_`, a quote inside a comment, an empty nested -S, `--unset NAME`), so an env
+            # with -S is ALSO read the way the gate read it before #570 (-S a bare flag, `-u` takes
+            # a value), as one more window at this depth: either reading denies, so no shape that
+            # denied before #570 allows now. _count_handover bounds a chain of them (each copies the tail).
+            i, body, pre_rest, pre_o, split_seen = o, None, rest, o, False
             while i < len(rest):
                 t = rest[i].replace(PH, "")
                 long_name = t[2:].split("=", 1)[0]
@@ -2750,21 +2795,51 @@ def _check_window(_wi, w):
                         body, i = rest[i].split("=", 1)[1], i + 1
                     elif i + 1 < len(rest):
                         body, i = rest[i + 1], i + 2
-                    break
-                m = re.match(r"-[^-CPSu]*([CPSu])", t)
-                if m:
-                    attached = t[m.end():]
-                    if m.group(1) == "S" and (attached or i + 1 < len(rest)):
-                        body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
-                    i += 1 if attached else 2
-                    if body is not None:
+                    else:
                         break
+                    m = None
+                else:
+                    m = re.match(r"-[^-CPSu]*([CPSu])", t)
+                    if m:
+                        attached = t[m.end():]
+                        if m.group(1) == "S" and (attached or i + 1 < len(rest)):
+                            body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
+                        i += 1 if attached else 2
+                if body is not None:
+                    split_seen = True
+                    words = _env_split_options(body)
+                    if words is None:
+                        break
+                    env_splits += 1
+                    if env_splits > _ENV_SPLIT_MAX:
+                        deny("env -S strings that start with an option, more than %d deep - confirm with user first"
+                             % _ENV_SPLIT_MAX)
+                        break
+                    rest, i, body = words + rest[i:], 0, None
+                elif m:
+                    pass
                 elif t.startswith("-"):
                     i += 1
                 elif _assignment(rest[i]):
                     i += 1
                 else:
                     break
+            if split_seen:
+                if _wi in _ENV_PRE570_WINDOWS:  # only a chain of them copies the tail again and again
+                    _count_handover("env -S")
+                j = pre_o
+                while j < len(pre_rest):
+                    t = pre_rest[j].replace(PH, "")
+                    if t == "-u" and j + 1 < len(pre_rest):
+                        j += 2
+                    elif t.startswith("-") or _assignment(pre_rest[j]):
+                        j += 1
+                    else:
+                        break
+                if j < len(pre_rest):
+                    _WDEPTH[len(windows)] = _cur_depth
+                    _ENV_PRE570_WINDOWS.add(len(windows))
+                    windows.append(pre_rest[j:])
             if body is not None:
                 _scan_body(" ".join([body] + rest[i:]))
                 o = len(rest)
