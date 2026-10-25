@@ -141,7 +141,9 @@ def _runs_sql_client(stage):
         if not t or t in _SQL_STAGE_KEYWORDS:
             continue
         if wrap and t.startswith("-"):
-            skip = t in _SQL_STAGE_WRAPPERS[wrap]
+            # A short cluster takes the next word when its last letter does (sudo -iu postgres psql).
+            v = _SQL_STAGE_WRAPPERS[wrap]
+            skip = t in v or (not t.startswith("--") and "=" not in t and "-" + t[-1] in v)
             continue
         if duration:
             duration = False
@@ -1363,6 +1365,8 @@ def _sql_stdin_drop(c):
             return True
     return False
 
+_SQL_BODIES_SEEN = set()  # bash -c / eval bodies already checked by _deny_sql_stdin_drop
+
 def _deny_sql_stdin_drop(c):
     if _sql_stdin_drop(c):
         deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) sent to a SQL client on stdin — confirm with user first", rule="sql-drop")
@@ -1716,7 +1720,10 @@ def _scan_body(body):
         deny("shell -c / eval body nested more than %d levels deep - confirm with user first" % _MAX_SHELL_DEPTH)
     # GH #559 review: SQL a client reads on stdin inside the body (bash -c "echo 'DROP TABLE t' | psql db"),
     # which the top-level check above read as one quoted word. Heredocs in the body count too.
-    _deny_sql_stdin_drop(_strip_heredocs(body))
+    # The same body comes back from every window copy (see _BODY_READINGS), so each is checked once.
+    if body not in _SQL_BODIES_SEEN:
+        _SQL_BODIES_SEEN.add(body)
+        _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
     if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)):

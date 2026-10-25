@@ -1670,6 +1670,8 @@ test_allow "$IRRECOVERABLE" "GH #559 review: grep for psql upstream of a grep fo
   "$(bash_payload "grep -rn psql docs/ | grep -i 'drop table'")"
 test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into sudo -u postgres psql" \
   "$(bash_payload "echo 'DROP TABLE users' | sudo -u postgres psql mydb")"
+test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into sudo -iu postgres psql (a clustered value flag)" \
+  "$(bash_payload "echo 'DROP TABLE users' | sudo -iu postgres psql mydb")"
 test_deny  "$IRRECOVERABLE" "GH #559 review: DROP TABLE echoed into env PGHOST=db /usr/bin/psql" \
   "$(bash_payload "echo 'DROP TABLE users' | env PGHOST=db /usr/bin/psql mydb")"
 test_allow "$IRRECOVERABLE" "GH #559 review control: a SELECT echoed into psql" \
