@@ -47,7 +47,8 @@ Severity:
 
 Every finding below is fixed and merged. Three items the first version left out of the contract were
 then covered too (see "Out of the contract"). Merged PRs: #569, #570, #571 and #600, #572, #573, #574,
-#575, #576, #580, #582, #611, #614, #615. Issues #559–#568 and #606–#608 are closed. The rest of
+#575, #576, #580, #582, #611, #614, #615. Issues #559–#568 and #606–#608 are closed. The one
+"not confirmed" item, an empty `core.hooksPath`, was confirmed as a bypass and fixed in #609/#620. The rest of
 this file keeps the findings as they were on `58a6f08`. Only the Fix column and the sections after the
 table are updated.
 
@@ -136,11 +137,26 @@ Still not covered, by choice:
 
 ## Not confirmed
 
-- `git -c core.hooksPath= commit` (an empty value) is allowed, because `_sets_hooks_path` (`:1816`)
-  requires a non-empty value. Whether git then runs no hooks or the default `.git/hooks` was not checked.
-  Checking it would mean running the payload.
+Nothing is left here. The two open questions were settled on 2026-10-25:
+- `git -c core.hooksPath= commit` (an empty value) **turns off every hook**, so it is a HIGH bypass,
+  the same as `--no-verify`. On `58a6f08` the gate allowed it, because `_sets_hooks_path` (`:1816`)
+  required a non-empty value. At the operator's request it was run in a throwaway repo in the session
+  scratchpad, with git 2.43 and a pre-commit hook in both `git-hooks/` and `.git/hooks` that each log
+  when they run:
+  - a plain commit ran `git-hooks/` with `core.hooksPath git-hooks` set, and `.git/hooks` without it
+  - `-c core.hooksPath=`, `-c core.hookspath=` and `-c core.hooksPath=/nonexistent` ran no hook in
+    either setup
 
-Settled since:
+  So an empty value does not fall back to `.git/hooks`. Another session fixed it the same day: in
+  `011fbf2` (merged in #609) and in `8fa1f90` (merged in #620, GH #562). On `develop` all of these now
+  deny:
+  - `-c core.hooksPath=` and `-ccore.hooksPath=`
+  - `-c core.hooksPath=""`
+  - `--config-env=core.hooksPath=…`
+  - `GIT_CONFIG_PARAMETERS` with an empty value
+  - `git config core.hooksPath ''`
+
+  `git -c user.name= commit` stays allowed.
 - `git stash -q drop` is not a bypass. While working on #582, the sweep's own tooling ran
   `git stash -q push -- <paths>` and git refused it with `fatal: subcommand wasn't specified; 'push'
   can't be assumed due to unexpected token 'push'`. A flag before the stash subcommand stops the
