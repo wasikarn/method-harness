@@ -55,7 +55,7 @@ fi
 # --- advisory warns on the next codex Bash call while the record is fresh ---
 out=$(pretooluse_payload "codex exec 'retry'" | bash "$ADVISORY" "$STATE")
 rc=$?
-if [ "$rc" -eq 0 ] && echo "$out" | /usr/bin/grep -q 'mh-codex-quota-advisory'; then
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'mh-codex-quota-advisory' <<<"$out"; then
   ok "advisory warns on a fresh record, exit 0 (never blocks)"
 else
   bad "expected an advisory nudge and exit 0, got rc=$rc out='$out'"
@@ -114,7 +114,7 @@ else
 fi
 
 out=$(pretooluse_payload "$COMPANION" | bash "$ADVISORY" "$STATE")
-if echo "$out" | /usr/bin/grep -q 'mh-codex-quota-advisory'; then
+if /usr/bin/grep -q 'mh-codex-quota-advisory' <<<"$out"; then
   ok "advisory warns on the next companion command while the record is fresh"
 else
   bad "expected an advisory for the next companion command, got out='$out'"
@@ -148,7 +148,7 @@ else bad "expected silence and no python3 run at the default path, got out='$out
 
 fresh_state "$FAKE_HOME/.cache/mh/codex-quota-state.json"
 HOME="$FAKE_HOME" MH_CODEX_QUOTA_STATE_FILE='' adv "$CODEX_P"
-if [ "$py" = yes ] && echo "$out" | /usr/bin/grep -q 'mh-codex-quota-advisory'; then
+if [ "$py" = yes ] && /usr/bin/grep -q 'mh-codex-quota-advisory' <<<"$out"; then
   ok "GH #326 empty MH_CODEX_QUOTA_STATE_FILE falls back to the HOME default, as python does"
 else bad "expected an advisory from the HOME default state file, got out='$out' python=$py"; fi
 
@@ -158,7 +158,7 @@ if [ -z "$out" ] && [ "$py" = no ]; then ok "GH #326 an argv state path wins ove
 else bad "expected the argv path to decide, got out='$out' python=$py"; fi
 
 MH_CODEX_QUOTA_STATE_FILE="$STATE_DIR/absent.json" adv "$CODEX_P" "$STATE"
-if [ "$py" = yes ] && echo "$out" | /usr/bin/grep -q 'mh-codex-quota-advisory'; then
+if [ "$py" = yes ] && /usr/bin/grep -q 'mh-codex-quota-advisory' <<<"$out"; then
   ok "GH #326 a present argv state file reaches python3 and warns"
 else bad "expected python3 and an advisory from the argv state file, got out='$out' python=$py"; fi
 
@@ -225,37 +225,37 @@ else bad "expected silence and a removed record once reset_at has passed, got ou
 future_state "$S2"
 for cmd in 'git commit -m "fix codex hook"' 'grep codex notes.md' 'echo codex' 'command -v codex'; do
   out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
-  if echo "$out" | grep -q '"permissionDecision": *"deny"'; then bad "a command that only mentions codex was denied: $cmd"
-  elif echo "$out" | grep -q 'mh-codex-quota-advisory'; then ok "a known reset only advises a command that mentions codex: $cmd"
+  if grep -q '"permissionDecision": *"deny"' <<<"$out"; then bad "a command that only mentions codex was denied: $cmd"
+  elif grep -q 'mh-codex-quota-advisory' <<<"$out"; then ok "a known reset only advises a command that mentions codex: $cmd"
   else bad "expected the advisory for a command that mentions codex: $cmd, got '$out'"; fi
 done
 # heredoc commit body, a companion path that is not run, and codex subcommands that spend no quota
 for cmd in $'git commit -m "$(cat <<\'EOF\'\nfix x\n\ncodex exec now denied\nEOF\n)"' 'git add hooks/codex-companion.mjs' 'codex login' 'codex --version' 'git commit -m "fix (codex hook)"'; do
   out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
-  if echo "$out" | grep -q '"permissionDecision": *"deny"'; then bad "denied a command that runs no quota-spending codex: $(echo "$cmd" | head -1)"
+  if grep -q '"permissionDecision": *"deny"' <<<"$out"; then bad "denied a command that runs no quota-spending codex: $(echo "$cmd" | head -1)"
   else ok "no deny for: $(echo "$cmd" | head -1)"; fi
 done
 # a far-dated or misparsed reset (beyond 8 days of the record) never denies, and an old one still clears by TTL
 printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(( $(date +%s) - 90000 ))" "$(( $(date +%s) + 9 * 86400 ))" > "$S2"
 out=$(pretooluse_payload "codex exec 'go'" | bash "$ADVISORY" "$S2")
-if echo "$out" | grep -q '"permissionDecision"'; then bad "a reset more than 8 days out denied: '$out'"
+if grep -q '"permissionDecision"' <<<"$out"; then bad "a reset more than 8 days out denied: '$out'"
 elif [ ! -f "$S2" ]; then ok "a reset more than 8 days out is ignored and the old record clears by TTL"
 else bad "expected the stale record to be removed"; fi
 # old record + future reset + a mention: advisory only, and the record stays for the real invocation
 printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(( $(date +%s) - 90000 ))" "$(( $(date +%s) + 172800 ))" > "$S2"
 out=$(pretooluse_payload "grep codex x" | bash "$ADVISORY" "$S2")
-if echo "$out" | grep -q 'mh-codex-quota-advisory' && [ -f "$S2" ]; then ok "old record with a future reset: a mention advises and the record stays"
+if grep -q 'mh-codex-quota-advisory' <<<"$out" && [ -f "$S2" ]; then ok "old record with a future reset: a mention advises and the record stays"
 else bad "expected advisory and a kept record, got '$out'"; fi
 for cmd in "cd /tmp && codex exec 'go'" "rtk proxy codex exec 'go'" "FOO=1 codex exec 'go'" "echo hi; codex exec 'go'" "node /p/codex-companion.mjs task go"; do
   out=$(pretooluse_payload "$cmd" | bash "$ADVISORY" "$S2")
-  if echo "$out" | grep -q '"permissionDecision": *"deny"'; then ok "a known reset still denies a real invocation: $cmd"
+  if grep -q '"permissionDecision": *"deny"' <<<"$out"; then ok "a known reset still denies a real invocation: $cmd"
   else bad "expected a deny for a real codex invocation: $cmd, got '$out'"; fi
 done
 
 # --- a reset still ahead outlives the advisory TTL (a weekly limit can be days out) ---
 printf '{"recorded_at": %s, "reset_at": %s, "message": "Usage limit reached"}' "$(( $(date +%s) - 90000 ))" "$(( $(date +%s) + 172800 ))" > "$S2"
 out=$(pretooluse_payload "codex exec 'go'" | bash "$ADVISORY" "$S2")
-if echo "$out" | grep -q '"permissionDecision": *"deny"'; then ok "a record older than the TTL still denies while its reset is ahead"
+if grep -q '"permissionDecision": *"deny"' <<<"$out"; then ok "a record older than the TTL still denies while its reset is ahead"
 else bad "expected a deny for an old record with a future reset, got '$out'"; fi
 
 echo
