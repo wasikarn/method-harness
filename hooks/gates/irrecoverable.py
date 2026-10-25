@@ -1504,10 +1504,11 @@ def _redirect_target_end(s, j):
             k += 1
     return k
 
+_WORD_END_RE = re.compile(r"\d*[<>]|[ \t\n;&|)]|$")
 def _alone(s, i, k):
-    # True when s[i:i + k] is a whole word: a blank (or the start) before it, a blank, a separator or
-    # the end after it.
-    return (i == 0 or s[i - 1] in " \t\n") and (i + k == len(s) or s[i + k] in " \t\n;&|)")
+    # True when s[i:i + k] is a whole word: a blank (or the start) before it, a blank, a separator, a
+    # redirect (`\;>/dev/null`, `{}2>x`) or the end after it.
+    return (i == 0 or s[i - 1] in " \t\n") and _WORD_END_RE.match(s, i + k) is not None
 
 def _blank_redirections(s, named_fd=True):
     # named_fd: True = bash 4+/ksh93 (consume "{var}>f"), False = macOS /bin/sh, bash 3.2, dash (the
@@ -3034,9 +3035,18 @@ _FIND_VALUE_TESTS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwhol
                      "-printf", "-fprintf", "-fprint", "-fprint0", "-fls", "-regextype", "-newermt"}
 
 def _find_actions(rest, *names):
-    # True when a word of find's `rest` that is not a test's value may be one of names.
-    return any(_find_word_may_be(t, *names) and not (k and rest[k - 1].replace(PH, "") in _FIND_VALUE_TESTS)
-               for k, t in enumerate(rest))
+    # True when a word of find's `rest` that is not a test's value may be one of names. Read left to
+    # right: a test's value is skipped even when it is itself a test's name (`-name -name -delete`
+    # deletes the files named "-name").
+    value = False
+    for t in rest:
+        if value:
+            value = False
+            continue
+        if _find_word_may_be(t, *names):
+            return True
+        value = t.replace(PH, "") in _FIND_VALUE_TESTS
+    return False
 
 def _shell_body_runs_rm(sub, depth=0):
     # GH #586: True when sub (a find action's command, `sh -c 'rm "$1"' _ {}`) is a shell (past its

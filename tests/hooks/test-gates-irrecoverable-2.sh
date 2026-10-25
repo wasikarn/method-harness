@@ -2327,7 +2327,15 @@ for _c in \
   "find . -exec sh -c 'sh -c \"rm \\\$1\"' _ x \\;" \
   "find . -exec sh -c 'eval rm \"\$1\"' _ {} \\;" \
   "find . -exec sh -c 'busybox rm \"\$1\"' _ {} \\;" \
-  'find . -name x | xargs -I {} rm {}' ; do
+  'find . -name x | xargs -I {} rm {}' \
+  'find . -name -name -delete' \
+  'find . -name -size -delete' \
+  'find . -printf -name -delete' \
+  'find . -name x -name -name -delete' \
+  'find . -iname -path -execdir rm {} +' \
+  'find . -exec cat {} \;>/dev/null -delete' \
+  'find . -exec cat {} \;2>/dev/null -delete' \
+  'find . -exec cat {}>/dev/null \; -delete' ; do
   test_deny "$IRRECOVERABLE" "GH #586: find deletes through a shell body or a spliced action: $_c" "$(bash_payload "$_c")"
 done
 for _c in \
