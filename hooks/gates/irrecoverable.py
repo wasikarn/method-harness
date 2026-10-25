@@ -42,11 +42,191 @@ _HEREDOC_RE = re.compile(r"<<(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
 # against the segment of the line BEFORE "<<" (the command the heredoc feeds).
 _INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
+# 2026-10-24 sweep: a SQL client reads SQL on stdin too (a heredoc, a here-string, a pipe), where the
+# -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
+# checked with the stdin text further down (_sql_stdin_drop). A SQL comment separates words like a blank.
+_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb)(?![\w.-])")
+_SQL_GAP = r"(?:\s|/\*[^*]{0,200}\*/|--[^\n]{0,200}\n)+"
+_SQL_DROP_RE = re.compile(r"DROP" + _SQL_GAP + r"(TABLE|DATABASE|SCHEMA)|TRUNCATE" + _SQL_GAP + r"(TABLE" + _SQL_GAP + r")?\w",
+                          re.IGNORECASE)
+# GH #559 review 2: SQL a client reads on stdin is matched with its string literals as one word and its
+# comments dropped, so text that only mentions a drop (-- removed the DROP TABLE step, LIKE 'truncate x')
+# reads nothing. A backslash ends no literal early here: 'a\'; DROP TABLE t is a drop to PostgreSQL.
+# The -c/-e path in the rule loop keeps its raw match.
+_SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|`[^`]*`?|--[^\n]*|/\*(?:[^*]|\*(?!/))*(?:\*/)?")
+
+def _sql_drops(sql):
+    return bool(_SQL_DROP_RE.search(_SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)))
+
+# GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
+# matched once where it is stripped (rescanning every stored body per bash -c / eval body was quadratic).
+_SQL_HEREDOC_DROP = [False]
+
+def _pieces(text, pipe=False):
+    # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
+    # pipe=True a single | or |&. A redirect's & (2>&1, &>f) separates nothing.
+    # GH #559 review 2: a # that starts a word comments out the rest of the line (an apostrophe in it opens
+    # no quote), and a newline after a trailing | && || continues the pipeline, as it does in the shell.
+    out, start, i, q, n, last, last2 = [], 0, 0, None, len(text), "", ""
+    while i < n:
+        c, w = text[i], 0
+        if q:
+            if c == "\\" and q == '"':
+                i += 1
+            elif c == q:
+                q = None
+        elif c == "\\":
+            i += 1
+        elif c in "'\"":
+            q = c
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "\n" and (last == "|" or last + last2 == "&&"):
+            pass
+        elif pipe:
+            if c == "|" and text[i + 1:i + 2] != "|" and text[i - 1:i] != "|":
+                w = 2 if text[i + 1:i + 2] == "&" else 1
+        elif text.startswith(("&&", "||"), i):
+            w = 2
+        elif c in ";\n" or (c == "&" and text[i - 1:i] not in (">", "<", "|") and text[i + 1:i + 2] != ">"):
+            w = 1
+        if c not in " \t\n":
+            last, last2 = c, last
+        if w:
+            out.append((start, i))
+            i += w
+            start = i
+            continue
+        i += 1
+    out.append((start, n))
+    return out
+
+# GH #559 review: the client is the command a pipe stage runs, not the word anywhere in it: "grep -v psql"
+# and a gh title naming psql read no SQL. A stage's argv0 is its first word past shell keywords, VAR=x
+# assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
+# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
+# are defined. A wrapper missing here hides the client, as it does in the rule loop.
+_SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb")
+_SQL_STAGE_WRAPPERS = {
+    "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
+    "builtin": (), "setsid": (), "rtk": (), "doas": ("-u", "-C"), "exec": ("-a",),
+    "sudo": ("-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "-R", "--user", "--group", "--host",
+             "--prompt", "--close-from", "--chdir", "--role", "--type", "--other-user", "--command-timeout"),
+    "nice": ("-n", "--adjustment"), "ionice": ("-c", "-n", "--class", "--classdata"),
+    "stdbuf": ("-i", "-o", "-e", "--input", "--output", "--error"),
+    "timeout": ("-s", "-k", "--signal", "--kill-after"), "gtimeout": ("-s", "-k", "--signal", "--kill-after"),
+}
+_SQL_STAGE_KEYWORDS = ("!", "{", "if", "elif", "then", "else", "do", "while", "until", "coproc")
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_]\w*\+?=")
+
+def _words(text):
+    # The words of text split at unquoted blanks, quotes removed, one at a time (a caller that needs only the
+    # first few stops early). An unclosed quote runs to the end of text.
+    w, q, has, i, n = [], None, False, 0, len(text)
+    while i < n:
+        c = text[i]
+        if q:
+            if c == q:
+                q = None
+            elif c == "\\" and q == '"' and i + 1 < n:
+                i += 1
+                if text[i] != "\n":  # a backslash-newline is a line continuation, gone from the word
+                    w.append(text[i])
+            else:
+                w.append(c)
+        elif c in " \t\n":
+            if has:
+                yield "".join(w)
+                w, has = [], False
+        elif c in "'\"":
+            q, has = c, True
+        elif c == "#" and not has:  # a comment, to the end of the line
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "\\" and text[i + 1:i + 2] == "\n":
+            i += 2
+            continue
+        else:
+            if c == "\\" and i + 1 < n:
+                i += 1
+                c = text[i]
+            w.append(c)
+            has = True
+        i += 1
+    if has:
+        yield "".join(w)
+
+# GH #559 review 2: `docker exec <flags> <container> <cmd>` (and podman's) runs <cmd>, as the rule loop reads it.
+_DOCKER_EXEC_VALUE_FLAGS = ("-e", "-u", "-w", "--env", "--env-file", "--user", "--workdir", "--detach-keys")
+
+def _stage_cmd(stage):
+    # (argv0, the word iterator past it) of a pipe stage: its first word past shell keywords, assignments,
+    # the wrappers in _SQL_STAGE_WRAPPERS and a docker exec's flags and container; (None, ()) for none.
+    words = _words(stage)
+    wrap, skip, duration, docker = None, False, False, 0
+    for t in words:
+        t = t.lstrip("$({`").rstrip(")}`;")
+        if skip:
+            skip = False
+            continue
+        if not t or t in _SQL_STAGE_KEYWORDS:
+            continue
+        if docker == 1:  # only `docker exec` runs a command named after it
+            if t != "exec":
+                return "docker", words
+            docker, wrap = 2, None
+            continue
+        if wrap and t.startswith("-"):
+            # A short cluster takes the next word when its last letter does (sudo -iu postgres psql).
+            v = _DOCKER_EXEC_VALUE_FLAGS if wrap == "docker" else _SQL_STAGE_WRAPPERS[wrap]
+            skip = t in v or (not t.startswith("--") and "=" not in t and "-" + t[-1] in v)
+            continue
+        if docker == 2:
+            if t.startswith("-"):
+                wrap = "docker"
+                skip = t in _DOCKER_EXEC_VALUE_FLAGS or (not t.startswith("--") and "-" + t[-1] in _DOCKER_EXEC_VALUE_FLAGS)
+                continue
+            docker, wrap = 3, None  # the container
+            continue
+        if duration:
+            duration = False
+            continue
+        if _ASSIGNMENT_RE.match(t):
+            continue
+        b = t.rsplit("/", 1)[-1]
+        if b in ("docker", "podman") and not docker:
+            docker = 1
+            continue
+        if b in _SQL_STAGE_WRAPPERS or (wrap == "rtk" and b in ("proxy", "run", "err", "test", "summary")):
+            wrap, duration = b, b in ("timeout", "gtimeout")
+            continue
+        return b, words
+    return None, ()
+
+def _runs_sql_client(stage):
+    return _stage_cmd(stage)[0] in _SQL_CLIENTS
+
+def _feeds_sql_client(line, pos):
+    # Whether the heredoc opened at line[pos] is read by a SQL client: its own pipe stage or one downstream
+    # runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest ( or `
+    # before pos: a $( the heredoc sits in is no separator to _pieces, and a quote may hold it
+    # (gh --body "$(cat <<EOF").
+    for o in {0, max(line.rfind("(", 0, pos), line.rfind("`", 0, pos)) + 1}:
+        text, p = line[o:], pos - o
+        s, e = next((s, e) for s, e in _pieces(text) if p <= e)
+        if any(_runs_sql_client(text[s + a:s + b]) for a, b in _pieces(text[s:e], pipe=True) if s + b >= p):
+            return True
+    return False
 
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
     # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
+    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is still
+    # stripped, and one that drops sets _SQL_HEREDOC_DROP for the SQL check.
     lines = cmd.split("\n")
     out, i = [], 0
     while i < len(lines):
@@ -70,6 +250,9 @@ def _strip_heredocs(cmd):
             # Unmatched closing delimiter: put the scanned lines BACK rather
             # than silently eat a real write statement that followed.
             out.extend(lines[body_start:i])
+        elif (not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(line) and _feeds_sql_client(line, m.start())
+              and _sql_drops("\n".join(lines[body_start:i - 1]))):
+            _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
 def _normalize_ansi_c_quotes(cmd):
@@ -288,7 +471,21 @@ def _spawn_anchor_body(wrapper_prefix):
 _SPAWN_ANCHOR_RES = (re.compile(r"(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r")", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r"))", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX_LAZY) + r"))", re.MULTILINE))
-_SPAWN_FLAG_RE = re.compile(r"-p\b|--print\b|--agent\b|--bg\b|--worktree\b")
+_SPAWN_FLAG_RE = re.compile(r"-p\b|--print\b|--agent\b|--bg\b|--background\b|--worktree\b|-w\b")
+# Bypass hunt 2026-10-23 F1/F2: -w and --background are --worktree's and --bg's other spellings, and
+# the Bash tool has no TTY, so `claude <prompt>`, `<input> | claude` and `claude < file` run headless
+# exactly like -p. A version or help word anywhere in argv exits before a session starts (2.1.310).
+# The flag scan above reads every anchor; the prompt/stdin reading (_claude_starts_session) only an
+# anchor outside quotes, since a quoted `;` or `|` in a commit message opens an anchor here too, and
+# `-m "a; claude handles it"` must not read `handles` as a prompt.
+_SPAWN_INFO = ("--version", "-v", "--help", "-h")
+# `claude --help`'s Commands that start no session (2.1.310). Not `agents`, `attach`, `respawn` or
+# `ultrareview`: each one dispatches, opens or restarts a session.
+_CLAUDE_NO_SESSION_SUBS = frozenset({"auth", "auto-mode", "config", "doctor", "gateway", "import", "install",
+                                     "kill", "logs", "mcp", "migrate-installer", "plugin", "plugins", "purge",
+                                     "rm", "setup-token", "stop", "update", "upgrade"})
+_SPAWN_WORDS_CAP = 1024
+_SPAWN_OUT_REDIR_RE = re.compile(r"\d*(?:&>>?|>>?&?|>\|)\s*(?:\"[^\"]*\"|'[^']*'|[^\s;&|()<>]+)?")
 # GH #157: an ODD backslash run directly before a quote escapes that quote
 # in real bash (`claude \" ; othertool -p x` -- the `"` is a literal argument
 # character, not a string opener), so it is captured as one literal token
@@ -447,15 +644,165 @@ def _spawn_statement(tail, work):
         buf.append(t)
     return "".join(buf), work
 
+def _quote_mask(c):
+    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
+    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
+    # per scanned text.
+    mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
+    while i < n:
+        ch, q = c[i], stack[-1]
+        if q == SQ:
+            mask[i] = 1
+            if ch == SQ:
+                stack.pop()
+        elif q == '"':
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == '"':
+                stack.pop()
+            elif ch == "$" and c[i + 1:i + 2] == "(":
+                stack.append("(")
+                i += 1
+            elif ch == "`":
+                stack.append("`")
+        elif q == "$'":
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == SQ:
+                stack.pop()
+        elif ch == "\\" and i + 1 < n:
+            mask[i + 1] = 1
+            i += 1
+        elif ch == "$" and c[i + 1:i + 2] == SQ:
+            mask[i] = mask[i + 1] = 1
+            stack.append("$'")
+            i += 1
+        elif ch in (SQ, '"'):
+            mask[i] = 1
+            stack.append(ch)
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
+            j = c.find("\n", i)  # a comment, to the end of its line
+            j = n if j < 0 else j
+            mask[i:j] = b"\1" * (j - i)
+            i = j
+            continue
+        elif q == "(" and ch in "()":
+            stack.append(ch) if ch == "(" else stack.pop()
+        elif q == "`" and ch == "`":
+            stack.pop()
+        i += 1
+    return mask
+
+_SPAWN_SESSION_SEEN = {}  # the three anchor passes, joined and plain text, re-read the same statements
+
+def _claude_starts_session(stmt, piped):
+    key = (stmt[:_SPAWN_WORDS_CAP + 1], piped)
+    r = _SPAWN_SESSION_SEEN.get(key)
+    if r is None:
+        r = _SPAWN_SESSION_SEEN[key] = _claude_words_start_session(stmt, piped)
+    return r
+
+def _claude_words_start_session(stmt, piped):
+    # F1: stmt is the raw text after an unquoted `claude`. A `<` stdin (not `<(`) or a pipe in is the
+    # prompt; so is any word that is not an option (an option's value too: over-denies `claude --model
+    # sonnet`, which has no prompt and fails anyway), unless a version or help word exits first, or
+    # the first word is a subcommand that starts no session (`claude --model mcp x` is a prompt).
+    # Only a prefix is read: every anchor reads its own statement, and an unclosed `(` makes that the
+    # rest of the command each time. A cut statement that shows no version or help word is a spawn.
+    cut = len(stmt) > _SPAWN_WORDS_CAP
+    stmt = stmt[:_SPAWN_WORDS_CAP]
+    depth = 0
+    for tok in _SPAWN_TOKEN_RE.finditer(stmt):  # a `)` closing `$(claude ...)` ends claude's words
+        depth += (tok.group() == "(") - (tok.group() == ")")
+        if depth < 0:
+            stmt, cut = stmt[:tok.start()], False
+            break
+    # A version or help word inside $(..) or `..` is that command's, not claude's.
+    text = _SPAWN_OUT_REDIR_RE.sub(" ", stmt.replace("<(", " ("))
+    while True:
+        t2 = re.sub(r"\$\([^()]*\)|`[^`]*`", " X ", text)
+        if t2 == text:
+            break
+        text = t2
+    try:
+        words = shlex.split(text, comments=True)
+    except ValueError:
+        words = None
+    if words and any(t in _SPAWN_INFO for t in words):
+        return False
+    if words is None or cut or re.search(r"<(?!\()", stmt):
+        return True
+    if words and words[0] in _CLAUDE_NO_SESSION_SUBS:
+        return False
+    for i, t in enumerate(words):
+        if t == "--":
+            return i + 1 < len(words) or piped
+        if not (t.startswith("-") and len(t) > 1):
+            return True
+    return piped
+
 def _nested_spawn_text(c, overlap):
     if _charge_spawn_anchor(c):
         return True
     work = 0  # shared across every anchor's scan, never reset per-anchor -- see _SPAWN_SCAN_BUDGET above
+    mask = None
     for m in _SPAWN_ANCHOR_RES[overlap].finditer(c):
         stmt, work = _spawn_statement(c[m.end(1):], work)
         if stmt is None or _SPAWN_FLAG_RE.search(stmt):
             return True
+        if mask is None:
+            mask = _quote_mask(c)
+        if mask[m.end(1) - 1]:
+            continue
+        a, lead = m.start(1), m.group(1)
+        lead_words = _spawn_lead_words(lead)
+        if lead_words is None:
+            continue
+        # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
+        # over as words.
+        sep = re.match(r"[|;&(){\s]*", lead).group()
+        piped = re.search(r"(?<!\|)\|&?[\s({]*$", c[:a] + sep) is not None or "xargs" in lead_words
+        if _claude_starts_session(stmt, piped):
+            return True
     return False
+
+def _spawn_lead_words(lead):
+    # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
+    # wrapper explains: the anchor's walk skips any words after a wrapper (`time rg claude src/`), fine
+    # for the flag scan but not for reading claude's words as a prompt. Explained: an assignment, a
+    # keyword, a wrapper, a dash word after a wrapper and the one word after that dash word (its value,
+    # if it takes one: `env -C /tmp`, `sudo -p pw:`, `timeout -s KILL`), and timeout's duration.
+    words = lead.replace("{", " ").replace("(", " ").split()[:-1]  # the last word is claude
+    names, prev, after_dash = [], None, False
+    for t in words:
+        t = t.lstrip("|&;")
+        if not t or re.match(r"[A-Za-z_]\w*=", t):
+            continue
+        b = t.rsplit("/", 1)[-1]
+        if b in SHELL_KEYWORDS or b in ("builtin", "--"):
+            continue
+        if b in PREFIX_WRAPPERS or b == "xargs":
+            prev, after_dash = b, False
+            names.append(b)
+            continue
+        if prev and t.startswith("-"):
+            after_dash = True
+            continue
+        if after_dash:
+            after_dash = False
+            continue
+        if prev in ("timeout", "gtimeout") and re.fullmatch(r"[\d.]+[smhd]?", b):
+            continue
+        return None
+    return names
+
+_SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via Bash (claude with a prompt "
+                      "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "
+                      "main session dispatches")
 
 def _deny_nested_spawn():
     if _spawn_over_budget:
@@ -463,9 +810,7 @@ def _deny_nested_spawn():
               "to a file with the Write tool and run the file, or split it into smaller commands",
               file=sys.stderr)
     else:
-        print("[mh:gate] BLOCKED: a subagent may not spawn a nested Claude Code session via Bash "
-              "(claude -p/--print/--agent/--bg/--worktree) -- only the main session dispatches",
-              file=sys.stderr)
+        print("[mh:gate] BLOCKED: " + _SPAWN_DENY_REASON, file=sys.stderr)
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"))
     sys.exit(2)
 
@@ -1217,6 +1562,43 @@ _CMD_LEN_CAP = 150_000
 if len(cmd) > _CMD_LEN_CAP:
     deny("command too long to safely tokenize (" + str(len(cmd)) + " chars, cap " + str(_CMD_LEN_CAP) + ") - confirm with user first")
 
+def _sql_stdin_drop(c):
+    # SQL a client reads on stdin drops or truncates: a heredoc body it reads (_SQL_HEREDOC_DROP), a
+    # here-string on its own stage, or the data a stage upstream of it in its pipeline emits. Text downstream
+    # of the client is its output (psql -c '\d' | grep -i 'drop table'), so it is not read.
+    # GH #559 review 2: only echo/printf words and a cat here-string count as emitted data; another stage's
+    # words (git diff | grep -v 'DROP TABLE' | psql) are arguments, not the SQL that reaches the client.
+    if _SQL_HEREDOC_DROP[0]:
+        return True
+    if not _SQL_CLIENT_RE.search(c) or not _SQL_DROP_RE.search(re.sub(r"[\\'\"]", "", c)):
+        return False
+    for s, e in _pieces(c):
+        segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
+        k = next((k for k, g in enumerate(segs) if _runs_sql_client(g)), None)
+        if k is None:
+            continue
+        data = []
+        for g in segs[:k]:
+            a0, rest = _stage_cmd(g)
+            if a0 in ("echo", "printf"):
+                data.extend(rest)
+            elif a0 == "cat" and "<<<" in g:
+                data.extend(_words(g.split("<<<", 1)[1]))
+        here = segs[k].split("<<<", 1)
+        if len(here) > 1:
+            data.extend(_words(here[1]))
+        if _sql_drops(" ".join(data)):
+            return True
+    return False
+
+_SQL_BODIES_SEEN = set()  # bash -c / eval bodies already checked by _deny_sql_stdin_drop
+
+def _deny_sql_stdin_drop(c):
+    if _sql_stdin_drop(c):
+        deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) sent to a SQL client on stdin — confirm with user first", rule="sql-drop")
+
+_deny_sql_stdin_drop(cmd)
+
 # GH #309: bash, ksh and zsh (not dash) expand a brace inside a word before anything reads it, so
 # "git {,\"reset\"} --hard", "--fo{r,}{ce,}" and "r{m,} -rf" hid a verb or flag from every check below,
 # which read the text literally. _bracex expands the whole command the way the shell does (lexed, so
@@ -1562,12 +1944,16 @@ def _scan_body(body):
         return
     if _cur_depth >= _MAX_SHELL_DEPTH:
         deny("shell -c / eval body nested more than %d levels deep - confirm with user first" % _MAX_SHELL_DEPTH)
+    # GH #559 review: SQL a client reads on stdin inside the body (bash -c "echo 'DROP TABLE t' | psql db"),
+    # which the top-level check above read as one quoted word. Heredocs in the body count too.
+    # The same body comes back from every window copy (see _BODY_READINGS), so each is checked once.
+    if body not in _SQL_BODIES_SEEN:
+        _SQL_BODIES_SEEN.add(body)
+        _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
     if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)):
-        deny("a subagent may not spawn a nested Claude Code session via Bash "
-             "(claude -p/--print/--agent/--bg/--worktree), inside bash -c / eval either "
-             "-- only the main session dispatches")
+        deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
         if ww:
@@ -1813,6 +2199,29 @@ def _git_words(rest, ph_value=False):
                 out.append(word())
     return out + rest[i:] if (hit if ph_value else joined) else None
 
+# GH #562: `git config` on core.hooksPath: a read (get, list, the key alone) and the one documented write,
+# `core.hooksPath git-hooks` with no value-pattern, are allowed. The word git-hooks anywhere else (a
+# value-pattern, a --comment) allowed `git config core.hooksPath /dev/null git-hooks`, which replaces the
+# git-hooks value with /dev/null.
+_GIT_CONFIG_VALUE_OPTS = ("-f", "--file", "--blob", "--type", "--comment", "--default", "--value")
+_GIT_CONFIG_READ_OPTS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list")
+_GIT_CONFIG_EDIT_OPTS = ("--unset", "--unset-all", "--rename-section", "--remove-section", "-e", "--edit")
+def _hooks_path_ok(scan):
+    pos, opts, i = [], [], 0
+    while i < len(scan):
+        t = scan[i]
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        (opts if t.startswith("-") else pos).append(t.split("=", 1)[0] if t.startswith("--") else t)
+        i += 1
+    if any(t in _GIT_CONFIG_EDIT_OPTS for t in opts) or pos[:1] in (["unset"], ["rename-section"], ["remove-section"], ["edit"]):
+        return False
+    if pos[:1] in (["get"], ["list"]) or any(t in _GIT_CONFIG_READ_OPTS for t in opts):
+        return True
+    pos = pos[1:] if pos[:1] == ["set"] else pos
+    return len(pos) == 1 or (len(pos) == 2 and pos[1] == "git-hooks" and not any(t == "--value" for t in opts))
+
 def _sets_hooks_path(w):
     # Does a `-c KEY=VAL` / `-cKEY=VAL` / `--config-env KEY=VAR` / `--config-env=KEY=VAR` word in
     # window w set core.hooksPath (key case-insensitive) to a non-empty value?
@@ -1834,6 +2243,50 @@ def _sets_hooks_path(w):
         if key.lower() == "core.hookspath" and val:
             return True
     return False
+
+# GH #561: config a git run is given re-enables a denied action without its flag: an alias runs any
+# subcommand or shell line, remote.<r>.mirror is push --mirror, a "+" remote.<r>.push refspec is a forced
+# push, clean.requireForce=false is clean -f, and gc's expiry keys at now are reflog expire + prune.
+# Read from `-c KEY=VAL` (and a `git config KEY VALUE` write of the same keys, see _git_config_write).
+_GIT_FALSE = ("false", "no", "off", "0", "")
+def _git_c_pairs(globs):
+    # (lowercased key, value) of each -c KEY=VAL / -cKEY=VAL in git's global flags.
+    out = []
+    for idx, t in enumerate(globs):
+        t_pf = t.replace(PH, "")
+        kv = globs[idx + 1] if t_pf == "-c" and idx + 1 < len(globs) else t_pf[2:] if t_pf.startswith("-c") and t_pf != "-c" else None
+        if kv and "=" in kv:
+            key, _, val = kv.replace(PH, "").partition("=")
+            out.append((key.lower(), val))
+    return out
+
+def _git_cfg_risk(key, val, sub):
+    # The rule a config pair breaks for subcommand sub (None: any later run), or None.
+    now = val.lower() in ("now", "all", "0")
+    if key.startswith("remote.") and key.endswith(".mirror") and val.lower() not in _GIT_FALSE and sub in ("push", None):
+        return "git-push-mirror"
+    if key.startswith("remote.") and key.endswith(".push") and val.startswith("+") and sub in ("push", None):
+        return "git-push-force"
+    if key == "clean.requireforce" and val.lower() in _GIT_FALSE and sub in ("clean", None):
+        return "git-clean-force"
+    if key in ("gc.pruneexpire", "gc.reflogexpire", "gc.reflogexpireunreachable") and now and sub in ("gc", None):
+        return "git-reflog-prune"
+    return None
+
+def _git_config_write(scan):
+    # (key, value) a `git config [set] KEY VALUE` writes, or None (a read, a list, an unset).
+    pos, i = [], 0
+    while i < len(scan):
+        t = scan[i]
+        if t in _GIT_CONFIG_VALUE_OPTS:
+            i += 2
+            continue
+        if not t.startswith("-"):
+            pos.append(t)
+        i += 1
+    if pos[:1] == ["set"]:
+        pos = pos[1:]
+    return (pos[0], pos[1]) if len(pos) >= 2 and "." in pos[0] else None
 
 # GH #336: chmod making files world-writable (777 / a+rwx) recursively or on / or ~.
 # The tokenizer splits `+` out of a word (`a+rwx` is "a", "+", "rwx"), so the mode is read on the
@@ -2095,17 +2548,41 @@ def _check_window(_wi, w):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
-            i = o
+            # GH #560: -S STRING / --split-string=STRING splits STRING into the command and its first
+            # words, so it is a command line like a `sh -c` body (any words after it are appended).
+            # -C (chdir) and BSD -P (path) take a value like -u.
+            # A short cluster reads like getopt (GH #560 review: `env -iS 'rm -rf x'` ran the string):
+            # the first value letter takes the rest of the cluster, or the next word when that is
+            # empty (`-iu FOO`). getopt_long also takes an unambiguous prefix (`--split=`); `--s`
+            # is the shortest, as no other env long option starts with s.
+            i, body = o, None
             while i < len(rest):
                 t = rest[i].replace(PH, "")
-                if t == "-u" and i + 1 < len(rest):
-                    i += 2
+                long_name = t[2:].split("=", 1)[0]
+                if t.startswith("--") and len(long_name) > 0 and "split-string".startswith(long_name):
+                    if "=" in t:
+                        body, i = rest[i].split("=", 1)[1], i + 1
+                    elif i + 1 < len(rest):
+                        body, i = rest[i + 1], i + 2
+                    break
+                m = re.match(r"-[^-CPSu]*([CPSu])", t)
+                if m:
+                    attached = t[m.end():]
+                    if m.group(1) == "S" and (attached or i + 1 < len(rest)):
+                        body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
+                    i += 1 if attached else 2
+                    if body is not None:
+                        break
                 elif t.startswith("-"):
                     i += 1
                 elif _assignment(rest[i]):
                     i += 1
                 else:
                     break
+            if body is not None:
+                _scan_body(" ".join([body] + rest[i:]))
+                o = len(rest)
+                break
             if i >= len(rest):
                 break
             argv0, o = basename(rest[i]), i + 1
@@ -2359,6 +2836,16 @@ def _check_window(_wi, w):
             if _ambig and _ambig[1] is _AMBIG_BROAD_VERB_RE and sub.replace(PH, "") in (
                     "push", "reset", "clean", "checkout", "restore", "switch", "branch", "stash"):
                 _deny_ambiguous()
+            # GH #561: what a -c pair makes of this subcommand (an alias names it, or a key re-enables a deny).
+            _sub = sub.replace(PH, "")
+            for _k, _v in _git_c_pairs(rest[:i]):
+                if _k == "alias." + _sub.lower() and _v:
+                    _scan_body((_v[1:] if _v.startswith("!") else "git " + _v) + " " + " ".join(args))
+                _r = _git_cfg_risk(_k, _v, _sub)
+                if _r == "git-clean-force" and any(t.replace(PH, "") in ("-n", "--dry-run", "-i", "--interactive") for t in args):
+                    _r = None  # a dry run or the prompt deletes nothing unasked
+                if _r:
+                    deny("git -c " + _k + "=" + _v + " makes `git " + _sub + "` do what its denied flag does — confirm with user first", rule=_r)
             # drop the value token after a free-text flag so message content
             # (e.g. "commit -m ...rm -rf...") is never pattern-matched.
             scan_raw, skip = [], False
@@ -2400,7 +2887,14 @@ def _check_window(_wi, w):
                 # `git config core.hooksPath X` / --unset disables pre-commit and
                 # pre-push (same bypass class as --no-verify). The documented
                 # wiring value `git-hooks` stays allowed.
-                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and "git-hooks" not in scan:
+                # GH #561: a stored alias or key does at the next run what the -c pair above does now.
+                _cw = _git_config_write(scan) if sub == "config" else None
+                if _cw and _cw[0].lower().startswith("alias.") and _cw[1]:
+                    _scan_body(_cw[1][1:] if _cw[1].startswith("!") else "git " + _cw[1])
+                if _cw and _git_cfg_risk(_cw[0].lower(), _cw[1], None):
+                    deny("git config " + _cw[0] + " " + _cw[1] + " makes a later git run do what a denied flag does — confirm with user first",
+                         rule=_git_cfg_risk(_cw[0].lower(), _cw[1], None))
+                if sub == "config" and any(t.lower() == "core.hookspath" for t in scan) and not _hooks_path_ok(scan):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
                     deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
@@ -2629,9 +3123,15 @@ def _check_window(_wi, w):
             # SQL genuinely lives inside -e/-c values, so DO scan them, but only
             # for known-dangerous statements. TABLE is optional in TRUNCATE
             # grammar. Full PH removal: a splice can land mid-keyword (DR$(true)OP).
-            if re.search(r"DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE\s+(TABLE\s+)?\w",
-                         " ".join(rest).replace(PH, ""), re.IGNORECASE):
+            if _SQL_DROP_RE.search(" ".join(rest).replace(PH, "")):
                 deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) detected — confirm with user first", rule="sql-drop")
+
+    # 2026-10-24 sweep: the client tools that drop a database without SQL. dropdb drops the user's own
+    # database when no name is given, so anything but a help or version request denies.
+    if _a0 == "dropdb" and not all(t.replace(PH, "") in ("--help", "-?", "--version", "-V") for t in rest):
+        deny("dropdb drops a database — confirm with user first", rule="sql-drop")
+    if _a0 in ("mysqladmin", "mariadb-admin") and any(t.replace(PH, "").lower() == "drop" for t in rest):
+        deny("mysqladmin drop drops a database — confirm with user first", rule="sql-drop")
 
 def _run_windows(i):
     while i < len(windows):  # a window's checks may append more (bash -c / eval bodies, find, xargs)
