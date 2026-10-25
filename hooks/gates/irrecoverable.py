@@ -3065,7 +3065,7 @@ def _check_window(_wi, w):
             # GNU rm takes any unambiguous prefix, and its long options (force,
             # interactive, one-file-system, no-preserve-root, preserve-root,
             # recursive, dir, verbose, help, version) leave --r and --f unambiguous.
-            has_r = has_f = False
+            has_r = has_f = has_i = False
             for t in rest:
                 # "$(true)-rf" IS "-rf" in bash but blanks to "PH-rf", which no
                 # longer starts with "-" -- strip PH, assume the dangerous
@@ -3074,15 +3074,24 @@ def _check_window(_wi, w):
                 if t.startswith("--"):
                     has_r = has_r or _is_flag(t, "--recursive")
                     has_f = has_f or _is_flag(t, "--force")
+                    # --interactive[=always|yes] asks per file; =never/no/none and =once (-I) do not.
+                    has_i = has_i or (_is_flag(t.split("=", 1)[0], "--interactive")
+                                      and t.partition("=")[2] in ("", "always", "yes"))
                 elif t.startswith("-") and len(t) > 1:
                     body = t[1:].lower()
                     has_r = has_r or "r" in body
                     has_f = has_f or "f" in body
+                    has_i = has_i or "i" in t[1:]  # -i asks per file; -I asks once and still deletes the tree
             if has_r and has_f:
                 deny("rm -rf detected — " + delete_hint(), rule="rm-rf")
             # GH #336: GNU rm takes any unambiguous prefix (`--n` is the only `--n...` option).
             if any(_is_flag(t.replace(PH, ""), "--no-preserve-root") for t in rest):
                 deny("rm --no-preserve-root lifts rm's guard on / — " + delete_hint(), rule="rm-no-preserve-root")
+            # 2026-10-25 (out-of-contract follow-up to the 2026-10-24 sweep): without -f, rm -r still deletes
+            # the tree with no undo; -f only adds silence on write-protected files and missing paths. -i
+            # prompts for every file, and the Bash tool's stdin gives no yes, so it deletes nothing unasked.
+            if has_r and not has_f and not has_i:
+                deny("rm -r deletes a directory tree with no undo, -f or not — " + delete_hint(), rule="rm-recursive")
 
         # Same PH-erases-flag-shape fix as the rm block ("find $(true)-exec").
         if argv0 == "find" and any(t.replace(PH, "") in ("-exec", "-execdir") for t in rest) and "rm" in [basename(t) for t in rest]:
