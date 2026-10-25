@@ -1173,6 +1173,12 @@ HASH_LIT = "\x02"
 # pass as an over-deny regression on the naive "any extra nonflag arg denies"
 # version of this fix.
 PSUB = "\x03"
+# GH #586: find's `{}` and `\;` are plain words in bash (a `{` opens a group only when a blank follows
+# it, and an escaped `;` is never a separator), but the tokenizer cut the statement at each, so find's
+# words after the first `{}` (`-exec echo {} \; -delete`) landed in windows no find rule read. Either
+# one, standing alone as a word, is swapped for this placeholder (a word character, one nonflag token,
+# no dispatch matches it).
+WORD_LIT = "\x04"
 # Work budget for the depth-counting closer-search, charged per character
 # walked and shared across one _scan_once call: without it, a flood of unclosed
 # "$(" starts is O(n^2) (65s on a 100,000-char payload under the length cap).
@@ -1498,6 +1504,12 @@ def _redirect_target_end(s, j):
             k += 1
     return k
 
+_WORD_END_RE = re.compile(r"\d*[<>]|[ \t\n;&|)]|$")
+def _alone(s, i, k):
+    # True when s[i:i + k] is a whole word: a blank (or the start) before it, a blank, a separator, a
+    # redirect (`\;>/dev/null`, `{}2>x`) or the end after it.
+    return (i == 0 or s[i - 1] in " \t\n") and _WORD_END_RE.match(s, i + k) is not None
+
 def _blank_redirections(s, named_fd=True):
     # named_fd: True = bash 4+/ksh93 (consume "{var}>f"), False = macOS /bin/sh, bash 3.2, dash (the
     # literal word "{var}" plus a plain redirect), "zsh" = True plus "{var}&>f" (GH #219).
@@ -1519,6 +1531,16 @@ def _blank_redirections(s, named_fd=True):
         if c == DQ:
             out.append(c)
             i = _copy_dquote(s, i + 1, out)
+            last_escaped = False
+            continue
+        if c == "\\" and s[i + 1:i + 2] == ";" and _alone(s, i, 2):
+            out.append(WORD_LIT)  # GH #586: find's `\;`
+            i += 2
+            last_escaped = False
+            continue
+        if c == "{" and s[i + 1:i + 2] == "}" and _alone(s, i, 2):
+            out.append(WORD_LIT)  # GH #586: find's / xargs's `{}`
+            i += 2
             last_escaped = False
             continue
         if c == "\\" and i + 1 < n:
@@ -1572,7 +1594,7 @@ class _Glued(str):
 def _tokens(src, extra_wordchars="", whitespace_split=False):
     # shlex tokens of a _blanked() text; the placeholders are word characters. Raises ValueError.
     lex = shlex.shlex(src, posix=True, punctuation_chars=True)
-    lex.wordchars += PH + HASH_LIT + PSUB + extra_wordchars
+    lex.wordchars += PH + HASH_LIT + PSUB + WORD_LIT + extra_wordchars
     if whitespace_split:
         lex.whitespace_split = True
         return list(lex)
@@ -2993,6 +3015,71 @@ def _container_exec_command(tool, rest):
         i += 1
     return rest[i + 1:] or None  # past the container or service name
 
+def _find_word_may_be(t, *names):
+    # GH #586: a find word that is, or with its substitutions expanded may be, one of names: `$(true)-exec`
+    # (an empty splice), `-$(echo delete)`, `-de$(echo l)ete`. A substitution can expand to anything, so
+    # its visible text must still show the leading `-`: a bare `$(cat pattern)` (a -name value) is not
+    # read as an action, and `find . $(echo -delete)` stays a gap.
+    if PH not in t:
+        return t in names
+    if not t.replace(PH, "").startswith("-"):
+        return False
+    pat = re.compile(".*".join(re.escape(piece) for piece in t.split(PH)), re.DOTALL)
+    return any(pat.fullmatch(n) for n in names)
+
+# GH #586: find tests whose next word is a value (a name, a path, a time), never an action.
+_FIND_VALUE_TESTS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex",
+                     "-lname", "-ilname", "-newer", "-anewer", "-cnewer", "-samefile", "-type", "-xtype", "-user",
+                     "-group", "-uid", "-gid", "-perm", "-size", "-mtime", "-atime", "-ctime", "-mmin", "-amin",
+                     "-cmin", "-used", "-links", "-inum", "-maxdepth", "-mindepth", "-fstype", "-context",
+                     "-printf", "-fprint", "-fprint0", "-fls", "-regextype", "-files0-from"}
+_FIND_NEWER_XY_RE = re.compile(r"-newer[aBcm][aBcmt]")  # -newermt, -newerBt, ...: one value; -fprintf takes two
+
+def _find_actions(rest, *names):
+    # True when a word of find's `rest` that is not a test's value may be one of names. Read left to
+    # right: a test's value is skipped even when it is itself a test's name (`-name -name -delete`
+    # deletes the files named "-name").
+    value = 0
+    for t in rest:
+        if value:
+            value -= 1
+            continue
+        if _find_word_may_be(t, *names):
+            return True
+        u = t.replace(PH, "")
+        value = 2 if u == "-fprintf" else 1 if u in _FIND_VALUE_TESTS or _FIND_NEWER_XY_RE.fullmatch(u) else 0
+    return False
+
+def _shell_body_runs_rm(sub, depth=0):
+    # GH #586: True when sub (a find action's command, `sh -c 'rm "$1"' _ {}`) is a shell (past its
+    # wrappers) whose body runs rm at a command position: a statement's start or after `do`/`then`/
+    # `else`, past assignments, wrappers, `eval` and `busybox`; a shell inside the body is read the
+    # same way, three levels deep. The same delete as `-exec rm`, which denies with no flags.
+    if depth > 3 or not sub:
+        return False
+    a0 = basename(sub[0]).replace(PH, "")
+    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    if i >= len(sub) or basename(sub[i]).replace(PH, "") not in _SHELLS:
+        return False
+    sh = basename(sub[i]).replace(PH, "")
+    for g in _SHELL_GETOPT[sh]:
+        body = _shell_body(sh, sub[i + 1:], g)
+        if not body:
+            continue
+        for cur, _ww, _curc in _body_readings(body)[0]:
+            starts = [0] + [k + 1 for k, t in enumerate(cur) if t in SHELL_KEYWORDS]
+            for k in starts:
+                while k < len(cur) and (cur[k] in SHELL_KEYWORDS or _assignment(cur[k])
+                                        or basename(cur[k]).replace(PH, "") in ("eval", "busybox")):
+                    k += 1
+                while k < len(cur) and basename(cur[k]).replace(PH, "") in PREFIX_WRAPPERS:
+                    k = _past_wrapper_words(basename(cur[k]).replace(PH, ""), cur, k + 1)
+                if k < len(cur) and basename(cur[k]).replace(PH, "") == "rm":
+                    return True
+                if k < len(cur) and _shell_body_runs_rm(cur[k:], depth + 1):
+                    return True
+    return False
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -3245,6 +3332,9 @@ def _check_window(_wi, w):
             if sub:
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(sub)
+                if rest[j].replace(PH, "") in ("-exec", "-execdir") and _shell_body_runs_rm(sub):
+                    deny("find -exec/-execdir runs rm through a shell body — destructive delete; " + delete_hint(),
+                         rule="find-exec-rm")
         if len(acts) > 1:
             # A later `-exec` may be a shell's option letters (`bash -c -exec 'body'`), not a find
             # action: also scan everything after the first action as ONE command. Each such window
@@ -3356,9 +3446,9 @@ def _check_window(_wi, w):
                 deny("rm -r deletes a directory tree with no undo, -f or not — " + delete_hint(), rule="rm-recursive")
 
         # Same PH-erases-flag-shape fix as the rm block ("find $(true)-exec").
-        if argv0 == "find" and any(t.replace(PH, "") in ("-exec", "-execdir") for t in rest) and "rm" in [basename(t) for t in rest]:
+        if argv0 == "find" and _find_actions(rest, "-exec", "-execdir") and "rm" in [basename(t) for t in rest]:
             deny("find -exec/-execdir rm detected — destructive delete; " + delete_hint(), rule="find-exec-rm")
-        if argv0 == "find" and any(t.replace(PH, "") == "-delete" for t in rest):
+        if argv0 == "find" and _find_actions(rest, "-delete"):
             deny("find -delete detected — destructive delete; " + delete_hint(), rule="find-delete")
 
         if argv0 == "git" and rest:
