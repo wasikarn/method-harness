@@ -60,6 +60,13 @@ open(p, 'w').write(s)" "$tmp/canary-fixture-apostrophe.sh"
 bash "$CANARY" "$tmp" >/dev/null 2>&1; rc=$?
 [ "$rc" -ne 0 ]; check "apostrophe inside an embedded python string fails the canary" $?
 
+fresh
+trash "$tmp/canary-fixture-apostrophe.sh"
+# A sourced _*.sh helper is not a gate: one that exits 1 when run directly must not fail the canary.
+printf '#!/usr/bin/env bash\necho "Error: sourced helper run as a gate" >&2\nexit 1\n' > "$tmp/_helper-probe.sh"
+bash "$CANARY" "$tmp" >/dev/null 2>&1
+check "a _*.sh helper is skipped, not run as a gate" $?
+
 echo ""
 echo "test-gate-canary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

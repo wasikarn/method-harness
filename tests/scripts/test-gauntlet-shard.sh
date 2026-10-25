@@ -40,8 +40,8 @@ for n in 1 2 3 4 5 6; do
     [ -n "$s" ] || empty=1
     # A shard keeps glob order, so the log reads like a serial run.
     [ "$(printf '%s\n' "$full" | /usr/bin/grep -xF -f <(printf '%s\n' "$s"))" = "$s" ] || order=1
-    printf '%s\n' "$s" | /usr/bin/grep -qxF "$big1" && gates=$i
-    printf '%s\n' "$s" | /usr/bin/grep -qxF "$big2" && guard=$i
+    /usr/bin/grep -qxF "$big1" <<<"$s" && gates=$i
+    /usr/bin/grep -qxF "$big2" <<<"$s" && guard=$i
     all="$all$s"$'\n'
     i=$((i + 1))
   done

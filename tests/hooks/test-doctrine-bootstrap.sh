@@ -42,14 +42,14 @@ strip_path="$noop_bin"
 
 out=$(CLAUDE_PLUGIN_ROOT="$fixture" PATH="$strip_path" /bin/bash "$SCRIPT" 2>/dev/null)
 
-echo "$out" | /usr/bin/grep -q "alpha-gate" && echo "$out" | /usr/bin/grep -q "beta-gate" && ok=1 || ok=0
+/usr/bin/grep -q "alpha-gate" <<<"$out" && /usr/bin/grep -q "beta-gate" <<<"$out" && ok=1 || ok=0
 assert "python3-missing message names every current hooks/gates/*.sh file" "$ok"
 
 # Add a third gate to the fixture -- the message must pick it up without any
 # script change, proving the list isn't hardcoded.
 : > "$fixture/hooks/gates/gamma-gate.sh"
 out2=$(CLAUDE_PLUGIN_ROOT="$fixture" PATH="$strip_path" /bin/bash "$SCRIPT" 2>/dev/null)
-echo "$out2" | /usr/bin/grep -q "gamma-gate" && ok=1 || ok=0
+/usr/bin/grep -q "gamma-gate" <<<"$out2" && ok=1 || ok=0
 assert "a newly-added gate file appears in the message with no script edit" "$ok"
 
 # (2026-09-21) The glob-empty fallback used to be a second hand-maintained
@@ -57,9 +57,10 @@ assert "a newly-added gate file appears in the message with no script edit" "$ok
 # in the script's code lines at all; comments are stripped first because the
 # history note above the loop legitimately names two gates.
 hardcoded=0
+code=$(sed 's/#.*$//' "$SCRIPT")
 for g in "$ROOT"/hooks/gates/*.sh; do
   name=$(basename "$g" .sh)
-  sed 's/#.*$//' "$SCRIPT" | /usr/bin/grep -q -- "$name" && hardcoded=$((hardcoded + 1))
+  /usr/bin/grep -q -- "$name" <<<"$code" && hardcoded=$((hardcoded + 1))
 done
 [[ "$hardcoded" == "0" ]] && ok=1 || ok=0
 assert "no real gate name is hardcoded in the script's code (found $hardcoded)" "$ok"
