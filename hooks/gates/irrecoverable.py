@@ -2161,6 +2161,37 @@ def _bundled_flag(t, stop_chars, flag="f"):
             return True
     return False
 
+def _rm_forced(scan):
+    # GH #563 follow-up: whether `git rm <scan>` is a real forced delete of worktree files.
+    force = dry = cached = False
+    skip = False
+    for t in scan:
+        if skip:
+            skip = False
+            continue
+        if t == "--":
+            break
+        if t.startswith("--"):
+            name = t.split("=", 1)[0]
+            if _is_flag(name, "--pathspec-from-file"):
+                skip = "=" not in t
+            elif _is_flag(name, "--no-force", "--no-dry-run", "--no-cached"):
+                # A prefix shared by several (--no-) is rejected by git; read it the deny way.
+                if _is_flag(name, "--no-dry-run"):
+                    dry = False
+                if _is_flag(name, "--no-cached"):
+                    cached = False
+                if _is_flag(name, "--no-force") and not _is_flag(name, "--no-dry-run", "--no-cached"):
+                    force = False
+            else:
+                force = force or _is_flag(name, "--force")
+                dry = dry or _is_flag(name, "--dry-run")
+                cached = cached or _is_flag(name, "--cached")
+        elif t.startswith("-") and len(t) > 1:
+            force = force or "f" in t
+            dry = dry or "n" in t
+    return force and not dry and not cached
+
 def _git_words(rest, ph_value=False):
     # GH #375: git's leading global flags with each glued token run (_Glued) joined into one shell
     # word, then the subcommand and its arguments unchanged; None when no flag or value was glued.
@@ -3048,21 +3079,22 @@ def _check_window(_wi, w):
                     deny("git update-ref -d on main/master/develop deletes a protected branch, like branch -D — confirm with user first", rule="git-update-ref-delete-protected")
                 if sub == "branch" and (
                         any(t in ("-M", "-C") or (t.startswith("-") and not t.startswith("--") and ("M" in t or "C" in t)) for t in scan)
-                        or (any(t == "-m" or t == "-c" or _is_flag(t, "--move", "--copy") for t in scan)
-                            and any(t == "-f" or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
+                        # -fm, -mf, -fc, -cf: the force and the move/copy bundled (GH #563 follow-up); -u takes a value.
+                        or (any(_bundled_flag(t, "u", "m") or _bundled_flag(t, "u", "c") or _is_flag(t, "--move", "--copy") for t in scan)
+                            and any(_bundled_flag(t, "u", "f") or _is_flag(t, "--force") for t in scan))) and any(_protected_ref(t) for t in _nonflag[-1:]):
                     deny("git branch -M/-C onto main/master/develop overwrites a protected branch — confirm with user first", rule="git-branch-force-move-protected")
                 # GH #563 (2026-10-24 sweep): more verbs with a denied verb's damage. send-pack is push's
                 # plumbing; rm -f drops a tracked file's uncommitted edits (--cached leaves the worktree);
                 # branch -f and update-ref without -d move main/master/develop like branch -M does.
                 _force = any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan)
-                if sub == "send-pack" and (any(_is_flag(t, "--force", "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
+                # send-pack lists "-f, --force", bundled too (-vf, -qf); no short option of it takes a value.
+                if sub == "send-pack" and (_force or any(_is_flag(t, "--mirror") for t in scan) or any(t.startswith("+") for t in _nonflag)):
                     deny("git send-pack --force/--mirror/+refspec overwrites remote history, like push --force — confirm with user first", rule="git-push-force")
-                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) deletes nothing.
-                # Only options before "--" count (after it "-n" is a path), and --no-dry-run undoes it.
-                _rm_opts = scan[:scan.index("--")] if "--" in scan else scan
-                if sub == "rm" and _force and not any(_is_flag(t, "--cached") for t in scan) and not (
-                        any(_is_flag(t, "--dry-run") or _bundled_flag(t, "", "n") for t in _rm_opts)
-                        and not any(_is_flag(t, "--no-dry-run") for t in _rm_opts)):
+                # GH #563 review: a dry run (-n, bundled as in -nf, or --dry-run / a prefix) and --cached
+                # delete nothing from the worktree. git reads rm's options in order, so the last of each
+                # pair wins (-f/--no-force, -n/--no-dry-run, --cached/--no-cached); only words before "--"
+                # are options (after it "-f" is a path), and a bare --pathspec-from-file takes the next word.
+                if sub == "rm" and _rm_forced(scan):
                     deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first", rule="git-rm-force")
                 if sub == "branch" and _force and _nonflag and _protected_ref(_nonflag[0]) and not any(
                         t.startswith("-") and not t.startswith("--") and any(c in t for c in "dDmMcC")

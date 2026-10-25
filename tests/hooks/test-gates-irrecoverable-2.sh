@@ -1874,4 +1874,28 @@ test_deny  "$IRRECOVERABLE" "GH #563: git rm -f -- -n (-n after -- is a path)" "
 test_deny  "$IRRECOVERABLE" "GH #563: git rm -nf --no-dry-run (last one wins)" "$(bash_payload 'git rm -nf --no-dry-run a.py')"
 test_deny  "$IRRECOVERABLE" "GH #563: git rm -f still denies" "$(bash_payload 'git rm -f a.py')"
 
+# GH #563 follow-up review of PR #573: send-pack's -f is --force (bundled too); git rm reads its
+# options in order with last-wins for each pair (--cached/--no-cached, -n/--no-dry-run, -f/--no-force),
+# stops at "--", and --pathspec-from-file takes the next word; branch -f bundled with -m/-c onto main.
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: send-pack -f overwrites like --force" "$(bash_payload 'git send-pack -f url main')"
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: send-pack -vf (bundled force)" "$(bash_payload 'git send-pack -vf url main')"
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: send-pack -qf --all (bundled force)" "$(bash_payload 'git send-pack -qf --all url')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up control: send-pack url HEAD:main (no force)" "$(bash_payload 'git send-pack url HEAD:main')"
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: git rm --pathspec-from-file -n -f (-n is the file)" "$(bash_payload 'git rm --pathspec-from-file -n -f')"
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: git rm --cached --no-cached -f (last one wins)" "$(bash_payload 'git rm --cached --no-cached -f a.py')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up: git rm -- -f (-f after -- is a path)" "$(bash_payload 'git rm -- -f')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up: git rm --no-dry-run -nf (the later -n wins)" "$(bash_payload 'git rm --no-dry-run -nf a.py')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git rm --no-cached --cached -f (last one wins)" "$(bash_payload 'git rm --no-cached --cached -f a.py')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git rm -f --no-force" "$(bash_payload 'git rm -f --no-force a.py')"
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: git rm a.py -f (an option after a path)" "$(bash_payload 'git rm a.py -f')"
+test_deny  "$IRRECOVERABLE" "GH #563 follow-up: git rm --pathspec-from-file=l -f" "$(bash_payload 'git rm --pathspec-from-file=l -f')"
+for _c in 'git branch -fm feat main' 'git branch -mf feat main' 'git branch -fc feat main' 'git branch -cf feat main' 'git branch -vfm feat master'; do
+  test_deny  "$IRRECOVERABLE" "GH #563 follow-up: $_c (bundled force move/copy onto main)" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git branch -f feat HEAD" "$(bash_payload 'git branch -f feat HEAD')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git branch -m old new" "$(bash_payload 'git branch -m old new')"
+test_allow "$IRRECOVERABLE" "GH #563 follow-up control: git branch -fm old new" "$(bash_payload 'git branch -fm old new')"
+_rm_pad_cmd="$(python3 -c 'print("git rm " + "-n --no-dry-run --cached --no-cached " * 3800 + "-f a.py")')"
+_timed_case 'GH #563 follow-up: a 140 KB git rm option list is read in bounded time' 2 "$_rm_pad_cmd"
+
 gates_summary
