@@ -3,23 +3,31 @@
 Under `set -o pipefail`, `writer | grep -q PAT` races: grep -q exits on its first match, a writer
 still writing dies of SIGPIPE (141), and pipefail turns the match into a failure.
 
-The shell is parsed by shfmt's JSON syntax tree (mvdan.cc/sh), not by a regex or a hand-written
-lexer: both missed sites or crashed in review (GH #578, #597, #598). A pipe's readers are the
-commands that can read the stdin it hands its right side: the command there, every command of a
-`{ }`/`( )` group, both sides of `&&`/`||`, the conditions and bodies of if/while/until/for/case, and
-a `time`d command, unless that statement redirects its own stdin. A reader is a quiet grep when,
-after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup wrapper (`env -S STRING` is split
-into words), it is grep, egrep or fgrep (any path, `\\grep` too) and one of its words is -q, --quiet
-or --silent (or an unambiguous abbreviation, as getopt_long allows), in a cluster such as -iEq.
-GNU grep permutes, so options after operands count; option words end at `--`, and the argument of
--e/--regexp and other value-taking options is not an option. Redirections, quoted text, comments
-and quoted here-document bodies are not words.
+The shell is parsed by shfmt's JSON syntax tree (mvdan.cc/sh, `--to-json`, shfmt >= 3.5), not by a
+regex or a hand-written lexer: both missed sites or crashed in review (GH #578, #597, #598). shfmt
+3.4 only knows `-tojson` and encodes operators as numbers, which made every file scan clean, so the
+scanner first checks itself: it must find the race in `x | grep -q y`, or it exits 2.
+
+A pipe's readers are the commands that can read the stdin it hands its right side:
+- directly: the command there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a
+  `time`d command, and any `$(...)`/`<(...)` inside such a command's words or assignments;
+- inside the conditions and bodies of if/while/until/for/case: a grep counts only when it has no
+  file operand (`while read -r f; do grep -q p "$f"; done` reads files, not the pipe). This part is
+  a heuristic: a grep with a file operand after `cat` drained nothing is not flagged there.
+A statement whose stdin is redirected (`<`, `<<<`, `<<`, `<&N` with N other than 0) is no reader.
+
+A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
+wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
+read as `env` words), it is grep, egrep or fgrep (any path, `\\grep` too) and one of its words is
+-q, --quiet or --silent. Long options resolve as getopt_long does (an unambiguous prefix, so `--qui`
+is --quiet and `--reg` is --regexp); the value of -e/--regexp and other value-taking options is not
+an option; GNU grep permutes, so options after operands count; option words end at `--`.
 
 A hit whose line ends in the comment `# pipe-into-grep-q: deliberate` is exempt and printed as
 `EXEMPT FILE:LINE: text` (the lint caps how many there are). Exit status: 0 clean, 1 hits printed,
-2 an error (shfmt missing, a file unreadable or unparsable); hits in other files are still printed
-on an error. Not caught: a grep reached through a function or alias, and early-exit readers other
-than grep -q (`head`, grep -m, a command that skips stdin).
+2 an error (shfmt missing or unsupported, a file unreadable or unparsable); hits in other files are
+still printed on an error. Not caught: a grep reached through a function or alias, and early-exit
+readers other than grep -q (`head`, grep -m, a command that skips stdin).
 """
 import json
 import os
@@ -32,23 +40,36 @@ from concurrent.futures import ThreadPoolExecutor
 
 PIPES = ('|', '|&')
 GREPS = {'grep', 'egrep', 'fgrep'}
-GREP_ARG_SHORT = set('efmABCdD')  # short options whose argument may be the next word
-GREP_ARG_LONG = {'--regexp', '--file', '--max-count', '--context', '--before-context',
-                 '--after-context', '--label', '--devices', '--directories', '--binary-files',
-                 '--include', '--exclude', '--exclude-from', '--exclude-dir', '--group-separator'}
+# GNU grep 3.11's long options (getopt_long resolves an unambiguous prefix to one of these).
+GREP_LONG = [
+    'after-context', 'basic-regexp', 'before-context', 'binary', 'binary-files', 'byte-offset',
+    'color', 'colour', 'context', 'count', 'dereference-recursive', 'devices', 'directories',
+    'exclude', 'exclude-dir', 'exclude-from', 'extended-regexp', 'file', 'files-with-matches',
+    'files-without-match', 'fixed-strings', 'group-separator', 'help', 'ignore-case', 'include',
+    'initial-tab', 'invert-match', 'label', 'line-buffered', 'line-number', 'line-regexp',
+    'max-count', 'no-filename', 'no-group-separator', 'no-ignore-case', 'no-messages', 'null',
+    'null-data', 'only-matching', 'perl-regexp', 'quiet', 'recursive', 'regexp', 'silent', 'text',
+    'version', 'with-filename', 'word-regexp',
+]
+GREP_LONG_VALUE = {'after-context', 'before-context', 'binary-files', 'context', 'devices',
+                   'directories', 'exclude', 'exclude-dir', 'exclude-from', 'file',
+                   'group-separator', 'include', 'label', 'max-count', 'regexp'}
+GREP_SHORT_VALUE = set('efmABCdD')
 # wrapper -> (short option letters that take a value, long options that take a value, positionals)
 WRAPPERS = {
     'command': ('', set(), 0), 'builtin': ('', set(), 0), 'exec': ('a', set(), 0),
-    'env': ('uCS', {'--unset', '--chdir', '--split-string'}, 0),
+    'env': ('uC', {'--unset', '--chdir'}, 0),
     'timeout': ('ks', {'--kill-after', '--signal'}, 1),
     'nice': ('n', {'--adjustment'}, 0),
     'stdbuf': ('ioe', {'--input', '--output', '--error'}, 0),
     'nohup': ('', set(), 0),
-    'sudo': ('ugpCDhrtTUg', {'--user', '--group', '--prompt', '--close-from', '--chdir', '--host',
-                             '--role', '--type', '--command-timeout', '--other-user'}, 0),
+    'sudo': ('ugpCDhrtTU', {'--user', '--group', '--prompt', '--close-from', '--chdir', '--host',
+                            '--role', '--type', '--command-timeout', '--other-user'}, 0),
 }
+ASSIGNING = {'env', 'sudo'}  # wrappers that take NAME=VALUE words before the command
 STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
 DELIBERATE = re.compile(r'#\s*pipe-into-grep-q: deliberate\s*$')
+CANARY = b'x | grep -q y\n'
 
 
 def literal(word):
@@ -65,21 +86,15 @@ def literal(word):
     return out
 
 
-def has_eq(word):
-    """True when a literal part of the word holds `=` (an env NAME=VALUE with an expansion)."""
-    def walk(n):
-        if isinstance(n, dict):
-            if n.get('Type') == 'Lit' and '=' in n.get('Value', ''):
-                return True
-            return any(walk(v) for k, v in n.items() if k in ('Parts',))
-        if isinstance(n, list):
-            return any(walk(v) for v in n)
-        return False
-    return walk(word)
+def has_eq(node):
+    """True when a literal part of the word holds `=` (NAME=$VALUE)."""
+    if node.get('Type') == 'Lit' and '=' in node.get('Value', ''):
+        return True
+    return any(has_eq(p) for p in node.get('Parts') or [])
 
 
 def takes_value(w, short, long_):
-    """Whether option word w consumes the next word as its value."""
+    """Whether wrapper option word w consumes the next word as its value."""
     if w.startswith('--'):
         return '=' not in w and w in long_
     for n, ch in enumerate(w[1:], 1):
@@ -88,124 +103,187 @@ def takes_value(w, short, long_):
     return False
 
 
-def is_quiet_grep(words, raw):
-    """words: literal text or None per word; raw: the shfmt words (for env's NAME=$X)."""
+def env_split(w, nxt):
+    """For an env option word holding -S: (split body, words consumed), else None."""
+    if w.startswith('--split-string='):
+        return w.split('=', 1)[1], 1
+    if w == '--split-string':
+        return (nxt, 2) if nxt is not None else ('', 1)
+    if w.startswith('-') and not w.startswith('--'):
+        for n, ch in enumerate(w[1:], 1):
+            if ch in 'uC':  # its value is the rest of the word or the next word, not -S
+                return None
+            if ch == 'S':
+                rest = w[n + 1:]
+                if rest:
+                    return rest, 1
+                return (nxt, 2) if nxt is not None else ('', 1)
+    return None
+
+
+def grep_call(words, raw):
+    """For a command's words (literal text or None) and shfmt words: the grep's argument words
+    (literal or None) after any wrapper, or None when the command is not a grep."""
     k = 0
     while k < len(words):
         w = words[k]
         if w is None:
-            return False
+            return None
         name = os.path.basename(w.replace('\\', ''))
         if name in GREPS:
-            return grep_is_quiet(words[k + 1:])
+            return words[k + 1:]
         if name not in WRAPPERS:
-            return False
+            return None
         short, long_, positional = WRAPPERS[name]
         k += 1
         while k < len(words):
             w = words[k]
             if w is None:
-                if name == 'env' and has_eq(raw[k]):
+                if name in ASSIGNING and has_eq(raw[k]):
                     k += 1
                     continue
                 break
-            if name == 'env' and (w in ('-S', '--split-string') or w.startswith('--split-string=')
-                                  or (w.startswith('-S') and len(w) > 2)):
-                body = (w.split('=', 1)[1] if w.startswith('--split-string=')
-                        else w[2:] if w.startswith('-S') and len(w) > 2 else None)
-                if body is None:
-                    if k + 1 >= len(words) or words[k + 1] is None:
-                        return False
-                    body, k = words[k + 1], k + 2
-                else:
-                    k += 1
-                try:
-                    split = shlex.split(body)
-                except ValueError:
-                    return False
-                rest = split + list(words[k:])
-                return is_quiet_grep(rest, [{}] * len(split) + list(raw[k:]))
+            if name == 'env':
+                split = env_split(w, words[k + 1] if k + 1 < len(words) else None)
+                if split is not None:
+                    body, used = split
+                    try:
+                        parts = shlex.split(body)
+                    except ValueError:
+                        return None
+                    rest = ['env'] + parts + list(words[k + used:])
+                    return grep_call(rest, [{}] * (1 + len(parts)) + list(raw[k + used:]))
             if w == '--':
                 k += 1
                 break
             if w.startswith('-') and len(w) > 1:
                 k += 2 if takes_value(w, short, long_) else 1
                 continue
-            if name == 'env' and '=' in w:
+            if name in ASSIGNING and '=' in w and not w.startswith('='):
                 k += 1
                 continue
             break
         k += positional
-    return False
+    return None
 
 
-def grep_is_quiet(args):
-    rest = iter(args)
-    for w in rest:
+def resolve_long(opt):
+    """getopt_long: an exact name, or the one long option an abbreviation names, else None."""
+    name = opt[2:]
+    if name in GREP_LONG:
+        return name
+    matches = [o for o in GREP_LONG if o.startswith(name)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def grep_args(args):
+    """(quiet, reads stdin) for a grep's argument words."""
+    quiet = False
+    pattern_given = False
+    operands = []
+    it = iter(args)
+    for w in it:
         if w is None:
+            operands.append(None)
             continue
         if w == '--':
-            return False
+            operands += list(it)
+            break
         if w.startswith('--'):
-            opt = w.split('=', 1)[0]
-            if '=' not in w and opt in GREP_ARG_LONG:
-                next(rest, None)
-            elif len(opt) >= 3 and '--quiet'.startswith(opt) or len(opt) >= 4 and '--silent'.startswith(opt):
-                return True
+            opt, _, value = w.partition('=')
+            name = resolve_long(opt)
+            if name in ('quiet', 'silent'):
+                quiet = True
+            elif name in GREP_LONG_VALUE:
+                if name in ('regexp', 'file'):
+                    pattern_given = True
+                if not _:
+                    next(it, None)
             continue
         if w.startswith('-') and len(w) > 1:
             for n, ch in enumerate(w[1:], 1):
                 if ch == 'q':
-                    return True
-                if ch in GREP_ARG_SHORT:
-                    if n == len(w) - 1:  # `-e PAT`: the next word is the argument
-                        next(rest, None)
+                    quiet = True
+                if ch in GREP_SHORT_VALUE:
+                    if ch in 'ef':
+                        pattern_given = True
+                    if n == len(w) - 1:
+                        next(it, None)
                     break
                 if not ch.isalpha():
                     break
-    return False
+            continue
+        operands.append(w)
+    files = operands if pattern_given else operands[1:]
+    reads_stdin = not files or '-' in files
+    return quiet, reads_stdin
 
 
 def own_stdin(stmt):
     for r in stmt.get('Redirs') or []:
         n = (r.get('N') or {}).get('Value', '0')
-        if r.get('Op') in STDIN_REDIRS and n == '0':
-            return True
+        if r.get('Op') not in STDIN_REDIRS or n != '0':
+            continue
+        if r.get('Op') == '<&' and literal(r.get('Word') or {}) == '0':
+            continue  # <&0 duplicates the stdin it already has: still the pipe
+        return True
     return False
 
 
-def readers(stmt):
-    """The commands that can read the stdin a pipe hands this statement."""
+def substs(node):
+    """The $(...) and <(...) nodes inside a command, not inside nested ones."""
+    out = []
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get('Type') in ('CmdSubst', 'ProcSubst'):
+                out.append(n)
+                return
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(node)
+    return out
+
+
+def readers(stmt, direct=True):
+    """(command, direct) pairs for the commands that can read the stdin this statement gets."""
     if not stmt or own_stdin(stmt):
         return []
     cmd = stmt.get('Cmd') or {}
     t = cmd.get('Type')
 
-    def each(stmts):
-        return [c for s in stmts or [] for c in readers(s)]
+    def each(stmts, d):
+        return [r for s in stmts or [] for r in readers(s, d)]
 
-    if t == 'CallExpr':
-        return [cmd]
+    if t in ('CallExpr', 'DeclClause', 'TestClause', 'ArithmCmd', 'LetClause'):
+        out = [(cmd, direct)] if t == 'CallExpr' else []
+        for sub in substs(cmd):
+            out += each(sub.get('Stmts'), direct)
+        return out
     if t == 'BinaryCmd':
         if cmd.get('Op') in PIPES:
-            return readers(cmd.get('X'))
-        return readers(cmd.get('X')) + readers(cmd.get('Y'))
+            return readers(cmd.get('X'), direct)
+        return readers(cmd.get('X'), direct) + readers(cmd.get('Y'), direct)
     if t in ('Block', 'Subshell'):
-        return each(cmd.get('Stmts'))
+        return each(cmd.get('Stmts'), direct)
+    if t == 'TimeClause':
+        return readers(cmd.get('Stmt'), direct)
     if t == 'IfClause':
         out, c = [], cmd
         while c:
-            out += each(c.get('Cond')) + each(c.get('Then'))
+            out += each(c.get('Cond'), False) + each(c.get('Then'), False)
             c = c.get('Else')
         return out
     if t == 'WhileClause':
-        return each(cmd.get('Cond')) + each(cmd.get('Do'))
+        return each(cmd.get('Cond'), False) + each(cmd.get('Do'), False)
     if t == 'ForClause':
-        return each(cmd.get('Do'))
+        return each(cmd.get('Do'), False)
     if t == 'CaseClause':
-        return [c for item in cmd.get('Items') or [] for c in each(item.get('Stmts'))]
-    if t == 'TimeClause':
-        return readers(cmd.get('Stmt'))
+        return [r for item in cmd.get('Items') or [] for r in each(item.get('Stmts'), False)]
     return []
 
 
@@ -215,9 +293,13 @@ def hits(tree):
     def walk(n):
         if isinstance(n, dict):
             if n.get('Type') == 'BinaryCmd' and n.get('Op') in PIPES:
-                for c in readers(n.get('Y')):
-                    args = c.get('Args') or []
-                    if is_quiet_grep([literal(w) for w in args], args):
+                for c, direct in readers(n.get('Y')):
+                    a = c.get('Args') or []
+                    args = grep_call([literal(w) for w in a], a)
+                    if args is None:
+                        continue
+                    quiet, reads_stdin = grep_args(args)
+                    if quiet and (direct or reads_stdin):
                         out.append(c['Pos']['Line'])
             for v in n.values():
                 walk(v)
@@ -229,28 +311,39 @@ def hits(tree):
     return sorted(set(out))
 
 
-def json_flag(shfmt):
-    """`--to-json` since shfmt 3.5; older releases (Ubuntu 22.04's 3.4) only know `-tojson`."""
-    for flag in ('--to-json', '-tojson'):
-        if subprocess.run([shfmt, flag], input=b'', capture_output=True).returncode == 0:
-            return flag
+def parse(shfmt, src):
+    """(tree, error message)."""
+    res = subprocess.run([shfmt, '-ln', 'bash', '--to-json'], input=src, capture_output=True)
+    if res.returncode != 0:
+        msg = res.stderr.decode('utf-8', 'replace').strip().splitlines()
+        return None, msg[0] if msg else f'rc {res.returncode}'
+    return json.loads(res.stdout), None
+
+
+def self_check(shfmt):
+    """None when this shfmt's tree is one the scanner reads, else why not."""
+    tree, err = parse(shfmt, CANARY)
+    if err or hits(tree) != [1]:
+        ver = subprocess.run([shfmt, '--version'], capture_output=True).stdout.decode().strip()
+        return (f'{shfmt} ({ver or "unknown version"}) gives a syntax tree this scanner cannot read '
+                f'({err or "it misses the race in `x | grep -q y`"}); shfmt >= 3.5 is needed '
+                '(pip install shfmt-py, brew install shfmt, or go install mvdan.cc/sh/v3/cmd/shfmt@latest)')
     return None
 
 
-def scan(shfmt, flag, path):
+def scan(shfmt, path):
     """(hit lines, exempt lines, error) for one file."""
     try:
         with open(path, 'rb') as f:
             src = f.read()
     except OSError as e:
         return [], [], f'{path}: unreadable ({e})'
-    res = subprocess.run([shfmt, '-ln', 'bash', flag], input=src, capture_output=True)
-    if res.returncode != 0:
-        msg = res.stderr.decode('utf-8', 'replace').strip().splitlines()
-        return [], [], f'{path}: shfmt cannot parse it ({msg[0] if msg else "rc " + str(res.returncode)})'
+    tree, err = parse(shfmt, src)
+    if err:
+        return [], [], f'{path}: shfmt cannot parse it ({err})'
     lines = src.decode('utf-8', 'replace').split('\n')
     found, exempt = [], []
-    for ln in hits(json.loads(res.stdout)):
+    for ln in hits(tree):
         text = lines[ln - 1] if 0 < ln <= len(lines) else ''
         (exempt if DELIBERATE.search(text) else found).append(f'{path}:{ln}: {text.strip()}')
     return found, exempt, None
@@ -259,17 +352,16 @@ def scan(shfmt, flag, path):
 def main(paths):
     shfmt = shutil.which('shfmt')
     if not shfmt:
-        print('pipe_into_grep_q: shfmt not found on PATH (macOS: brew install shfmt; Linux: '
-              'apt install shfmt, pip install shfmt-py, or go install mvdan.cc/sh/v3/cmd/shfmt@latest)',
-              file=sys.stderr)
+        print('pipe_into_grep_q: shfmt not found on PATH (shfmt >= 3.5: brew install shfmt, '
+              'pip install shfmt-py, or go install mvdan.cc/sh/v3/cmd/shfmt@latest)', file=sys.stderr)
         return 2
-    flag = json_flag(shfmt)
-    if not flag:
-        print(f'pipe_into_grep_q: {shfmt} accepts neither --to-json nor -tojson', file=sys.stderr)
+    why = self_check(shfmt)
+    if why:
+        print(f'pipe_into_grep_q: {why}', file=sys.stderr)
         return 2
     rc = 0
     with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as pool:
-        results = list(pool.map(lambda p: scan(shfmt, flag, p), paths))
+        results = list(pool.map(lambda p: scan(shfmt, p), paths))
     for found, exempt, err in results:
         for line in exempt:
             print(f'EXEMPT {line}')
