@@ -1747,4 +1747,31 @@ for _c in 'claude hi' 'echo hi | claude' 'claude -w x' ; do
 done
 
 
+# Bypass hunt 2026-10-23 F5: `find | xargs rm` is the same delete as `find -exec rm` (denied with no
+# flags at all), but the xargs re-point handed it to the rm-rf rule, which needs both -r and -f.
+for _c in \
+  'find . -type f | xargs rm' \
+  'find . -print0 | xargs -0 rm' \
+  "find . -name '*.bak' | xargs -I{} rm {}" \
+  'fd -t f | xargs rm' \
+  'git ls-files | xargs rm -f' \
+  'find . | xargs -n 10 rm' \
+  'find . | xargs /bin/rm' \
+  'find . | xargs sudo rm' \
+  'xargs rm < files.txt' \
+  "bash -c 'find . | xargs rm'" ; do
+  test_deny "$IRRECOVERABLE" "bypass hunt F5: xargs rm deletes every path it is fed: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'git ls-files | xargs grep -l rm' \
+  'xargs grep rm src < files.txt' \
+  "find . -name '*.o' | xargs ls -l" \
+  'echo a | xargs echo rm' \
+  'find . | xargs -I{} echo rm {}' \
+  'find . -type d -empty | xargs rmdir' \
+  'find . -name x | xargs wc -l' ; do
+  test_allow "$IRRECOVERABLE" "bypass hunt F5 control: xargs runs something else: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary

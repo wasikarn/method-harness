@@ -2397,22 +2397,32 @@ def _check_window(_wi, w):
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(rest[j:])
                 break
+        # The command xargs runs: past its flags and their values.
+        _xc = 0
+        while _xc < len(rest) and rest[_xc].replace(PH, "").startswith("-"):
+            t = rest[_xc].replace(PH, "")
+            # A bundled short cluster (-tJ) takes the next word when its last letter takes a value.
+            takes = t in ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
+                          "--process-slot-var") or (not t.startswith("--") and t[-1:] in "IJRSnPLdsEa")
+            _xc += 2 if takes else 1
+        # Bypass hunt 2026-10-23 F5: `find | xargs rm` deletes every path it is fed, the same delete as
+        # `find -exec rm`, which denies with no flags at all. Plain wrapper words between (`xargs sudo
+        # rm`) are skipped with their dash words; a wrapper's value flag (`sudo -u x rm`) is not read.
+        _xr = _xc
+        while _xr < len(rest) and (basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS
+                                   or (_xr > _xc and rest[_xr].replace(PH, "").startswith("-"))):
+            _xr += 1
+        if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
+            deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
             if basename(t).replace(PH, "") in ("rm", "find", "dd", "git"):
                 argv0, rest = basename(t), rest[j + 1:]
                 break
         else:
-            # gh only as the command xargs runs (past its flags and their values), since "gh" is also a
-            # common grep pattern: `xargs grep -l gh src` must not read as gh.
-            j = 0
-            while j < len(rest) and rest[j].replace(PH, "").startswith("-"):
-                t = rest[j].replace(PH, "")
-                # A bundled short cluster (-tJ) takes the next word when its last letter takes a value.
-                takes = t in ("--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
-                              "--process-slot-var") or (not t.startswith("--") and t[-1:] in "IJRSnPLdsEa")
-                j += 2 if takes else 1
-            if j < len(rest) and basename(rest[j]).replace(PH, "") == "gh":
-                argv0, rest = "gh", rest[j + 1:]
+            # gh only as the command xargs runs, since "gh" is also a common grep pattern: `xargs grep
+            # -l gh src` must not read as gh.
+            if _xc < len(rest) and basename(rest[_xc]).replace(PH, "") == "gh":
+                argv0, rest = "gh", rest[_xc + 1:]
     elif argv0 == "docker" and rest and rest[0].replace(PH, "") == "exec":
         # "docker exec <flags> <container> <cmd...>" re-points argv0 to the
         # inner command so the SQL check fires on a containerized client.
