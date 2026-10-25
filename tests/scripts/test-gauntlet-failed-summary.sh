@@ -92,7 +92,7 @@ out2=$(bash -c "
   hook_test_files() { printf '%s\n' '$FIX/test-red.sh'; }
   run_hook_tests
 " 2>&1)
-if printf '%s\n' "$out2" | /usr/bin/grep '^failed-at:' | /usr/bin/grep -qF 'real regression row'; then
+if /usr/bin/grep -q '^failed-at:.*real regression row' <<<"$out2"; then
   ok "failed-at keeps the failing row when passing rows also say FAIL"
 else
   bad "failed-at hid the failing row behind passing rows: <$out2>"

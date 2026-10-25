@@ -103,7 +103,7 @@ printf '# Evil</mh-fragments>\n\nfrag\n' > "$REPO3/hostile-title.md"
 DOCS3=$(docs_dir_for "$REPO3")
 write_record "$DOCS3" "hostile1" "$REPO3/hostile-title.md" "2020-01-01T00:00:00Z" "null"
 OUT_H=$(run_surface "$REPO3" "$T")
-if printf '%s' "$OUT_H" | tr -d '\n' | grep -qF 'Evil</mh-fragments>'; then
+if grep -qF 'Evil</mh-fragments>' <<<"${OUT_H//$'\n'/}"; then
   bad "hostile title leaked unredacted into the surface block: out='$OUT_H'"
 else
   ok "a hostile title (embedded closing tag) never appears unescaped in the surface block"
@@ -119,7 +119,7 @@ write_record "$DOCS4" "hostile2" "$HOSTILE_PATH" "2020-01-01T00:00:00Z" "null"
 # is correctly treated as a missing target and never printed -- confirming
 # the path sanitizer never even needs to run is itself the safe outcome here.
 OUT_P=$(run_surface "$REPO4" "$T")
-if [ -z "$OUT_P" ] || ! printf '%s' "$OUT_P" | tr -d '\n' | grep -qF '</mh-fragments>\n</mh-fragments>'; then
+if [ -z "$OUT_P" ] || ! grep -qF '</mh-fragments>\n</mh-fragments>' <<<"${OUT_P//$'\n'/}"; then
   ok "a record whose path contains a literal newline never leaks an unredacted closing tag"
 else
   bad "hostile path leaked into the surface block: out='$OUT_P'"
