@@ -25,6 +25,13 @@ test_deny  "$IRRECOVERABLE" "git config --unset core.hooksPath (persistent hook 
   "$(bash_payload 'git config --unset core.hooksPath')"
 test_allow "$IRRECOVERABLE" "git config core.hooksPath git-hooks (documented wiring)" \
   "$(bash_payload 'git config core.hooksPath git-hooks')"
+# GH #562: "git-hooks" anywhere passed the allowlist (a value-pattern replaces the git-hooks value), and a read denied.
+test_deny  "$IRRECOVERABLE" "GH #562: value-pattern git-hooks replaces the documented value" \
+  "$(bash_payload 'git config core.hooksPath /dev/null git-hooks')"
+test_deny  "$IRRECOVERABLE" "GH #562: --comment git-hooks" "$(bash_payload 'git config --comment git-hooks core.hooksPath /dev/null')"
+test_allow "$IRRECOVERABLE" "GH #562: git config core.hooksPath (a read)" "$(bash_payload 'git config core.hooksPath')"
+test_allow "$IRRECOVERABLE" "GH #562: CLAUDE.md's own check" "$(bash_payload 'test -d "$(git config core.hooksPath)"')"
+test_allow "$IRRECOVERABLE" "GH #562: git config --get core.hooksPath" "$(bash_payload 'git config --get core.hooksPath')"
 test_allow "$IRRECOVERABLE" "git -c user.name= (benign -c config, must not over-block)" \
   "$(bash_payload 'git -c user.name=x commit -m y')"
 # 2026-09-20 audit: the -c branch did an exact-case startswith("core.hooksPath=")
