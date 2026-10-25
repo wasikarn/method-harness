@@ -50,7 +50,8 @@ trap 'exit 130' INT TERM HUP
 merge_lock_dir="${MERGE_PR_LOCK_DIR:-$HOME/.cache/mh/merge-pr.lock}"
 merge_lock_take() {
   # shellcheck disable=SC2034 # read by gauntlet_lock_acquire
-  local GAUNTLET_LOCK_DIR="$merge_lock_dir" GAUNTLET_LOCK_WAIT_SECS="${MERGE_PR_LOCK_WAIT_SECS:-3600}"
+  # A live run can pass the queue's default 1 h stale age (3 rounds of load wait plus a gauntlet).
+  local GAUNTLET_LOCK_DIR="$merge_lock_dir" GAUNTLET_LOCK_WAIT_SECS="${MERGE_PR_LOCK_WAIT_SECS:-3600}" GAUNTLET_LOCK_MAX_AGE=14400
   gauntlet_lock_acquire
 }
 merge_lock_release() {
@@ -277,7 +278,7 @@ push_head() {
   local rc=0 remote n=0
   # MH_GAUNTLET_LOCK_OWNER is this script's merge-lock pid; the hook must queue on the gauntlet lock.
   env -u MH_GAUNTLET_LOCK_OWNER git push origin "HEAD:refs/heads/$branch" || rc=$?
-  remote=$(remote_head)
+  remote=$(remote_head) || exit 1
   if [ "$remote" != "$head" ]; then
     die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push gauntlet failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch."
   fi
@@ -306,7 +307,8 @@ while :; do
   head=$(git rev-parse HEAD)
   check_version
   check_review
-  [ "$(remote_head)" = "$head" ] || push_head
+  remote=$(remote_head) || exit 1
+  [ "$remote" = "$head" ] || push_head
   # A merge made outside this script lands no matter the lock: fetch, and sync again if it did.
   git fetch origin || die "git fetch failed after the push; not merging."
   rc=0
