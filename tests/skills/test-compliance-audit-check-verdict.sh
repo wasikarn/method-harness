@@ -40,7 +40,7 @@ assert_exit "blank gauntlet.command rejected" 1 '{"contract_version": 1, "requir
 # otherwise schema-valid object.
 mismatch_out=$(printf '%s' "$good" | python3 "$CHECK" deadbeef0 2>&1 >/dev/null)
 mismatch_rc=$?
-if [ "$mismatch_rc" -eq 1 ] && printf '%s' "$mismatch_out" | /usr/bin/grep -q "does not match the pinned SHA"; then
+if [ "$mismatch_rc" -eq 1 ] && /usr/bin/grep -q "does not match the pinned SHA" <<<"$mismatch_out"; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
@@ -49,7 +49,7 @@ fi
 
 match_out=$(printf '%s' "$good" | python3 "$CHECK" abc1234)
 match_rc=$?
-if [ "$match_rc" -eq 0 ] && printf '%s' "$match_out" | /usr/bin/grep -q '"pass": true'; then
+if [ "$match_rc" -eq 0 ] && /usr/bin/grep -q '"pass": true' <<<"$match_out"; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
@@ -61,7 +61,7 @@ fi
 full_sha="abc1234000000000000000000000000000000000"
 prefix_out=$(printf '%s' "$good" | python3 "$CHECK" "$full_sha")
 prefix_rc=$?
-if [ "$prefix_rc" -eq 0 ] && printf '%s' "$prefix_out" | /usr/bin/grep -q '"pass": true'; then
+if [ "$prefix_rc" -eq 0 ] && /usr/bin/grep -q '"pass": true' <<<"$prefix_out"; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
@@ -69,7 +69,7 @@ else
 fi
 short_out=$(printf '%s' "$good" | python3 "$CHECK" abc 2>&1 >/dev/null)
 short_rc=$?
-if [ "$short_rc" -eq 1 ] && printf '%s' "$short_out" | /usr/bin/grep -q "pinned SHA"; then
+if [ "$short_rc" -eq 1 ] && /usr/bin/grep -q "pinned SHA" <<<"$short_out"; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
@@ -81,7 +81,7 @@ fi
 stray='{"contract_version": 1, "requirements": [{"id": "R1", "verdict": "CONFORMS", "note": "", "accepted": null}], "gauntlet": {"command": "bash gauntlet.sh", "sha": "abc1234", "exit_code": 0, "output_tail": "ok"}, "scope_ok": true, "unexpected_files": ["stray.py"]}'
 stray_out=$(printf '%s' "$stray" | python3 "$CHECK")
 stray_rc=$?
-if [ "$stray_rc" -eq 0 ] && printf '%s' "$stray_out" | /usr/bin/grep -q '"pass": false'; then
+if [ "$stray_rc" -eq 0 ] && /usr/bin/grep -q '"pass": false' <<<"$stray_out"; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))

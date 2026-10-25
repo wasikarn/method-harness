@@ -1989,9 +1989,11 @@ _GH_BUILTIN_WRITES = {
     "extension": {"install", "upgrade", "exec"}, "alias": {"set", "import"},
     "issue": {"delete", "transfer"}, "label": {"delete"}, "cache": {"delete"}, "codespace": {"delete"},
     "workflow": {"run", "enable", "disable"}, "run": {"cancel", "delete", "rerun"}, "project": {"delete"},
+    "gist": {"delete"},  # GH #564: a deleted gist cannot be restored
 }
-# Verbs that are T2 by default and T3/T4 only with one flag: --clobber deletes the old asset, --force hard-resets.
-_GH_BUILTIN_FORCED = {("release", "upload"): "--clobber", ("repo", "sync"): "--force"}
+# Verbs that are T2 by default and T3/T4 only with one flag: --clobber deletes the old asset, --force hard-resets,
+# --rebase rewrites the PR's head branch on GitHub (a force-push to it; the default merge commit rewrites nothing).
+_GH_BUILTIN_FORCED = {("release", "upload"): "--clobber", ("repo", "sync"): "--force", ("pr", "update-branch"): "--rebase"}
 # Cobra aliases of the groups above (`gh <group> --help` lists them).
 _GH_GROUP_ALIASES = {"cs": "codespace", "ext": "extension", "extensions": "extension"}
 
