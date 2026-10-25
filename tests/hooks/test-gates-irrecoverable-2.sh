@@ -1989,7 +1989,15 @@ for _c in \
   "docker exec -u postgres db psql -c 'DROP TABLE users'" \
   "docker exec -e PGPASSWORD=x -w /tmp db psql -c 'DROP TABLE users'" \
   "docker exec db sh -c 'rm -rf /data'" \
-  "podman exec db psql -c 'DROP TABLE users'" ; do
+  "podman exec db psql -c 'DROP TABLE users'" \
+  "docker exec db env PGPASSWORD=x psql -c 'DROP TABLE users'" \
+  "docker exec db sudo -u postgres psql -c 'DROP TABLE users'" \
+  'docker exec db timeout 5 rm -rf /data' \
+  'kubectl exec db -- env A=1 rm -rf /data' \
+  "docker exec -itu postgres db psql -c 'DROP TABLE users'" \
+  'docker --tlscacert ca.pem exec db rm -rf /data' \
+  'podman --runtime crun exec db rm -rf /data' \
+  'kubectl -v 9 exec db -- rm -rf /data' ; do
   test_deny "$IRRECOVERABLE" "GH #584: a rule's command run inside a container: $_c" "$(bash_payload "$_c")"
 done
 for _c in \

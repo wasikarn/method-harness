@@ -2700,14 +2700,16 @@ def _past_wrapper_words(name, rest, i):
 # GH #584 (bypass hunt F6): the container tools whose exec runs a command, and each one's options
 # that take the next word as a value (an attached `--user=x` or `-upostgres` is one word anyway).
 _CONTAINER_TOOLS = ("docker", "podman", "docker-compose", "kubectl")
-_DOCKER_GLOBAL_VALUES = {"-H", "--host", "-c", "--context", "--config", "-l", "--log-level", "--url",
-                         "--connection", "--identity", "--root", "--runroot"}
+_DOCKER_GLOBAL_VALUES = {"-H", "--host", "-c", "--context", "--config", "-l", "--log-level", "--tlscacert",
+                         "--tlscert", "--tlskey", "--url", "--connection", "--identity", "--root", "--runroot",
+                         "--runtime", "--cgroup-manager", "--storage-driver", "--storage-opt", "--tmpdir", "--ssh",
+                         "--module", "--network-cmd-path", "--events-backend", "--log-driver", "--hooks-dir"}
 _DOCKER_EXEC_VALUES = {"-e", "--env", "--env-file", "-u", "--user", "-w", "--workdir", "--detach-keys",
-                       "--preserve-fd"}
+                       "--preserve-fd", "--preserve-fds"}
 _COMPOSE_GLOBAL_VALUES = {"-f", "--file", "-p", "--project-name", "--profile", "--env-file",
                           "--project-directory", "--ansi", "--parallel", "--progress"}
 _COMPOSE_EXEC_VALUES = {"-e", "--env", "-u", "--user", "-w", "--workdir", "--index"}
-_KUBECTL_VALUES = {"-n", "--namespace", "--context", "--cluster", "--kubeconfig", "-s", "--server", "--user",
+_KUBECTL_VALUES = {"-v", "--v", "-n", "--namespace", "--context", "--cluster", "--kubeconfig", "-s", "--server", "--user",
                    "--as", "--as-group", "--request-timeout", "-c", "--container", "-f", "--filename",
                    "--pod-running-timeout"}
 
@@ -2717,7 +2719,8 @@ def _past_options(rest, i, values):
         t = rest[i].replace(PH, "")
         if not t.startswith("-") or t in ("-", "--"):
             break
-        i += 2 if t in values else 1
+        # A short cluster whose last letter takes a value takes the next word too (`-itu postgres`).
+        i += 2 if t in values or (not t.startswith("--") and "-" + t[-1] in values) else 1
     return i
 
 def _container_exec_command(tool, rest):
@@ -3007,12 +3010,14 @@ def _check_window(_wi, w):
             if _xc < len(rest) and basename(rest[_xc]).replace(PH, "") == "gh":
                 argv0, rest = "gh", rest[_xc + 1:]
     elif argv0 in _CONTAINER_TOOLS:
-        # The command a container tool runs inside (`docker exec db psql ...`) becomes argv0, so every
-        # rule, and the shell unwrap, reads it as if it ran here (GH #584).
+        # The command a container tool runs inside (`docker exec db psql ...`) is checked by every rule
+        # as if it ran here (GH #584).
+        # A window of its own, so a wrapper inside the container (`docker exec db env A=1 psql ...`)
+        # unwraps like anywhere else.
         inner = _container_exec_command(argv0, rest)
         if inner:
-            argv0, rest = basename(inner[0]), inner[1:]
-            _unwrap_shell(argv0.replace(PH, ""), rest)
+            _WDEPTH[len(windows)] = _cur_depth
+            windows.append(inner)
 
     # GH #336. Outside the candidate loop below: a PH argv0 (`${EDITOR} f`) must not read as mkfs.
     # PH is stripped instead, so a splice inside the word (`mk$(true)fs.ext4`) still matches.
