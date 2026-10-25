@@ -2614,4 +2614,30 @@ for _c in \
 done
 
 
+# GH #591 (bypass hunt 2026-10-23 F14): xargs feeds mkfs its device on stdin, so the mkfs rule saw no
+# operand. (`find ... -exec mkfs.ext4 {} \;` denies since #586 made `{}` a word.)
+for _c in \
+  'xargs mkfs.ext4 <<< /dev/sda1' \
+  'echo /dev/sda1 | xargs mkfs -t ext4' \
+  'echo /dev/sda1 | xargs sudo mkfs.ext4' \
+  'echo /dev/sda1 | xargs -n1 mke2fs' \
+  'find /dev -name sda1 -exec mkfs.ext4 {} \;' \
+  'xargs mkfs -V -t ext4 <<< /dev/sda1' \
+  'xargs mkfs.ext4 -L -V <<< /dev/sda1' \
+  'xargs mkfs.ext4 -L --version <<< /dev/sda1' \
+  'printf "0 /dev/sdb" | xargs mkfs.vfat -h' \
+  'echo d | xargs mkfs.fat -h' ; do
+  test_deny "$IRRECOVERABLE" "GH #591: mkfs on a device xargs or find hands it: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'xargs mkfs.ext4 --help' \
+  'xargs mkfs --version' \
+  'echo x | xargs echo mkfs.ext4' \
+  'echo mkfs.ext4' \
+  'man mkfs' \
+  'git ls-files | xargs grep -l mkfs' ; do
+  test_allow "$IRRECOVERABLE" "GH #591 control: no filesystem is made: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary
