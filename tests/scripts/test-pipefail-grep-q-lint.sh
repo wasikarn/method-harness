@@ -107,8 +107,17 @@ x | echo "$(grep -q y && echo ok)"
 x | diff <(grep -q y) f
 x | while read -r f; do grep -q pat; done
 x | while read -r f; do grep -q pat -; done
+x | for f in $(grep -q y); do :; done
+x | case $(grep -q y) in a) ;; esac
+x | cat < <(grep -q y)
+x | timeout --sig KILL 5 grep -q y
+x | env --split 'grep -q' y
+x | while read f; do grep -q pat /dev/stdin; done
+x | while read l; do grep -q -f - file; done
+x | grep -q y <&"$fd"
+x | { echo "$(grep -q y)" < f; }
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
@@ -142,10 +151,13 @@ x | grep --reg -q y
 x | grep -q y <&3
 x | while read -r f; do grep -q pat "$f"; done
 x | for f in a b; do grep -q -e pat "$f"; done
+x | while read f; do grep -rq pat; done
+x | while read l; do v=$(grep -q y); done < "$f"
+x | grep --col=never -c y
 EOF
 out=$(scan "$probe/good.sh"); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] \
-  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp/--reg -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects, loop greps on files are clean" \
+  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp/--reg -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects, loop greps on files or -r, a loop with its own stdin, --col are clean" \
   || bad "probe: rc $rc on the race-free file: $out $(cat "$probe/err")"
 
 # The exemption counts only as a trailing comment, and is reported, not hidden.
@@ -169,9 +181,20 @@ out=$(scan "$probe/missing.sh"); rc=$?
 real_shfmt=$(command -v shfmt)
 mkdir -p "$probe/old" "$probe/numeric"
 printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --to-json ] && { echo "flag provided but not defined: -to-json" >&2; exit 2; }; done\nexec "%s" "$@"\n' "$real_shfmt" > "$probe/old/shfmt"
-printf '#!/bin/sh\n"%s" "$@" | sed '"'"'s/"Op": "|"/"Op": 12/g'"'"'\n' "$real_shfmt" > "$probe/numeric/shfmt"
-chmod +x "$probe/old/shfmt" "$probe/numeric/shfmt"
-for kind in old numeric; do
+# numeric rewrites the parsed tree (any JSON spacing): every "Op": "|" becomes 12, as 3.4 encodes it.
+cat > "$probe/numeric/fix.py" <<'PY'
+import json, sys
+def fix(n):
+    if isinstance(n, dict):
+        return {k: (12 if k == 'Op' and v == '|' else fix(v)) for k, v in n.items()}
+    return [fix(v) for v in n] if isinstance(n, list) else n
+json.dump(fix(json.load(sys.stdin)), sys.stdout)
+PY
+printf '#!/bin/sh\n"%s" "$@" | python3 -I "%s"\n' "$real_shfmt" "$probe/numeric/fix.py" > "$probe/numeric/shfmt"
+mkdir -p "$probe/nonjson"
+printf '#!/bin/sh\necho "shfmt wrapper banner"\n' > "$probe/nonjson/shfmt"
+chmod +x "$probe/old/shfmt" "$probe/numeric/shfmt" "$probe/nonjson/shfmt"
+for kind in old numeric nonjson; do
   out=$(PATH="$probe/$kind:$PATH" python3 -I "$SCAN" "$probe/race.sh" 2>"$probe/err"); rc=$?
   [ "$rc" -eq 2 ] && /usr/bin/grep -q 'shfmt >= 3.5 is needed' "$probe/err" \
     && ok "probe: a shfmt whose tree the scanner cannot read ($kind) is an error (rc 2), never clean" \

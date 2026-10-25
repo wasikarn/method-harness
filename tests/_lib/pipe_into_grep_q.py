@@ -10,22 +10,26 @@ scanner first checks itself: it must find the race in `x | grep -q y`, or it exi
 
 A pipe's readers are the commands that can read the stdin it hands its right side:
 - directly: the command there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a
-  `time`d command, and any `$(...)`/`<(...)` inside such a command's words or assignments;
-- inside the conditions and bodies of if/while/until/for/case: a grep counts only when it has no
-  file operand (`while read -r f; do grep -q p "$f"; done` reads files, not the pipe). This part is
-  a heuristic: a grep with a file operand after `cat` drained nothing is not flagged there.
-A statement whose stdin is redirected (`<`, `<<<`, `<<`, `<&N` with N other than 0) is no reader.
+  `time`d command, and any `$(...)`/`<(...)` in a reader statement's own words and redirections
+  (`for` lists, `case` subjects, `< <(...)`, assignments): they expand with the pipe as stdin;
+- inside the conditions and bodies of if/while/until/for/case: a grep counts only when it reads
+  stdin: no file operand and no -r, or a `-` or `/dev/stdin` operand, or `-f -`
+  (`while read -r f; do grep -q p "$f"; done` reads files, not the pipe). This part is a
+  heuristic: a grep with a file operand after `cat` drained nothing is not flagged there.
+A statement whose stdin is redirected (`<`, `<<<`, `<<`, `<&N` with a literal N other than 0) is no
+reader; `<&0` and `<&"$fd"` may still be the pipe, so they are.
 
 A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
 wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
 read as `env` words), it is grep, egrep or fgrep (any path, `\\grep` too) and one of its words is
--q, --quiet or --silent. Long options resolve as getopt_long does (an unambiguous prefix, so `--qui`
-is --quiet and `--reg` is --regexp); the value of -e/--regexp and other value-taking options is not
-an option; GNU grep permutes, so options after operands count; option words end at `--`.
+-q, --quiet or --silent. Long options, grep's and the wrappers', resolve as getopt_long does (an
+unambiguous prefix or aliases, so `--qui` is --quiet, `--reg` is --regexp, `--sig` is timeout's
+--signal); the value of -e/--regexp and other value-taking options is not an option; GNU grep
+permutes, so options after operands count; option words end at `--`.
 
 A hit whose line ends in the comment `# pipe-into-grep-q: deliberate` is exempt and printed as
 `EXEMPT FILE:LINE: text` (the lint caps how many there are). Exit status: 0 clean, 1 hits printed,
-2 an error (shfmt missing or unsupported, a file unreadable or unparsable); hits in other files are
+2 an error (shfmt missing or unsupported, non-JSON output, a file unreadable or unparsable); hits in other files are
 still printed on an error. Not caught: a grep reached through a function or alias, and early-exit
 readers other than grep -q (`head`, grep -m, a command that skips stdin).
 """
@@ -40,34 +44,47 @@ from concurrent.futures import ThreadPoolExecutor
 
 PIPES = ('|', '|&')
 GREPS = {'grep', 'egrep', 'fgrep'}
-# GNU grep 3.11's long options (getopt_long resolves an unambiguous prefix to one of these).
-GREP_LONG = [
-    'after-context', 'basic-regexp', 'before-context', 'binary', 'binary-files', 'byte-offset',
-    'color', 'colour', 'context', 'count', 'dereference-recursive', 'devices', 'directories',
-    'exclude', 'exclude-dir', 'exclude-from', 'extended-regexp', 'file', 'files-with-matches',
-    'files-without-match', 'fixed-strings', 'group-separator', 'help', 'ignore-case', 'include',
-    'initial-tab', 'invert-match', 'label', 'line-buffered', 'line-number', 'line-regexp',
-    'max-count', 'no-filename', 'no-group-separator', 'no-ignore-case', 'no-messages', 'null',
-    'null-data', 'only-matching', 'perl-regexp', 'quiet', 'recursive', 'regexp', 'silent', 'text',
-    'version', 'with-filename', 'word-regexp',
-]
-GREP_LONG_VALUE = {'after-context', 'before-context', 'binary-files', 'context', 'devices',
-                   'directories', 'exclude', 'exclude-dir', 'exclude-from', 'file',
-                   'group-separator', 'include', 'label', 'max-count', 'regexp'}
+# GNU grep 3.11's long options; `True` marks one that takes a value. getopt_long resolves an
+# unambiguous prefix (or one whose matches are aliases, like --col for color/colour).
+GREP_LONG = {
+    'after-context': True, 'basic-regexp': False, 'before-context': True, 'binary': False,
+    'binary-files': True, 'byte-offset': False, 'color': False, 'colour': False, 'context': True,
+    'count': False, 'dereference-recursive': False, 'devices': True, 'directories': True,
+    'exclude': True, 'exclude-dir': True, 'exclude-from': True, 'extended-regexp': False,
+    'file': True, 'files-with-matches': False, 'files-without-match': False,
+    'fixed-strings': False, 'group-separator': True, 'help': False, 'ignore-case': False,
+    'include': True, 'initial-tab': False, 'invert-match': False, 'label': True,
+    'line-buffered': False, 'line-number': False, 'line-regexp': False, 'max-count': True,
+    'no-filename': False, 'no-group-separator': False, 'no-ignore-case': False,
+    'no-messages': False, 'null': False, 'null-data': False, 'only-matching': False,
+    'perl-regexp': False, 'quiet': False, 'recursive': False, 'regexp': True, 'silent': False,
+    'text': False, 'version': False, 'with-filename': False, 'word-regexp': False,
+}
+ALIASES = {'colour': 'color'}
 GREP_SHORT_VALUE = set('efmABCdD')
-# wrapper -> (short option letters that take a value, long options that take a value, positionals)
+# wrapper -> (short option letters that take a value, its long options as GREP_LONG, positionals)
 WRAPPERS = {
-    'command': ('', set(), 0), 'builtin': ('', set(), 0), 'exec': ('a', set(), 0),
-    'env': ('uC', {'--unset', '--chdir'}, 0),
-    'timeout': ('ks', {'--kill-after', '--signal'}, 1),
-    'nice': ('n', {'--adjustment'}, 0),
-    'stdbuf': ('ioe', {'--input', '--output', '--error'}, 0),
-    'nohup': ('', set(), 0),
-    'sudo': ('ugpCDhrtTU', {'--user', '--group', '--prompt', '--close-from', '--chdir', '--host',
-                            '--role', '--type', '--command-timeout', '--other-user'}, 0),
+    'command': ('', {}, 0), 'builtin': ('', {}, 0), 'exec': ('a', {}, 0), 'nohup': ('', {}, 0),
+    'env': ('uCS', {'ignore-environment': False, 'null': False, 'unset': True, 'chdir': True,
+                    'split-string': True, 'block-signal': False, 'default-signal': False,
+                    'ignore-signal': False, 'list-signal-handling': False, 'debug': False}, 0),
+    'timeout': ('ks', {'preserve-status': False, 'foreground': False, 'kill-after': True,
+                       'signal': True, 'verbose': False}, 1),
+    'nice': ('n', {'adjustment': True}, 0),
+    'stdbuf': ('ioe', {'input': True, 'output': True, 'error': True}, 0),
+    'sudo': ('ugpCDhrtTU', {'user': True, 'group': True, 'prompt': True, 'close-from': True,
+                            'chdir': True, 'host': True, 'role': True, 'type': True,
+                            'command-timeout': True, 'other-user': True, 'login': False,
+                            'shell': False, 'preserve-env': False, 'non-interactive': False,
+                            'background': False, 'edit': False, 'list': False,
+                            'validate': False, 'reset-timestamp': False,
+                            'remove-timestamp': False, 'set-home': False, 'stdin': False,
+                            'bell': False, 'askpass': False}, 0),
 }
 ASSIGNING = {'env', 'sudo'}  # wrappers that take NAME=VALUE words before the command
 STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
+# Keys under which shfmt nests statements; a statement's own words are everything else.
+NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
 DELIBERATE = re.compile(r'#\s*pipe-into-grep-q: deliberate\s*$')
 CANARY = b'x | grep -q y\n'
 
@@ -93,23 +110,36 @@ def has_eq(node):
     return any(has_eq(p) for p in node.get('Parts') or [])
 
 
-def takes_value(w, short, long_):
-    """Whether wrapper option word w consumes the next word as its value."""
+def resolve_long(word, options):
+    """getopt_long on `--name[=value]` over options: (full name or None, has `=value`)."""
+    name, sep, _value = word[2:].partition('=')
+    if name in options:
+        return name, bool(sep)
+    matches = {ALIASES.get(o, o) for o in options if o.startswith(name)} if name else set()
+    return (matches.pop() if len(matches) == 1 else None), bool(sep)
+
+
+def option_value(w, short, long_):
+    """For a wrapper option word: (option letter or long name, whether the next word is its value)."""
     if w.startswith('--'):
-        return '=' not in w and w in long_
+        name, inline = resolve_long(w, long_)
+        return name, bool(name) and long_.get(name, False) and not inline
     for n, ch in enumerate(w[1:], 1):
         if ch in short:
-            return n == len(w) - 1
-    return False
+            return ch, n == len(w) - 1
+    return None, False
 
 
 def env_split(w, nxt):
-    """For an env option word holding -S: (split body, words consumed), else None."""
-    if w.startswith('--split-string='):
-        return w.split('=', 1)[1], 1
-    if w == '--split-string':
+    """For an env option word holding -S/--split-string: (body, words consumed), else None."""
+    if w.startswith('--'):
+        name, inline = resolve_long(w, WRAPPERS['env'][1])
+        if name != 'split-string':
+            return None
+        if inline:
+            return w.split('=', 1)[1], 1
         return (nxt, 2) if nxt is not None else ('', 1)
-    if w.startswith('-') and not w.startswith('--'):
+    if w.startswith('-'):
         for n, ch in enumerate(w[1:], 1):
             if ch in 'uC':  # its value is the rest of the word or the next word, not -S
                 return None
@@ -157,7 +187,7 @@ def grep_call(words, raw):
                 k += 1
                 break
             if w.startswith('-') and len(w) > 1:
-                k += 2 if takes_value(w, short, long_) else 1
+                k += 2 if option_value(w, short, long_)[1] else 1
                 continue
             if name in ASSIGNING and '=' in w and not w.startswith('='):
                 k += 1
@@ -167,19 +197,9 @@ def grep_call(words, raw):
     return None
 
 
-def resolve_long(opt):
-    """getopt_long: an exact name, or the one long option an abbreviation names, else None."""
-    name = opt[2:]
-    if name in GREP_LONG:
-        return name
-    matches = [o for o in GREP_LONG if o.startswith(name)]
-    return matches[0] if len(matches) == 1 else None
-
-
 def grep_args(args):
     """(quiet, reads stdin) for a grep's argument words."""
-    quiet = False
-    pattern_given = False
+    quiet = recursive = pattern_given = patterns_from_stdin = False
     operands = []
     it = iter(args)
     for w in it:
@@ -190,101 +210,114 @@ def grep_args(args):
             operands += list(it)
             break
         if w.startswith('--'):
-            opt, _, value = w.partition('=')
-            name = resolve_long(opt)
+            name, inline = resolve_long(w, GREP_LONG)
             if name in ('quiet', 'silent'):
                 quiet = True
-            elif name in GREP_LONG_VALUE:
+            elif name in ('recursive', 'dereference-recursive'):
+                recursive = True
+            elif name and GREP_LONG[name]:
+                value = w.split('=', 1)[1] if inline else next(it, None)
                 if name in ('regexp', 'file'):
                     pattern_given = True
-                if not _:
-                    next(it, None)
+                    patterns_from_stdin |= name == 'file' and value == '-'
             continue
         if w.startswith('-') and len(w) > 1:
             for n, ch in enumerate(w[1:], 1):
                 if ch == 'q':
                     quiet = True
+                if ch in 'rR':
+                    recursive = True
                 if ch in GREP_SHORT_VALUE:
+                    value = w[n + 1:] or next(it, None)
                     if ch in 'ef':
                         pattern_given = True
-                    if n == len(w) - 1:
-                        next(it, None)
+                        patterns_from_stdin |= ch == 'f' and value == '-'
                     break
                 if not ch.isalpha():
                     break
             continue
         operands.append(w)
     files = operands if pattern_given else operands[1:]
-    reads_stdin = not files or '-' in files
-    return quiet, reads_stdin
+    if patterns_from_stdin or '-' in files or '/dev/stdin' in files:
+        return quiet, True
+    return quiet, not files and not recursive  # -r with no file searches `.`, not stdin
 
 
 def own_stdin(stmt):
+    """Whether the statement's stdin is redirected away from the pipe."""
     for r in stmt.get('Redirs') or []:
         n = (r.get('N') or {}).get('Value', '0')
         if r.get('Op') not in STDIN_REDIRS or n != '0':
             continue
-        if r.get('Op') == '<&' and literal(r.get('Word') or {}) == '0':
-            continue  # <&0 duplicates the stdin it already has: still the pipe
+        if r.get('Op') == '<&':
+            target = literal(r.get('Word') or {})
+            if target is None or target == '0':
+                continue  # <&0, or <&"$fd" that may be 0: still (maybe) the pipe
         return True
     return False
 
 
 def substs(node):
-    """The $(...) and <(...) nodes inside a command, not inside nested ones."""
+    """The $(...) and <(...) in a statement's own words and redirections: not in the statements
+    it nests (those run with their own stdin), not inside another substitution."""
     out = []
 
-    def walk(n):
+    def walk(n, top=False):
         if isinstance(n, dict):
-            if n.get('Type') in ('CmdSubst', 'ProcSubst'):
+            t = n.get('Type')
+            if t in ('CmdSubst', 'ProcSubst') and not top:
                 out.append(n)
                 return
-            for v in n.values():
+            for k, v in n.items():
+                if k in NESTED or (t == 'BinaryCmd' and k in ('X', 'Y')):
+                    continue
                 walk(v)
         elif isinstance(n, list):
             for v in n:
                 walk(v)
 
-    walk(node)
+    walk(node, top=True)
     return out
 
 
 def readers(stmt, direct=True):
     """(command, direct) pairs for the commands that can read the stdin this statement gets."""
-    if not stmt or own_stdin(stmt):
+    if not stmt:
         return []
-    cmd = stmt.get('Cmd') or {}
-    t = cmd.get('Type')
 
     def each(stmts, d):
         return [r for s in stmts or [] for r in readers(s, d)]
 
-    if t in ('CallExpr', 'DeclClause', 'TestClause', 'ArithmCmd', 'LetClause'):
-        out = [(cmd, direct)] if t == 'CallExpr' else []
-        for sub in substs(cmd):
-            out += each(sub.get('Stmts'), direct)
+    # Words and redirections expand before the statement's own redirections apply, so a
+    # substitution in them reads the pipe even when the statement then redirects its stdin.
+    out = [r for sub in substs(stmt) for r in each(sub.get('Stmts'), direct)]
+    if own_stdin(stmt):
         return out
+    cmd = stmt.get('Cmd') or {}
+    t = cmd.get('Type')
+    if t == 'CallExpr':
+        return out + [(cmd, direct)]
     if t == 'BinaryCmd':
         if cmd.get('Op') in PIPES:
-            return readers(cmd.get('X'), direct)
-        return readers(cmd.get('X'), direct) + readers(cmd.get('Y'), direct)
+            return out + readers(cmd.get('X'), direct)
+        return out + readers(cmd.get('X'), direct) + readers(cmd.get('Y'), direct)
     if t in ('Block', 'Subshell'):
-        return each(cmd.get('Stmts'), direct)
+        return out + each(cmd.get('Stmts'), direct)
     if t == 'TimeClause':
-        return readers(cmd.get('Stmt'), direct)
+        return out + readers(cmd.get('Stmt'), direct)
     if t == 'IfClause':
-        out, c = [], cmd
+        c = cmd
         while c:
             out += each(c.get('Cond'), False) + each(c.get('Then'), False)
             c = c.get('Else')
         return out
     if t == 'WhileClause':
-        return each(cmd.get('Cond'), False) + each(cmd.get('Do'), False)
+        return out + each(cmd.get('Cond'), False) + each(cmd.get('Do'), False)
     if t == 'ForClause':
-        return each(cmd.get('Do'), False)
+        return out + each(cmd.get('Do'), False)
     if t == 'CaseClause':
-        return [r for item in cmd.get('Items') or [] for r in each(item.get('Stmts'), False)]
-    return []
+        return out + [r for item in cmd.get('Items') or [] for r in each(item.get('Stmts'), False)]
+    return out
 
 
 def hits(tree):
@@ -317,7 +350,10 @@ def parse(shfmt, src):
     if res.returncode != 0:
         msg = res.stderr.decode('utf-8', 'replace').strip().splitlines()
         return None, msg[0] if msg else f'rc {res.returncode}'
-    return json.loads(res.stdout), None
+    try:
+        return json.loads(res.stdout), None
+    except ValueError:
+        return None, 'shfmt printed something that is not JSON'
 
 
 def self_check(shfmt):
