@@ -54,7 +54,7 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 # 2026-07-03: the old pretty-printed format broke every line-oriented reader).
 row=$(tail -1 "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" && "$out" == "$payload" && -f "$metrics_file" ]] \
-  && printf '%s' "$row" | /usr/bin/grep -q '"session_id":"test-session"' \
+  && /usr/bin/grep -q '"session_id":"test-session"' <<<"$row" \
   && [[ "$(wc -l < "$metrics_file" | tr -d ' ')" == "1" ]] \
   && printf '%s' "$row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "echoes payload through + appends one compact JSONL cost row for a valid transcript" "$ok"
@@ -191,9 +191,9 @@ row=$(tail -1 "$metrics_file" 2>/dev/null)
 # Exactly one row, input_tokens summed to 300 (100+200), output_tokens summed to 130.
 [[ "$rc" == "0" && -f "$metrics_file" \
   && "$(wc -l < "$metrics_file" | tr -d ' ')" == "1" ]] \
-  && printf '%s' "$row" | /usr/bin/grep -q '"session_id":"multi"' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"input_tokens":300' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"output_tokens":130' \
+  && /usr/bin/grep -q '"session_id":"multi"' <<<"$row" \
+  && /usr/bin/grep -q '"input_tokens":300' <<<"$row" \
+  && /usr/bin/grep -q '"output_tokens":130' <<<"$row" \
   && printf '%s' "$row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "aggregates a multi-line transcript into one summed JSONL cost row" "$ok"
 trash "$fake_home" "$transcript" 2>/dev/null || true
@@ -212,10 +212,10 @@ printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" >/dev/null 2>&1
 rc=$?
 row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$row" | /usr/bin/grep -q '"dedup_usage":true' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"turns":2' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"input_tokens":107' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"output_tokens":53' && ok=1 || ok=0
+  && /usr/bin/grep -q '"dedup_usage":true' <<<"$row" \
+  && /usr/bin/grep -q '"turns":2' <<<"$row" \
+  && /usr/bin/grep -q '"input_tokens":107' <<<"$row" \
+  && /usr/bin/grep -q '"output_tokens":53' <<<"$row" && ok=1 || ok=0
 assert "same message.id repeated on 3 lines counts once (turns 2, input 107, output 53), dedup_usage:true" "$ok"
 trash "$fake_home" "$transcript" 2>/dev/null || true
 
@@ -233,10 +233,10 @@ printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" >/dev/null 2>&1
 rc=$?
 row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$row" | /usr/bin/grep -q '"usage_pick":"last"' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"turns":1' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"input_tokens":100' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"output_tokens":1500' && ok=1 || ok=0
+  && /usr/bin/grep -q '"usage_pick":"last"' <<<"$row" \
+  && /usr/bin/grep -q '"turns":1' <<<"$row" \
+  && /usr/bin/grep -q '"input_tokens":100' <<<"$row" \
+  && /usr/bin/grep -q '"output_tokens":1500' <<<"$row" && ok=1 || ok=0
 assert "same message.id with output 2 / 2 / 1500 across 3 lines → last line wins (output 1500, turns 1), usage_pick:\"last\"" "$ok"
 trash "$fake_home" "$transcript" 2>/dev/null || true
 
@@ -255,12 +255,12 @@ opus_row=$(/usr/bin/grep '"model":"claude-opus-4-8"' "$metrics_file" 2>/dev/null
 sonnet_row=$(/usr/bin/grep '"model":"claude-sonnet-5"' "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" && -f "$metrics_file" \
   && "$(wc -l < "$metrics_file" | tr -d ' ')" == "2" ]] \
-  && printf '%s' "$opus_row" | /usr/bin/grep -q '"model_scoped":true' \
-  && printf '%s' "$opus_row" | /usr/bin/grep -q '"input_tokens":100' \
-  && printf '%s' "$opus_row" | /usr/bin/grep -q '"output_tokens":50' \
-  && printf '%s' "$sonnet_row" | /usr/bin/grep -q '"model_scoped":true' \
-  && printf '%s' "$sonnet_row" | /usr/bin/grep -q '"input_tokens":200' \
-  && printf '%s' "$sonnet_row" | /usr/bin/grep -q '"output_tokens":80' \
+  && /usr/bin/grep -q '"model_scoped":true' <<<"$opus_row" \
+  && /usr/bin/grep -q '"input_tokens":100' <<<"$opus_row" \
+  && /usr/bin/grep -q '"output_tokens":50' <<<"$opus_row" \
+  && /usr/bin/grep -q '"model_scoped":true' <<<"$sonnet_row" \
+  && /usr/bin/grep -q '"input_tokens":200' <<<"$sonnet_row" \
+  && /usr/bin/grep -q '"output_tokens":80' <<<"$sonnet_row" \
   && printf '%s' "$opus_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null \
   && printf '%s' "$sonnet_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "multi-model transcript writes one model_scoped row per model with that model's own tokens" "$ok"
@@ -282,15 +282,15 @@ make_transcript_line claude-sonnet-5 100 50 > "$transcript"
 payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "receipt", "cwd": sys.argv[2]}))' "$transcript" "$fake_repo")
 printf '%s' "$payload" | HOME="$fake_home" CLAUDE_PLUGIN_ROOT="$fake_root" bash "$COST_TRACKER" >/dev/null 2>&1
 row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
-printf '%s' "$row" | /usr/bin/grep -q '"mh_version":"9.9.9"' \
-  && printf '%s' "$row" | /usr/bin/grep -q "\"head_commit\":\"$head_sha\"" && ok=1 || ok=0
+/usr/bin/grep -q '"mh_version":"9.9.9"' <<<"$row" \
+  && /usr/bin/grep -q "\"head_commit\":\"$head_sha\"" <<<"$row" && ok=1 || ok=0
 assert "row carries mh_version from CLAUDE_PLUGIN_ROOT plugin.json and head_commit of the payload cwd" "$ok"
 payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "receipt-none", "cwd": sys.argv[2]}))' "$transcript" "$fake_home")
 printf '%s' "$payload" | HOME="$fake_home" CLAUDE_PLUGIN_ROOT='' bash "$COST_TRACKER" >/dev/null 2>&1
 row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
-printf '%s' "$row" | /usr/bin/grep -q '"session_id":"receipt-none"' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"mh_version":null' \
-  && printf '%s' "$row" | /usr/bin/grep -q '"head_commit":null' && ok=1 || ok=0
+/usr/bin/grep -q '"session_id":"receipt-none"' <<<"$row" \
+  && /usr/bin/grep -q '"mh_version":null' <<<"$row" \
+  && /usr/bin/grep -q '"head_commit":null' <<<"$row" && ok=1 || ok=0
 assert "no plugin root and non-git cwd → row still written with mh_version:null, head_commit:null" "$ok"
 trash "$fake_home" "$fake_root" "$fake_repo" "$transcript" 2>/dev/null || true
 
@@ -319,13 +319,13 @@ orch_row=$(/usr/bin/grep '"stream":"orchestrator"' "$metrics_file" 2>/dev/null)
 sub_row=$(/usr/bin/grep '"stream":"subagent"' "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" && "$out" == "$payload" && -f "$metrics_file" \
   && "$(wc -l < "$metrics_file" | tr -d ' ')" == "2" ]] \
-  && printf '%s' "$orch_row" | /usr/bin/grep -q '"input_tokens":200' \
-  && printf '%s' "$orch_row" | /usr/bin/grep -q '"cache_read_tokens":2000' \
-  && printf '%s' "$orch_row" | /usr/bin/grep -q '"turns":2' \
-  && printf '%s' "$orch_row" | /usr/bin/grep -q '"cache_read_per_turn":1000' \
-  && printf '%s' "$sub_row" | /usr/bin/grep -q '"input_tokens":14' \
-  && printf '%s' "$sub_row" | /usr/bin/grep -q '"cache_read_tokens":80' \
-  && printf '%s' "$sub_row" | /usr/bin/grep -q '"turns":2' \
+  && /usr/bin/grep -q '"input_tokens":200' <<<"$orch_row" \
+  && /usr/bin/grep -q '"cache_read_tokens":2000' <<<"$orch_row" \
+  && /usr/bin/grep -q '"turns":2' <<<"$orch_row" \
+  && /usr/bin/grep -q '"cache_read_per_turn":1000' <<<"$orch_row" \
+  && /usr/bin/grep -q '"input_tokens":14' <<<"$sub_row" \
+  && /usr/bin/grep -q '"cache_read_tokens":80' <<<"$sub_row" \
+  && /usr/bin/grep -q '"turns":2' <<<"$sub_row" \
   && printf '%s' "$orch_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null \
   && printf '%s' "$sub_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "counts subagent transcripts and tags each row with stream + turns + cache_read_per_turn" "$ok"
@@ -372,9 +372,9 @@ explore_row=$(/usr/bin/grep '"agent_type":"Explore"' "$metrics_file" 2>/dev/null
 orch_row=$(/usr/bin/grep '"stream":"orchestrator"' "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" && -f "$metrics_file" \
   && "$(wc -l < "$metrics_file" | tr -d ' ')" == "3" ]] \
-  && printf '%s' "$reviewer_row" | /usr/bin/grep -q '"input_tokens":10' \
-  && printf '%s' "$explore_row" | /usr/bin/grep -q '"input_tokens":20' \
-  && printf '%s' "$orch_row" | /usr/bin/grep -q '"agent_type":null' \
+  && /usr/bin/grep -q '"input_tokens":10' <<<"$reviewer_row" \
+  && /usr/bin/grep -q '"input_tokens":20' <<<"$explore_row" \
+  && /usr/bin/grep -q '"agent_type":null' <<<"$orch_row" \
   && printf '%s' "$reviewer_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null \
   && printf '%s' "$explore_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "subagent rows split by agent_type (from meta.json sibling) even on the same model; orchestrator row carries agent_type:null" "$ok"
@@ -394,7 +394,7 @@ rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 sub_row=$(/usr/bin/grep '"stream":"subagent"' "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" && -f "$metrics_file" ]] \
-  && printf '%s' "$sub_row" | /usr/bin/grep -q '"agent_type":"unknown"' \
+  && /usr/bin/grep -q '"agent_type":"unknown"' <<<"$sub_row" \
   && printf '%s' "$sub_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "subagent transcript with no .meta.json sibling falls back to agent_type:\"unknown\" (fails safe, no crash)" "$ok"
 trash "$fake_home" "$sess_dir" 2>/dev/null || true
@@ -422,8 +422,8 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 fb_row=$(/usr/bin/grep '"agent_type":"mh:plan-reviewer"' "$metrics_file" 2>/dev/null)
 unk_row=$(/usr/bin/grep '"agent_type":"unknown"' "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" && -f "$metrics_file" ]] \
-  && printf '%s' "$fb_row" | /usr/bin/grep -q '"input_tokens":10' \
-  && printf '%s' "$unk_row" | /usr/bin/grep -q '"input_tokens":20' \
+  && /usr/bin/grep -q '"input_tokens":10' <<<"$fb_row" \
+  && /usr/bin/grep -q '"input_tokens":20' <<<"$unk_row" \
   && printf '%s' "$fb_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "meta.json without agentType falls back to parent transcript's Agent tool_use subagent_type via toolUseId; unmatched toolUseId stays \"unknown\"" "$ok"
 trash "$fake_home" "$sess_dir" 2>/dev/null || true
@@ -528,8 +528,8 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 sub_row=$(/usr/bin/grep '"stream":"subagent"' "$metrics_file" 2>/dev/null)
 orch_row=$(/usr/bin/grep '"stream":"orchestrator"' "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" ]] \
-  && printf '%s' "$sub_row" | /usr/bin/grep -q '"returns":1,"verify_tokens":430,"verify_cache_read":10,"verify_per_return":\[430\]' \
-  && printf '%s' "$orch_row" | /usr/bin/grep -q '"returns":1,"verify_tokens":430' && ok=1 || ok=0
+  && /usr/bin/grep -q '"returns":1,"verify_tokens":430,"verify_cache_read":10,"verify_per_return":\[430\]' <<<"$sub_row" \
+  && /usr/bin/grep -q '"returns":1,"verify_tokens":430' <<<"$orch_row" && ok=1 || ok=0
 assert "H8: task-notification -> next Agent tool_use window summed into verify_tokens (430, cache_read 10) via a real cost-tracker.sh run, not a fabricated row; turn after the dispatch excluded; a background-command notification (no agent-<id>.jsonl) neither adds a return nor closes the window" "$ok"
 trash "$fake_home" "$sess_dir" 2>/dev/null || true
 
@@ -544,7 +544,7 @@ out=$(printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" 2>/dev/nul
 rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 row=$(tail -1 "$metrics_file" 2>/dev/null)
-[[ "$rc" == "0" ]] && printf '%s' "$row" | /usr/bin/grep -q '"returns":0,"verify_tokens":null,"verify_cache_read":null,"verify_per_return":\[\]' && ok=1 || ok=0
+[[ "$rc" == "0" ]] && /usr/bin/grep -q '"returns":0,"verify_tokens":null,"verify_cache_read":null,"verify_per_return":\[\]' <<<"$row" && ok=1 || ok=0
 assert "H8: a transcript with no task-notification writes returns:0, verify_tokens:null via a real cost-tracker.sh run" "$ok"
 trash "$fake_home" "$transcript" 2>/dev/null || true
 
@@ -574,9 +574,9 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 orch_row=$(/usr/bin/grep '"stream":"orchestrator"' "$metrics_file" 2>/dev/null)
 sub_row=$(/usr/bin/grep '"stream":"subagent"' "$metrics_file" 2>/dev/null)
 [[ -f "$metrics_file" ]] \
-  && printf '%s' "$err" | /usr/bin/grep -q "jq failed" \
-  && printf '%s' "$orch_row" | /usr/bin/grep -q '"error":"jq_failed"' \
-  && printf '%s' "$sub_row" | /usr/bin/grep -q '"agent_type":"general-purpose"' && ok=1 || ok=0
+  && /usr/bin/grep -q "jq failed" <<<"$err" \
+  && /usr/bin/grep -q '"error":"jq_failed"' <<<"$orch_row" \
+  && /usr/bin/grep -q '"agent_type":"general-purpose"' <<<"$sub_row" && ok=1 || ok=0
 assert "a usage-type-error line inside an OPEN verify window still emits the orchestrator jq_failed sentinel (not silence), and the subagent row still writes correctly" "$ok"
 trash "$fake_home" "$sess_dir" 2>/dev/null || true
 
