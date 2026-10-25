@@ -571,6 +571,21 @@ done
 _timed_case "GH #409: a comma mode after 2000 benign chmod statements, denied in bounded time" 2 \
   "$(printf 'chmod 644 x; %.0s' $(seq 2000))chmod -R u+s,a+rwx x"
 
+# GH #566: programs that run the command after them, beyond PREFIX_WRAPPERS.
+test_deny  "$IRRECOVERABLE" "GH #566: flock LOCK git push --force" "$(bash_payload 'flock /tmp/l git push --force')"
+test_deny  "$IRRECOVERABLE" "GH #566: caffeinate -i git push --force" "$(bash_payload 'caffeinate -i git push --force')"
+test_deny  "$IRRECOVERABLE" "GH #566: xcrun git reset --hard" "$(bash_payload 'xcrun git reset --hard')"
+test_deny  "$IRRECOVERABLE" "GH #566: watch -n1 git reset --hard" "$(bash_payload 'watch -n1 git reset --hard')"
+test_deny  "$IRRECOVERABLE" "GH #566: strace -f rm -rf" "$(bash_payload 'strace -f rm -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #566: script -qc body" "$(bash_payload "script -qc 'rm -rf build' /dev/null")"
+test_deny  "$IRRECOVERABLE" "GH #566: parallel rm -rf" "$(bash_payload 'parallel rm -rf ::: build')"
+test_deny  "$IRRECOVERABLE" "GH #566: subagent: npx claude-code -p" "$(bash_agent_payload 'npx @anthropic-ai/claude-code -p hi' fork)"
+test_deny  "$IRRECOVERABLE" "GH #566: subagent: flock LOCK claude -p" "$(bash_agent_payload 'flock /tmp/l claude -p hi' fork)"
+test_allow "$IRRECOVERABLE" "GH #566 control: flock LOCK make" "$(bash_payload 'flock /tmp/l make')"
+test_allow "$IRRECOVERABLE" "GH #566 control: watch -n2 git status" "$(bash_payload 'watch -n2 git status')"
+test_allow "$IRRECOVERABLE" "GH #566 control: su - alice" "$(bash_payload 'su - alice')"
+test_allow "$IRRECOVERABLE" "GH #566 control: subagent npx claude-code --version" "$(bash_agent_payload 'npx @anthropic-ai/claude-code --version' fork)"
+
 # GH #382: the wrapper, assignment and argv0 walks read a split value ($U, a:b) or a dropped empty word
 # ("") one token off. Every statement is also read as shell words (glued runs joined, "" kept).
 _c382="$ROOT/tests/hooks/fixtures/irrecoverable-382-cases.txt"
