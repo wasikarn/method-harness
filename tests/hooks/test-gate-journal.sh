@@ -110,7 +110,7 @@ for group in d['hooks'].values():
 " "$1" "$REGISTRY"
 }
 # ids_in_registry <id> <newline-separated ids> -> 0 if <id> is one of them
-ids_in_registry() { printf '%s\n' "$2" | /usr/bin/grep -qxF -- "$1"; }
+ids_in_registry() { /usr/bin/grep -qxF -- "$1" <<<"$2"; }
 
 ok=0
 for f in "$ROOT"/hooks/gates/*.py; do

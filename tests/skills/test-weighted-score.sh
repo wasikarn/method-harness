@@ -20,8 +20,8 @@ out=$(python3 "$SCORER" <<'EOF'
 ], "floorPct": 0.5, "passThreshold": 7.0}
 EOF
 )
-echo "$out" | /usr/bin/grep -q '"total": 7.6' || { echo "FAIL: stdin total, got: $out"; exit 1; }
-echo "$out" | /usr/bin/grep -q '"pass": true' || { echo "FAIL: stdin pass, got: $out"; exit 1; }
+/usr/bin/grep -q '"total": 7.6' <<<"$out" || { echo "FAIL: stdin total, got: $out"; exit 1; }
+/usr/bin/grep -q '"pass": true' <<<"$out" || { echo "FAIL: stdin pass, got: $out"; exit 1; }
 
 # Malformed input (all insufficient) must exit non-zero and print no JSON on stdout.
 bad_out=$(printf '%s' '{"scores": [{"id": "x", "score": 5, "max": 10, "weight": 1, "insufficient": true}]}' | python3 "$SCORER" 2>/dev/null)
@@ -55,7 +55,7 @@ bool_code=$?
 # belowFloor -- the check is strictly '<', discriminating a future '<='
 # regression.
 floor_out=$(printf '%s' '{"scores": [{"id": "x", "score": 5, "max": 10, "weight": 1, "insufficient": false}], "floorPct": 0.5}' | python3 "$SCORER")
-echo "$floor_out" | /usr/bin/grep -q '"belowFloor": \[\]' || { echo "FAIL: score at exact floor tripped belowFloor, got: $floor_out"; exit 1; }
+/usr/bin/grep -q '"belowFloor": \[\]' <<<"$floor_out" || { echo "FAIL: score at exact floor tripped belowFloor, got: $floor_out"; exit 1; }
 
 # Weight-sensitivity: research-doc row 5 (8/10/3) is a fragile fail via stdin.
 sens_out=$(python3 "$SCORER" <<'EOF'
@@ -66,8 +66,8 @@ sens_out=$(python3 "$SCORER" <<'EOF'
 ], "passThreshold": 7.0, "perturb": 0.2}
 EOF
 )
-echo "$sens_out" | /usr/bin/grep -q '"verdictStable": false' || { echo "FAIL: expected fragile verdictStable, got: $sens_out"; exit 1; }
-echo "$sens_out" | /usr/bin/grep -q '6.36' || { echo "FAIL: expected totalRange lo 6.36, got: $sens_out"; exit 1; }
+/usr/bin/grep -q '"verdictStable": false' <<<"$sens_out" || { echo "FAIL: expected fragile verdictStable, got: $sens_out"; exit 1; }
+/usr/bin/grep -q '6.36' <<<"$sens_out" || { echo "FAIL: expected totalRange lo 6.36, got: $sens_out"; exit 1; }
 
 # An out-of-range perturb must fail closed with empty stdout, same as any
 # other malformed input -- including the >=1 fail-open this repo's own
@@ -81,7 +81,7 @@ done
 
 # Omitting perturb must not add a "sensitivity" key -- backward compatibility.
 noperturb_out=$(printf '%s' '{"scores": [{"id": "x", "score": 5, "max": 10, "weight": 1, "insufficient": false}]}' | python3 "$SCORER")
-echo "$noperturb_out" | /usr/bin/grep -q 'sensitivity' && { echo "FAIL: unexpected sensitivity key with no perturb input, got: $noperturb_out"; exit 1; }
+/usr/bin/grep -q 'sensitivity' <<<"$noperturb_out" && { echo "FAIL: unexpected sensitivity key with no perturb input, got: $noperturb_out"; exit 1; }
 
 # A string "false" in `insufficient` is truthy -- it must fail closed, not
 # silently drop a 0/10 axis from belowFloor (2026-09-21 deep-audit).
@@ -95,7 +95,7 @@ str_code=$?
 list_err=$(printf '%s' '[{"id": "a", "score": 5, "max": 10, "weight": 1, "insufficient": false}]' | python3 "$SCORER" 2>&1 >/dev/null)
 list_code=$?
 [ "$list_code" -eq 1 ] || { echo "FAIL: expected exit 1 on list payload, got $list_code"; exit 1; }
-printf '%s' "$list_err" | /usr/bin/grep -q '^weighted-score: ' || { echo "FAIL: expected one-line weighted-score: reason on list payload, got: $list_err"; exit 1; }
-printf '%s' "$list_err" | /usr/bin/grep -q 'Traceback' && { echo "FAIL: list payload leaked a traceback: $list_err"; exit 1; }
+/usr/bin/grep -q '^weighted-score: ' <<<"$list_err" || { echo "FAIL: expected one-line weighted-score: reason on list payload, got: $list_err"; exit 1; }
+/usr/bin/grep -q 'Traceback' <<<"$list_err" && { echo "FAIL: list payload leaked a traceback: $list_err"; exit 1; }
 
 echo "PASS: test-weighted-score"
