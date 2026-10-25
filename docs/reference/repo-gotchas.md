@@ -135,6 +135,14 @@ never runs at all and nothing server-side notices. Run the verify command above 
   names non-UUID ids but does not drop them). Probe with
   `MH_GATE_JOURNAL_PATH=/dev/null` (or a scratch file when you want to read the row back), and
   use `scripts/gate-differential.sh` for old-vs-new comparisons, which already isolates it.
+- **Background load runs go in a bash file, with explicit PIDs.** The Bash tool's shell is zsh:
+  `wait $pids` does not word-split, and under `zsh -c` `kill $(jobs -p)` finds no jobs, so the
+  workers outlive the run. Twice this left a flood behind (289 processes, load ~248, 2026-10-05;
+  4 `yes` at 100% CPU for ~4 h, 2026-10-25) that failed every session's timing rows. Write the
+  run as a file and start it with `bash <file>`, collect `pids+=($!)`, `kill "${pids[@]}"` in a
+  `trap ... EXIT`, then confirm no worker is left and the load has dropped. `run-gauntlet.sh` now
+  names long-running CPU-heavy processes of yours (`scripts/_lib/stray-procs.sh`, warn-only), but
+  it can only catch a stray after the fact; killing one that a peer session owns is the operator's call.
 
 ## Research: check qmd before web search
 

@@ -185,6 +185,12 @@ run_hook_tests() {
   return "$rc"
 }
 
+# GH #158: name leftover CPU-heavy processes (a stray stress run) before the timing rows run, and
+# again on failure, so a load flake can be told from a regression. Warn-only, never fails the run.
+# shellcheck source=_lib/stray-procs.sh
+. "$ROOT/scripts/_lib/stray-procs.sh"
+stray_procs_report
+
 p1="" p2=""
 if [ -z "$shard" ] || [ "${shard%/*}" -eq 1 ]; then
   # check-observer-contract.sh (GH #443): the mh module stays a turn.complete observer.
@@ -212,6 +218,7 @@ if [ "$fail" -eq 0 ]; then
   echo "gauntlet: all layers passed"
 else
   echo "gauntlet: FAILED (full logs kept at $LOG)" >&2
+  stray_procs_report  # before the lists: the last line stays the failing: list (GH #387)
   /usr/bin/grep '^failed-at:' "$LOG/tests" >&2
   /usr/bin/grep '^failing:' "$LOG/tests" >&2
 fi

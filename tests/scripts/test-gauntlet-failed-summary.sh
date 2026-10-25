@@ -71,7 +71,8 @@ elif [ -z "$LOGDIR" ]; then
   bad "mktemp -d failed for the log dir"
 else
   printf -- '--- tests/x.sh\nnoise\nfailed-at: tests/scripts/test-red.sh: ❌ row\nfailing: tests/scripts/test-red.sh\n' >"$LOGDIR/tests"
-  out=$(bash -c "LOG='$LOGDIR'; fail=1; $TAIL" 2>&1)
+  # stray_procs_report reads the real ps; stub it so only the lists are under test here.
+  out=$(bash -c "LOG='$LOGDIR'; fail=1; stray_procs_report() { echo 'gauntlet: warning: stub'; }; $TAIL" 2>&1)
   last=$(printf '%s\n' "$out" | tail -n 1)
   if /usr/bin/grep -qF 'failing: tests/scripts/test-red.sh' <<<"$last"; then
     ok "the last line of a failed run repeats the failing: list"
