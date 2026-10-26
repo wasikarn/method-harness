@@ -12,7 +12,8 @@
 # It never kills anything (a process may belong to a peer session's live run; killing it is the
 # operator's call) and never returns non-zero, so a `set -e` caller is never aborted; when ps fails it
 # says so in one line and skips. Detection is by behaviour, not by name: a long build at full CPU is
-# named too, which is the point of a warning. The 30 min default skips a busy headless `claude` run
+# named too, which is the point of a warning, except an /Applications app's own executables (the
+# Claude desktop app's helpers summed 341% CPU over 40 h on 2026-10-26). The 30 min default skips a busy headless `claude` run
 # (named at 13 min on the first live run); the strays this targets ran for hours. Bash 3.2.
 
 # A numeric env setting, or its default when unset or not a whole number: a typo such as "1h" must
@@ -41,6 +42,12 @@ stray_procs_report() {
       for (i = 1; i <= n; i++) s = s * 60 + t[i]
       s += d * 86400
       if (s < ms) next
+      # A desktop app in /Applications (the Claude app hosting this session among them) runs all day;
+      # its own executables are not a stray run. Match the whole command line, since a bundle name may
+      # hold a space. Not every Python.app/Contents/MacOS: framework python3 re-execs through one, and
+      # neither a tool shipped in an app (Xcode.app/Contents/Developer) nor the claude CLI is skipped.
+      c = $4; for (i = 5; i <= NF; i++) c = c " " $i
+      if (c ~ /^\/Applications\/[^\/]+\.app\/Contents\/(MacOS|Frameworks)\//) next
       k = $4; sub(".*/", "", k)
       if (!(k in cnt)) { keys[++nk] = k; cmd[k] = $4; for (i = 5; i <= NF; i++) cmd[k] = cmd[k] " " $i }
       cnt[k]++; sum[k] += $3
