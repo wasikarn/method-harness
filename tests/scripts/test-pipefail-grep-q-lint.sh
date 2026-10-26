@@ -52,7 +52,11 @@ trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
 hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }
 
-# One race per statement (line numbers in want_lines), each a shape a past check missed.
+# Planted hits the scanner must report, one per statement (line numbers in want_lines), each a
+# shape a past check missed. Most are real races (measured at exit 141); some pin documented
+# heuristics or over-reports, where bash may exit 0 (grep -q in loop bodies, a writer whose
+# status is discarded, a function never called, small fixed input). The `>(...)` over-reports
+# whose fds are all redirected later live in over.sh below.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -134,7 +138,6 @@ tee >(grep -q y) < "$f" | cat
 tee >(grep -q y) < "$f"
 f() { cat "$1" > >(grep -q y); }
 cat < "$f" > >(grep -q y) >&1
-cat < "$f" 2> >(grep -q y) >/dev/null
 seq 2000000 2> >(grep -q 1) >&2 2>/dev/null
 { seq 2000000 >&2; } > >(grep -q 1) 2>&1 >/dev/null
 { seq 2000000 >&3; } > >(grep -q 1) 3>&1 >/dev/null
@@ -142,16 +145,31 @@ seq 2000000 2> >(grep -q 1) >&2 2>/dev/null
 { seq 2000000 >&2; } >& >(grep -q 1) >/dev/null
 { seq 2000000 >&3; } > >(grep -q 1) 3>&1- >/dev/null
 { seq 2000000 >&10; } {fd}> >(grep -q 1) {fd}>/dev/null
-cat < "$f" > >(grep -q y) >/dev/null
-cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
 [ "$rc" -eq 1 ] && [ "$got_lines" = "$want_lines" ] \
-  && ok "probe: all $n_want planted races found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
+  && ok "probe: all $n_want planted hits (mostly races; some pinned heuristics/over-reports) found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
+
+# Known `>(...)` over-reports (docs/reference/repo-gotchas.md lists them and says why they stay):
+# bash exits 0 for each, yet the scanner reports it, by design. Rows 1-3: every fd holding the
+# `>(...)` is redirected later on the same command; row 4: the writer never writes to that fd.
+# Pinned so a skip rule cannot come back unreviewed: one that clears a row must keep every race
+# above reported, and then move the row to good.sh.
+cat > "$probe/over.sh" <<'EOF'
+cat < "$f" > >(grep -q y) >/dev/null
+{ seq 2000000 >&2; } 2> >(grep -q 1) 2>/dev/null
+cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
+cat < "$f" 2> >(grep -q y) >/dev/null
+EOF
+out=$(scan "$probe/over.sh"); rc=$?
+got_lines=$(hit_lines <<<"$out")
+[ "$rc" -eq 1 ] && [ "$got_lines" = "1 2 3 4" ] \
+  && ok "probe: the 4 known >(...) over-reports (fds all redirected later, an fd never written) stay reported, as documented" \
+  || bad "probe: known over-reports gave rc $rc, lines [$got_lines], want rc 1 and [1 2 3 4]: a skip rule must be reviewed against the races above; stderr: $(cat "$probe/err")"
 
 cat > "$probe/good.sh" <<'EOF'
 # printf "$r" | grep -q x
