@@ -62,10 +62,15 @@ merge_lock_release() {
 
 git fetch origin
 
-info=$(gh pr view "$pr" --json headRefOid,baseRefName,headRefName -q '.headRefOid + " " + .baseRefName + " " + .headRefName')
-read -r head base branch <<<"$info"
+info=$(gh pr view "$pr" --json headRefOid,baseRefName,headRefName,isCrossRepository \
+  -q '.headRefOid + " " + .baseRefName + " " + .headRefName + " " + (.isCrossRepository | tostring)')
+read -r head base branch cross <<<"$info"
 if [ -z "$head" ] || [ -z "${branch:-}" ]; then
   die "could not read the head sha, base and head branch of PR $pr"
+fi
+# The script pushes the sync to origin's $branch; a fork PR's branch is not there.
+if [ "${cross:-}" != "false" ]; then
+  die "PR $pr comes from a fork (or gh did not say; isCrossRepository=${cross:-unknown}); the script can only sync and push a branch on origin. Merge it on GitHub."
 fi
 if [ "$base" != "develop" ]; then
   echo "merge-pr: PR $pr targets '$base', not develop; the origin/develop check would prove nothing." >&2
@@ -314,8 +319,9 @@ run_gauntlet_here() {
 push_head() {
   local rc=0 remote n=0 ssh_cmd
   # git opens the SSH connection before the pre-push hook runs, so it idles through the whole gauntlet
-  # and GitHub drops it (exit 141 on #634's first merge run, 2026-10-26): keep it alive.
-  ssh_cmd="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand || echo ssh)} -o ServerAliveInterval=30"
+  # and GitHub drops it (exit 141 on #634's first merge run, 2026-10-26): keep it alive, with the
+  # 10 s x 30 setting that held on 2026-09-30.
+  ssh_cmd="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand || echo "${GIT_SSH:-ssh}")} -o ServerAliveInterval=10 -o ServerAliveCountMax=30"
   # MH_GAUNTLET_LOCK_OWNER is this script's merge-lock pid; the hook must queue on the gauntlet lock.
   env -u MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND="$ssh_cmd" git push origin "HEAD:refs/heads/$branch" || rc=$?
   remote=$(remote_head) || exit 1

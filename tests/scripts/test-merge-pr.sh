@@ -48,7 +48,7 @@ case "$*" in
     for a in "$@"; do [ "$prev" = "--match-head-commit" ] && want="$a"; prev="$a"; done
     [ -z "${STUB_MERGE_REFUSE:-}" ] && [ "$want" = "$(tip)" ] || { echo "head branch was modified" >&2; exit 1; }
     exit 0 ;;
-  *headRefOid,baseRefName,headRefName*) [ -n "${STUB_EMPTY:-}" ] || echo "$(tip) ${STUB_BASE:-develop} feat/x" ;;
+  *headRefOid,baseRefName,headRefName*) [ -n "${STUB_EMPTY:-}" ] || echo "$(tip) ${STUB_BASE:-develop} feat/x ${STUB_CROSS-false}" ;;
   *"--json headRefOid "*) tip ;;
   *baseRefName*) echo "${STUB_BASE2:-${STUB_BASE:-develop}}" ;;
   *mergeCommit*) echo "mergesha000" ;;
@@ -232,7 +232,7 @@ if /usr/bin/grep -qx "head=$(remote_tip feat/x)" "$F/prepush.log" && /usr/bin/gr
 else bad "pre-push saw: $(cat "$F/prepush.log")"; fi
 if /usr/bin/grep -qx "lockdir= owner=" "$F/prepush.log"; then ok "the merge lock does not leak into the pre-push hook"; else bad "hook env: $(cat "$F/prepush.log")"; fi
 if /usr/bin/grep -qx "mergelock=held" "$F/prepush.log"; then ok "the merge lock is held while the gauntlet runs"; else bad "lock during push: $(cat "$F/prepush.log")"; fi
-if /usr/bin/grep -qx "ssh=ssh -o ServerAliveInterval=30" "$F/prepush.log"; then ok "the push keeps its SSH connection alive through the gauntlet"; else bad "push ssh: $(cat "$F/prepush.log")"; fi
+if /usr/bin/grep -qx "ssh=ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=30" "$F/prepush.log"; then ok "the push keeps its SSH connection alive through the gauntlet"; else bad "push ssh: $(cat "$F/prepush.log")"; fi
 if w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then ok "the merged head contains origin/develop"; else bad "head misses develop"; fi
 
 # 2. up to date with develop, same version: a plain bump commit on the PR head.
@@ -365,6 +365,11 @@ setup; STUB_BASE2=main run
 refuses "retargeted base" "base changed"
 setup; STUB_EMPTY=1 run
 refuses "empty gh output" "could not read the head sha"
+setup; STUB_CROSS=true run
+refuses "fork PR" "comes from a fork"
+untouched "fork PR"
+setup; STUB_CROSS='' run
+refuses "unknown fork status" "isCrossRepository=unknown"
 
 # 12. load stays high: fail with the figure, before writing anything.
 setup; on develop "peer" set_ver 1.1.2

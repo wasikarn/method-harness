@@ -43,7 +43,7 @@ start it with `run_in_background`: one run can span a lock wait plus a full gaun
 checkout while it runs; it re-checks the tree after each wait and before and after its push, and
 refuses on any change. It:
 
-1. refuses unless the PR's base is `develop`, the checkout is on the PR's head branch, the tree is
+1. refuses unless the PR's base is `develop`, it is not from a fork, the checkout is on the PR's head branch, the tree is
    clean, and the local branch contains the PR head (a rerun after a red gauntlet carries the
    unpushed commits of the last run);
 2. checks the review verdict below before writing anything;
@@ -59,8 +59,8 @@ refuses on any change. It:
    PR's other manifest edits survive, then keeps the PR's own version if it is higher (a deliberate
    minor bump); any other conflict refuses (merge by hand, push, rerun);
 6. pushes to the PR branch, so the pre-push gauntlet runs on the exact tree that will merge. Git
-   opens the SSH connection before the hook runs, so the push adds `-o ServerAliveInterval=30` to
-   the ssh command (GitHub dropped the idle connection on the first real run, exit 141). It checks
+   opens the SSH connection before the hook runs, so the push adds `-o ServerAliveInterval=10 -o
+   ServerAliveCountMax=30` to the ssh command (GitHub dropped the idle connection on the first real run, exit 141). It checks
    the push by `git ls-remote`, not the exit code, and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
    on the local branch: fix, commit, rerun (a fix commit that touches more than the manifests needs
    a new review verdict). If the tree changed while the gauntlet ran, it refuses the merge. When
