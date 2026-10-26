@@ -1934,9 +1934,11 @@ _deny_sql_stdin_drop(cmd)
 # cannot be read at all, so a command that could hold an expansion is denied under brace-view's own id:
 # it journals while that rule is shadowed and enforces once it is promoted. Bash expands a brace only
 # with a "," or ".." in it, so that test is a superset of every bash expansion (nested ones included); a
-# plain ${VAR}, awk '{...}' or find -exec {} is left alone. zsh with braceccl expands r{m} too (GH #665). Known over-deny while _bracex is broken: a
-# brace plus a comma anywhere (mkdir {a,b}, awk '{print $1, $2}'). The else matters: a shadowed deny
-# returns here.
+# plain ${VAR}, awk '{...}' or find -exec {} is left alone. zsh with braceccl expands r{m} too (GH #665).
+# Known over-deny while _bracex is broken: any "{" with a "," or ".." anywhere in the command, inside the
+# brace or not (mkdir {a,b}, awk '{print $1, $2}', find .. -exec ls {} +, git log a..b --format={x},
+# ${x,,}, a quoted '{a,b}'). Kept coarse on purpose: a narrower text test would be a loosening.
+# The else matters: a shadowed deny returns here.
 _BRACEX_TEXT = None
 if "{" in cmd:
     if _bracex is None:
