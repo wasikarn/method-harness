@@ -164,8 +164,8 @@ got_lines=$(hit_lines <<<"$out")
 # design. Rows 1-3 and 5: every fd holding the `>(...)` or pipe is redirected later on the
 # same command; rows 4 and 6: the writer never writes to that fd; rows 7 and 8: the writer's status
 # is discarded (`|| true`, `<(...)`); row 9: a later reader drains the rest. Only the drain keeps
-# the writer alive: grep's own status does not matter, and a later command that reads a file, not
-# the pipe, drains nothing (bad.sh's `x | { grep -q y; echo z; }` and `...; cat "$f"; }` race).
+# the writer alive: grep's own status does not matter, and a later command that reads nothing
+# (bad.sh's `x | { grep -q y; echo z; }`) or reads a file (`...; cat "$f"; }`) drains nothing.
 # Pinned so a skip rule cannot come back unreviewed: one that clears a row must keep every race
 # above reported, and then move the row to good.sh.
 cat > "$probe/over.sh" <<'EOF'
