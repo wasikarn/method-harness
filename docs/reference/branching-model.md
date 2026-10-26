@@ -13,6 +13,9 @@ a squashed feature branch is not merged by ancestry, so only `git branch -D` rem
 Enforcement layers, weakest to strongest:
 - `git-hooks/pre-push` refuses a direct push whose remote ref is `refs/heads/develop`, before the
   gauntlet even runs — local, defense-in-depth, one manual retry if a stdin ref line is malformed.
+  It also refuses to *create* a branch that changes a file (not the manifests) `develop` changed since
+  the branch point, listing those commits: merge `develop`, check none already makes the change, push
+  again (84c57d69 had fixed what #613's first branch re-fixed). Parallel open PRs are not checked.
 - `gate:bash:irrecoverable` asks (not denies — a merge can be a legitimate, operator-approved
   action) on `gh pr merge` / `gh api .../merge` from an interactive Claude Code session. This
   covers only a session running with mh loaded — it does **not** constrain the GitHub web UI, a
@@ -80,29 +83,40 @@ It also refuses a PR without a current review verdict (2026-10-25: #569–#576 a
 their reviews still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
 `Fresh-context review: MERGE @ <sha>` (or `FIX FIRST` / `CLOSE`; case and markdown emphasis ignored) in a
 PR **comment**, `<sha>` being the head the reviewer read; a GitHub PR review or the PR body does not count,
-nor does a line inside a ``` or ~~~ fence, and the last verdict line in a comment wins. The last verdict on
-the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must be a merge
-of `develop` or touch only the two manifests, checked before the script writes anything, before its push
-and before the merge. So merging `develop`
-and bumping the version keep the review; any other change, a rebase, or a force-push needs a new one. The
+nor does a line inside a ``` or ~~~ fence at any indentation (closed only by a bare line of the same
+character, at least as long), and the last verdict line in a comment wins. The last verdict on
+the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must touch only
+the two manifests or be a two-parent merge whose tree is what `git merge-tree --write-tree` makes of its parents,
+manifests aside, and whose only conflicts were in the manifests (GH #629; git >= 2.38), checked before the
+script writes anything, before its push and before the merge. So merging `develop`
+and bumping the version keep the review; any other change (an edit made inside a merge, or a conflict
+resolved in code, included), a rebase, or a force-push needs a new one. The
 check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
 still caught. Post the reviewer's result as that comment. It proves a verdict was posted, not who wrote it
-or that the reviewer had fresh context, and a conflict resolved inside a merge commit is not checked. There
+or that the reviewer had fresh context. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
 **Without `gh` (a Claude Code cloud session).** The script reads the PR and merges through `gh`, which a
 cloud session lacks; it has the GitHub MCP tools instead. Do not retype the checks by hand (that was
 done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
 1. read the PR's head sha, base branch and issue comments with the MCP tools, and save the comments
-   (the JSON array they return) to a file;
+   to a file. The comments come a page at a time, oldest first: request `perPage` 100 and keep
+   reading pages until one comes back short, appending each page's array to the file in order (`jq`
+   reads arrays saved one after another, like `gh --paginate` output), and check the total against
+   the PR's comment count. A page left out can hide the latest verdict: a FIX FIRST on page 2 after a
+   MERGE on page 1;
 2. if the head lacks `origin/develop` or a version above it, run `scripts/sync-pr-head.sh <head branch>
    <head sha>` and use the sha it prints. It merges develop and bumps in a temporary worktree and
-   pushes leased on the head, so the pre-push gauntlet runs on the tree that merges;
+   pushes leased on the head, so the pre-push gauntlet runs on the tree that merges. A PR from a fork
+   (its head repository is not this one) cannot be synced this way, since the sync pushes to a branch
+   of `origin`: merge develop into it and bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,
    review (same verdict parser), ancestry and version checks, never a gh call, lock, sync, push or
    merge. It prints the head on a pass, and on a head that is not synced it names the sync command;
-4. merge through the MCP merge tool with `expectedHeadSha` set to that head, straight away. If develop
-   moved first, go back to step 2.
+4. read the PR once more with the MCP tools and confirm its base is still `develop` and its head is
+   still that sha (`--verify` only knows the values it was given; the `gh` path re-reads the base
+   itself), then merge through the MCP merge tool with `expectedHeadSha` set to that head, straight
+   away. If develop moved first, go back to step 2.
 There is no load wait and no merge lock in this mode: a cloud container runs nothing else, and the
 lock is per machine.
 

@@ -454,6 +454,42 @@ refuses "fenced MERGE before a real FIX FIRST" "is FIX FIRST"
 setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"~~~\nFresh-context review: MERGE @ $FEATURE\n~~~\"}]" run
 refuses "only a fenced MERGE" "no \"Fresh-context review"
 
+# 16k. GH #629: a merge commit after the reviewed sha must be the plain merge of its parents, manifests aside.
+# An edit made inside a develop merge, or a conflict resolved in code there, needs a new review.
+setup; on develop "peer" append c.txt peer
+git -C "$F/seed" checkout -q feat/x
+git -C "$F/seed" merge -q --no-commit origin/develop >/dev/null
+printf 'sneaked\n' >>"$F/seed/a.txt"
+git -C "$F/seed" add -- a.txt
+git -C "$F/seed" commit -qm "Merge develop (with an edit)"
+git -C "$F/seed" push -q origin feat/x
+git -C "$F/seed" checkout -q develop
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $FEATURE") run
+refuses "an edit inside a merge after the review" "merge commit"
+untouched "an edit inside a merge after the review"
+setup; on feat/x "pr a" append a.txt pr; on develop "dev a" append a.txt dev
+reviewed=$(remote_tip feat/x)
+git -C "$F/seed" checkout -q feat/x
+git -C "$F/seed" merge -q origin/develop >/dev/null 2>&1
+printf 'a\npr\ndev\n' >"$F/seed/a.txt"
+git -C "$F/seed" add -- a.txt
+git -C "$F/seed" commit -qm "Merge develop (conflict resolved by hand)"
+git -C "$F/seed" push -q origin feat/x
+git -C "$F/seed" checkout -q develop
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $reviewed") run
+refuses "a code conflict resolved in a merge after the review" "resolved a conflict outside the manifests"
+
+# 16l. GH #629 fences: a ~~~ fence is not closed by ```, a longer fence not by a shorter one, a closer
+# carries no text, and an indented fence (a list item) still hides what it holds.
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"Fresh-context review: MERGE @ ${FEATURE:0:7}\n~~~\n\`\`\`\n~~~\nFresh-context review: FIX FIRST @ ${FEATURE:0:7}\"}]" run
+refuses "mixed fences hiding a later FIX FIRST" "is FIX FIRST"
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\`\n\`\`\`\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\n\`\`\`\`\"}]" run
+refuses "a MERGE inside a longer fence" "is FIX FIRST"
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\n\`\`\` x\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\"}]" run
+refuses "a MERGE after a closer with text" "is FIX FIRST"
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n- item\n\n      \`\`\`\n      Fresh-context review: MERGE @ $FEATURE\n      \`\`\`\"}]" run
+refuses "a MERGE in an indented fence" "is FIX FIRST"
+
 # 18. --verify, for a session without gh: the same checks from what the MCP tools return, never a gh call,
 #     sync, push or merge. vrun <head> <base> <comments file>: sets out, rc.
 vrun() {
@@ -498,6 +534,9 @@ vrun "$tip" develop "$F/missing.json"
 if [ "$rc" -ne 0 ] && /usr/bin/grep -q "could not read PR 451's comments" <<<"$out"; then ok "--verify refuses a missing comments file"; else bad "--verify missing file rc=$rc: $out"; fi
 vrun "$tip" main "$F/comments.json"
 if [ "$rc" -ne 0 ] && /usr/bin/grep -q "not develop" <<<"$out"; then ok "--verify refuses a non-develop base"; else bad "--verify base rc=$rc: $out"; fi
+if /usr/bin/grep -q 'update_pull_request' <<<"$out" && ! /usr/bin/grep -q 'gh pr edit' <<<"$out"; then
+  ok "--verify names the MCP retarget, not gh, for a wrong base"
+else bad "--verify wrong-base hint: $out"; fi
 vrun "${tip:0:12}" develop "$F/comments.json"
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q "full 40-character head sha" <<<"$out"; then ok "--verify needs the full sha (exit 2)"; else bad "--verify short sha rc=$rc: $out"; fi
 out=$(PATH="$STUB:$PATH" bash "$SCRIPT" --verify 451 2>&1); rc=$?
