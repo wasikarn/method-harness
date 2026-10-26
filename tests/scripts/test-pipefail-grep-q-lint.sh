@@ -126,8 +126,12 @@ x | while read f; do grep -q pat /dev/fd/0; done
 x | cat > >(grep -q y) < "$f"
 x | cat < "$f" > >(grep -q y)
 x | tee >(grep -q y) >/dev/null
+x | { tee >(grep -q y) >/dev/null; } < "$f"
+x | while read -r l; do cat "$l" > >(grep -q y); done < "$f"
+x | ( cat big > >(grep -q y) ) < "$f"
+x | while read l; do grep -q pat /proc/self/fd/0; done
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")

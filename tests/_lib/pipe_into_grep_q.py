@@ -95,7 +95,7 @@ NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
 # (`echo P | { [[ $(cat) == P ]] < f; }` reads f), so they are not here.
 SIMPLE = {'CallExpr', 'DeclClause', 'LetClause'}
 # Operands that name the stdin a grep inherits.
-STDIN_FILES = ('-', '/dev/stdin', '/dev/fd/0')
+STDIN_FILES = ('-', '/dev/stdin', '/dev/fd/0', '/proc/self/fd/0')
 DELIBERATE = re.compile(r'#\s*pipe-into-grep-q: deliberate\s*$')
 CANARY = b'x | grep -q y\n'
 
@@ -292,6 +292,25 @@ def substs(node):
     return out
 
 
+def output_substs(node):
+    """Every `>(...)` in a statement's whole subtree (nested statements too), not inside another one."""
+    out = []
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get('Type') == 'ProcSubst' and n.get('Op') == '>(':
+                out.append(n)
+                return
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(node)
+    return out
+
+
 def readers(stmt, direct=True):
     """(command, direct) pairs for the commands that can read the stdin this statement gets."""
     if not stmt:
@@ -308,10 +327,10 @@ def readers(stmt, direct=True):
     # A grep -q in `>(...)` exits early and the command writing into it dies of SIGPIPE, which
     # pipefail turns into the pipeline's failure (bash: `seq 2000000 | tee >(grep -q 1) >/dev/null`
     # gives PIPESTATUS 141 141; `cat < f > >(grep -q 1)` dies the same way). So on a pipe's right
-    # side it counts wherever it sits, whatever the statement's stdin.
-    outputs = [r for node in [stmt.get('Cmd') or {}] + list(stmt.get('Redirs') or [])
-               for sub in substs(node) if sub.get('Op') == '>('
-               for r in each(sub.get('Stmts'), direct)]
+    # side it counts wherever it sits, whatever the statement's stdin: also inside a group, subshell
+    # or loop body whose stdin is redirected (`x | while read -r l; do cat "$l" > >(grep -q y);
+    # done < f` gives 141 141 too), so the whole subtree is searched, not only this statement.
+    outputs = [r for sub in output_substs(stmt) for r in each(sub.get('Stmts'), direct)]
 
     # Redirections apply left to right: a substitution in one expands with whatever stdin the
     # earlier ones left, so only those up to the first that replaces stdin can see the pipe.
