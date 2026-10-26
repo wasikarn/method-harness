@@ -2567,7 +2567,8 @@ for _c in \
   'bash -e -e -e -e -e -e -e -e -e -c "$(echo claude) -p x"' \
   'bash -o pipefail -o errexit -o nounset -O a -O b -O c -O d -O e -c "$(echo claude) -p x"' \
   'bash --rcfile /dev/null -c "$(echo claude) -p x"' \
-  'bash --init-file x -c "$(echo claude) -p x"' ; do
+  'bash --init-file x -c "$(echo claude) -p x"' \
+  'bash +c "$(echo claude) -p x"' ; do
   test_deny "$IRRECOVERABLE" "GH #588: subagent spawn behind a substitution or a find action: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in \
@@ -2763,5 +2764,61 @@ test_deny  "$IRRECOVERABLE" "GH #594 control: rm a >x> -- -rf b (-- is a redirec
 test_deny  "$IRRECOVERABLE" "GH #594 control: subprocess.run([rm, 'a --', -rf, b])" \
   "$(bash_payload 'python3 -c '"'"'import subprocess; subprocess.run(["rm", "a --", "-rf", "b"])'"'"'')"
 test_allow "$IRRECOVERABLE" "GH #594: rm -f -- -r ./x.log (plain operands)" "$(bash_payload 'rm -f -- -r ./x.log')"
+
+# GH #662: `busybox [--] APPLET args` runs the applet, so every rule reads the applet as the command.
+test_deny  "$IRRECOVERABLE" "GH #662: busybox rm -rf b" "$(bash_payload 'busybox rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox -- rm -rf b" "$(bash_payload 'busybox -- rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: /bin/busybox rm -r b" "$(bash_payload '/bin/busybox rm -r b')"
+test_deny  "$IRRECOVERABLE" "GH #662: sudo busybox rm -rf b" "$(bash_payload 'sudo busybox rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox dd of=/dev/sda" "$(bash_payload 'busybox dd if=/dev/zero of=/dev/sda')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox mkfs.ext2 /dev/sda1" "$(bash_payload 'busybox mkfs.ext2 /dev/sda1')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox find . -delete" "$(bash_payload 'busybox find . -delete')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox sh -c 'rm -rf b'" "$(bash_payload "busybox sh -c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox xargs rm -rf" "$(bash_payload 'echo b | busybox xargs rm -rf')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox chmod -R 777 /" "$(bash_payload 'busybox chmod -R 777 /')"
+# the rules that walk their own wrapper list (xargs, find -exec, a shell reading stdin) read past it too
+test_deny  "$IRRECOVERABLE" "GH #662: xargs busybox rm" "$(bash_payload 'echo b | xargs busybox rm')"
+test_deny  "$IRRECOVERABLE" "GH #662: xargs busybox mkfs.ext2" "$(bash_payload 'echo /dev/sdb1 | xargs busybox mkfs.ext2')"
+test_deny  "$IRRECOVERABLE" "GH #662: find -exec busybox chmod 777" "$(bash_payload 'find . -exec busybox chmod 777 {} +')"
+test_deny  "$IRRECOVERABLE" "GH #662: find -exec busybox sh -c 'rm b'" "$(bash_payload "find . -exec busybox sh -c 'rm b' \\;")"
+test_deny  "$IRRECOVERABLE" "GH #662: echo 'rm -rf b' | busybox sh" "$(bash_payload "echo 'rm -rf b' | busybox sh")"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox sh <<< 'rm -rf b'" "$(bash_payload "busybox sh <<< 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: cat <<EOF | busybox sh" "$(bash_payload $'cat <<EOF | busybox sh\nrm -rf b\nEOF')"
+# busybox's shells, and busybox's other names
+test_deny  "$IRRECOVERABLE" "GH #662: busybox ash -c 'rm -rf b'" "$(bash_payload "busybox ash -c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox hush -c 'rm -rf b'" "$(bash_payload "busybox hush -c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: ash -c 'rm -rf b'" "$(bash_payload "ash -c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: cat <<EOF | busybox ash" "$(bash_payload $'cat <<EOF | busybox ash\nrm -rf b\nEOF')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox.static rm -rf b" "$(bash_payload '/bin/busybox.static rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox-static rm -rf b" "$(bash_payload 'busybox-static rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: toybox dd of=/dev/sda" "$(bash_payload 'toybox dd if=/dev/zero of=/dev/sda')"
+# ash and dash take the next word for every o in a cluster (bash's reading), and +c runs CMD as -c does
+test_deny  "$IRRECOVERABLE" "GH #662: ash -oc pipefail 'rm -rf b'" "$(bash_payload "ash -oc pipefail 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox ash -ooc errexit pipefail 'rm -rf b'" "$(bash_payload "busybox ash -ooc errexit pipefail 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: dash -oc pipefail 'rm -rf b'" "$(bash_payload "dash -oc pipefail 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: ash +c 'rm -rf b'" "$(bash_payload "ash +c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: bash +c 'rm -rf b'" "$(bash_payload "bash +c 'rm -rf b'")"
+# the echo upstream of a stdin shell, written through busybox or a path
+test_deny  "$IRRECOVERABLE" "GH #662: busybox echo 'rm -rf b' | sh" "$(bash_payload "busybox echo 'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #662: toybox echo 'rm -rf b' | ash" "$(bash_payload "toybox echo 'rm -rf b' | ash")"
+test_deny  "$IRRECOVERABLE" "GH #662: /bin/echo 'rm -rf b' | sh" "$(bash_payload "/bin/echo 'rm -rf b' | sh")"
+# busybox's `--`, and command's -p / --, before a stdin shell, its echo, or a find body's applet
+test_deny  "$IRRECOVERABLE" "GH #662: echo 'rm -rf b' | busybox -- sh" "$(bash_payload "echo 'rm -rf b' | busybox -- sh")"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox -- sh <<< 'rm -rf b'" "$(bash_payload "busybox -- sh <<< 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: cat <<EOF | busybox -- sh" "$(bash_payload $'cat <<EOF | busybox -- sh\nrm -rf b\nEOF')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox -- echo 'rm -rf b' | sh" "$(bash_payload "busybox -- echo 'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #662: command -p echo 'rm -rf b' | sh" "$(bash_payload "command -p echo 'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #662: command -- echo 'rm -rf b' | sh" "$(bash_payload "command -- echo 'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #662: find -exec sh -c 'busybox -- chmod 777 \"\$1\"'" \
+  "$(bash_payload "find . -exec sh -c 'busybox -- chmod 777 \"\$1\"' _ {} \\;")"
+test_allow "$IRRECOVERABLE" "GH #662 control: ash +x script.sh" "$(bash_payload 'ash +x script.sh')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox echo 'ls' | sh" "$(bash_payload "busybox echo 'ls' | sh")"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox sh -c 'ls -la'" "$(bash_payload "busybox sh -c 'ls -la'")"
+test_allow "$IRRECOVERABLE" "GH #662 control: toybox ls" "$(bash_payload 'toybox ls')"
+test_allow "$IRRECOVERABLE" "GH #662 control: cat <<EOF | busybox ash (echo body)" "$(bash_payload $'cat <<EOF | busybox ash\necho hi\nEOF')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox ls -la" "$(bash_payload 'busybox ls -la')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox --list" "$(bash_payload 'busybox --list')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox rm x.log" "$(bash_payload 'busybox rm x.log')"
+test_allow "$IRRECOVERABLE" "GH #662 control: echo busybox rm -rf b" "$(bash_payload 'echo busybox rm -rf b')"
 
 gates_summary
