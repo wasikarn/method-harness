@@ -59,8 +59,25 @@ ALLOW PY=python3; $PY -m pytest -q
 WOULD_ASK opaque-var-verb $X -rf build
 WOULD_ASK opaque-var-verb "$RUNNER" build
 WOULD_ASK source-file source ./setup.sh
-# a bare `. file` with no candidate word never reaches python (irrecoverable.sh fast path)
 WOULD_ASK source-file . ./setup.sh && git status
+# GH #592: `.` with no candidate word on the line reaches python too (irrecoverable.sh fast path)
+WOULD_ASK source-file . x.sh
+WOULD_ASK source-file . ./x.sh
+WOULD_ASK source-file command . x.sh
+WOULD_ASK source-file ls && . x.sh
+WOULD_ASK source-file ls; . x.sh
+WOULD_ASK source-file (. x.sh)
+WOULD_ASK source-file "." x.sh
+WOULD_ASK source-file if true; then . x.sh; fi
+WOULD_ASK source-file .<in x.sh
+WOULD_ASK source-file .>/dev/null x.sh
+WOULD_ASK source-file .&>/dev/null x.sh
+WOULD_ASK source-file case a in a). x.sh;; esac
+ALLOW cp -r . /tmp/x
+ALLOW ls -la .
+ALLOW echo done. next
+ALLOW ./x.sh
+ALLOW cd ..
 #
 # 4. mkfs, chmod 777 / a+rwx, rm --no-preserve-root
 DENY mkfs.ext4 /dev/sda1

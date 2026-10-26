@@ -36,6 +36,12 @@ else
     _has_subst=1
   fi
 fi
+# GH #592: `.` is source's other spelling. A "." word in command position (after a blank, the JSON key's
+# ":", a separator or a case arm's ")"), ended by a blank or a glued redirection (.<in x.sh, .&>f x.sh),
+# defers to python; a "." inside a word (done. next, ./x.sh) stays on the fast path.
+case "$_norm" in
+  *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
+esac
 case "$_norm$_norm_nows" in
   *rm*|*find*|*git*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*) : ;;  # candidate -> python
   *) [ "$_has_subst" -eq 1 ] || exit 0 ;;                          # no destructive token possible -> allow (unless obfuscated)
