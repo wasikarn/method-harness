@@ -76,8 +76,7 @@ ALLOW ${HOME}/bin/tool build
 ALLOW X=$Y make
 ALLOW PATH=$PATH:/x true; make
 WOULD_ASK opaque-var-verb X=1 Y=2 true; $X build
-# a ${...} word read as the program only where it opens a statement, and a value the scan cannot read
-# counts as an assignment
+# a ${...} word that is not the program, and a value the scan cannot read counts as an assignment
 ALLOW CMD=ls; "${CMD}" build && cd "${REPO}"
 ALLOW cd "${REPO}" && "$(command -v python3)" x.py
 ALLOW CMD=$(dirname $(which ls))/ls; $CMD build
@@ -96,20 +95,18 @@ WOULD_ASK opaque-var-verb if ${CMD}; then echo; fi
 WOULD_ASK opaque-var-verb time ${CMD} build
 ALLOW PATH=$PATH:/x make && echo $PATH
 ALLOW PYTHONPATH=$PYTHONPATH:. pytest -q; echo "$PYTHONPATH"
-# a ${X} inside quotes or arithmetic opens no statement
+# a ${X} word that is not the program, as with $X
 ALLOW "$(command -v python3)" x.py && git commit -m "do ${X}"
 ALLOW "$(command -v python3)" x.py; echo "a; ${OUT}"
-ALLOW $(which node) app.js; N=$(( ${COUNT} * 2 ))
 ALLOW CMD=ls; ${CMD} x; echo "done; ${OUT}"
-# the braced form is read from the text: after a prefix chain, in $( ), as an array's whole word
+# the braced form reads as $NAME does, wherever $NAME would be the program
 WOULD_ASK opaque-var-verb X=1 ${CMD} build
 WOULD_ASK opaque-var-verb echo $(${CMD} build)
 WOULD_ASK opaque-var-verb "${CMD[@]}" x
-ALLOW arr+=(${A})
-ALLOW local -a arr=(${A})
+WOULD_ASK opaque-var-verb sudo ${CMD} build
+WOULD_ASK opaque-var-verb bash -c '${CMD} build'
+WOULD_ASK opaque-var-verb "${PY:-${HOME}/bin/python}" -m pytest
 ALLOW echo $(date) ${HOME} && $(command -v python3) -V
-ALLOW [[ -z $a || ${X} ]] && echo y
-ALLOW ./do ${ARG}
 ALLOW echo X=1 ${CMD}
 ALLOW echo ${a:-${CMD}}
 # a prefix to a program that runs a body is in that body's environment

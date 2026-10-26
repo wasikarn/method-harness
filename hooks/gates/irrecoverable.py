@@ -953,6 +953,8 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
                       "main session dispatches")
 
 def _deny_nested_spawn():
+    if _ONLY_RULE[0]:
+        raise _ViewStop
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1026,6 +1028,9 @@ _SHADOW_LOGGED = set()  # (rule, decision) already journaled this run: window co
 # ends the view (_ViewStop). A structural deny (no rule id) never fires in a view: it is an artifact
 # of the substituted text, so it ends the view too.
 _VIEW = [None]
+# GH #593: set to one rule while a reading may only raise that rule's ask: every other deny ends the
+# window unreported, every other ask is dropped.
+_ONLY_RULE = [None]
 class _ViewStop(Exception):
     pass
 
@@ -1040,6 +1045,8 @@ def _shadowed(rule, decision):
     return True
 
 def deny(reason, rule=None):
+    if _ONLY_RULE[0]:
+        raise _ViewStop
     if _VIEW[0] and rule is None:
         raise _ViewStop
     if _shadowed(rule, "deny"):
@@ -1060,7 +1067,7 @@ def ask(reason, rule=None):
     # JSON objects on stdout are not valid JSON (GH #254 validator).
     # A shadowed ask is checked first and never touches _ASKED, so a later real ask still emits.
     # In a view (GH #336) an ask adds nothing once the command already asks.
-    if (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
+    if (_ONLY_RULE[0] and rule != _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
     _ASKED.append(reason)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
@@ -2912,13 +2919,13 @@ _VAR_NAME_RE = re.compile(r"[A-Za-z_]\w*")
 _ASSIGN_WORD_RE = re.compile(r"""(?<![\w$=])([A-Za-z_]\w*)\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()<>'"\\`{]|\\.)*""")
 _BLANKS_RE = re.compile(r"[ \t]*")
 _PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])([\w./~"'$-][^\s;&|()<>]*)""")
-_PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "env", "xargs", "eval", "exec", "sudo", "nohup",
-                        "timeout", "nice", "command", "builtin", "time", "find", "watch", "flock", "parallel"}
+_PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "env", "xargs", "eval", "exec", "sudo", "doas", "su",
+                        "nohup", "setsid", "stdbuf", "timeout", "nice", "ionice", "taskset", "chroot", "unshare",
+                        "script", "command", "builtin", "time", "find", "watch", "flock", "parallel", "npx",
+                        "python", "python3", "perl", "ruby", "node"}
 _DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
-# A word that is a whole braced expansion (`${CMD}`, "${CMD:-ls}", "${CMD[@]}").
-_BRACED_WORD_RE = re.compile(r"[ \t]*\"?\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}\n]*)?\}\"?(?=[\s;&|)}]|$)")
 _ASSIGNED_NAMES = set(re.findall(r"(?<![\w$])([A-Za-z_]\w*)\+?=", cmd))
-_standalone, _prefixed, _chain, _braced_after_prefix = set(), set(), [], []
+_standalone, _prefixed, _chain = set(), set(), []
 for _m in _ASSIGN_WORD_RE.finditer(cmd):
     _chain.append(_m)
     _gap = _BLANKS_RE.match(cmd, _m.end()).end()
@@ -2930,44 +2937,9 @@ for _m in _ASSIGN_WORD_RE.finditer(cmd):
     if _prefix and basename(_nw.group(1).strip("\"'")) in _PREFIX_BODY_RUNNERS:
         _prefix = False
     (_prefixed if _prefix else _standalone).update(c.group(1) for c in _chain)
-    if _prefix:
-        _braced_after_prefix.append((_chain[0].start(), _m.end()))
     _chain = []
 _ASSIGNED_NAMES -= _prefixed - _standalone
 
-# `${CMD} build` reaches argv0 as PH alone, which no window can tie back to CMD, so the braced form is read
-# from the raw text, once: a whole `${NAME...}` word where a statement starts. Openers: line start, a
-# separator, `{ `, a `(` that is not an array's `=(` or arithmetic, a keyword (not a path's last part),
-# or a prefix-assignment chain that itself opens a statement. An opener inside quotes or `[[ ]]` opens none.
-_BRACED_OPENER_RE = re.compile(r"(?:(?P<sep>[;&|]|\{(?=[ \t])|(?<![=(])\((?!\()|(?<![\w/.-])(?:then|do|else|elif|if|while|until|time|!)(?=[ \t]))|^)", re.M)
-def _braced_verb_names():
-    if "${" not in cmd:
-        return set()
-    mask = _quote_mask(cmd)
-    opened = None
-    for m in re.finditer(r"\[\[(?=[ \t])|(?<=[ \t])\]\]", cmd):  # mask [[ ... ]] too
-        if mask[m.start()]:
-            continue
-        if cmd[m.start()] == "[":
-            opened = m.start()
-        elif opened is not None:
-            mask[opened:m.end()] = b"\x01" * (m.end() - opened)
-            opened = None
-    names = set()
-    for m in _BRACED_OPENER_RE.finditer(cmd):
-        q = m.start("sep") if m.group("sep") is not None else m.start() - 1  # the opener, or the newline
-        w = _BRACED_WORD_RE.match(cmd, m.end())
-        if w and (q < 0 or not mask[q]):
-            names.add(w.group(1))
-    for start, end in _braced_after_prefix:  # `X=1 ${CMD} build`, when the chain opens a statement
-        w = _BRACED_WORD_RE.match(cmd, end)
-        pre = cmd[:start].rstrip(" \t")
-        if w and (not pre or (pre[-1] in ";&|\n" and not mask[len(pre) - 1])):
-            names.add(w.group(1))
-    return names
-if _braced_verb_names() - _ASSIGNED_NAMES:
-    ask("the program this runs is a variable with no visible assignment — confirm what it runs",
-        rule="opaque-var-verb")
 def _opaque_var(argv0, rest):
     # shlex splits an unquoted `$X` into "$" and "X"; a quoted "$X" stays one word.
     name = rest[0] if argv0 == "$" and rest else argv0[1:] if argv0.startswith("$") else ""
@@ -4300,6 +4272,38 @@ def _view_windows(text):
         if curc != cur:
             out.append(curc)
     return out
+
+# GH #593: `${CMD} build` reaches argv0 as PH, which no window can tie back to CMD. A reading with each
+# `${NAME...}` written as `$NAME` (inside out, so `${PY:-${HOME}/py}` is `$PY`) runs every window check
+# with only the opaque-var-verb ask live, so the braced form asks wherever `$CMD` would (sudo, bash -c,
+# time). Nothing else: a default rewritten away must not change what another rule reads.
+_BRACED_REF_RE = re.compile(r"\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}]*)?\}")
+def _braced_reading():
+    v = cmd
+    for _ in range(3):
+        w = _BRACED_REF_RE.sub(lambda m: "$" + m.group(1), v)
+        if w == v:
+            break
+        v = w
+    if v == cmd:
+        return
+    start = len(windows)
+    _ONLY_RULE[0] = "opaque-var-verb"
+    try:
+        windows.extend(_view_windows(v))
+        i = start
+        while i < len(windows) and not _ASKED and ("opaque-var-verb", "ask") not in _SHADOW_LOGGED:
+            try:
+                _check_window(i, windows[i])
+            except _ViewStop:
+                pass
+            i += 1
+    finally:
+        _ONLY_RULE[0] = None
+        del windows[start:]
+        del _WORDS[:]  # the reading's queued words: the main reading ran its own
+if "${" in cmd and len(cmd) <= _VIEW_LEN_CAP:
+    _braced_reading()
 
 for _VIEW[0], _text in _views():
     try:
