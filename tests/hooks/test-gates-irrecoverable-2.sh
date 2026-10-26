@@ -2037,6 +2037,127 @@ test_deny  "$IRRECOVERABLE" "GH #559 review 4: a backtick is no quote to psql be
   "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 1 \`; DROP TABLE t; -- \`\nSQL")")"
 test_deny  "$IRRECOVERABLE" "GH #559 review 4: a [bracket] identifier with an apostrophe before DROP TABLE into sqlite3" \
   "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT [it's]; DROP TABLE t; -- '\nSQL")")"
+# GH #621: a { } or ( ) group piped into a client feeds it every inner command's output; a block comment
+# may hold a *, and MySQL's # comment separates words too. Once the stripper meets a construct it does not
+# model, a plain '...' literal before it is still one word, so a literal that only mentions a drop reads nothing.
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed in a { } group piped into psql" \
+  "$(bash_payload "{ echo 'DROP TABLE t'; } | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE printf'd in a { } group piped into mysql" \
+  "$(bash_payload "{ printf 'DROP TABLE t'; } | mysql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed second in a ( ) group piped into psql" \
+  "$(bash_payload "( echo a; echo 'DROP TABLE t' ) | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed after cat in a { } group piped into psql" \
+  "$(bash_payload "{ cat x.sql; echo 'DROP TABLE t'; } | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed in a nested group piped into psql" \
+  "$(bash_payload "{ ( echo 'DROP TABLE t' ); } | sudo -u postgres psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: DROP TABLE echoed in a one-command ( ) group piped into psql" \
+  "$(bash_payload "( echo 'DROP TABLE t' ) | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: a here-string psql reads inside a { } group" \
+  "$(bash_payload "{ cd /x; psql db <<< 'DROP TABLE t'; }")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: DROP TABLE echoed into psql inside a { } group" \
+  "$(bash_payload "{ echo 'DROP TABLE t' | psql db; }")"
+test_allow "$IRRECOVERABLE" "GH #621 control: a SELECT echoed in a { } group piped into psql" \
+  "$(bash_payload "{ echo 'SELECT 1'; echo 'SELECT 2'; } | psql db")"
+test_allow "$IRRECOVERABLE" "GH #621 control: a { } group echoing DROP TABLE piped into grep, then psql" \
+  "$(bash_payload "{ echo 'DROP TABLE t'; } | grep -c DROP; psql db -c 'SELECT 1'")"
+test_deny  "$IRRECOVERABLE" "GH #621: a block comment holding a * between DROP and TABLE on psql -c" \
+  "$(bash_payload "psql -c 'DROP /* has * star */ TABLE t'")"
+test_deny  "$IRRECOVERABLE" "GH #621: a MySQL # comment between DROP and TABLE on mysql -e" \
+  "$(bash_payload "mysql -e \$'DROP # c\\nTABLE t'")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: a -- comment between DROP and TABLE on mysql -e" \
+  "$(bash_payload "mysql -e \$'DROP -- c\\nTABLE t'")"
+test_deny  "$IRRECOVERABLE" "GH #621: a MySQL # comment between DROP and TABLE in a heredoc into mysql" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nDROP # c\nTABLE t;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621: a backtick column and a literal mentioning truncate table into mysql" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621: a [1] subscript and a literal mentioning drop table into sqlite3" \
+  "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT a[1] FROM t WHERE x = 'drop table x';\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621: a LIKE literal mentioning drop table before a -- #42 comment into sqlite3" \
+  "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT a FROM t WHERE x LIKE '%%drop table x%%' -- #42\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #621 control: DROP TABLE after a stripped literal next to a backtick column into mysql" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT \`id\` FROM t WHERE note='x'; DROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #621 control: a backslash literal stops the stripping before a later quote pair" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT 'a\\\\' , '; DROP TABLE t; SELECT ';\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #621 control: a # comment apostrophe does not open a literal over DROP TABLE" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT \`a\` # don't\nDROP TABLE t; SELECT 'x';\nSQL")")"
+_sql_groups_cmd="$(python3 -c 'print("{ echo x; } | psql; " * 7000)')"
+_timed_case 'GH #621: 7000 { } groups piped into psql finish in bounded time' 0 "$_sql_groups_cmd"
+_sql_nested_cmd="$(python3 -c 'print("( " * 9000 + "echo \"" + "x " * 20000 + "\" | psql" + " ) | psql" * 9000 + " # DROP TABLE t")')"
+_timed_case 'GH #621: 9000 nested groups around 40 KB of echo piped into psql finish in bounded time' 0 "$_sql_nested_cmd"
+_sql_nested_cmd="$(python3 -c 'print("( " * 5000 + "echo \"" + "x " * 10000 + "\" | psql" + " ; echo y ) | psql" * 5000 + " # DROP TABLE t")')"
+_timed_case 'GH #621: 5000 nested groups each adding a line to 20 KB of SQL deny on the read budget' 2 "$_sql_nested_cmd"
+_sql_gap_cmd="$(python3 -c 'print("psql -c \"DROP " + "/* a * b */ " * 6000 + "x\"; mysql db <<SQL\nDROP " + "# c\n" * 12000 + "x\n" + "/*" + "*" * 40000 + "\nSQL")')"
+_timed_case 'GH #621: 140 KB of comment runs between DROP and a non-object finish in bounded time' 0 "$_sql_gap_cmd"
+_sql_lits_cmd="$(python3 -c 'print("mysql db <<SQL\nSELECT \`a\`" + " ,'"'"'drop table x'"'"'" * 7000 + ";\nSQL")')"
+_timed_case 'GH #621: 7000 literals after a backtick in a heredoc into mysql finish in bounded time' 0 "$_sql_lits_cmd"
+# GH #621 review: a CR (or U+2028/U+2029) ends a -- or // comment for psql and JavaScript, so a quote in
+# the comment may pair with a later literal; such a body, and any body a mongo/mongosh/redis-cli client
+# reads (JavaScript, where a ' may sit in a regex), blanks no literal and is matched raw.
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a -- comment holding an apostrophe before DROP TABLE into psql" \
+  "$(bash_payload "$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\nSELECT a[1] FROM t -- it'"'"'s\rDROP TABLE t; SELECT '"'"'x'"'"';\nSQL")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a -- comment holding an apostrophe before TRUNCATE into psql" \
+  "$(bash_payload "$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\nSELECT a[1] FROM t -- it'"'"'s\rTRUNCATE t; SELECT '"'"'x'"'"';\nSQL")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a -- comment before DROP TABLE into psql (no fallback construct)" \
+  "$(bash_payload "$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\nSELECT 1 -- x\rDROP TABLE t;\nSQL")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: an apostrophe in a mongosh regex literal before drop()" \
+  "$(bash_payload "$(python3 -c 'print("mongosh db <<'"'"'JS'"'"'\nvar a=[1]; db.x.find({a:/'"'"'/}); db.t.drop(); var y='"'"'z'"'"';\nJS")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a U+2028 ends a // comment holding an apostrophe before drop() into mongosh" \
+  "$(bash_payload "$(python3 -c 'print("mongosh db <<'"'"'JS'"'"'\nvar a=[1]; // it'"'"'s\u2028db.t.drop(); var y='"'"'z'"'"';\nJS")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a // comment holding an apostrophe before drop() into mongo" \
+  "$(bash_payload "$(python3 -c 'print("mongo db <<'"'"'JS'"'"'\nvar a=[1]; // it'"'"'s\rdb.t.drop(); var y='"'"'z'"'"';\nJS")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: an apostrophe in a regex literal before drop() echoed into mongosh" \
+  "$(bash_payload "echo \"var a=[1]; db.x.find({a:/'/}); db.t.drop(); var y='z';\" | mongosh db")"
+# GH #621 review 3: psql -a echoes its input on, so a non-SQL client anywhere downstream of the first client
+# reads the body too, and the body blanks no literal.
+_js_body="var a=[1]; db.x.find({a:/'/}); db.t.drop(); var y='z';"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a into mongosh" \
+  "$(bash_payload "echo \"$_js_body\" | psql -a | mongosh db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS here-string through psql -a into mongosh" \
+  "$(bash_payload "psql -a <<< \"$_js_body\" | mongosh db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS heredoc through psql -a into mongosh" \
+  "$(bash_payload "$(printf "psql -a <<'JS' | mongosh db\n%s\nJS" "$_js_body")")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed in a { } group through psql -a into mongosh" \
+  "$(bash_payload "{ echo \"$_js_body\"; } | psql -a | mongosh db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a into docker exec mongosh" \
+  "$(bash_payload "echo \"$_js_body\" | psql -a | docker exec -i m mongosh")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a into mongosh inside bash -c" \
+  "$(bash_payload "bash -c \"echo \\\"$_js_body\\\" | psql -a | mongosh db\"")"
+# GH #621 review 4: a client with an echo flag (or an echo/print/tee/trace command in the body) copies the body
+# to its output, and a mongo/mongosh/redis-cli word anywhere in the command may be where it lands, so either
+# one keeps the stdin body unblanked (develop's raw match).
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql -a output piped into a function running mongosh" \
+  "$(bash_payload "f() { mongosh db; }; echo \"$_js_body\" | psql -a | f")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql -a output piped into \$M naming mongosh" \
+  "$(bash_payload "M=mongosh; echo \"$_js_body\" | psql -a | \$M db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql -a output to a temp file mongosh then reads" \
+  "$(bash_payload "echo \"$_js_body\" | psql -a > /tmp/o; mongosh db < /tmp/o")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: a heredoc into psql -a to a temp file mongosh then reads" \
+  "$(bash_payload "$(printf "psql -a > /tmp/o <<'JS'\n%s\nJS\nmongosh db < /tmp/o" "$_js_body")")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: a heredoc into psql -a whose pipe continues past the body" \
+  "$(bash_payload "$(printf "psql -a <<'JS' |\n%s\nJS\nmongosh db" "$_js_body")")"
+for _flag in -a -qa -ae -e -b -E -s --echo-all --echo-q --echo-errors --echo-hidden "-L /tmp/l" --log-file=/tmp/l \
+    "-v ECHO=all" --set=ECHO=queries; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql $_flag echoes its input on to an unseen client" \
+    "$(bash_payload "echo \"$_js_body\" | psql $_flag db | \$M db")"
+done
+for _flag in -v -vv -sv --verbose --verb --tee=/tmp/t; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: mysql $_flag echoes its input on to an unseen client" \
+    "$(bash_payload "echo \"$_js_body\" | mysql $_flag db | \$M db")"
+done
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: mariadb -v echoes its input on to an unseen client" \
+  "$(bash_payload "echo \"$_js_body\" | mariadb -v db | \$M db")"
+for _flag in -echo --echo "-cmd '.echo on'"; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: sqlite3 $_flag echoes its input on to an unseen client" \
+    "$(bash_payload "echo \"$_js_body\" | sqlite3 $_flag db | \$M db")"
+done
+for _cmd in '\\set ECHO all' '\\qecho' '\\w /tmp/q' 'tee /tmp/t' '\\p' '.echo on' '.trace stdout'; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: a $_cmd line in the body copies it on to an unseen client" \
+    "$(bash_payload "$(printf "psql db <<'JS' | \$M db\n%s\n%s\nJS" "$_cmd" "$_js_body")")"
+done
+test_allow "$IRRECOVERABLE" "GH #621 review 4 control: mysql -uvictor -h vhost (values, not -v) keeps the literal relief" \
+  "$(bash_payload "$(printf "mysql -uvictor -h vhost db <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621 review 4 control: psql -U alice -d app (values, not echo flags) keeps the literal relief" \
+  "$(bash_payload "$(printf "psql -U alice -d app <<'SQL'\nSELECT a[1] FROM t WHERE x = 'drop table x';\nSQL")")"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
