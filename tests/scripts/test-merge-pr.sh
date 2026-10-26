@@ -20,6 +20,8 @@ safe_trash() { [ -n "${1:-}" ] && trash "$1" 2>/dev/null; return 0; }
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 unset GAUNTLET_LOCK_DIR MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND
+# `git -c` from an outer push (git -c core.sshCommand=... push) reaches the fixture through these.
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 # A git hook exports GIT_DIR; the fixture's git commits and pushes would then target the real repo.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 
