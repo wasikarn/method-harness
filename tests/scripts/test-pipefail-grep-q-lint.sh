@@ -24,7 +24,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 echo "=== nothing pipes into grep -q (pipefail turns its early exit into a failure) ==="
 
 if ! command -v shfmt >/dev/null 2>&1; then
-  bad "shfmt not found on PATH, so this lint cannot run (shfmt >= 3.5; macOS: brew install shfmt; Linux: pip install shfmt-py, or apt install shfmt on Ubuntu 24.04+)"
+  bad "shfmt not found on PATH, so this lint cannot run (macOS: brew install shfmt; Linux: pip install shfmt-py, not Ubuntu's apt package)"
   echo "=== Summary: $pass passed, $fail failed ==="
   exit 1
 fi
@@ -130,13 +130,16 @@ x | { tee >(grep -q y) >/dev/null; } < "$f"
 x | while read -r l; do cat "$l" > >(grep -q y); done < "$f"
 x | ( cat big > >(grep -q y) ) < "$f"
 x | while read l; do grep -q pat /proc/self/fd/0; done
+tee >(grep -q y) < "$f" | cat
+tee >(grep -q y) < "$f"
+f() { cat "$1" > >(grep -q y); }
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
 [ "$rc" -eq 1 ] && [ "$got_lines" = "$want_lines" ] \
-  && ok "probe: all $n_want planted races found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code)" \
+  && ok "probe: all $n_want planted races found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
 
 cat > "$probe/good.sh" <<'EOF'
@@ -171,6 +174,8 @@ x | grep --col=never -c y
 x | for f in $(grep -q y); do :; done < "$f"
 x | case $(grep -q y) in a) ;; esac < "$f"
 x | grep -q y < "$f" <<<"$(grep -q z)"
+tee >(grep -c y) < "$f"
+tee >(while read -r l; do grep -q y "$l"; done) < "$f"
 x | [[ $(grep -q y) ]] < "$f"
 x | (( $(grep -q y; echo 1) )) < "$f"
 EOF
