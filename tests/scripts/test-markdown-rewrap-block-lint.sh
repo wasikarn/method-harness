@@ -5,14 +5,14 @@
 # (PR #686, docs/reference/repo-gotchas.md): rewrapping the code span `cat 2> >(grep -q y)` put
 # `>(grep -q y)`:` at a line start, and pandoc rendered the rest of the paragraph as a block quote,
 # pairing the later backticks wrongly. Flagged, outside fences and front matter:
-# - a `>` glued to the next character (`>(`, `>/dev/null`, `>&2`) on a line right after text
-#   outside a block quote (lazy lines count as inside): a deliberate quote is `> text`, a wrapped
-#   shell redirect is not;
+# - a `>` or `>>` glued to the next character (`>(`, `>/dev/null`, `>>log`) on a line right after
+#   text outside a block quote (lazy lines count as inside): a deliberate quote is `> text`, a
+#   wrapped shell redirect is not;
 # - an ATX heading right after a paragraph line (not a list item, table row, quote, heading, HTML).
 # Neither counts after a horizontal rule, setext underline or link reference definition, and HTML
-# blocks and comments are skipped. Fences follow CommonMark: a backtick opener's info string has no
-# backtick, and a closer is bare. SCANNED_OUT, if set, names a file that gets the count of files
-# read.
+# blocks (by CommonMark's start and end rules) and comments are skipped. Fences follow CommonMark: a
+# backtick opener's info string has no backtick, and a closer is bare. SCANNED_OUT, if set, names a
+# file that gets the count of files read.
 # Lists are out of scope: a list right after its lead-in line is common and deliberate.
 # Fix a hit by rewrapping so the marker stays mid-line, or with a blank line before a real heading.
 set -uo pipefail
@@ -26,7 +26,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 hits() {
   python3 - "$@" <<'PY'
 import os, re, sys
-glued = re.compile(r'^ {0,3}>[^ \t>]')
+glued = re.compile(r'^ {0,3}>+[^ \t>]')
 heading = re.compile(r'^ {0,3}#{1,6}(?:[ \t]|$)')
 fence = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
 quote = re.compile(r'^ {0,3}>')
@@ -34,6 +34,14 @@ not_para = re.compile(r'^ {0,3}(?:>|#|[-+*][ \t]|\d+[.)][ \t]|\||<)')
 # a line after which a marker opens no paragraph split: a horizontal rule, a setext underline, a
 # link reference definition
 leaf = re.compile(r'^ {0,3}(?:([-*_])(?:[ \t]*\1){2,}[ \t]*|=+[ \t]*|\[[^\]]+\]:[ \t].*)$')
+html_tag = re.compile(r'^ {0,3}</?([A-Za-z][A-Za-z0-9-]*)(?=[\s/>]|$)')
+html_alone = re.compile(r'^ {0,3}</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>\s*$')
+RAW = {'pre', 'script', 'style', 'textarea'}
+BLOCK = set('address article aside base basefont blockquote body caption center col colgroup dd '
+            'details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 '
+            'h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav '
+            'noframes ol optgroup option p param search section summary table tbody td tfoot th '
+            'thead title tr track ul'.split())
 scanned = 0
 for f in sys.argv[1:]:
     try:
@@ -51,8 +59,10 @@ for f in sys.argv[1:]:
     for n in range(start, len(lines)):
         line = lines[n]
         if html:
-            # a comment ends at -->, any other HTML block at a blank line
-            if (html == 'comment' and '-->' in line) or (html == 'block' and not line.strip()):
+            # a comment ends at -->, a raw block (<pre>, <script>, ...) at its closing tag, any
+            # other HTML block at a blank line
+            if ((html == 'comment' and '-->' in line) or (html == 'block' and not line.strip())
+                    or (html not in ('comment', 'block') and html in line.lower())):
                 html = None
             prev = ''
             continue
@@ -64,9 +74,19 @@ for f in sys.argv[1:]:
                 html = 'comment'
             prev = ''
             continue
-        if not prev.strip() and re.match(r'^ {0,3}</?[A-Za-z!?]', line):
-            html, prev = 'block', ''
-            continue
+        t = html_tag.match(line)
+        if t:
+            name = t.group(1).lower()
+            if name in RAW:
+                if f'</{name}>' not in line.lower():
+                    html = f'</{name}>'
+                prev = ''
+                continue
+            # CommonMark block tags open an HTML block even right after text; any other tag only
+            # when it stands alone after a blank line (a paragraph may start with an inline tag)
+            if name in BLOCK or (not prev.strip() and html_alone.match(line)):
+                html, prev = 'block', ''
+                continue
         m = fence.match(line)
         if open_fence:
             # a closer is the same character, at least as long, with nothing after it but spaces
@@ -120,6 +140,12 @@ text after the real closer
 
 text after the quote
 >(glued again)
+
+an append redirect wrapped as
+>>file.log keeps going
+
+<https://example.com> starts a paragraph, not an HTML block
+>(wrapped after an autolink)
 EOF
 cat > "$probe/good.md" <<'EOF'
 ---
@@ -168,10 +194,21 @@ a comment
 <details>
 # not rendered as a heading inside the HTML block
 </details>
+
+text right before a block tag
+<div>
+>raw glued inside the div
+</div>
+
+<pre>
+x
+
+# still raw inside pre until its closing tag
+</pre>
 EOF
 got=$(hits "$probe/bad.md" | sed 's/^[^:]*:\([0-9]*\):.*/\1/' | tr '\n' ' ')
-[ "$got" = "2 5 8 10 16 20 " ] && ok "probe: a glued > after text and a heading after a paragraph are caught, also past an inline triple-backtick span, a closer with an info string and a quote ended by a blank line (lines 2 5 8 10 16 20)" \
-  || bad "probe: bad.md gave lines [$got], want [2 5 8 10 16 20 ]"
+[ "$got" = "2 5 8 10 16 20 23 26 " ] && ok "probe: a glued > after text and a heading after a paragraph are caught, also past an inline triple-backtick span, a closer with an info string and a quote ended by a blank line (lines 2 5 8 10 16 20 23 26)" \
+  || bad "probe: bad.md gave lines [$got], want [2 5 8 10 16 20 23 26 ]"
 out=$(hits "$probe/good.md")
 [ -z "$out" ] && ok "probe: quotes after a label, lazy quote lines, headings after a blank, a list, a rule, a link ref or a setext underline, fences, HTML blocks, comments and front matter pass" \
   || bad "probe: good.md was flagged: $out"
