@@ -2791,6 +2791,18 @@ test_deny  "$IRRECOVERABLE" "GH #662: cat <<EOF | busybox ash" "$(bash_payload $
 test_deny  "$IRRECOVERABLE" "GH #662: busybox.static rm -rf b" "$(bash_payload '/bin/busybox.static rm -rf b')"
 test_deny  "$IRRECOVERABLE" "GH #662: busybox-static rm -rf b" "$(bash_payload 'busybox-static rm -rf b')"
 test_deny  "$IRRECOVERABLE" "GH #662: toybox dd of=/dev/sda" "$(bash_payload 'toybox dd if=/dev/zero of=/dev/sda')"
+# ash and dash take the next word for every o in a cluster (bash's reading), and +c runs CMD as -c does
+test_deny  "$IRRECOVERABLE" "GH #662: ash -oc pipefail 'rm -rf b'" "$(bash_payload "ash -oc pipefail 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox ash -ooc errexit pipefail 'rm -rf b'" "$(bash_payload "busybox ash -ooc errexit pipefail 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: dash -oc pipefail 'rm -rf b'" "$(bash_payload "dash -oc pipefail 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: ash +c 'rm -rf b'" "$(bash_payload "ash +c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: bash +c 'rm -rf b'" "$(bash_payload "bash +c 'rm -rf b'")"
+# the echo upstream of a stdin shell, written through busybox or a path
+test_deny  "$IRRECOVERABLE" "GH #662: busybox echo 'rm -rf b' | sh" "$(bash_payload "busybox echo 'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #662: toybox echo 'rm -rf b' | ash" "$(bash_payload "toybox echo 'rm -rf b' | ash")"
+test_deny  "$IRRECOVERABLE" "GH #662: /bin/echo 'rm -rf b' | sh" "$(bash_payload "/bin/echo 'rm -rf b' | sh")"
+test_allow "$IRRECOVERABLE" "GH #662 control: ash +x script.sh" "$(bash_payload 'ash +x script.sh')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox echo 'ls' | sh" "$(bash_payload "busybox echo 'ls' | sh")"
 test_allow "$IRRECOVERABLE" "GH #662 control: busybox sh -c 'ls -la'" "$(bash_payload "busybox sh -c 'ls -la'")"
 test_allow "$IRRECOVERABLE" "GH #662 control: toybox ls" "$(bash_payload 'toybox ls')"
 test_allow "$IRRECOVERABLE" "GH #662 control: cat <<EOF | busybox ash (echo body)" "$(bash_payload $'cat <<EOF | busybox ash\necho hi\nEOF')"

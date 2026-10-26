@@ -1914,11 +1914,16 @@ def _shell_stdin_bodies(c):
                 if w:
                     out.append(w[0])
             up = _split_words(segs[k - 1]) if k else None
-            if up and up[0] in ("echo", "printf"):
+            # GH #662: the echo as written past a path, `command`, `builtin` or busybox (`busybox echo ... | sh`).
+            while up and up[0].rsplit("/", 1)[-1] in ("command", "builtin", "busybox", "busybox.static",
+                                                       "busybox-static", "toybox"):
+                up = up[1:]
+            name = up[0].rsplit("/", 1)[-1] if up else ""
+            if name in ("echo", "printf"):
                 args = up[1:]
-                while up[0] == "echo" and args and re.fullmatch(r"-[neE]+", args[0]):
+                while name == "echo" and args and re.fullmatch(r"-[neE]+", args[0]):
                     args = args[1:]
-                out.append(" ".join(args).replace("\\n", "\n") if up[0] == "printf" else " ".join(args))
+                out.append(" ".join(args).replace("\\n", "\n") if name == "printf" else " ".join(args))
     return out
 
 _SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
@@ -2165,15 +2170,15 @@ def _count_handover(what):
 
 def _shell_body(argv0, rest, getopt, need_c=True):
     """The `-c` command string of `argv0 rest`, or None. `getopt` picks how a value flag reads:
-    bash takes the next word for EVERY o/O in a cluster (`-oc pipefail`, `-coo a b`); zsh, ksh and
-    dash follow getopt, where an `o` followed by more letters has them as its attached value
+    bash (and dash, ash) takes the next word for EVERY o/O in a cluster (`-oc pipefail`, `-coo a b`); zsh
+    and ksh follow getopt, where an `o` followed by more letters has them as its attached value
     (`-opipefail`) and only a cluster-final `o` takes the next word. zsh's -O takes none."""
     vf = "o" if argv0 == "zsh" else "oO"
 
     def cluster(letters, sign):  # -> (has -c, following words consumed)
         c, extra = False, 0
         for k, ch in enumerate(letters):
-            if ch == "c" and sign == "-":
+            if ch == "c":  # GH #662: `+c CMD` runs CMD too (bash, dash, busybox ash)
                 c = True
             if ch in vf:
                 if not getopt:
@@ -2209,7 +2214,7 @@ def _shell_body(argv0, rest, getopt, need_c=True):
     # Fallback (a script word before -c, `--rcfile FILE -c body`): the first `-c` cluster anywhere.
     for i in range(len(rest) - 1):
         t = rest[i].replace(PH, "")
-        if t.startswith("-") and not t.startswith("--") and "c" in t:
+        if t[:1] in ("-", "+") and not t.startswith("--") and "c" in t:
             j = i + (2 if t[-1] in vf else 1)
             while j < len(rest):
                 u = rest[j].replace(PH, "")
@@ -2227,11 +2232,12 @@ def _shell_body(argv0, rest, getopt, need_c=True):
 _LONG_VALUE_OPTS = ("--rcfile", "--init-file")  # bash long options that take a file: the next word is not the body
 
 
-# bash reads every o/O in a cluster as taking the next word; zsh, ksh and dash follow getopt; `sh`
-# is bash on macOS and dash on Linux, so both readings are scanned (a wrong reading only scans one
-# extra word).
-_SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (True,), "sh": (False, True),
-                 "ash": (True,), "hush": (True,)}
+# bash reads every o/O in a cluster as taking the next word; zsh and ksh follow getopt; `sh` is
+# bash on macOS and dash on Linux, so both readings are scanned (a wrong reading only scans one
+# extra word). dash and busybox ash take the next word for every o too (`dash -oc errexit 'cmd'`
+# runs cmd, checked live, GH #662), so they are scanned both ways as well; hush has no -o.
+_SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (False, True), "sh": (False, True),
+                 "ash": (False, True), "hush": (True,)}
 
 
 # GH #608: an interpreter one-liner (python -c, perl/ruby -e, node -e/-p) runs a command through a string it
