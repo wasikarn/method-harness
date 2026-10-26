@@ -111,9 +111,9 @@ def _plain_literals_blanked(sql):
 
 # GH #621 review: psql and JavaScript end a -- or // comment at a CR, U+2028 or U+2029 as well, so a body
 # holding one blanks nothing; nor does a body a non-SQL client reads (mongo and mongosh read JavaScript,
-# where a ' may sit in a regex literal), which keeps develop's matching.
+# where a ' may sit in a regex literal), which keeps develop's matching. A non-SQL client named anywhere on
+# the heredoc's line or downstream in the pipeline counts (psql -a | mongosh hands the body on).
 _SQL_LINE_ENDS_RE = re.compile("[\r\u2028\u2029]")
-_NON_SQL_CLIENTS = ("mongosh", "mongo", "redis-cli")
 _NON_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mongosh|mongo|redis-cli)(?![\w.-])")
 
 def _sql_drops(sql, sql_client=True):
@@ -1932,7 +1932,8 @@ def _sql_stdin_drop(c):
         here = segs[k].split("<<<", 1)
         if len(here) > 1:
             data.extend(_words(here[1]))
-        if _sql_drops(" ".join(data), _stage_cmd(segs[k])[0] not in _NON_SQL_CLIENTS):
+        # GH #621 review 3: psql -a echoes its input on, so a non-SQL client anywhere downstream reads it too.
+        if _sql_drops(" ".join(data), not _NON_SQL_CLIENT_RE.search("|".join(segs[k:]))):
             return True
     return _group_piped_sql_drop(c) if "}" in c or ")" in c else False
 
@@ -1952,6 +1953,7 @@ class _SqlFrame:
 
 def _group_piped_sql_drop(c):
     data, seen, n = [], set(), len(c)
+    js_any = bool(_NON_SQL_CLIENT_RE.search(c))  # a later stage is not read yet when the first client is
     budget = [4 * n + 100_000]
     frames = [_SqlFrame(None, 0, 0)]
 
@@ -1973,7 +1975,7 @@ def _group_piped_sql_drop(c):
                         budget[0] -= len(sql)
                         if budget[0] < 0:
                             return "budget"
-                        if _sql_drops(sql, a0 not in _NON_SQL_CLIENTS):
+                        if _sql_drops(sql, not js_any):
                             return True
             elif a0 in ("echo", "printf"):
                 data.extend(rest)

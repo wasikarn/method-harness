@@ -2049,6 +2049,21 @@ test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a // comment holding an a
   "$(bash_payload "$(python3 -c 'print("mongo db <<'"'"'JS'"'"'\nvar a=[1]; // it'"'"'s\rdb.t.drop(); var y='"'"'z'"'"';\nJS")')")"
 test_deny  "$IRRECOVERABLE" "GH #621 review: an apostrophe in a regex literal before drop() echoed into mongosh" \
   "$(bash_payload "echo \"var a=[1]; db.x.find({a:/'/}); db.t.drop(); var y='z';\" | mongosh db")"
+# GH #621 review 3: psql -a echoes its input on, so a non-SQL client anywhere downstream of the first client
+# reads the body too, and the body blanks no literal.
+_js_body="var a=[1]; db.x.find({a:/'/}); db.t.drop(); var y='z';"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a into mongosh" \
+  "$(bash_payload "echo \"$_js_body\" | psql -a | mongosh db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS here-string through psql -a into mongosh" \
+  "$(bash_payload "psql -a <<< \"$_js_body\" | mongosh db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS heredoc through psql -a into mongosh" \
+  "$(bash_payload "$(printf "psql -a <<'JS' | mongosh db\n%s\nJS" "$_js_body")")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed in a { } group through psql -a into mongosh" \
+  "$(bash_payload "{ echo \"$_js_body\"; } | psql -a | mongosh db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a into docker exec mongosh" \
+  "$(bash_payload "echo \"$_js_body\" | psql -a | docker exec -i m mongosh")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a into mongosh inside bash -c" \
+  "$(bash_payload "bash -c \"echo \\\"$_js_body\\\" | psql -a | mongosh db\"")"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
