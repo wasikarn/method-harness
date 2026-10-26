@@ -58,12 +58,11 @@ readers (`head`, `grep -m`, a command that skips stdin): there, apply the rule b
 is a pipe too, so a quiet grep reading it is checked wherever it sits, on either side of a pipe or
 in no pipe at all: its early exit kills the command writing into it with SIGPIPE (`tee >(grep -q 1)
 < big | cat` gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
-fails a pipefail pipeline or a `set -e` script. A `>(...)` in a redirection is not checked only when
-nothing can write into it: every fd it holds (both for `&>` and `>& >(...)`) is replaced later on
-the same command and no redirection in between copies one of them (`cat > >(grep -q y) >/dev/null`
-is clean; `cmd > >(grep -q y) 2>&1 >/dev/null` still writes stderr into it, bash: 141). It is
-over-reported when the writer's status is discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a
-function never called) or a later reader drains the rest; a bare `v=$(...)` keeps the writer's
+fails a pipefail pipeline or a `set -e` script. It is over-reported when the writer's status is
+discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never called) or a later reader
+drains the rest, and when every fd holding the `>(...)` is redirected elsewhere later on the same
+command (`cat > >(grep -q y) >/dev/null`): telling that apart needs a model of fd copies, moves and
+`{var}` fds, and two attempts at one hid real races (#650); a bare `v=$(...)` keeps the writer's
 status, so under `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` reads all of
 its input (GNU grep 3.11), so it is safe in a pipe; `grep -q` stays early-exit even with
 `>/dev/null` (`tee >(grep -q 1 >/dev/null) < big` still exits 141). A hit whose line ends in the

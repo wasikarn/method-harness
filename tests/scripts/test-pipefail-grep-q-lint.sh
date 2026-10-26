@@ -140,8 +140,12 @@ seq 2000000 2> >(grep -q 1) >&2 2>/dev/null
 { seq 2000000 >&3; } > >(grep -q 1) 3>&1 >/dev/null
 { seq 2000000 >&2; } &> >(grep -q 1) >/dev/null
 { seq 2000000 >&2; } >& >(grep -q 1) >/dev/null
+{ seq 2000000 >&3; } > >(grep -q 1) 3>&1- >/dev/null
+{ seq 2000000 >&10; } {fd}> >(grep -q 1) {fd}>/dev/null
+cat < "$f" > >(grep -q y) >/dev/null
+cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
@@ -183,15 +187,12 @@ x | case $(grep -q y) in a) ;; esac < "$f"
 x | grep -q y < "$f" <<<"$(grep -q z)"
 tee >(grep -c y) < "$f"
 tee >(while read -r l; do grep -q y "$l"; done) < "$f"
-cat < "$f" > >(grep -q y) >/dev/null
-cat < "$f" 2> >(grep -q y) 2>/dev/null
-cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
 x | [[ $(grep -q y) ]] < "$f"
 x | (( $(grep -q y; echo 1) )) < "$f"
 EOF
 out=$(scan "$probe/good.sh"); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] \
-  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp/--reg -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects, loop greps on files or -r, a loop with its own stdin, --col, substitutions after a stdin redirect or in a redirected [[ ]]/(( )), a >(...) a later redirect replaces are clean" \
+  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp/--reg -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects, loop greps on files or -r, a loop with its own stdin, --col, substitutions after a stdin redirect or in a redirected [[ ]]/(( )) are clean" \
   || bad "probe: rc $rc on the race-free file: $out $(cat "$probe/err")"
 
 # The exemption counts only as a trailing comment, and is reported, not hidden.

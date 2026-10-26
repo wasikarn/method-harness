@@ -28,11 +28,11 @@ reader; `<&0` and `<&"$fd"` may still be the pipe, so they are.
 
 A `>(...)` is checked the same way, wherever it sits (either side of a pipe, or no pipe at all):
 its readers are what the command writes into it, and a quiet grep there kills that command with
-SIGPIPE. A `>(...)` in a redirection is not checked when nothing can write into it: every fd it
-holds (both for `&>` and `>& >(...)`) is replaced later on the same command, with no copy of one in
-between (`cat > >(grep -q y) >/dev/null`; but `2>&1 >/dev/null` keeps it on fd 2). Over-reported: a writer whose status is discarded
-(`echo "$(...)"`, `<(...)`, `|| true`, a function never called; a bare `v=$(...)` keeps the status,
-so under `set -e` it is a real failure) and a grep followed by a reader that drains the rest.
+SIGPIPE. Over-reported: a writer whose status is discarded (`echo "$(...)"`, `<(...)`, `|| true`, a
+function never called; a bare `v=$(...)` keeps the status, so under `set -e` it is a real failure),
+a grep followed by a reader that drains the rest, and a `>(...)` whose fds are all redirected
+elsewhere later on the same command (`cat > >(grep -q y) >/dev/null`): telling that last one apart
+needs a model of fd copies, moves and `{var}` fds, and getting it wrong hides real races.
 
 A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
 wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
@@ -98,9 +98,6 @@ WRAPPERS = {
 }
 ASSIGNING = {'env', 'sudo'}  # wrappers that take NAME=VALUE words before the command
 STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
-# Output redirections -> the fds they point elsewhere (default fd 1; `&>`/`&>>` both 1 and 2).
-OUT_REDIRS = {'>', '>>', '>|', '>&'}
-BOTH_REDIRS = {'&>', '&>>'}
 # Keys under which shfmt nests statements; a statement's own words are everything else.
 NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
 # Commands that expand their words before their redirections apply.
@@ -360,79 +357,6 @@ def readers(stmt, direct=True):
     return out
 
 
-def written_fds(r):
-    """The fds an output redirection points elsewhere (None: cannot tell)."""
-    op = r.get('Op')
-    if op in BOTH_REDIRS:
-        return {'1', '2'}
-    if op not in OUT_REDIRS:
-        return set()
-    n = r.get('N')
-    fd = (n or {}).get('Value', '1')
-    if op == '>&':
-        target = literal(r.get('Word') or {})
-        if target is None:
-            # `>&"$x"` is a dup or, as in `>& >(...)`, a file for both stdout and stderr.
-            return None if n else {'1', '2'}
-        if target == fd:
-            return set()  # `>&1` on fd 1 duplicates it onto itself: nothing replaced
-        if not (target.isdigit() or target == '-') and not n:
-            return {'1', '2'}  # `>& file` is `&> file`
-    return {fd}
-
-
-def copies_from(r):
-    """The fd a duplication (`M>&N`, `M<&N`) copies, '' for none, None when it cannot tell."""
-    if r.get('Op') not in ('>&', '<&'):
-        return ''
-    target = literal(r.get('Word') or {})
-    if target is None:
-        return None
-    return target if target.isdigit() else ''
-
-
-def dead_outputs(tree):
-    """ids of the `>(...)` nodes nothing can write into: bash applies a statement's redirections
-    left to right, so in `cat > >(grep -q y) >/dev/null` the later `>` replaces fd 1 and nothing
-    reaches the grep. Conservative: every fd the `>(...)` holds (both for `&>` and `>& >(...)`) must
-    be replaced later on the same command, and no redirection in between may copy one of them
-    first (`2>&1 >/dev/null` keeps it on fd 2, bash: 141). Anything it cannot tell stays live."""
-    dead = set()
-
-    def is_dead(redirs, i):
-        held = written_fds(redirs[i])
-        if not held:
-            return False
-        for later in redirs[i + 1:]:
-            src = copies_from(later)
-            if src is None or src in held:
-                return False  # a copy (or an unknown one) of a held fd before its replacement
-            fds = written_fds(later)
-            if fds is None:
-                return False
-            held = held - fds
-            if not held:
-                return True
-        return False
-
-    def walk(n):
-        if isinstance(n, dict):
-            redirs = n.get('Redirs') or []
-            for i, r in enumerate(redirs):
-                procs = [p for p in (r.get('Word') or {}).get('Parts') or []
-                         if p.get('Type') == 'ProcSubst' and p.get('Op') == '>(']
-                if procs and is_dead(redirs, i):
-                    dead.update(id(p) for p in procs)
-            for v in n.values():
-                walk(v)
-        elif isinstance(n, list):
-            for v in n:
-                walk(v)
-
-    walk(tree)
-    return dead
-
-
 def hits(tree):
     out = []
 
@@ -454,7 +378,7 @@ def hits(tree):
             # exits early and that command dies of SIGPIPE (bash: `tee >(grep -q 1) < big | cat`
             # gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
             # fails a pipefail pipeline or a `set -e` script, so it counts wherever it sits.
-            if n.get('Type') == 'ProcSubst' and n.get('Op') == '>(' and id(n) not in dead:
+            if n.get('Type') == 'ProcSubst' and n.get('Op') == '>(':
                 check([r for s in n.get('Stmts') or [] for r in readers(s)])
             for v in n.values():
                 walk(v)
@@ -462,7 +386,6 @@ def hits(tree):
             for v in n:
                 walk(v)
 
-    dead = dead_outputs(tree)
     walk(tree)
     return sorted(set(out))
 
