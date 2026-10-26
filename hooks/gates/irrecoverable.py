@@ -1042,8 +1042,9 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
 # structural one) ends the window unreported, and any other ask is dropped.
 _ONLY_RULE = [None]
 # GH #661: in the enforced view pass, a deny by another rule that has an id returns instead of ending the window,
-# so the enforced rule further on in the same window is still reached. A structural deny (no id: a depth or
-# budget limit, a nested spawn) denies there, as it does in the main reading: the text cannot be read safely.
+# so the enforced rule further on in the same window is still reached. A structural deny (no id: a depth limit,
+# the handover budget, an untokenizable body) denies there, as it does in the main reading: the text cannot be
+# read safely. The pass runs no spawn check (that is the main reading's).
 _ONLY_RULE_PASS_ON = [False]
 def _deny_nested_spawn():
     if _ONLY_RULE[0] and not _ONLY_RULE_PASS_ON[0]:

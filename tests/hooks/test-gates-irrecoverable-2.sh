@@ -2880,7 +2880,7 @@ test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U ./build\"\$(dat
   "$(bash_payload 'echo {a,b}; f{ind,ind} . -name x -delete; sudo -u $U ./build"$(date +%s)" -r out')"
 test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U python\"\$(echo 3)\" -m compileall -r 2 {a,b}" \
   "$(bash_payload 'fi{nd,nd} x -delete; sudo -u $U python"$(echo 3)" -m compileall -r 2 {a,b}')"
-# the enforced pass gets its own spawn-scan budget: a subagent body the main reading fits is not denied as a spawn
+# the enforced pass runs no spawn scan: a subagent body the main reading fits is not denied as a spawn
 test_allow "$IRRECOVERABLE" "GH #661 control: subagent bash -c with 800 statements, then echo {a,b}" \
   "$(bash_agent_payload "bash -c '$(printf 'true; %.0s' $(seq 800))true'; echo {a,b}" fork)"
 # the pass reads rm's rules only and runs no spawn scan, so an expansion that copies a long eval body many times
