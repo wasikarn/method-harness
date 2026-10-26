@@ -28,7 +28,7 @@ git init -q --bare "$BARE"
 git init -q -b develop "$CLONE"
 mkdir -p "$CLONE/scripts" "$CLONE/.claude-plugin"
 printf '#!/usr/bin/env bash\necho "stub gauntlet ran"\necho "lock held: $([ -f "${GAUNTLET_LOCK_DIR:-}/pid" ] && echo yes || echo no)"\n' > "$CLONE/scripts/run-gauntlet.sh"
-for f in a.txt b.txt "my file.txt" .claude-plugin/plugin.json .claude-plugin/marketplace.json; do echo start > "$CLONE/$f"; done
+for f in a.txt b.txt r.txt s.txt "my file.txt" .claude-plugin/plugin.json .claude-plugin/marketplace.json; do echo start > "$CLONE/$f"; done
 g add -A && g commit -q -m base
 g remote add origin "$BARE" && g push -q origin develop
 BASE=$(g rev-parse HEAD)
@@ -37,6 +37,8 @@ BASE=$(g rev-parse HEAD)
 edit a.txt dev "dev: fix a"
 edit "my file.txt" dev "dev: fix spaced"
 edit .claude-plugin/plugin.json dev "dev: bump" && edit .claude-plugin/marketplace.json dev "dev: bump 2"
+g mv r.txt r2.txt && g commit -q -m "dev: rename r"
+edit s.txt dev "dev: fix s"
 g push -q origin develop
 
 # branch <name> <file>...: a branch cut at BASE that changes each <file>; prints its head.
@@ -64,6 +66,18 @@ head=$(branch spaced "my file.txt")
 out=$(push_hook "$head" "$ZERO"); rc=$?
 ok=1; [ "$rc" -ne 0 ] && [[ $out == *"my file.txt"* && $out == *"dev: fix spaced"* ]] && ok=0
 check "a path with a space is matched and named" "$ok"
+
+# git diff detects renames by default and would list only the new name on the renaming side.
+head=$(branch editrenamed r.txt)
+out=$(push_hook "$head" "$ZERO"); rc=$?
+ok=1; [ "$rc" -ne 0 ] && [[ $out == *r.txt* && $out == *"dev: rename r"* ]] && ok=0
+check "branch edits a file develop renamed: refused" "$ok"
+
+g checkout -q -b renames "$BASE" && g mv s.txt s2.txt && g commit -q -m "renames: s"
+head=$(g rev-parse HEAD); g checkout -q develop
+out=$(push_hook "$head" "$ZERO"); rc=$?
+ok=1; [ "$rc" -ne 0 ] && [[ $out == *s.txt* && $out == *"dev: fix s"* ]] && ok=0
+check "branch renames a file develop edited: refused" "$ok"
 
 head=$(branch clean b.txt)
 out=$(push_hook "$head" "$ZERO"); rc=$?

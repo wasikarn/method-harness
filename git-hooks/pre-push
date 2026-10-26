@@ -16,7 +16,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 # protection is), so a rare false-closed here costs one manual retry, not a
 # security gap from silently letting an unparseable line through.
 _ZERO=0000000000000000000000000000000000000000
-_new_heads=()
+_new_heads=() _new_refs=()
 while IFS= read -r _line; do
   # shellcheck disable=SC2206 # deliberate word-split on whitespace-separated ref-line fields
   _fields=($_line)
@@ -30,7 +30,9 @@ while IFS= read -r _line; do
     exit 1
   fi
   case $_remote_ref in refs/heads/*)
-    [ "${_fields[1]}" = "$_ZERO" ] || [ "${_fields[3]}" != "$_ZERO" ] || _new_heads+=("${_fields[1]}") ;;
+    if [ "${_fields[1]}" != "$_ZERO" ] && [ "${_fields[3]}" = "$_ZERO" ]; then
+      _new_heads+=("${_fields[1]}") _new_refs+=("$_remote_ref")
+    fi ;;
   esac
 done
 
@@ -43,15 +45,18 @@ _remote="${1:-}"
 if [ -n "$_remote" ] && [ "${#_new_heads[@]}" -gt 0 ]; then
   # FETCH_HEAD, not refs/remotes/<remote>/develop: a push to a URL passes the URL as $1.
   if git fetch -q "$_remote" develop && _dev=$(git rev-parse --verify -q FETCH_HEAD); then
-    for _head in "${_new_heads[@]}"; do
+    for _i in "${!_new_heads[@]}"; do
+      _head=${_new_heads[$_i]} _ref=${_new_refs[$_i]}
       _base=$(git merge-base "$_head" "$_dev") ||
-        { echo "pre-push: $_head shares no history with $_remote develop; skipping the develop-overlap check." >&2; continue; }
+        { echo "pre-push: $_ref shares no history with $_remote develop; skipping the develop-overlap check." >&2; continue; }
+      # --no-renames: a rename on either side must list the old path too, or it slips past.
       _overlap=()
       while IFS= read -r _f; do
         case $_f in .claude-plugin/plugin.json | .claude-plugin/marketplace.json | "") ;; *) _overlap+=("$_f") ;; esac
-      done < <(comm -12 <(git diff --name-only "$_base" "$_head" | sort) <(git diff --name-only "$_base" "$_dev" | sort))
+      done < <(comm -12 <(git diff --no-renames --name-only "$_base" "$_head" | sort) \
+        <(git diff --no-renames --name-only "$_base" "$_dev" | sort))
       if [ "${#_overlap[@]}" -gt 0 ]; then
-        echo "pre-push: $_remote/develop changed files this new branch also changes, since the branch point:" >&2
+        echo "pre-push: $_remote/develop changed files the new branch $_ref also changes, since the branch point:" >&2
         printf '  %s\n' "${_overlap[@]}" >&2
         git log --oneline "$_base..$_dev" -- "${_overlap[@]}" >&2
         echo "pre-push: merge $_remote/develop into the branch, read those commits for the same change, then push again." >&2
