@@ -1038,8 +1038,8 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
                       "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "
                       "main session dispatches")
 
-# GH #593: set to one rule while a reading may only raise that rule's ask: every other deny ends the
-# window unreported, every other ask is dropped.
+# GH #593 / #661: the rules a reading may decide with, or None for all: a deny by any other rule (or a
+# structural one) ends the window unreported, and any other ask is dropped.
 _ONLY_RULE = [None]
 def _deny_nested_spawn():
     if _ONLY_RULE[0]:
@@ -1138,7 +1138,7 @@ def _shadowed(rule, decision):
     return True
 
 def deny(reason, rule=None):
-    if _ONLY_RULE[0]:
+    if _ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]:
         raise _ViewStop
     if _VIEW[0] and rule is None:
         raise _ViewStop
@@ -1147,7 +1147,9 @@ def deny(reason, rule=None):
             raise _ViewStop
         return
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
-    journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"), rule=_VIEW[0] or rule)
+    # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
+    journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
+            rule=rule if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) else _VIEW[0] or rule)
     sys.exit(2)
 
 _ASKED = []
@@ -1160,7 +1162,7 @@ def ask(reason, rule=None):
     # JSON objects on stdout are not valid JSON (GH #254 validator).
     # A shadowed ask is checked first and never touches _ASKED, so a later real ask still emits.
     # In a view (GH #336) an ask adds nothing once the command already asks.
-    if (_ONLY_RULE[0] and rule != _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
+    if (_ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
     _ASKED.append(reason)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
@@ -4448,7 +4450,7 @@ def _braced_reading():
     # (_WDEPTH, _ENV_PRE570_WINDOWS) is read by a later window; _RM_VIA_INTERP is put back.
     start = len(windows)
     rm_via_interp = _RM_VIA_INTERP[0]
-    _ONLY_RULE[0] = "opaque-var-verb"
+    _ONLY_RULE[0] = frozenset({"opaque-var-verb"})
     try:
         windows.extend(_view_windows(v))
         i = start
@@ -4465,6 +4467,33 @@ def _braced_reading():
 if "${" in cmd and len(cmd) <= _VIEW_LEN_CAP:
     _braced_reading()
 
+def _enforced_pass(text):
+    # GH #661: a shadowed view stops at its first hit, so a rule it enforces (_VIEW_ENFORCED) may not have read
+    # the windows after that hit (`fi{nd,nd} x -delete; rm --{r,f} b`). This pass reads every window once more
+    # with only those rules live; any other rule's deny ends that window alone.
+    _ONLY_RULE[0] = _VIEW_ENFORCED[_VIEW[0]]
+    try:
+        i = len(windows)
+        windows.extend(_view_windows(text))
+        while True:
+            while i < len(windows):  # a window's checks may append more (bash -c bodies, xargs, find)
+                try:
+                    _check_window(i, windows[i])
+                except _ViewStop:
+                    pass
+                i += 1
+            if not _WORDS:
+                break
+            for depth, ww in _WORDS[:]:  # the word windows, as _run_words reads them
+                wc = _drop_ph_tokens(ww)
+                for x in ((ww, wc) if wc != ww else (ww,)):
+                    _WDEPTH[len(windows)] = depth
+                    windows.append(x)
+            del _WORDS[:]
+    finally:
+        _ONLY_RULE[0] = None
+        del _WORDS[:]
+
 for _VIEW[0], _text in _views():
     try:
         _start = len(windows)
@@ -4473,5 +4502,7 @@ for _VIEW[0], _text in _views():
         _run_words()
     except _ViewStop:
         del _WORDS[:]
+        if _VIEW[0] in _VIEW_ENFORCED:
+            _enforced_pass(_text)
 
 sys.exit(0)

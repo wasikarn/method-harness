@@ -2830,6 +2830,11 @@ test_deny  "$IRRECOVERABLE" "GH #661: rm --{rec,verbose} b (rm-recursive)" "$(ba
 test_deny  "$IRRECOVERABLE" "GH #661: sudo rm --{r,f} b" "$(bash_payload 'sudo rm --{r,f} b')"
 test_deny  "$IRRECOVERABLE" "GH #661: bash -c 'rm --{r,f} b'" "$(bash_payload "bash -c 'rm --{r,f} b'")"
 test_deny  "$IRRECOVERABLE" "GH #661: rm --no-preserve-{root,x} -r /" "$(bash_payload 'rm --no-preserve-{root,x} -r /')"
+# a shadowed brace-view hit earlier in the command does not end the view before the rm
+test_deny  "$IRRECOVERABLE" "GH #661: fi{nd,nd} ... -delete; rm --{r,f} b" "$(bash_payload 'fi{nd,nd} /nonexistent -delete; rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: git push --fo{rce,rce} ...; rm --{r,f} b" "$(bash_payload 'git push --fo{rce,rce} --dry-run origin main; rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: git br{anch,anch} -D x; r{m,} -rf /tmp/x" "$(bash_payload 'git br{anch,anch} -D nosuchbranch; r{m,} -rf /tmp/x')"
+test_deny  "$IRRECOVERABLE" "GH #661: true && fi{nd,nd} ... || r{m,} -rf /tmp/x" "$(bash_payload 'true && fi{nd,nd} /nonexistent -delete || r{m,} -rf /tmp/x')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm {a,b}.log')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
