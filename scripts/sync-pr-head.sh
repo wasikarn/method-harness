@@ -19,9 +19,10 @@
 #      gauntlet runs on the exact tree that merges; a branch that is no longer exactly <head> (someone
 #      pushed or rewound it) is refused. A push that exits non-zero but landed (ls-remote) still counts.
 # Prints the new head sha on stdout; everything else goes to stderr. The caller fetches origin first.
-# Both commits keep a PR's review verdict (merge-pr.sh check_review): the version commit touches only the
-# manifests, and since GH #629 a merge keeps it only as a plain two-parent merge whose conflicts were all
-# in the manifests, which is the one step 1 makes.
+# Both commits keep a PR's review verdict (merge-pr.sh check_review): the version commit changes only the
+# manifests' version value, and since GH #629 a merge keeps it only as a plain two-parent merge whose
+# conflicts were all in the manifests and differ from the merge with the version set aside only in that
+# value, which is the one step 1 makes.
 # Bash 3.2.
 set -euo pipefail
 
