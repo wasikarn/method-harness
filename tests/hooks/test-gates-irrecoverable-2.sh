@@ -556,6 +556,17 @@ test_allow "$IRRECOVERABLE" "GH #565: gh api contents/.../merge_sort.py" "$(bash
 test_allow "$IRRECOVERABLE" "GH #565: gh api commits?path=src/merge.py" "$(bash_payload "gh api 'repos/o/r/commits?path=src/merge.py'")"
 test_ask   "$IRRECOVERABLE" "GH #565: gh pr -R o/r merge still asks" "$(bash_payload 'gh pr -R o/r merge 3')"
 test_ask   "$IRRECOVERABLE" "GH #565: gh api .../pulls/3/merge still asks" "$(bash_payload 'gh api repos/o/r/pulls/3/merge')"
+# GH #621: a boolean flag does not take the next word, so a -h after it is help (runs nothing).
+test_allow "$IRRECOVERABLE" "GH #621: gh pr update-branch --rebase -h (help)" "$(bash_payload 'gh pr update-branch 3 --rebase -h')"
+test_allow "$IRRECOVERABLE" "GH #621: gh release upload --clobber -h (help)" "$(bash_payload 'gh release upload v1 f --clobber -h')"
+test_allow "$IRRECOVERABLE" "GH #621: gh pr merge 1 --squash --help (help)" "$(bash_payload 'gh pr merge 1 --squash --help')"
+test_ask   "$IRRECOVERABLE" "GH #621 control: gh api -H -h (-h is -H's value)" "$(bash_payload 'gh api -H -h repos/o/r/pulls/1/merge')"
+test_ask   "$IRRECOVERABLE" "GH #621 control: gh extension exec x --force -h (exec hands -h on)" "$(bash_payload 'gh extension exec x --force -h')"
+test_ask   "$IRRECOVERABLE" "GH #621 control: gh pr merge 1 --body -h (-h is --body's value)" "$(bash_payload 'gh pr merge 1 --body -h')"
+# GH #621: a mid-word # reaches the gate as HASH_LIT; the endpoint check reads it as #.
+test_ask   "$IRRECOVERABLE" "GH #621: gh api .../pulls/3/merge#x asks" "$(bash_payload 'gh api repos/o/r/pulls/3/merge#x')"
+test_ask   "$IRRECOVERABLE" "GH #621: gh api '.../pulls/3/merge#x' asks" "$(bash_payload "gh api 'repos/o/r/pulls/3/merge#x'")"
+test_allow "$IRRECOVERABLE" "GH #621 control: gh api .../contents/merge_x#y.py" "$(bash_payload 'gh api repos/o/r/contents/merge_x#y.py')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with --squash flag"       "$(bash_payload 'gh pr merge --squash 5')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with a brace word asks once (two window copies)" "$(bash_payload 'gh pr merge feat{1}')"
 test_ask   "$IRRECOVERABLE" "gh pr merge with a \$() argument asks once (compacted copy)" "$(bash_payload 'gh pr merge $(true) 12')"
