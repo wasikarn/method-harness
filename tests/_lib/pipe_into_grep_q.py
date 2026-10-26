@@ -28,13 +28,8 @@ reader; `<&0` and `<&"$fd"` may still be the pipe, so they are.
 
 A `>(...)` is checked the same way, wherever it sits (either side of a pipe, or no pipe at all):
 its readers are what the command writes into it, and a quiet grep there kills that command with
-SIGPIPE. Over-reported: a writer whose status is discarded (`echo "$(...)"`, `<(...)`, `|| true`, a
-function never called; a bare `v=$(...)` keeps the status, so under `set -e` it is a real failure),
-a grep followed by a reader that drains the rest, a `>(...)` whose fds are all redirected
-elsewhere later on the same command (`cat > >(grep -q y) >/dev/null`: telling it apart needs a
-model of fd copies, moves and `{var}` fds, and getting it wrong hides real races), and a `>(...)`
-on an fd the writer never writes to (`cat 2> >(grep -q y)`: that is the program's run-time
-behaviour, which no static scan can know).
+SIGPIPE. What it over-reports, and why each stays reported, is listed in
+docs/reference/repo-gotchas.md (the pipefail paragraph).
 
 A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
 wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
