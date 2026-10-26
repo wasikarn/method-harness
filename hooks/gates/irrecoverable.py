@@ -1042,10 +1042,11 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
 # structural one) ends the window unreported, and any other ask is dropped.
 _ONLY_RULE = [None]
 # GH #661: in the enforced view pass, a deny by another rule that has an id returns instead of ending the window,
-# so the enforced rule further on in the same window is still reached (a structural deny still ends it).
+# so the enforced rule further on in the same window is still reached. A structural deny (no id: a depth or
+# budget limit, a nested spawn) denies there, as it does in the main reading: the text cannot be read safely.
 _ONLY_RULE_PASS_ON = [False]
 def _deny_nested_spawn():
-    if _ONLY_RULE[0]:
+    if _ONLY_RULE[0] and not _ONLY_RULE_PASS_ON[0]:
         raise _ViewStop
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
@@ -1142,12 +1143,13 @@ def _shadowed(rule, decision):
 
 def deny(reason, rule=None):
     if _ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]:
-        if rule is not None and _ONLY_RULE_PASS_ON[0]:
+        if not _ONLY_RULE_PASS_ON[0]:
+            raise _ViewStop
+        if rule is not None:
             return
+    elif _VIEW[0] and rule is None:
         raise _ViewStop
-    if _VIEW[0] and rule is None:
-        raise _ViewStop
-    if _shadowed(rule, "deny"):
+    if not (_ONLY_RULE_PASS_ON[0] and rule is None) and _shadowed(rule, "deny"):
         if _VIEW[0]:
             raise _ViewStop
         return
@@ -4493,14 +4495,15 @@ def _enforced_pass(text):
                 i += 1
             if not _WORDS:
                 break
-            for depth, ww in _WORDS[:]:  # the word windows, as _run_words reads them
+            for depth, ww in _WORDS[:]:  # the word windows, as _run_words reads them (in the word phase)
                 wc = _drop_ph_tokens(ww)
                 for x in ((ww, wc) if wc != ww else (ww,)):
                     _WDEPTH[len(windows)] = depth
                     windows.append(x)
             del _WORDS[:]
+            _WORD_PHASE[0] = True
     finally:
-        _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0] = None, False
+        _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0], _WORD_PHASE[0] = None, False, False
         del _WORDS[:]
 
 for _VIEW[0], _text in _views():

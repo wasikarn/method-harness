@@ -2841,6 +2841,16 @@ test_deny  "$IRRECOVERABLE" "GH #661: decoy; X=\$Y r{m,} -rf b" "$(bash_payload 
 test_deny  "$IRRECOVERABLE" "GH #661: GIT_CONFIG_PARAMETERS=core.hooks{path,path} rm --{r,f} b" \
   "$(bash_payload 'GIT_CONFIG_PARAMETERS=core.hooks{path,path} rm --{r,f} b')"
 test_deny  "$IRRECOVERABLE" "GH #661: echo b | xargs r{m,} -rf" "$(bash_payload 'echo b | xargs r{m,} -rf')"
+# a structural limit only the expanded text reaches (an eval chain past the depth limit, the xargs handover
+# budget) denies in the enforced pass, as it does in the main reading
+test_deny  "$IRRECOVERABLE" "GH #661: e{val,val} x3 rm --{r,f} b" "$(bash_payload 'e{val,val} e{val,val} e{val,val} rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: 55 xargs e{nv,} decoys, then xargs env r{m,} -rf b" \
+  "$(bash_payload "$(printf ': | xargs e{nv,} true; %.0s' $(seq 55)): | xargs env r{m,} -rf b")"
+# a word glued to a substitution is not every verb in the enforced pass's word windows (as in _run_words)
+test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U ./build\"\$(date +%s)\" -r out" \
+  "$(bash_payload 'echo {a,b}; f{ind,ind} . -name x -delete; sudo -u $U ./build"$(date +%s)" -r out')"
+test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U python\"\$(echo 3)\" -m compileall -r 2 {a,b}" \
+  "$(bash_payload 'fi{nd,nd} x -delete; sudo -u $U python"$(echo 3)" -m compileall -r 2 {a,b}')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm {a,b}.log')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
