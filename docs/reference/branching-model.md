@@ -37,30 +37,49 @@ Enforcement layers, weakest to strongest:
 ## Merging: `scripts/merge-pr.sh <PR>` (GH #450)
 
 #445 and #446 were each green alone and red together on `develop`. Agents merge through
-`scripts/merge-pr.sh <PR>`, not bare `gh pr merge`. It runs `git fetch origin`, refuses unless the
-PR's base is `develop` (re-read just before the merge) and its review verdict (below) says MERGE,
-waits for load below 4 (default 900s, then fails with the load figure), fetches again and syncs the
-head when it lacks the `origin/develop` tip or a version above it (below), then checks ancestry
-(`git merge-base --is-ancestor`), the review again, and versions (plain `X.Y.Z`, both manifests equal,
-above `origin/develop`'s; `MERGE_PR_ALLOW_SAME_VERSION=1` accepts an equal version, for a PR that needs
-no bump; an unreadable manifest or a failed fetch also refuses, with a message naming it), merges with
-`gh pr merge --merge --match-head-commit <checked sha>`, and prints the merge commit sha. On a
-wrong-base refusal, retarget the PR with `gh pr edit <PR> --base develop`.
+`scripts/merge-pr.sh <PR>`, not bare `gh pr merge`. **PRs do not bump the version; the script does,
+at merge time** (2026-10-25: while each PR bumped itself, every peer merge re-conflicted every open PR
+on the two manifest lines, and #581 took about six re-sync and gauntlet cycles to land).
 
-**Branches do not bump the version; the merge does.** While every branch bumped its own manifests,
-develop's version moved 48 times in six hours (2026-10-25) and each open PR re-merged and re-bumped
-after every one (#618 took five rounds). Now, after the load wait, a head that lacks `origin/develop`
-or does not ship a version above it goes to `scripts/sync-pr-head.sh <branch> <head>`: in a temporary
-worktree it merges `origin/develop` (a manifest conflict takes develop's side only when the branch
-changed nothing in that manifest but its version line; any other conflict, including a manifest edit
-next to the version line, refuses, so merge develop into the branch yourself and push), sets both manifests to
-develop's version + 1 (or the branch's own when it is higher: a deliberate minor bump survives) in
-one manifest-only commit, and pushes to the PR branch, leased on the head. That push runs the pre-push
-gauntlet on the exact tree that will merge, and fails if the branch moved since the head was read. The gauntlet
-takes minutes and develop can move meanwhile, so `merge-pr.sh` fetches and syncs again, up to
-`MERGE_PR_SYNC_TRIES` rounds (default 3), then merges pinned to the synced head; a PR from a fork
-cannot be pushed to and is refused instead. A rebase rewrites every commit, so it also throws away
-the review verdict below; the sync never rebases.
+Run it from the PR's own checkout, on its branch, with a clean tree (untracked files count), and
+start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. Do not edit that
+checkout while it runs; it re-checks the tree after each wait and before and after its push, and
+refuses on any change. It:
+
+1. refuses unless the PR's base is `develop`, it is not from a fork, the checkout is on the PR's head branch, the tree is
+   clean, and the local branch contains the PR head (a rerun after a red gauntlet carries the
+   unpushed commits of the last run);
+2. checks the review verdict below before writing anything;
+3. takes a per-user merge lock (`~/.cache/mh/merge-pr.lock`, the gauntlet queue's code with its own
+   dir), so one merge runs at a time and develop holds still during its gauntlet; after 3600 s it
+   refuses instead of running unlocked;
+4. waits for load below 4 (default 900 s, then fails with the load figure);
+5. merges `origin/develop` into the branch when it is behind (the develop tip its own last fetch saw:
+   every worktree shares the `origin/develop` ref and peer sessions fetch all the time, so it never
+   re-reads the ref between fetches), and writes develop's version + 1 into
+   both manifests unless they already agree on a higher one. The sync and the bump are one commit
+   (`Merge origin/develop into <branch>; bump mh to N`), or `chore: bump mh to N` when no sync was
+   needed. An older PR that still bumps its own version conflicts on that line: when the only
+   conflicts are the manifests, the script merges them again with the version set aside, so the
+   PR's other manifest edits survive, then keeps the PR's own version if it is higher (a deliberate
+   minor bump); any other conflict refuses (merge by hand, push, rerun);
+6. pushes to the PR branch, so the pre-push gauntlet runs on the exact tree that will merge. Git
+   opens the SSH connection before the hook runs, so the push adds `-o ServerAliveInterval=10 -o
+   ServerAliveCountMax=30` to the ssh command (GitHub dropped the idle connection on the first real run, exit 141). It checks
+   the push by `git ls-remote`, not the exit code, and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
+   on the local branch: fix, commit, rerun (a fix commit that touches more than the manifests needs
+   a new review verdict). If the tree changed while the gauntlet ran, it refuses the merge. When
+   origin already has the head (an earlier run pushed it, or an older PR is already up to date and
+   above develop), the script runs the pre-push hook itself on the clean tree instead of pushing,
+   and refuses if there is no executable hook;
+7. fetches; if `origin/develop` moved (a merge made outside the script), goes back to step 4, three
+   rounds at most;
+8. re-checks the version (plain `X.Y.Z`, both manifests equal, above `origin/develop`'s), the review
+   and the base, merges with `gh pr merge --merge --match-head-commit <pushed sha>`, and prints the
+   merge commit sha.
+
+Never rebase a PR branch: a rebase rewrites every commit and throws away the review verdict below.
+On a wrong-base refusal, retarget the PR with `gh pr edit <PR> --base develop`.
 
 It also refuses a PR without a current review verdict (2026-10-25: #569–#576 and #611 merged while
 their reviews still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
@@ -70,8 +89,8 @@ nor does a line inside a ``` or ~~~ fence at any indentation (closed only by a b
 character, at least as long), and the last verdict line in a comment wins. The last verdict on
 the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must touch only
 the two manifests or be a two-parent merge whose tree is what `git merge-tree --write-tree` makes of its parents,
-manifests aside, and whose only conflicts were in the manifests (GH #629; git >= 2.38), checked before and
-after the load wait. So merging `develop`
+manifests aside, and whose only conflicts were in the manifests (GH #629; git >= 2.38), checked before the
+script writes anything, before its push and before the merge. So merging `develop`
 and bumping the version keep the review; any other change (an edit made inside a merge, or a conflict
 resolved in code, included), a rebase, or a force-push needs a new one. The
 check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
@@ -89,21 +108,23 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
    the PR's comment count. A page left out can hide the latest verdict: a FIX FIRST on page 2 after a
    MERGE on page 1;
 2. if the head lacks `origin/develop` or a version above it, run `scripts/sync-pr-head.sh <head branch>
-   <head sha>` and use the sha it prints. A PR from a fork (its head repository is not this one)
-   cannot be synced this way, since the sync pushes to a branch of `origin`: merge develop into it and
-   bump on the fork by hand;
+   <head sha>` and use the sha it prints. It merges develop and bumps in a temporary worktree and
+   pushes leased on the head, so the pre-push gauntlet runs on the tree that merges. A PR from a fork
+   (its head repository is not this one) cannot be synced this way, since the sync pushes to a branch
+   of `origin`: merge develop into it and bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,
-   review (same verdict parser), ancestry and version checks, never a sync, push or merge. It prints
-   the head on a pass, and on a head that is not synced it names the sync command;
+   review (same verdict parser), ancestry and version checks, never a gh call, lock, sync, push or
+   merge. It prints the head on a pass, and on a head that is not synced it names the sync command;
 4. read the PR once more with the MCP tools and confirm its base is still `develop` and its head is
    still that sha (`--verify` only knows the values it was given; the `gh` path re-reads the base
    itself), then merge through the MCP merge tool with `expectedHeadSha` set to that head, straight
    away. If develop moved first, go back to step 2.
-There is no load wait in this mode: a cloud container runs nothing else.
+There is no load wait and no merge lock in this mode: a cloud container runs nothing else, and the
+lock is per machine.
 
-The checks are local-only. The script narrows the gap; it does not close it: a push to `develop`
-from another clone between the check and the merge can still race, and nothing stops a merge made
-outside the script. The script's own `gh pr merge` call runs inside the script, so
+The checks and the lock are local-only. The script narrows the gap; it does not close it: a merge made
+outside the script costs a retry round, a push to `develop` from another clone between the last check
+and the merge can still race, and nothing stops a merge made outside the script. The script's own `gh pr merge` call runs inside the script, so
 `gate:bash:irrecoverable`'s ask on that command does not see it.
 
 The former `git worktree add -b` deny predates this and was removed in the v1.0.0 rebuild;
@@ -140,15 +161,13 @@ discipline:
 - **`ListAgents`/`SendMessage` file-claim discipline** (`~/.claude/CLAUDE.md`, injected globally)
   still applies to anyone touching a file another live session might also touch — worktree
   isolation removes the *working-tree* collision, not a collision in a file both sessions read
-  from or write to outside git (e.g. the shared memory store above; the manifests are per
-  checkout, which is why `merge-pr.sh` reads the version from `origin/develop`).
-- **Do not bump the manifests on a branch.** `scripts/merge-pr.sh` gives the PR the next version
-  at merge time (Merging above), so the number is read from `origin/develop` seconds before the
-  merge instead of hours before it. Merge only through the script (never bare `gh pr merge`): two
-  PRs that cut the same version leave the installed cache with whichever tree built first, and the
-  other change does not load until the next bump (#492 and #493 both took 1.1.189, #496 and #497
-  both took 1.1.191, 2026-10-05). A branch that does bump (a deliberate minor release) keeps its
-  number when it is above develop's.
+  from or write to outside git (e.g. the shared memory store above).
+- **Leave the version alone in a PR.** `scripts/merge-pr.sh` cuts it at merge time, under its
+  merge lock, from `origin/develop`'s number (see Merging above), so a PR's title, body and commit
+  messages never name a version. Bumping it yourself only brings back the manifest conflict on
+  every peer merge. The lock also keeps two PRs from cutting the same number, which left the
+  installed cache with whichever tree built first (#492 and #493 both took 1.1.189, #496 and #497
+  both took 1.1.191, 2026-10-05).
 - **`/rewind` only reverts this session's own worktree.** It can no longer touch a peer's tree at
   all, since each session now has its own — this constraint from the old shared-tree model is
   gone, not merely mitigated.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# test-sync-pr-head.sh — scripts/sync-pr-head.sh, which scripts/merge-pr.sh runs so branches never
-# bump the version: it merges origin/develop into a PR head (manifest conflicts take develop's side,
+# test-sync-pr-head.sh — scripts/sync-pr-head.sh, the no-gh sync a cloud session runs before
+# `merge-pr.sh --verify`, so branches never bump the version: it merges origin/develop into a PR head (manifest conflicts take develop's side,
 # any other conflict refuses), sets both manifests to develop's version + 1 (or the head's own when it
 # is higher), pushes to the PR branch and prints the new head. Real git: a bare origin, a develop that
 # moved on, and a feature branch per case. Case 1 wires hooks that print to stdout (the real pre-push
@@ -8,7 +8,7 @@
 set -uo pipefail
 # A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
-unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT MERGE_PR_ALLOW_SAME_VERSION
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
@@ -168,13 +168,6 @@ if [ "$rc" -eq 0 ] && [ "$(git -C "$L" rev-parse "$out^")" = "$HEAD_SHA" ] && [ 
   && /usr/bin/grep -q '^chore: bump mh to 1.0.7' <<<"$(git -C "$L" log -1 --format=%s "$out")"; then
   ok "up to date, same version: a single 'chore: bump mh to 1.0.7' commit on the head"
 else bad "bump only: rc=$rc out='$out' err=$err"; fi
-
-# 7. MERGE_PR_ALLOW_SAME_VERSION=1 on that same head: nothing to do.
-git -C "$w/c" push -q -f origin "$HEAD_SHA:refs/heads/feat/x"
-out=$(cd "$L" && MERGE_PR_ALLOW_SAME_VERSION=1 bash "$SCRIPT" feat/x "$HEAD_SHA" 2>"$ROOT_DIR/err"); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "$HEAD_SHA" ] && [ "$(remote_head)" = "$HEAD_SHA" ]; then
-  ok "same version with the opt-out: head unchanged, no push"
-else bad "opt-out: rc=$rc out='$out' err=$(cat "$ROOT_DIR/err")"; fi
 
 # 7b. contains develop, plugin.json bumped but marketplace.json not: the early return must not take it;
 # a bump commit brings marketplace.json to plugin.json's 1.0.7.

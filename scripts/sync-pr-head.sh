@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # sync-pr-head.sh <branch> <head sha> — bring a PR head up to origin/develop and give it the next
-# version, so a feature branch never bumps the manifests itself. scripts/merge-pr.sh runs it right
-# before the merge: while every branch bumped its own, develop's version moved 48 times in six hours
-# and each open PR had to re-merge and re-bump after every one (#618 took five rounds).
+# version, so a feature branch never bumps the manifests itself. This is the sync for a session without
+# gh (a cloud session): run it, then `merge-pr.sh --verify` on the sha it prints, then the MCP merge.
+# merge-pr.sh's gh path syncs in the caller's checkout instead. While every branch bumped its own,
+# develop's version moved 48 times in six hours and each open PR had to re-merge and re-bump after
+# every one (#618 took five rounds).
 #
 # When the head already contains origin/develop and ships a version above it, it prints the head and
 # changes nothing. Otherwise, in a temporary worktree at the head:
@@ -12,8 +14,7 @@
 #      aborts: the branch's own change needs a person, so merge develop yourself. Taking develop's
 #      whole file would silently drop the branch's edit (PR #644 review).
 #   2. set both manifests to the head's own version when it is above develop's (a deliberate bump,
-#      say a minor one), else develop's + 1 (MERGE_PR_ALLOW_SAME_VERSION=1: develop's own), in one
-#      manifest-only commit.
+#      say a minor one), else develop's + 1, in one manifest-only commit.
 #   3. push to origin/<branch>, leased on <head>. The pre-push gauntlet runs on the exact tree that
 #      merges; a branch that is no longer exactly <head> (someone pushed or rewound it) is refused.
 # Prints the new head sha on stdout; everything else goes to stderr. The caller fetches origin first.
@@ -51,8 +52,6 @@ for v in "$dev_ver" "$head_ver"; do
 done
 if version_lt "$dev_ver" "$head_ver"; then
   target=$head_ver
-elif [ "${MERGE_PR_ALLOW_SAME_VERSION:-}" = 1 ]; then
-  target=$dev_ver
 else
   target=$(awk -v v="$dev_ver" 'BEGIN { split(v, x, "."); printf "%d.%d.%d\n", x[1], x[2], x[3] + 1 }')
 fi

@@ -3441,6 +3441,14 @@ def _gh_written_subs():
     _GH_SUBS.append(subs)
     return subs
 
+# GH #594: `rm -- -rf` removes a file named -rf. A bare `--` ends rm's options, but a reading can show one
+# bash never passes (a CR the tokenizer splits at, `<<- --` read as a redirect target, an interpreter's
+# argv joined into shell words), and a stop there hides the flags after it. So the stop is trusted only
+# when the whole command is plain `rm [flags] -- operands`: space or tab between words, and no quote,
+# `$`, backslash, redirect, glob or separator anywhere, as for git branch -D (_BRANCH_D_PLAIN_RE).
+_RM_PLAIN_DASHDASH = re.fullmatch(r"[ \t]*rm(?:[ \t]+(?:-[A-Za-z]+|--[a-z-]+))*[ \t]+--(?:[ \t]+[\w./+,:@%-]+)+[ \t]*",
+                                  cmd) is not None
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -3805,6 +3813,9 @@ def _check_window(_wi, w):
             # recursive, dir, verbose, help, version) leave --r and --f unambiguous.
             has_r = has_f = False
             for t in rest:
+                # GH #594: after a bare `--` every word is an operand, in a plain command only (_RM_PLAIN_DASHDASH).
+                if t == "--" and _RM_PLAIN_DASHDASH:
+                    break
                 # "$(true)-rf" IS "-rf" in bash but blanks to "PH-rf", which no
                 # longer starts with "-" -- strip PH, assume the dangerous
                 # (empty-substitution) resolution.
