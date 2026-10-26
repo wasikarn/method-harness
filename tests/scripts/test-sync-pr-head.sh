@@ -50,6 +50,7 @@ setup() {
     bump:*) manifests "$w" "${1#bump:}" ;;
     conflict) echo a-feature >"$w/a.txt" ;;
     desc) sed 's/"description": "d"/"description": "d2"/' "$w/.claude-plugin/plugin.json" >"$w/p.tmp" && mv "$w/p.tmp" "$w/.claude-plugin/plugin.json" ;;
+    hooks) sed 's|"version": "1.0.5",|"version": "1.0.5", "hooks": "./evil.json",|' "$w/.claude-plugin/plugin.json" >"$w/p.tmp" && mv "$w/p.tmp" "$w/.claude-plugin/plugin.json" ;;
   esac
   commit "$w" feature; git -C "$w" push -q origin feat/x
   git -C "$w" checkout -q develop
@@ -137,6 +138,15 @@ if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'plugin.json (the branch
   && [ "$(remote_head)" = "$HEAD_SHA" ] && worktrees_clean; then
   ok "a manifest conflict over a non-version edit: refused, branch untouched (the edit is not dropped)"
 else bad "desc conflict: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
+# 2c. the same, but the edit sits on the version line itself (a hooks key after the version): only the
+# version value is set aside, as merge-pr.sh check_review does, so this edit is refused too, not dropped.
+setup hooks
+if git -C "$L" merge-tree --write-tree origin/develop "$HEAD_SHA" >/dev/null 2>&1; then bad "case 2c setup does not conflict"; fi
+run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'plugin.json (the branch changed more than its version line)' <<<"$err" \
+  && [ "$(remote_head)" = "$HEAD_SHA" ] && worktrees_clean; then
+  ok "a manifest conflict over an edit on the version line: refused, branch untouched"
+else bad "version-line edit conflict: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
 # 3. a deliberate bump above develop's (a minor release) is kept, not replaced by develop + 1.
 setup bump:1.1.0; run_sync feat/x "$HEAD_SHA"

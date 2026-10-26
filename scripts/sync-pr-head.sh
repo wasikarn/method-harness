@@ -47,6 +47,10 @@ version_lt() {
     for (i = 1; i <= 3; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }
     exit 1 }'
 }
+# Copy stdin with the first "version" value blanked (merge-pr.sh's with_version, with a placeholder).
+without_version() {
+  awk '!done && /"version"/ { done = sub(/"version"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"version\": \"\"") } { print }'
+}
 is_xyz() { [[ "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; }
 
 dev_ver=$(version_of origin/develop "$PJ") || { echo "sync-pr-head: cannot read $PJ at origin/develop." >&2; exit 1; }
@@ -88,7 +92,9 @@ if [ "$behind" -eq 1 ]; then
     base=$(git merge-base origin/develop "$head")
     for f in "$PJ" "$MJ"; do
       /usr/bin/grep -qxF "$f" <<<"$conflicted" || continue
-      if [ -n "$(git diff "$base" "$head" -- "$f" | awk '/^[-+]/ && !/^(---|\+\+\+)/ && !/"version"[[:space:]]*:/')" ]; then
+      # Only the first "version" value is set aside, as merge-pr.sh check_review does: the rest of that
+      # line (a "hooks" key after it, say) is an edit too.
+      if ! { a=$(git show "$base:$f" | without_version) && b=$(git show "$head:$f" | without_version) && [ "$a" = "$b" ]; }; then
         others=$(printf '%s\n%s (the branch changed more than its version line)' "$others" "$f" | awk 'NF')
       fi
     done
