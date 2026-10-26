@@ -2935,4 +2935,52 @@ test_allow "$IRRECOVERABLE" "GH #662 control: busybox --list" "$(bash_payload 'b
 test_allow "$IRRECOVERABLE" "GH #662 control: busybox rm x.log" "$(bash_payload 'busybox rm x.log')"
 test_allow "$IRRECOVERABLE" "GH #662 control: echo busybox rm -rf b" "$(bash_payload 'echo busybox rm -rf b')"
 
+# GH #661: bash brace-expands rm's own words before rm parses them: `--{r,f}` is `--r --f`, i.e. -rf.
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{r,f} b" "$(bash_payload 'rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{recursive,force} b" "$(bash_payload 'rm --{recursive,force} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm {-r,-f} b" "$(bash_payload 'rm {-r,-f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{r,} b (rm-recursive)" "$(bash_payload 'rm --{r,} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{rec,verbose} b (rm-recursive)" "$(bash_payload 'rm --{rec,verbose} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: sudo rm --{r,f} b" "$(bash_payload 'sudo rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: bash -c 'rm --{r,f} b'" "$(bash_payload "bash -c 'rm --{r,f} b'")"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --no-preserve-{root,x} -r /" "$(bash_payload 'rm --no-preserve-{root,x} -r /')"
+# a shadowed brace-view hit earlier in the command does not end the view before the rm
+test_deny  "$IRRECOVERABLE" "GH #661: fi{nd,nd} ... -delete; rm --{r,f} b" "$(bash_payload 'fi{nd,nd} /nonexistent -delete; rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: git push --fo{rce,rce} ...; rm --{r,f} b" "$(bash_payload 'git push --fo{rce,rce} --dry-run origin main; rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: git br{anch,anch} -D x; r{m,} -rf /tmp/x" "$(bash_payload 'git br{anch,anch} -D nosuchbranch; r{m,} -rf /tmp/x')"
+test_deny  "$IRRECOVERABLE" "GH #661: true && fi{nd,nd} ... || r{m,} -rf /tmp/x" "$(bash_payload 'true && fi{nd,nd} /nonexistent -delete || r{m,} -rf /tmp/x')"
+# ...nor a word window the first pass already saw, nor another rule firing first in the rm's own window
+test_deny  "$IRRECOVERABLE" "GH #661: decoy; sudo -u \$U r{m,} -rf b" "$(bash_payload 'fi{nd,nd} x -delete; sudo -u $U r{m,} -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #661: decoy; X=\$Y r{m,} -rf b" "$(bash_payload 'fi{nd,nd} x -delete; X=$Y r{m,} -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #661: GIT_CONFIG_PARAMETERS=core.hooks{path,path} rm --{r,f} b" \
+  "$(bash_payload 'GIT_CONFIG_PARAMETERS=core.hooks{path,path} rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: echo b | xargs r{m,} -rf" "$(bash_payload 'echo b | xargs r{m,} -rf')"
+# a structural limit only the expanded text reaches (an eval chain past the depth limit, the xargs handover
+# budget) denies in the enforced pass, as it does in the main reading
+test_deny  "$IRRECOVERABLE" "GH #661: e{val,val} x3 rm --{r,f} b" "$(bash_payload 'e{val,val} e{val,val} e{val,val} rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: 55 xargs e{nv,} decoys, then xargs env r{m,} -rf b" \
+  "$(bash_payload "$(printf ': | xargs e{nv,} true; %.0s' $(seq 55)): | xargs env r{m,} -rf b")"
+# a word glued to a substitution is not every verb in the enforced pass's word windows (as in _run_words)
+test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U ./build\"\$(date +%s)\" -r out" \
+  "$(bash_payload 'echo {a,b}; f{ind,ind} . -name x -delete; sudo -u $U ./build"$(date +%s)" -r out')"
+test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U python\"\$(echo 3)\" -m compileall -r 2 {a,b}" \
+  "$(bash_payload 'fi{nd,nd} x -delete; sudo -u $U python"$(echo 3)" -m compileall -r 2 {a,b}')"
+# the enforced pass runs no spawn scan: a subagent body the main reading fits is not denied as a spawn
+test_allow "$IRRECOVERABLE" "GH #661 control: subagent bash -c with 800 statements, then echo {a,b}" \
+  "$(bash_agent_payload "bash -c '$(printf 'true; %.0s' $(seq 800))true'; echo {a,b}" fork)"
+# the pass reads rm's rules only and runs no spawn scan, so an expansion that copies a long eval body many times
+# spends no scan budget there: allowed, as on develop, and the rm in or after that body is still read
+_x661="eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)}"
+test_allow "$IRRECOVERABLE" "GH #661 control: subagent eval 'true;...'{0..29} (no spawn scan in the pass)" \
+  "$(bash_agent_payload "$_x661" fork)"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent: the rm inside the body that spends the budget" \
+  "$(bash_agent_payload "eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)} '; rm --{r,f} b'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then bash -c 'rm --{r,f} b'" \
+  "$(bash_agent_payload "$_x661; bash -c 'rm --{r,f} b'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then e{val,val} x3 rm --{r,f} b" \
+  "$(bash_agent_payload "$_x661; e{val,val} e{val,val} e{val,val} rm --{r,f} b" fork)"
+test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm {a,b}.log')"
+test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
+test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
+
 gates_summary
