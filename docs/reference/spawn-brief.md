@@ -48,8 +48,8 @@ return `NEEDS-DECISION <question>` instead of guessing; a ruling made within you
 claim — illegible evidence is unverified, not absent; before returning, stop every background
 job or wait loop you started (a finished validator once left an `until ... sleep` loop running);
 in a repo that has `scripts/merge-pr.sh` (method-harness does), merge through `scripts/merge-pr.sh <PR>`,
-not bare `gh pr merge` (checks are local-only, so it narrows the race but does not close it:
-`branching-model.md`, "Merging").
+not bare `gh pr merge`, and do not bump the version in the PR: the script cuts it at merge time, run
+from the PR's checkout in the background (`branching-model.md`, "Merging").
 ```
 
 When the brief goes to Codex (`/codex:rescue`), name the reasoning effort as an invocation flag,

@@ -1,54 +1,58 @@
 #!/usr/bin/env bash
-# test-merge-pr.sh — GH #450: scripts/merge-pr.sh merges only a PR whose head
-# contains the origin/develop tip, pinned with --match-head-commit, and whose two manifests
-# agree on a version above origin/develop's (both checked before and after the load wait;
-# #492/#493, #496/#497 cut the same number). Stubs gh,
-# git and uptime on PATH; never touches GitHub. Each failing case also checks
-# that `gh pr merge` was never reached (or, for a head mismatch, that it was
-# reached with the checked sha and its refusal propagated). It also needs a last "Fresh-context review:
-# MERGE @ <sha>" comment whose <sha> is the head or an ancestor followed only by develop merges and
-# manifest-only commits (2026-10-25: #569-#576 and #611 merged with FIX FIRST reviews open); the gh stub
-# runs the script's own jq on fake comments. Branches do not bump: a head that is behind develop or
-# does not ship a version above it is handed to the sync script (stubbed here; scripts/sync-pr-head.sh
-# is tested on real repos by test-sync-pr-head.sh) after the load wait, round after round while develop
-# keeps moving, and the merge is pinned to the synced head.
+# test-merge-pr.sh — GH #450: scripts/merge-pr.sh brings a develop PR up to date, cuts its version and
+# merges it pinned with --match-head-commit. PRs no longer bump the version (2026-10-25: every peer merge
+# re-conflicted every open PR on the two manifest lines): the script merges origin/develop into the PR
+# branch, writes develop's version + 1, and pushes from the caller's checkout so the pre-push gauntlet runs
+# on the exact tree that merges, all under a per-user merge lock. It also needs a last "Fresh-context
+# review: MERGE @ <sha>" comment whose <sha> is the head or an ancestor followed only by develop merges
+# and manifest-only commits (#569-#576 and #611 merged with FIX FIRST reviews open).
+# Real git: each case builds a bare origin, a seed clone that plays the peers, and a work clone on the
+# PR branch whose pre-push hook is a recorder. Only gh and uptime are stubbed; never touches GitHub.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../../scripts/merge-pr.sh"
 pass=0; fail=0
-# An exported opt-out would turn every same-version refusal case into a merge; cases set it per call.
-unset MERGE_PR_ALLOW_SAME_VERSION
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 safe_trash() { [ -n "${1:-}" ] && trash "$1" 2>/dev/null; return 0; }
 
-echo "=== merge-pr.sh requires an up-to-date head (GH #450) ==="
+# The fixture's git must not read the operator's config (hooks, signing) or a caller's lock state.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+unset GAUNTLET_LOCK_DIR MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND
+# `git -c` from an outer push (git -c core.sshCommand=... push) reaches the fixture through these.
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+# A git hook exports GIT_DIR; the fixture's git commits and pushes would then target the real repo.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 
-STUB=$(mktemp -d)
-if [ -z "$STUB" ]; then echo "mktemp -d failed" >&2; exit 1; fi
-LOG="$STUB/calls.log"
+echo "=== merge-pr.sh syncs, cuts the version, pushes and merges (GH #450) ==="
 
-# gh: `pr view --json headRefOid,baseRefName` prints "STUB_HEAD STUB_BASE" (nothing when
-# STUB_EMPTY is set); `pr view --json baseRefName` prints STUB_BASE2, else STUB_BASE, else
-# develop (the re-read just before the merge); `pr merge` refuses unless
-# --match-head-commit equals STUB_REMOTE_HEAD (GitHub's real behaviour);
-# `pr view --json mergeCommit` prints the merge sha.
+T=$(mktemp -d)
+if [ -z "$T" ]; then echo "mktemp -d failed" >&2; exit 1; fi
+STUB="$T/stub"
+mkdir -p "$STUB/hooks"
+
+# gh: the PR is #451 on feat/x; its head is whatever origin's feat/x holds (STUB_ORIGIN), like GitHub.
+#   `pr view --json headRefOid,baseRefName,headRefName` prints "<head> STUB_BASE feat/x" (nothing when
+#   STUB_EMPTY is set); `--json baseRefName` prints STUB_BASE2, else STUB_BASE, else develop (the re-read
+#   just before the merge); `pr merge` refuses unless --match-head-commit equals origin's feat/x, or when
+#   STUB_MERGE_REFUSE is set; `api --paginate .../comments` applies the script's own --jq to
+#   STUB_COMMENTS_JSON (STUB_COMMENTS_JSON2 from the second read on; STUB_API_FAIL fails it).
 cat >"$STUB/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$STUB_LOG"
+tip() { git --git-dir="$STUB_ORIGIN" rev-parse refs/heads/feat/x; }
 case "$*" in
   *"pr merge"*)
     want=""; prev=""
     for a in "$@"; do [ "$prev" = "--match-head-commit" ] && want="$a"; prev="$a"; done
-    [ "$want" = "$STUB_REMOTE_HEAD" ] || { echo "head branch was modified" >&2; exit 1; }
+    [ -z "${STUB_MERGE_REFUSE:-}" ] && [ "$want" = "$(tip)" ] || { echo "head branch was modified" >&2; exit 1; }
     exit 0 ;;
-  *headRefOid,baseRefName*) [ -n "${STUB_EMPTY:-}" ] || echo "$STUB_HEAD ${STUB_BASE:-develop}" ;;
-  *headRefName,isCrossRepository*) echo "${STUB_BRANCH-feat/x} ${STUB_CROSS:-false}" ;;
+  *headRefOid,baseRefName,headRefName*) [ -n "${STUB_EMPTY:-}" ] || echo "$(tip) ${STUB_BASE:-develop} feat/x ${STUB_CROSS-false}" ;;
+  *"--json headRefOid "*) tip ;;
   *baseRefName*) echo "${STUB_BASE2:-${STUB_BASE:-develop}}" ;;
   *mergeCommit*) echo "mergesha000" ;;
   *"api --paginate"*comments*)
-    # Apply the script's --jq to STUB_COMMENTS_JSON (STUB_COMMENTS_JSON2 from the second read on), so
-    # the real expression is what the test exercises. STUB_API_FAIL makes the call fail.
     [ -z "${STUB_API_FAIL:-}" ] || { echo "HTTP 502" >&2; exit 1; }
     n=0; [ ! -f "$STUB_DIR/api" ] || n=$(cat "$STUB_DIR/api"); n=$((n + 1)); echo "$n" >"$STUB_DIR/api"
     json="$STUB_COMMENTS_JSON"; if [ "$n" -gt 1 ]; then json="${STUB_COMMENTS_JSON2-$STUB_COMMENTS_JSON}"; fi
@@ -57,391 +61,530 @@ case "$*" in
   *) exit 2 ;;
 esac
 EOF
-# git: per-subcommand call counters live in files under STUB_DIR (reset by run()), so a case
-# can change what the Nth call returns, i.e. what happened while the script waited for load.
-#   fetch: exits 1 on its second call when STUB_FETCH2_FAIL is set, else 0.
-#   merge-base --is-ancestor: for a synced head syncsha<n>, 0 when n >= STUB_SYNC_OK_FROM (default 1:
-#     the first sync's head is up to date) else 1; for the PR head, STUB_ANCESTOR on call 1,
-#     STUB_ANCESTOR2 (default STUB_ANCESTOR) after.
-#   show <ref>:<manifest>: prints a manifest whose version is STUB_HEAD_VER (PR head,
-#     plugin.json), STUB_HEAD_MKT_VER (PR head, marketplace.json, default STUB_HEAD_VER) or
-#     STUB_DEV_VER (origin/develop; STUB_DEV_VER2 from its second read on, default STUB_DEV_VER).
-#     STUB_SHOW_FAIL makes every show fail like a missing path. A synced head (syncsha<n>) ships
-#     STUB_SYNC_VER (default 99.0.0, above any develop version here).
-cat >"$STUB/git" <<'EOF'
-#!/usr/bin/env bash
-echo "git $*" >>"$STUB_LOG"
-count() { local n=0; [ ! -f "$STUB_DIR/$1" ] || n=$(cat "$STUB_DIR/$1"); n=$((n + 1)); echo "$n" >"$STUB_DIR/$1"; echo "$n"; }
-case "$1" in
-  fetch)
-    n=$(count fetch)
-    if [ "$n" -gt 1 ] && [ -n "${STUB_FETCH2_FAIL:-}" ]; then echo "fatal: unable to access" >&2; exit 1; fi
-    exit 0 ;;
-  merge-base)
-    # The reviewed-sha ancestry check (any first ref but origin/develop): STUB_REVIEWED_ANCESTOR, default 0.
-    [ "$3" = "origin/develop" ] || exit "${STUB_REVIEWED_ANCESTOR:-0}"
-    case "$4" in syncsha*) [ "${4#syncsha}" -ge "${STUB_SYNC_OK_FROM:-1}" ] && exit 0; exit 1 ;; esac
-    n=$(count merge-base)
-    if [ "$n" -gt 1 ]; then exit "${STUB_ANCESTOR2:-$STUB_ANCESTOR}"; fi
-    exit "$STUB_ANCESTOR" ;;
-  show)
-    [ -z "${STUB_SHOW_FAIL:-}" ] || { echo "fatal: path does not exist" >&2; exit 128; }
-    case "$2" in
-      origin/develop:*)
-        n=$(count show-develop)
-        if [ "$n" -gt 1 ]; then v="${STUB_DEV_VER2-$STUB_DEV_VER}"; else v="$STUB_DEV_VER"; fi ;;
-      syncsha*) v="${STUB_SYNC_VER:-99.0.0}" ;;
-      *:.claude-plugin/marketplace.json) v="${STUB_HEAD_MKT_VER-$STUB_HEAD_VER}" ;;
-      *) v="$STUB_HEAD_VER" ;;
-    esac
-    printf '{\n  "version": "%s"\n}\n' "$v" ;;
-  # STUB_COMMITS: space-separated "sha:file,file" for the non-merge commits after the reviewed sha.
-  rev-list) for c in $STUB_COMMITS; do echo "${c%%:*}"; done ;;
-  diff-tree)
-    [ -z "${STUB_DIFFTREE_FAIL:-}" ] || { echo "fatal: bad object" >&2; exit 128; }
-    for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { f=${c#*:}; printf '%s\n' ${f//,/ }; }; done ;;
-  *) exit 2 ;;
-esac
-EOF
+# uptime runs in the work clone after the lock is taken; STUB_DIRTY_DURING has it leave a stray file
+# there, as a caller still editing the checkout during the wait would.
 cat >"$STUB/uptime" <<'EOF'
 #!/usr/bin/env bash
+[ -z "${STUB_DIRTY_DURING:-}" ] || echo stray >stray.txt
 echo "10:00  up 1 day, 2 users, load averages: $STUB_LOAD 2.00 2.00"
 EOF
-# sync: logs "sync <branch> <head>", fails when STUB_SYNC_FAIL is set, else prints syncsha<n> for its
-# n-th call (MERGE_PR_SYNC points the script at it).
-cat >"$STUB/sync" <<'EOF'
+# A pre-commit hook that fails when STUB_PRECOMMIT_FAIL is set (a red lint on the sync or bump commit).
+# With STUB_PRECOMMIT_PEER set, its first call lands a peer merge on origin's develop and fetches it, as
+# another worktree's `git fetch` moves the shared origin/develop ref while the script runs (2026-10-26).
+cat >"$STUB/hooks/pre-commit" <<'EOF'
 #!/usr/bin/env bash
-echo "sync $*" >>"$STUB_LOG"
-[ -z "${STUB_SYNC_FAIL:-}" ] || { echo "sync-pr-head: conflicts outside the manifests" >&2; exit 1; }
-n=0; [ ! -f "$STUB_DIR/sync-n" ] || n=$(cat "$STUB_DIR/sync-n"); n=$((n + 1)); echo "$n" >"$STUB_DIR/sync-n"
-echo "syncsha$n"
+[ -z "${STUB_PRECOMMIT_FAIL:-}" ] || { echo "pre-commit: red" >&2; exit 1; }
+if [ -n "${STUB_PRECOMMIT_PEER:-}" ] && [ ! -f "$STUB_DIR/precommit-peer.done" ]; then
+  : >"$STUB_DIR/precommit-peer.done"
+  (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; bash "$STUB_PEER")
+  git fetch -q origin
+fi
+exit 0
 EOF
-chmod +x "$STUB/gh" "$STUB/git" "$STUB/uptime" "$STUB/sync"
+# The work clone's pre-push hook stands in for the gauntlet: it records the tree it ran on and the lock
+# variables it saw, fails when STUB_PREPUSH_FAIL is set, and on its first call with STUB_PREPUSH_PEER
+# set lands a peer merge on origin's develop (develop moving while the gauntlet runs).
+cat >"$STUB/hooks/pre-push" <<'EOF'
+#!/usr/bin/env bash
+n=0; [ ! -f "$STUB_DIR/prepush.n" ] || n=$(cat "$STUB_DIR/prepush.n"); n=$((n + 1)); echo "$n" >"$STUB_DIR/prepush.n"
+{
+  echo "head=$(git rev-parse HEAD)"
+  echo "dirty=$(git status --porcelain | tr '\n' ' ')"
+  echo "lockdir=${GAUNTLET_LOCK_DIR-} owner=${MH_GAUNTLET_LOCK_OWNER-}"
+  if [ -d "$MERGE_PR_LOCK_DIR" ]; then echo "mergelock=held"; else echo "mergelock=free"; fi
+  echo "ssh=${GIT_SSH_COMMAND-}"
+} >>"$STUB_DIR/prepush.log"
+[ -z "${STUB_PREPUSH_FAIL:-}" ] || { echo "gauntlet: red" >&2; exit 1; }
+[ -z "${STUB_PREPUSH_DIRTY:-}" ] || echo edit >>b.txt
+if [ -n "${STUB_PREPUSH_PEER:-}" ] && [ "$n" -eq 1 ]; then
+  (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; bash "$STUB_PEER")
+fi
+exit 0
+EOF
+# The peer that lands during the gauntlet (STUB_PREPUSH_PEER): one develop commit with the next version,
+# made in the seed clone (STUB_SEED).
+cat >"$STUB/peer.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$STUB_SEED"
+git checkout -q develop
+git pull -q origin develop
+v=$(awk -F'"' '/"version"/ && !s { print $4; s = 1 }' .claude-plugin/plugin.json)
+n=$(echo "$v" | awk -F. '{ print $1 "." $2 "." $3 + 1 }')
+for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+  new=$(awk -v v="$v" -v n="$n" '{ i = index($0, "\"version\": \"" v "\""); if (i) $0 = substr($0, 1, i - 1) "\"version\": \"" n "\"" substr($0, i + 13 + length(v)) } { print }' "$f")
+  printf '%s\n' "$new" >"$f"
+done
+echo peer >>c.txt
+git commit -qam peer-during-gauntlet
+git push -q origin develop
+EOF
+chmod +x "$STUB/gh" "$STUB/uptime" "$STUB/hooks/pre-push" "$STUB/hooks/pre-commit"
 
-# run <ancestor-rc> <remote-head> <load>; sets out, rc. Extra stub env (STUB_BASE, STUB_BASE2,
-# STUB_EMPTY, STUB_ANCESTOR2, STUB_FETCH2_FAIL, STUB_HEAD_VER, STUB_HEAD_MKT_VER, STUB_DEV_VER,
-# STUB_DEV_VER2, STUB_SHOW_FAIL) comes from the caller's environment.
-run() {
-  : >"$LOG"
-  rm -f "$STUB/fetch" "$STUB/merge-base" "$STUB/show-develop" "$STUB/api" "$STUB/sync-n"
-  out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_DIR="$STUB" STUB_HEAD=headsha111 \
-    STUB_COMMITS="${STUB_COMMITS-}" STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict 'MERGE @ abc1234')}" \
-    STUB_ANCESTOR="$1" STUB_REMOTE_HEAD="$2" STUB_LOAD="$3" \
-    STUB_HEAD_VER="${STUB_HEAD_VER-1.1.2}" STUB_DEV_VER="${STUB_DEV_VER-1.1.1}" \
-    MERGE_PR_SYNC="$STUB/sync" MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 bash "$SCRIPT" 451 2>&1)
-  rc=$?
+PLUGIN=.claude-plugin/plugin.json
+MARKET=.claude-plugin/marketplace.json
+# write_manifests <dir> <plugin version> <marketplace version> <marketplace description>; the
+# description sits on the line after the version, so a version conflict takes it into the same hunk.
+write_manifests() {
+  mkdir -p "$1/.claude-plugin"
+  printf '{\n  "name": "mh",\n  "version": "%s"\n}\n' "$2" >"$1/$PLUGIN"
+  printf '{\n  "name": "wasikarn",\n  "plugins": [\n    {\n      "name": "mh",\n      "version": "%s",\n      "description": "%s"\n    }\n  ]\n}\n' "$3" "$4" >"$1/$MARKET"
 }
-merged() { /usr/bin/grep -q '^gh pr merge' "$LOG"; }
-# merged_at <sha>: the merge call was pinned to <sha>.
-merged_at() { /usr/bin/grep -q "^gh pr merge 451 --merge --match-head-commit $1\$" "$LOG"; }
-syncs() { /usr/bin/grep -c '^sync ' "$LOG"; }
-# synced_and_merged <label> [rounds]: exit 0, the sync ran [rounds] times (default 1) and the merge is
-# pinned to the last synced head.
-synced_and_merged() {
-  local n=${2:-1}
-  if [ "$rc" -eq 0 ] && [ "$(syncs)" -eq "$n" ] && merged_at "syncsha$n"; then ok "$1: synced ($n round(s)) and merged at syncsha$n"
-  else bad "$1: rc=$rc syncs=$(syncs) out=$out log=$(cat "$LOG")"; fi
+ver_of() { awk -F'"' '/"version"/ && !seen { print $4; seen = 1 }' "$1"; }
+desc_of() { awk -F'"' '/"description"/ { print $4 }' "$1"; }
+
+# setup [base version]: a fresh origin whose develop holds both manifests and a.txt b.txt c.txt, and a
+# feat/x branch with one feature commit ($FEATURE). Sets F, the case's fixture dir.
+setup() {
+  local v="${1:-1.1.1}"
+  F=$(mktemp -d "$T/case.XXXXXX")
+  git init -q --bare -b develop "$F/origin.git"
+  git clone -q "$F/origin.git" "$F/seed" 2>/dev/null
+  git -C "$F/seed" checkout -q -b develop
+  write_manifests "$F/seed" "$v" "$v" "base desc"
+  printf 'a\n' >"$F/seed/a.txt"; printf 'b\n' >"$F/seed/b.txt"; printf 'c\n' >"$F/seed/c.txt"
+  git -C "$F/seed" add -- "$PLUGIN" "$MARKET" a.txt b.txt c.txt
+  git -C "$F/seed" commit -qm base
+  git -C "$F/seed" push -q origin develop
+  git -C "$F/seed" checkout -q -b feat/x
+  printf 'feature\n' >>"$F/seed/b.txt"
+  git -C "$F/seed" commit -qam feature
+  git -C "$F/seed" push -q origin feat/x
+  FEATURE=$(git -C "$F/seed" rev-parse HEAD)
+  git -C "$F/seed" checkout -q develop
 }
-# merged_unsynced <label>: exit 0, no sync, merge pinned to the PR head.
-merged_unsynced() {
-  if [ "$rc" -eq 0 ] && [ "$(syncs)" -eq 0 ] && merged_at headsha111; then ok "$1: merged at the PR head with no sync"
-  else bad "$1: rc=$rc syncs=$(syncs) out=$out log=$(cat "$LOG")"; fi
+# on <branch> <message> <command...>: run a change in the seed clone on <branch>, commit it, push it.
+on() {
+  local b=$1 m=$2; shift 2
+  git -C "$F/seed" checkout -q "$b"
+  (cd "$F/seed" && "$@")
+  git -C "$F/seed" commit -qam "$m"
+  git -C "$F/seed" push -q origin "$b"
+  git -C "$F/seed" checkout -q develop
 }
+set_ver() { write_manifests . "$1" "${2:-$1}" "$(desc_of "$MARKET")"; }
+set_desc() { write_manifests . "$(ver_of "$PLUGIN")" "$(ver_of "$MARKET")" "$1"; }
+append() { printf '%s\n' "$2" >>"$1"; }
+# work: the PR's own checkout, on feat/x, with the recording pre-push hook.
+work() {
+  git clone -q -b feat/x "$F/origin.git" "$F/work"
+  git -C "$F/work" config core.hooksPath "$STUB/hooks"
+}
+remote_tip() { git --git-dir="$F/origin.git" rev-parse "refs/heads/$1"; }
 # verdict <text>: one PR comment whose body carries the line "## Fresh-context review: <text>".
 verdict() { jq -nc --arg v "$1" '[{created_at: "2026-10-25T00:00:00Z", body: ("Some text.\n## Fresh-context review: " + $v + "\nmore")}]'; }
-# comments <json-array>...: concatenate comment arrays, in order.
 comments() { jq -sc 'add' <<<"$*"; }
 
-# refuses <label> <message-pattern>: the last run() exited non-zero, never reached gh pr merge,
-# and said why.
+# run: merge-pr.sh 451 from the work clone; sets out, rc. The default review is MERGE @ origin's feat/x.
+# Extra stub env (STUB_BASE, STUB_BASE2, STUB_EMPTY, STUB_LOAD, STUB_COMMENTS_JSON2, STUB_API_FAIL,
+# STUB_MERGE_REFUSE, STUB_PREPUSH_FAIL, STUB_PREPUSH_PEER) comes from the caller's environment.
+run() {
+  [ -d "$F/work" ] || work
+  : >"$F/calls.log"
+  out=$(cd "$F/work" && PATH="$STUB:$PATH" STUB_LOG="$F/calls.log" STUB_DIR="$F" \
+    STUB_ORIGIN="$F/origin.git" STUB_PEER="$STUB/peer.sh" STUB_SEED="$F/seed" STUB_LOAD="${STUB_LOAD:-1.50}" \
+    STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict "MERGE @ $(remote_tip feat/x)")}" \
+    MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
+    bash "$SCRIPT" 451 2>&1)
+  rc=$?
+}
+merged() { /usr/bin/grep -q '^gh pr merge' "$F/calls.log"; }
+pushes() { if [ -f "$F/prepush.n" ]; then cat "$F/prepush.n"; else echo 0; fi; }
+w() { git -C "$F/work" "$@"; }
+
+# merges <label>: the last run() exited 0, merged pinned to origin's feat/x, which is the local HEAD,
+# printed the merge sha last, freed the lock, and left the checkout clean with no open merge.
+merges() {
+  local tip; tip=$(remote_tip feat/x)
+  if [ "$rc" -eq 0 ]; then ok "$1 exits 0"; else bad "$1 rc=$rc: $out"; fi
+  if /usr/bin/grep -q "^gh pr merge 451 --merge --match-head-commit $tip\$" "$F/calls.log"; then
+    ok "$1 merges pinned to origin's head"
+  else bad "$1 merge not pinned to $tip: $(cat "$F/calls.log")"; fi
+  if [ "$(w rev-parse HEAD)" = "$tip" ]; then ok "$1 pushed the local HEAD"; else bad "$1 local HEAD is not origin's feat/x"; fi
+  if [ "$(printf '%s\n' "$out" | tail -n 1)" = "mergesha000" ]; then ok "$1 prints the merge sha last"; else bad "$1 last line: <$out>"; fi
+  if [ ! -d "$F/merge.lock" ]; then ok "$1 frees the merge lock"; else bad "$1 left the merge lock behind"; fi
+  if [ -z "$(w status --porcelain)" ] && ! w rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    ok "$1 leaves the checkout clean"
+  else bad "$1 left the checkout dirty: $(w status --porcelain)"; fi
+}
+# refuses <label> <message-pattern>: the last run() exited non-zero, never reached gh pr merge, said why,
+# freed the lock, and left no open merge or edited manifest behind.
 refuses() {
   if [ "$rc" -ne 0 ]; then ok "$1 exits non-zero (rc=$rc)"; else bad "$1 exited 0"; fi
   if merged; then bad "$1 still reached gh pr merge"; else ok "$1 never calls gh pr merge"; fi
   if /usr/bin/grep -q -- "$2" <<<"$out"; then ok "$1 message matches '$2'"; else bad "$1: no '$2' in: $out"; fi
+  if [ ! -d "$F/merge.lock" ]; then ok "$1 frees the merge lock"; else bad "$1 left the merge lock behind"; fi
+  if [ -z "$(w status --porcelain)" ] && ! w rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    ok "$1 leaves the checkout clean"
+  else bad "$1 left the checkout dirty: $(w status --porcelain)"; fi
 }
-# second_call_line <pattern>: line number in the stub log of the second matching call (empty
-# when there is none), i.e. the call made after the load wait.
-second_call_line() { awk -v p="$1" '$0 ~ p { n++; if (n == 2) { print NR; exit } }' "$LOG"; }
+# untouched <label>: the refusal wrote nothing: HEAD is still the PR head and no push ran.
+untouched() {
+  if [ "$(w rev-parse HEAD)" = "$(remote_tip feat/x)" ] && [ "$(pushes)" = 0 ]; then
+    ok "$1 commits and pushes nothing"
+  else bad "$1 changed the branch (HEAD $(w rev-parse HEAD), $(pushes) pushes)"; fi
+}
 
-# 1. up to date: merges with the checked head pinned, prints the merge sha.
-run 0 headsha111 1.50
-if [ "$rc" -eq 0 ]; then ok "up-to-date PR exits 0"; else bad "up-to-date PR rc=$rc: $out"; fi
-if /usr/bin/grep -q '^gh pr merge 451 --merge --match-head-commit headsha111$' "$LOG"; then
-  ok "merge is pinned to the checked head sha"
-else bad "merge call not pinned: $(cat "$LOG")"; fi
-if [ "$(printf '%s\n' "$out" | tail -n 1)" = "mergesha000" ]; then
-  ok "last line is the merge commit sha"
-else bad "last line is not the merge sha: <$out>"; fi
-if /usr/bin/grep -q '^git merge-base --is-ancestor origin/develop headsha111$' "$LOG"; then
-  ok "ancestry checked against origin/develop"
-else bad "no ancestry check: $(cat "$LOG")"; fi
+# 1. behind develop, PR never touched the version: one merge commit that syncs and bumps develop + 1, pushed
+#    from a clean tree with the merge lock kept out of the hook's environment, then merged.
+setup; on develop "peer 1.1.2" set_ver 1.1.2
+run
+merges "behind PR"
+if [ "$(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")" = "1.1.3 1.1.3" ]; then ok "both manifests cut to develop + 1"; else bad "versions: $(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")"; fi
+if [ "$(w log -1 --format=%s)" = "Merge origin/develop into feat/x; bump mh to 1.1.3" ] && [ "$(w rev-list --count --merges "$FEATURE..HEAD")" = 1 ] && [ "$(w rev-list --count "$FEATURE..HEAD")" = 2 ]; then
+  ok "sync and bump are one merge commit"
+else bad "commit shape: $(w log --oneline "$FEATURE..HEAD")"; fi
+if /usr/bin/grep -qx "head=$(remote_tip feat/x)" "$F/prepush.log" && /usr/bin/grep -qx "dirty=" "$F/prepush.log"; then
+  ok "the pre-push gauntlet ran on the clean tree that merges"
+else bad "pre-push saw: $(cat "$F/prepush.log")"; fi
+if /usr/bin/grep -qx "lockdir= owner=" "$F/prepush.log"; then ok "the merge lock does not leak into the pre-push hook"; else bad "hook env: $(cat "$F/prepush.log")"; fi
+if /usr/bin/grep -qx "mergelock=held" "$F/prepush.log"; then ok "the merge lock is held while the gauntlet runs"; else bad "lock during push: $(cat "$F/prepush.log")"; fi
+if /usr/bin/grep -qx "ssh=ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=30" "$F/prepush.log"; then ok "the push keeps its SSH connection alive through the gauntlet"; else bad "push ssh: $(cat "$F/prepush.log")"; fi
+if w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then ok "the merged head contains origin/develop"; else bad "head misses develop"; fi
 
-if [ "$(syncs)" -eq 0 ]; then ok "an up-to-date head with a version above develop's is not synced"; else bad "up-to-date head was synced: $(cat "$LOG")"; fi
+# 2. up to date with develop, same version: a plain bump commit on the PR head.
+setup
+run
+merges "up-to-date PR"
+if [ "$(w log -1 --format=%s)" = "chore: bump mh to 1.1.2" ] && [ "$(w rev-parse HEAD^)" = "$FEATURE" ]; then
+  ok "a plain bump commit on the PR head"
+else bad "commit shape: $(w log --oneline -3)"; fi
 
-# 2. behind develop: the sync merges develop and bumps, gets the branch name and the head, and the
-# merge is pinned to the synced head (it used to refuse and ask for a rebase).
-run 1 syncsha1 1.50
-synced_and_merged "behind PR"
-if /usr/bin/grep -q '^sync feat/x headsha111$' "$LOG"; then ok "sync gets the head branch and the PR head"; else bad "sync args: $(cat "$LOG")"; fi
-if [ "$(printf '%s\n' "$out" | tail -n 1)" = "mergesha000" ]; then ok "behind PR still prints the merge sha last"; else bad "behind PR last line: <$out>"; fi
-# the sync runs after the load wait, so it sits right before the merge: never under high load.
-run 1 syncsha1 7.25
-refuses "behind PR under high load" "7.25"
-if [ "$(syncs)" -eq 0 ]; then ok "no sync before the load wait"; else bad "synced before the load wait: $(cat "$LOG")"; fi
+# 3. an older PR already above develop and up to date: no commit and no push, but the script runs the
+#    pre-push hook itself on that head (its author may have pushed with hooks off), then merges.
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+before=$(remote_tip feat/x)
+run
+merges "self-bumped PR"
+if [ "$(remote_tip feat/x)" = "$before" ]; then ok "a head above develop is kept (1.1.100 over 1.1.99)"; else bad "self-bumped PR was rewritten"; fi
+if [ "$(pushes)" = 1 ] && /usr/bin/grep -qx "head=$before" "$F/prepush.log"; then ok "the gauntlet runs on a head the script did not push"; else bad "no gauntlet on an unpushed head: $(pushes)"; fi
+# ...and refuses when that gauntlet is red, or when there is no hook to run it.
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_PREPUSH_FAIL=1 run
+refuses "red gauntlet on an unpushed head" "the pre-push gauntlet failed on"
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100; work; w config --unset core.hooksPath
+run
+refuses "no pre-push hook" "no executable pre-push hook"
 
-# 3. head mismatch: a push landed after the check; GitHub refuses, script fails.
-run 0 othersha999 1.50
-if [ "$rc" -ne 0 ]; then ok "head mismatch exits non-zero (rc=$rc)"; else bad "head mismatch exited 0"; fi
-if merged; then ok "head mismatch reached gh pr merge with the checked sha"; else bad "head mismatch never tried the merge"; fi
-if /usr/bin/grep -q 'mergesha000' <<<"$out"; then bad "head mismatch printed a merge sha"; else ok "head mismatch prints no merge sha"; fi
+# 3b. versions order per number: develop at 1.1.99 is cut to 1.1.100, not 1.1.910.
+setup 1.1.99; on develop "peer" append c.txt peer
+run
+merges "1.1.99 develop"
+if [ "$(ver_of "$F/work/$PLUGIN")" = "1.1.100" ]; then ok "1.1.99 + 1 is 1.1.100"; else bad "cut $(ver_of "$F/work/$PLUGIN")"; fi
 
-# 4. load stays high: fails with the figure, no merge.
-run 0 headsha111 7.25
-refuses "high load" "7.25"
+# 4. an older PR that bumped itself conflicts with develop on the version line: merged with the PR's
+#    other manifest edit (the description, in the same hunk) kept, cut above develop.
+setup; on feat/x "self-bump" set_ver 1.1.2; on feat/x "desc" set_desc "PR desc"; on develop "peers" set_ver 1.1.3
+run
+merges "version-only conflict"
+if [ "$(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")" = "1.1.4 1.1.4" ] && [ "$(desc_of "$F/work/$MARKET")" = "PR desc" ]; then
+  ok "version conflict resolved, PR's description kept"
+else bad "manifests: $(cat "$F/work/$MARKET")"; fi
 
-# 4b. PR targets another branch: the develop ancestry check proves nothing, so refuse.
-STUB_BASE=main run 0 headsha111 1.50
+# 4b. a deliberate minor bump in the PR survives the version conflict: 1.2.0 over develop's 1.1.2.
+setup; on feat/x "minor" set_ver 1.2.0; on develop "peer" set_ver 1.1.2
+run
+merges "deliberate minor bump"
+if [ "$(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")" = "1.2.0 1.2.0" ]; then ok "the PR's higher version is kept"; else bad "minor bump became $(ver_of "$F/work/$PLUGIN")"; fi
+
+# 5. a real conflict in another file: refuse, nothing committed or pushed.
+setup; on feat/x "pr a" append a.txt pr; on develop "dev a" append a.txt dev
+run
+refuses "conflict in a.txt" "conflicts in a.txt"
+untouched "conflict in a.txt"
+
+# 6. a manifest conflict beyond the version line: refuse.
+setup; on feat/x "pr desc" set_desc "PR desc"; on feat/x "bump" set_ver 1.1.2; on develop "dev desc" set_desc "dev desc"; on develop "dev bump" set_ver 1.1.3
+run
+refuses "manifest conflict beyond the version" "still conflicts"
+untouched "manifest conflict beyond the version"
+
+# 7. develop moves while the gauntlet runs (a merge from outside the lock): sync again, push again, merge.
+setup
+STUB_PREPUSH_PEER=1 run
+merges "develop moved during the gauntlet"
+if [ "$(pushes)" = 2 ] && /usr/bin/grep -q "round 2 of 3" <<<"$out"; then ok "a second round synced and pushed again"; else bad "rounds: $(pushes) pushes: $out"; fi
+if [ "$(ver_of "$F/work/$PLUGIN")" = "1.1.3" ] && w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then
+  ok "the second round cut above the peer's 1.1.2"
+else bad "after round 2: $(ver_of "$F/work/$PLUGIN")"; fi
+
+# 7b. a peer's fetch moves the shared origin/develop ref while the sync commit is made (the first real
+#     merge of #634 hit this: synced to 1.1.400, cut 1.1.401, then compared with a develop already at
+#     1.1.401). The script checks against the develop it merged, finds the move after its push, syncs again.
+setup; on develop "peer 1.1.2" set_ver 1.1.2
+STUB_PRECOMMIT_PEER=1 run
+merges "develop moved by a peer's fetch mid-sync"
+if [ "$(ver_of "$F/work/$PLUGIN")" = "1.1.4" ] && w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then
+  ok "the next round cut above the peer's 1.1.3"
+else bad "after a peer fetch: $(ver_of "$F/work/$PLUGIN"): $out"; fi
+
+# 8. a red gauntlet: the push does not land; refuse and keep the sync commit. A rerun pushes that commit.
+setup; on develop "peer 1.1.2" set_ver 1.1.2
+STUB_PREPUSH_FAIL=1 run
+if [ "$rc" -ne 0 ] && ! merged && /usr/bin/grep -q "did not land" <<<"$out"; then ok "red gauntlet refuses"; else bad "red gauntlet rc=$rc: $out"; fi
+synced=$(w rev-parse HEAD)
+if [ "$synced" != "$(remote_tip feat/x)" ] && [ -z "$(w status --porcelain)" ]; then ok "the sync commit stays local and the tree clean"; else bad "after a red gauntlet: $(w status --porcelain)"; fi
+run
+merges "rerun after a red gauntlet"
+if [ "$(remote_tip feat/x)" = "$synced" ]; then ok "the rerun pushes the same commit, no second bump"; else bad "rerun made another commit"; fi
+
+# 9. GitHub refuses the merge (a push after the check): fail, print no merge sha.
+setup
+STUB_MERGE_REFUSE=1 run
+if [ "$rc" -ne 0 ] && ! /usr/bin/grep -q mergesha000 <<<"$out"; then ok "a refused merge fails without a merge sha"; else bad "refused merge rc=$rc: $out"; fi
+
+# 10. the checkout is not the PR branch, is dirty, or is behind the PR head: refuse before writing.
+setup; work; w checkout -q -b other
+run
+refuses "wrong branch" "checkout of PR 451's branch feat/x"
+setup; work; printf 'x\n' >"$F/work/stray.txt"
+run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "untracked" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ]; then ok "an untracked file refuses"; else bad "untracked rc=$rc: $out"; fi
+untouched "untracked file"
+
+# 10b. the caller edits the checkout during the lock or load wait: refuse before syncing or pushing.
+setup; on develop "peer" set_ver 1.1.2
+STUB_DIRTY_DURING=1 run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "after the lock and load waits" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ]; then
+  ok "an edit during the wait refuses"
+else bad "edit during the wait rc=$rc: $out"; fi
+untouched "edit during the wait"
+
+# 10c. the checkout changes while the gauntlet runs: its result does not cover the tree, so no merge.
+setup
+STUB_PREPUSH_DIRTY=1 run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "changed while the pre-push gauntlet ran" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ]; then
+  ok "an edit during the gauntlet refuses the merge"
+else bad "edit during the gauntlet rc=$rc: $out"; fi
+# The push already landed; a rerun on the cleaned tree must run the gauntlet again, not merge on trust.
+w restore b.txt
+run
+merges "rerun after an edit during the gauntlet"
+if [ "$(pushes)" = 2 ]; then ok "the rerun runs the gauntlet again"; else bad "rerun gauntlets: $(pushes)"; fi
+
+# 10d. a red pre-commit hook on the sync or the bump commit: refuse, abort the merge, restore the manifests.
+setup; on develop "peer" set_ver 1.1.2
+STUB_PRECOMMIT_FAIL=1 run
+refuses "red pre-commit on the sync" "git commit of the sync failed"
+untouched "red pre-commit on the sync"
+setup
+STUB_PRECOMMIT_FAIL=1 run
+refuses "red pre-commit on the bump" "git commit of the version bump failed"
+untouched "red pre-commit on the bump"
+setup; work; on feat/x "pushed elsewhere" append b.txt more
+run
+refuses "local branch behind the PR head" "pull the branch first"
+
+# 11. base checks and an empty gh answer.
+setup; STUB_BASE=main run
 refuses "non-develop base" "not develop"
-
-# 4c. base retargeted while waiting for load: the re-read before the merge refuses.
-STUB_BASE2=main run 0 headsha111 1.50
+setup; STUB_BASE2=main run
 refuses "retargeted base" "base changed"
-
-# 4d. gh prints nothing: refuse before any merge.
-STUB_EMPTY=1 run 0 headsha111 1.50
+setup; STUB_EMPTY=1 run
 refuses "empty gh output" "could not read the head sha"
+setup; STUB_CROSS=true run
+refuses "fork PR" "comes from a fork"
+untouched "fork PR"
+setup; STUB_CROSS='' run
+refuses "unknown fork status" "isCrossRepository=unknown"
 
-# 4e. develop moved during the first sync's push (the pre-push gauntlet takes minutes): a second round
-# syncs the first synced head, and the merge is pinned to the second.
-STUB_SYNC_OK_FROM=2 run 1 syncsha2 1.50
-synced_and_merged "develop moved during the sync" 2
-if /usr/bin/grep -q '^sync feat/x syncsha1$' "$LOG"; then ok "the second round syncs the first round's head"; else bad "second round args: $(cat "$LOG")"; fi
-# every round starts from a fresh develop: a fetch sits between the two syncs.
-if awk '/^sync /{s++} /^git fetch/{if (s == 1) f = 1} END {exit !f}' "$LOG"; then ok "git fetch runs between sync rounds"; else bad "no fetch between rounds: $(cat "$LOG")"; fi
-# develop never holds still: refuse after MERGE_PR_SYNC_TRIES rounds, naming the count.
-STUB_SYNC_OK_FROM=99 MERGE_PR_SYNC_TRIES=3 run 1 syncsha3 1.50
-refuses "develop moving through every round" "after 3 sync rounds"
-if [ "$(syncs)" -eq 3 ]; then ok "exactly MERGE_PR_SYNC_TRIES rounds"; else bad "rounds: $(syncs)"; fi
+# 12. load stays high: fail with the figure, before writing anything.
+setup; on develop "peer" set_ver 1.1.2
+STUB_LOAD=7.25 run
+refuses "high load" "7.25"
+untouched "high load"
 
-# 4e2. the fetch after the wait fails: say so and do not merge.
-STUB_FETCH2_FAIL=1 run 0 headsha111 1.50
-refuses "failed fetch after the wait" "git fetch failed after the load wait"
+# 13. another merge-pr.sh holds the lock past the wait: refuse, leave its lock alone.
+setup; mkdir "$F/merge.lock"; echo "$$" >"$F/merge.lock/pid"
+run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "could not take the merge lock" <<<"$out" && ! merged && [ "$(cat "$F/merge.lock/pid")" = "$$" ]; then
+  ok "a held merge lock refuses and stays with its owner"
+else bad "held lock rc=$rc: $out"; fi
+safe_trash "$F/merge.lock"
 
-# 4e3. the sync fails (a conflict outside the manifests, a red gauntlet on its push): refuse with its words.
-STUB_SYNC_FAIL=1 run 1 syncsha1 1.50
-refuses "failed sync" "syncing PR 451 failed"
-if /usr/bin/grep -q 'conflicts outside the manifests' <<<"$out"; then ok "the sync's own reason is shown"; else bad "sync reason missing: $out"; fi
+# 14. develop's version cannot be ordered, or its manifest is missing: refuse, nothing left behind.
+setup 1.1.196-rc1; on develop "peer" append c.txt peer
+run
+refuses "non-numeric develop version" "not X.Y.Z"
+setup 01.1.5
+run
+refuses "leading-zero version" "not X.Y.Z"
+setup; on develop "drop manifest" git rm -q "$PLUGIN"
+run
+refuses "missing develop manifest" "cannot read"
+untouched "missing develop manifest"
 
-# 4e4. a head branch from a fork cannot be pushed to: refuse instead of syncing.
-STUB_CROSS=true run 1 syncsha1 1.50
-refuses "fork PR that needs a sync" "not a branch of this repo"
-if [ "$(syncs)" -eq 0 ]; then ok "a fork head is never synced"; else bad "fork head synced: $(cat "$LOG")"; fi
+# 15. two manifests that disagree at the head are cut to one number above develop.
+setup; on feat/x "mismatch" set_ver 1.1.5 1.1.9
+run
+merges "manifest mismatch"
+if [ "$(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")" = "1.1.2 1.1.2" ]; then ok "mismatched manifests cut to one number"; else bad "mismatch: $(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")"; fi
 
-# 4f. same manifest version as origin/develop (a branch that never bumped, or bumped and lost the
-# race): synced, not refused.
-STUB_HEAD_VER=1.1.5 STUB_DEV_VER=1.1.5 run 0 syncsha1 1.50
-synced_and_merged "same version"
-
-# 4f2. develop's version moved to the head's during the load wait: the check after the wait syncs.
-STUB_HEAD_VER=1.1.2 STUB_DEV_VER=1.1.2 run 0 syncsha1 1.50
-synced_and_merged "version taken during the wait"
-
-# 4f3. a head below develop's version (a stale bump, or a conflict resolved to a lower number): synced.
-STUB_HEAD_VER=1.1.4 STUB_DEV_VER=1.1.5 run 0 syncsha1 1.50
-synced_and_merged "version below develop's"
-
-# 4f4. versions compare per number, not as text: 1.1.99 is below 1.1.100 (synced), 1.1.100 above 1.1.99.
-STUB_HEAD_VER=1.1.99 STUB_DEV_VER=1.1.100 run 0 syncsha1 1.50
-synced_and_merged "1.1.99 against 1.1.100"
-STUB_HEAD_VER=1.1.100 STUB_DEV_VER=1.1.99 run 0 headsha111 1.50
-merged_unsynced "1.1.100 against 1.1.99"
-
-# 4f5. the opt-out spares only an equal version: a lower one is still synced.
-MERGE_PR_ALLOW_SAME_VERSION=1 STUB_HEAD_VER=1.1.4 STUB_DEV_VER=1.1.5 run 0 syncsha1 1.50
-synced_and_merged "opt-out with a version below develop's"
-
-# 4f6. a version that is not plain X.Y.Z is handed to the sync (the stub syncs it; the real
-# sync-pr-head.sh refuses one, which 4e3 covers); a synced head that still ships one is refused once the
-# rounds run out.
-STUB_HEAD_VER=1.1.196-rc1 STUB_HEAD_MKT_VER=1.1.196-rc1 run 0 syncsha1 1.50
-synced_and_merged "non-numeric version"
-STUB_HEAD_VER=1.1.196-rc1 STUB_HEAD_MKT_VER=1.1.196-rc1 STUB_SYNC_VER=1.1.196-rc1 MERGE_PR_SYNC_TRIES=1 run 0 syncsha1 1.50
-refuses "non-numeric version after the sync" "after 1 sync rounds"
-
-# 4f7. a leading zero reads as the same number to awk but not to the equal-version guard, so it goes to
-# the sync (the stub syncs it; the real sync-pr-head.sh refuses a non-X.Y.Z version, which 4e3 covers).
-STUB_HEAD_VER=01.1.5 STUB_HEAD_MKT_VER=01.1.5 STUB_DEV_VER=1.1.5 run 0 syncsha1 1.50
-synced_and_merged "leading-zero version"
-
-# 4g. opt-out for a PR that needs no bump: an equal version merges as is.
-MERGE_PR_ALLOW_SAME_VERSION=1 STUB_HEAD_VER=1.1.5 STUB_DEV_VER=1.1.5 run 0 headsha111 1.50
-merged_unsynced "same version with the opt-out"
-
-# 4h. unreadable manifest version at the head: it goes to the sync (the stub syncs it; the real
-# sync-pr-head.sh refuses a head whose plugin.json version it cannot read, which 4e3 covers).
-STUB_HEAD_VER='' run 0 syncsha1 1.50
-synced_and_merged "unreadable version"
-
-# 4j. the two manifests at the head disagree: synced (checking plugin.json alone would miss it).
-STUB_HEAD_MKT_VER=1.1.9 run 0 syncsha1 1.50
-synced_and_merged "manifest mismatch"
-
-# 4k. no manifest readable anywhere (git show fails): the sync fails too, and the script refuses.
-STUB_SHOW_FAIL=1 STUB_SYNC_FAIL=1 run 0 syncsha1 1.50
-refuses "unreadable manifest file" "syncing PR 451 failed"
-
-# 6. review verdict (2026-10-25). No verdict comment at all: refuse, before the load wait.
-STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"A fresh-context review of this PR is in progress."}]' run 0 headsha111 7.25
+# 16. review verdict (2026-10-25). No verdict comment at all: refuse before the load wait or any write.
+setup; STUB_LOAD=7.25 STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"A fresh-context review of this PR is in progress."}]' run
 refuses "no review verdict" "no \"Fresh-context review: MERGE @ <sha>\""
 if /usr/bin/grep -q 'load' <<<"$out"; then bad "no verdict refused only after the load wait: $out"; else ok "no verdict is refused before the load wait"; fi
+untouched "no review verdict"
 
-# 6b. the latest verdict is FIX FIRST, even with an earlier MERGE: refuse and name it.
-STUB_COMMENTS_JSON=$(comments "$(verdict 'MERGE @ abc1234')" "$(verdict 'FIX FIRST')") run 0 headsha111 1.50
+# 16b. the latest verdict is FIX FIRST, even with an earlier MERGE: refuse and name it.
+setup; STUB_COMMENTS_JSON=$(comments "$(verdict "MERGE @ $FEATURE")" "$(verdict 'FIX FIRST')") run
 refuses "latest verdict FIX FIRST" "is FIX FIRST, not MERGE"
 
-# 6c. FIX FIRST then a later MERGE on the head (a re-review after the fix): merges.
-STUB_COMMENTS_JSON=$(comments "$(verdict 'FIX FIRST')" "$(verdict 'MERGE @ 0f1e2d3c')") run 0 headsha111 1.50
-if [ "$rc" -eq 0 ] && merged; then ok "FIX FIRST then MERGE merges"; else bad "FIX FIRST then MERGE rc=$rc: $out"; fi
+# 16c. FIX FIRST then a later MERGE on the head (a re-review after the fix): merges.
+setup; STUB_COMMENTS_JSON=$(comments "$(verdict 'FIX FIRST')" "$(verdict "MERGE @ $FEATURE")") run
+merges "FIX FIRST then MERGE"
 
-# 6d. a substantive commit after the reviewed sha: refuse, whatever its timestamps say (the reviewer's
-# finding: a fix committed before the review but pushed after it used to pass the time comparison).
-STUB_COMMITS="c2:hooks/gates/irrecoverable.py" run 0 headsha111 1.50
-refuses "a change after the reviewed sha" "commit c2 touches more than the manifests"
+# 16d. a substantive commit after the reviewed sha: refuse.
+setup; on feat/x "after review" append b.txt late
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $FEATURE") run
+refuses "a change after the reviewed sha" "touches more than the manifests"
 
-# 6e. a manifest-only commit after the reviewed sha (a version bump after syncing develop) keeps the review.
-STUB_COMMITS="c2:.claude-plugin/plugin.json,.claude-plugin/marketplace.json" run 0 headsha111 1.50
-if [ "$rc" -eq 0 ] && merged; then ok "a version bump after the review keeps it"; else bad "manifest-only commit lost the review rc=$rc: $out"; fi
-# ...but one that also touches another file does not.
-STUB_COMMITS="c2:.claude-plugin/plugin.json,scripts/merge-pr.sh" run 0 headsha111 1.50
-refuses "a bump plus another file after the review" "commit c2 touches more than the manifests"
+# 16e. a manifest-only commit after the reviewed sha (an older PR's own bump) keeps the review.
+setup; on feat/x "self-bump" set_ver 1.1.2
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $FEATURE") run
+merges "a version bump after the review"
 
-# 6f. a lower-case, bold verdict with a backticked sha and trailing words reads as MERGE; CLOSE refuses.
-STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## **Fresh-context review: merge** @ `abc1234` after re-sync"}]' run 0 headsha111 1.50
-if [ "$rc" -eq 0 ]; then ok "case, bold and a backticked sha do not hide a MERGE verdict"; else bad "styled MERGE verdict rc=$rc: $out"; fi
-STUB_COMMENTS_JSON=$(verdict 'CLOSE') run 0 headsha111 1.50
+# 16f. a lower-case, bold verdict with a backticked sha and trailing words reads as MERGE; CLOSE refuses.
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## **Fresh-context review: merge** @ \`${FEATURE:0:7}\` after re-sync\"}]" run
+merges "a styled MERGE verdict"
+setup; STUB_COMMENTS_JSON=$(verdict 'CLOSE') run
 refuses "CLOSE verdict" "is CLOSE"
 
-# 6g. a FIX FIRST posted during the load wait: the re-check after the wait refuses.
-STUB_COMMENTS_JSON2=$(comments "$(verdict 'MERGE @ abc1234')" "$(verdict 'FIX FIRST')") run 0 headsha111 1.50
-refuses "FIX FIRST posted during the wait" "is FIX FIRST"
+# 16g. a FIX FIRST posted while the script runs: the re-check before the push refuses.
+setup; STUB_COMMENTS_JSON2=$(comments "$(verdict "MERGE @ $FEATURE")" "$(verdict 'FIX FIRST')") run
+refuses "FIX FIRST posted during the run" "is FIX FIRST"
+if [ "$(pushes)" = 0 ]; then ok "a late FIX FIRST stops the push"; else bad "pushed despite a late FIX FIRST"; fi
 
-# 6h. the comments cannot be read: refuse, do not treat it as "no verdict needed".
-STUB_API_FAIL=1 run 0 headsha111 1.50
+# 16h. the comments cannot be read: refuse, do not treat it as "no verdict needed".
+setup; STUB_API_FAIL=1 run
 refuses "unreadable comments" "could not read the comments"
 
-# 6i. a MERGE that names no reviewed commit: refuse and show the expected form.
-STUB_COMMENTS_JSON=$(verdict 'MERGE') run 0 headsha111 1.50
+# 16i. a MERGE that names no reviewed commit, or one not in the head's history: refuse.
+setup; STUB_COMMENTS_JSON=$(verdict 'MERGE') run
 refuses "MERGE without a sha" "names no reviewed commit"
-
-# 6j. the reviewed sha is not in the head's history (rewritten history, or a sha from another PR).
-STUB_REVIEWED_ANCESTOR=1 run 0 headsha111 1.50
+setup; STUB_COMMENTS_JSON=$(verdict 'MERGE @ deadbeef1') run
 refuses "reviewed sha not an ancestor" "not in the head's history"
 
-# 6k. a verdict line inside a code fence does not count: a fenced MERGE then a real FIX FIRST is FIX
-# FIRST, and a comment with only a fenced MERGE has no verdict.
-STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"```\nFresh-context review: MERGE @ abc1234\n```\n## Fresh-context review: FIX FIRST"}]' run 0 headsha111 1.50
+# 16j. a verdict line inside a code fence does not count.
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"\`\`\`\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\n## Fresh-context review: FIX FIRST\"}]" run
 refuses "fenced MERGE before a real FIX FIRST" "is FIX FIRST"
-STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"~~~\nFresh-context review: MERGE @ abc1234\n~~~"}]' run 0 headsha111 1.50
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"~~~\nFresh-context review: MERGE @ $FEATURE\n~~~\"}]" run
 refuses "only a fenced MERGE" "no \"Fresh-context review"
 
-# 6l. git diff-tree fails on a commit after the reviewed sha: refuse (it used to read as not substantive).
-STUB_COMMITS="c2:hooks/gates/irrecoverable.py" STUB_DIFFTREE_FAIL=1 run 0 headsha111 1.50
-refuses "diff-tree failure" "diff-tree c2 failed"
+# 16k. GH #629: a merge commit after the reviewed sha must be the plain merge of its parents, manifests aside.
+# An edit made inside a develop merge, or a conflict resolved in code there, needs a new review.
+setup; on develop "peer" append c.txt peer
+git -C "$F/seed" checkout -q feat/x
+git -C "$F/seed" merge -q --no-commit origin/develop >/dev/null
+printf 'sneaked\n' >>"$F/seed/a.txt"
+git -C "$F/seed" add -- a.txt
+git -C "$F/seed" commit -qm "Merge develop (with an edit)"
+git -C "$F/seed" push -q origin feat/x
+git -C "$F/seed" checkout -q develop
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $FEATURE") run
+refuses "an edit inside a merge after the review" "changes more than merging its parents does"
+untouched "an edit inside a merge after the review"
+setup; on feat/x "pr a" append a.txt pr; on develop "dev a" append a.txt dev
+reviewed=$(remote_tip feat/x)
+git -C "$F/seed" checkout -q feat/x
+git -C "$F/seed" merge -q origin/develop >/dev/null 2>&1
+printf 'a\npr\ndev\n' >"$F/seed/a.txt"
+git -C "$F/seed" add -- a.txt
+git -C "$F/seed" commit -qm "Merge develop (conflict resolved by hand)"
+git -C "$F/seed" push -q origin feat/x
+git -C "$F/seed" checkout -q develop
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $reviewed") run
+refuses "a code conflict resolved in a merge after the review" "resolved a conflict outside the manifests"
 
-# 4l. a MERGE_PR_SYNC_TRIES that is not a whole number below 10000 would disarm the round cap (a
-# non-number, or one too big for bash's integers, makes `[ -ge ]` fail as false): refuse up front with
-# exit 2, before the load wait (load 7.25 would otherwise wait) and before any sync.
-for bad_tries in abc 99999999999999999999 10000; do
-  MERGE_PR_SYNC_TRIES=$bad_tries run 1 syncsha1 7.25
-  refuses "MERGE_PR_SYNC_TRIES=$bad_tries" "MERGE_PR_SYNC_TRIES must be a whole number of sync rounds below 10000"
-  if [ "$rc" -eq 2 ] && [ "$(syncs)" -eq 0 ] && ! /usr/bin/grep -q 'load' <<<"$out"; then
-    ok "MERGE_PR_SYNC_TRIES=$bad_tries: exit 2, before the load wait and any sync"
-  else bad "MERGE_PR_SYNC_TRIES=$bad_tries: rc=$rc syncs=$(syncs) out=$out"; fi
-done
-MERGE_PR_SYNC_TRIES=9999 run 1 syncsha1 1.50
-synced_and_merged "MERGE_PR_SYNC_TRIES=9999 (the largest accepted)"
-MERGE_PR_SYNC_TRIES=0 run 1 syncsha1 1.50
-refuses "MERGE_PR_SYNC_TRIES=0 on a head that needs a sync" "after 0 sync rounds"
+# 16l. GH #629 fences: a ~~~ fence is not closed by ```, a longer fence not by a shorter one, a closer
+# carries no text, and an indented fence (a list item) still hides what it holds.
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"Fresh-context review: MERGE @ ${FEATURE:0:7}\n~~~\n\`\`\`\n~~~\nFresh-context review: FIX FIRST @ ${FEATURE:0:7}\"}]" run
+refuses "mixed fences hiding a later FIX FIRST" "is FIX FIRST"
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\`\n\`\`\`\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\n\`\`\`\`\"}]" run
+refuses "a MERGE inside a longer fence" "is FIX FIRST"
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\n\`\`\` x\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\"}]" run
+refuses "a MERGE after a closer with text" "is FIX FIRST"
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n- item\n\n      \`\`\`\n      Fresh-context review: MERGE @ $FEATURE\n      \`\`\`\"}]" run
+refuses "a MERGE in an indented fence" "is FIX FIRST"
 
-# 7. --verify <PR> <head> <base> <comments.json>: the same checks without gh, for a cloud session that
-# merges through the GitHub MCP tools. The comments file holds what those tools return. It must never
-# call gh, sync, push or merge; on a pass it prints the head (stdout) and exits 0.
-FULL=1111111111111111111111111111111111111111
-# verify_run <ancestor-rc> [head] [base] [comments file]: sets rc, out (stdout), err; the comments file
-# defaults to STUB_COMMENTS_JSON (a MERGE @ abc1234 verdict) written to disk. Any gh call lands in the log.
-verify_run() {
-  local f="$STUB/comments.json"
-  printf '%s' "${STUB_COMMENTS_JSON-$(verdict 'MERGE @ abc1234')}" >"$f"
-  : >"$LOG"
-  rm -f "$STUB/fetch" "$STUB/merge-base" "$STUB/show-develop" "$STUB/api" "$STUB/sync-n"
-  out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_DIR="$STUB" STUB_HEAD=headsha111 \
-    STUB_COMMITS="${STUB_COMMITS-}" STUB_ANCESTOR="$1" STUB_REMOTE_HEAD=none STUB_LOAD=9.99 \
-    STUB_HEAD_VER="${STUB_HEAD_VER-1.1.2}" STUB_DEV_VER="${STUB_DEV_VER-1.1.1}" \
-    MERGE_PR_SYNC="$STUB/sync" MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 \
-    bash "$SCRIPT" --verify 451 "${2:-$FULL}" "${3:-develop}" "${4:-$f}" 2>"$STUB/err")
+# 18. --verify, for a session without gh: the same checks from what the MCP tools return, never a gh call,
+#     load wait, lock, sync, push or merge. vrun <head> <base> <comments file>: sets out (stdout), err, rc.
+#     Load reads 9.99 against a max of 4 with no wait, and a live pid (this test's) holds the merge lock,
+#     so a load wait or a lock take in verify mode would refuse or touch the lock.
+vrun() {
+  [ -d "$F/work" ] || work
+  : >"$F/calls.log"
+  [ -d "$F/merge.lock" ] || { mkdir "$F/merge.lock"; echo "$$" >"$F/merge.lock/pid"; }
+  out=$(cd "$F/work" && PATH="$STUB:$PATH" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
+    STUB_LOAD=9.99 MERGE_PR_LOAD_MAX=4 MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
+    bash "$SCRIPT" --verify 451 "$1" "$2" "$3" 2>"$F/verify.err")
   rc=$?
-  err=$(cat "$STUB/err")
+  err=$(cat "$F/verify.err")
 }
-# verify_quiet <label>: no gh call, no sync, no merge (load 9.99 also shows the load wait never ran).
-verify_quiet() {
-  if /usr/bin/grep -q '^gh ' "$LOG" || [ "$(syncs)" -ne 0 ]; then bad "$1: called gh or the sync: $(cat "$LOG")"
-  else ok "$1: no gh call, no sync, no merge"; fi
+no_side_effects() {
+  # A lock take that times out runs on without the lock (fail-open), but says so with gauntlet-lock:.
+  if [ ! -s "$F/calls.log" ] && [ "$(pushes)" = 0 ] && [ "$(cat "$F/merge.lock/pid" 2>/dev/null)" = "$$" ] \
+    && ! /usr/bin/grep -q 'gauntlet-lock:' <<<"$err"; then
+    ok "$1: no gh call, no push, the held lock untouched and never waited on"
+  else bad "$1 had side effects: $(cat "$F/calls.log") pushes=$(pushes) lock=$(cat "$F/merge.lock/pid" 2>&1)"; fi
 }
-# verify_refuses <label> <pattern>: non-zero exit, empty stdout, the reason on stderr, and quiet.
-verify_refuses() {
-  if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q -- "$2" <<<"$err"; then ok "$1: refused ('$2')"
-  else bad "$1: rc=$rc out='$out' err='$err'"; fi
-  verify_quiet "$1"
+# vrefuses <label> <stderr pattern>: non-zero, says why on stderr, prints nothing on stdout (a caller
+# that merges whatever sha stdout holds must get none).
+vrefuses() {
+  if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q -- "$2" <<<"$err"; then ok "$1"; else bad "$1: rc=$rc out='$out' err=$err"; fi
 }
+# a synced head (contains develop, version above it) with a MERGE verdict passes and prints the head,
+# alone on stdout, even from a checkout on another branch (a cloud session's clone).
+setup; on feat/x "bump" set_ver 1.1.2; work; w checkout -q -b elsewhere
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ]; then ok "--verify passes a synced head and prints only it on stdout"; else bad "--verify pass rc=$rc out='$out' err=$err"; fi
+no_side_effects "--verify pass"
+# a version bump commit after the reviewed sha keeps the review.
+setup; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); verdict "MERGE @ $FEATURE" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ]; then ok "--verify keeps a review across a later bump commit"; else bad "--verify bump after review rc=$rc out='$out' err=$err"; fi
+# a head behind develop, or at develop's version, is refused with the sync command to run. The work
+# clone is made before the peer lands, so only the script's own fetch can show the head is behind.
+setup; work; on develop "peer" set_ver 1.1.2
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify fetches, then refuses a head behind develop, naming the sync" "does not contain origin/develop; run scripts/sync-pr-head.sh"
+no_side_effects "--verify behind"
+setup
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify refuses develop's own version, naming the sync" "not above origin/develop's 1.1.1; run scripts/sync-pr-head.sh"
+setup; on feat/x "half bump" set_ver 1.1.2 1.1.3
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify refuses manifests that disagree, naming the sync" "must agree; run scripts/sync-pr-head.sh"
+# the review gate reads the comments file through the same parser.
+setup; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); comments "$(verdict "MERGE @ $tip")" "$(verdict 'FIX FIRST')" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify refuses a FIX FIRST verdict" "is FIX FIRST"
+setup; on feat/x "late" append b.txt late; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); verdict "MERGE @ $FEATURE" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify refuses a change after the review" "touches more than the manifests"
+vrun "$tip" develop "$F/missing.json"
+vrefuses "--verify refuses a missing comments file" "could not read PR 451's comments"
+vrun "$tip" main "$F/comments.json"
+vrefuses "--verify refuses a non-develop base" "not develop"
+if /usr/bin/grep -q 'update_pull_request' <<<"$err" && ! /usr/bin/grep -q 'gh pr edit' <<<"$err"; then
+  ok "--verify names the MCP retarget, not gh, for a wrong base"
+else bad "--verify wrong-base hint: $err"; fi
+vrun "${tip:0:12}" develop "$F/comments.json"
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && /usr/bin/grep -q "full 40-character head sha" <<<"$err"; then ok "--verify needs the full sha (exit 2)"; else bad "--verify short sha rc=$rc out='$out' err=$err"; fi
+out=$(PATH="$STUB:$PATH" bash "$SCRIPT" --verify 451 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q -- "--verify <PR number>" <<<"$out"; then ok "--verify without its arguments prints usage (exit 2)"; else bad "--verify usage rc=$rc: $out"; fi
 
-# 7a. synced and reviewed: pass, the head on stdout.
-verify_run 0
-if [ "$rc" -eq 0 ] && [ "$out" = "$FULL" ] && /usr/bin/grep -q "passes at $FULL" <<<"$err"; then
-  ok "--verify pass: exit 0, the head alone on stdout"
-else bad "--verify pass: rc=$rc out='$out' err='$err'"; fi
-verify_quiet "--verify pass"
-if /usr/bin/grep -q "^git merge-base --is-ancestor origin/develop $FULL$" "$LOG" && /usr/bin/grep -q '^git fetch' "$LOG"; then
-  ok "--verify fetches and checks ancestry against origin/develop"
-else bad "--verify skipped the fetch or the ancestry check: $(cat "$LOG")"; fi
+# 17. no PR argument: usage error.
+out=$(PATH="$STUB:$PATH" bash "$SCRIPT" 2>&1); rc=$?
+if [ "$rc" -eq 2 ]; then ok "missing PR argument exits 2"; else bad "missing PR argument rc=$rc"; fi
 
-# 7b. behind develop, or a version not above it: refused with the sync command, never synced itself.
-verify_run 1
-verify_refuses "--verify behind develop" "Run scripts/sync-pr-head.sh <head branch> $FULL"
-STUB_HEAD_VER=1.1.1 verify_run 0
-verify_refuses "--verify same version as develop" "the same as origin/develop"
-STUB_HEAD_MKT_VER=1.1.9 verify_run 0
-verify_refuses "--verify manifests disagree" "marketplace.json 1.1.9"
-
-# 7c. the review rule is the gh path's, parser and all.
-STUB_COMMENTS_JSON=$(comments "$(verdict 'MERGE @ abc1234')" "$(verdict 'FIX FIRST')") verify_run 0
-verify_refuses "--verify latest verdict FIX FIRST" "is FIX FIRST, not MERGE"
-STUB_COMMENTS_JSON='[{"body":"```\nFresh-context review: MERGE @ abc1234\n```"}]' verify_run 0
-verify_refuses "--verify only a fenced MERGE" "no \"Fresh-context review: MERGE @ <sha>\""
-STUB_COMMITS="c2:hooks/gates/irrecoverable.py" verify_run 0
-verify_refuses "--verify a change after the reviewed sha" "commit c2 touches more than the manifests"
-STUB_COMMITS="c2:.claude-plugin/plugin.json,.claude-plugin/marketplace.json" verify_run 0
-if [ "$rc" -eq 0 ] && [ "$out" = "$FULL" ]; then ok "--verify a bump after the review keeps it"; else bad "--verify bump after review: rc=$rc err='$err'"; fi
-STUB_REVIEWED_ANCESTOR=1 verify_run 0
-verify_refuses "--verify reviewed sha not in the head's history" "not in the head's history"
-
-# 7d. the comments file is missing or not JSON: refused, not read as "no verdict needed".
-verify_run 0 "$FULL" develop "$STUB/no-such-file.json"
-verify_refuses "--verify missing comments file" "could not read PR 451's comments"
-STUB_COMMENTS_JSON='not json' verify_run 0
-verify_refuses "--verify comments file not JSON" "could not read PR 451's comments"
-
-# 7e. base other than develop, and malformed arguments: refused (usage errors exit 2).
-verify_run 0 "$FULL" main
-verify_refuses "--verify non-develop base" "not develop"
-verify_run 0 headsha111
-if [ "$rc" -eq 2 ] && [ -z "$out" ] && /usr/bin/grep -q 'full 40-character head sha' <<<"$err"; then ok "--verify short head sha: exit 2"; else bad "--verify short sha: rc=$rc err='$err'"; fi
-out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" --verify 451 "$FULL" develop 2>&1); rc=$?
-if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'usage:' <<<"$out"; then ok "--verify missing comments argument: usage, exit 2"; else bad "--verify usage: rc=$rc out=$out"; fi
-
-# 5. no PR argument: usage error.
-out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" 2>&1); rc=$?
-if [ "$rc" -ne 0 ]; then ok "missing PR argument exits non-zero"; else bad "missing PR argument exited 0"; fi
-
-safe_trash "$STUB"
+safe_trash "$T"
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

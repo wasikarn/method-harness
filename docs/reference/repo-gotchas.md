@@ -60,11 +60,17 @@ in no pipe at all: its early exit kills the command writing into it with SIGPIPE
 < big | cat` gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
 fails a pipefail pipeline or a `set -e` script. It is over-reported when the writer's status is
 discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never called) or a later reader
-drains the rest, and when every fd holding the `>(...)` is redirected elsewhere later on the same
-command (`cat > >(grep -q y) >/dev/null`): telling that apart needs a model of fd copies, moves and
-`{var}` fds, and two attempts at one hid real races (#650); a bare `v=$(...)` keeps the writer's
-status, so under `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` reads all of
-its input (GNU grep 3.11), so it is safe in a pipe; `grep -q` stays early-exit even with
+drains the rest, when every fd holding the `>(...)` is redirected elsewhere later on the same
+command (`cat > >(grep -q y) >/dev/null`: telling that apart needs a model of fd copies, moves and
+`{var}` fds, and two attempts at one hid real races, #650), and when the writer never writes to the
+fd holding the `>(...)` (`cat 2> >(grep -q y)`: whether it writes there is the program's run-time
+behaviour, which no static scan can know); a bare `v=$(...)` keeps the writer's status, so under
+`set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` reads all of its input (GNU
+grep 3.11), so it is safe in a pipe, only when it reads fd 0 directly (no file operand, or `-`) with
+no `-m` limit. Two forms stop early for different reasons: `grep -m1 PAT` stops at its first match
+(`seq 2000000 | grep -m1 1 >/dev/null` gives 141 0), and a grep naming `/dev/stdin`, `/dev/fd/0` or
+`/proc/self/fd/0` reads stdin as a named file, which grep does not drain, even with no `-m` (`seq
+2000000 | grep 1 /dev/stdin >/dev/null` gives 141 0). And `grep -q` stays early-exit even with
 `>/dev/null` (`tee >(grep -q 1 >/dev/null) < big` still exits 141). A hit whose line ends in the
 comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint allows one: its own
 race probe.
@@ -141,7 +147,9 @@ already set alone.
   not resolve. No hand-copy into the cache dir, no `~/.claude` symlink.
 - **The plugin runs every hook machine-wide.** A gate crash locks out every session that has
   `mh@wasikarn` enabled, not just sessions in this repo. A missing sibling `.py` or lib module
-  must fail open with a diagnostic, never exit non-zero.
+  must fail open with a diagnostic, never exit non-zero. The exception is `irrecoverable.py`, which
+  fails closed (`operating-model.md` §1). A missing `_bracex` there denies only a `{` plus a `,` or
+  `..`, under the `brace-view` rule id, so a broken module never locks Bash as a whole.
 
 ## Session environment quirks
 
@@ -160,6 +168,15 @@ already set alone.
   names non-UUID ids but does not drop them). Probe with
   `MH_GATE_JOURNAL_PATH=/dev/null` (or a scratch file when you want to read the row back), and
   use `scripts/gate-differential.sh` for old-vs-new comparisons, which already isolates it.
+- **Background load runs go in a bash file, with explicit PIDs.** The Bash tool's shell is zsh:
+  `wait $pids` does not word-split, and under `zsh -c` `kill $(jobs -p)` finds no jobs, so the
+  workers outlive the run. Twice this left a flood behind (289 processes, load ~248, 2026-10-05;
+  4 `yes` at 100% CPU for ~4 h, 2026-10-25) that failed every session's timing rows. Write the
+  run as a file and start it with `bash <file>`, collect `pids+=($!)`, `kill "${pids[@]}"` in a
+  `trap ... EXIT`, then confirm no worker is left and the load has dropped. `run-gauntlet.sh` now
+  names long-running CPU-heavy process groups of yours, a flood of low-CPU workers included
+  (`scripts/_lib/stray-procs.sh`, warn-only), but it can only catch a stray after the fact; killing
+  one that a peer session owns is the operator's call.
 
 ## Research: check qmd before web search
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# test-sync-pr-head.sh — scripts/sync-pr-head.sh, which scripts/merge-pr.sh runs so branches never
-# bump the version: it merges origin/develop into a PR head (manifest conflicts take develop's side,
+# test-sync-pr-head.sh — scripts/sync-pr-head.sh, the no-gh sync a cloud session runs before
+# `merge-pr.sh --verify`, so branches never bump the version: it merges origin/develop into a PR head (manifest conflicts take develop's side,
 # any other conflict refuses), sets both manifests to develop's version + 1 (or the head's own when it
 # is higher), pushes to the PR branch and prints the new head. Real git: a bare origin, a develop that
 # moved on, and a feature branch per case. Case 1 wires hooks that print to stdout (the real pre-push
@@ -8,7 +8,7 @@
 set -uo pipefail
 # A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
-unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT MERGE_PR_ALLOW_SAME_VERSION
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_SSH_COMMAND GIT_SSH
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
@@ -82,8 +82,12 @@ hk=$(mktemp -d "$ROOT_DIR/hooks.XXXXXX")
 for h in post-checkout pre-merge-commit post-merge pre-commit commit-msg post-commit pre-push; do
   printf '#!/bin/sh\necho "%s hook says hi"\n' "$h" >"$hk/$h"; chmod +x "$hk/$h"
 done
+printf '#!/bin/sh\necho "pre-push hook says hi"\necho "ssh=$GIT_SSH_COMMAND"\n' >"$hk/pre-push"
 git -C "$L" config core.hooksPath "$hk"
 run_sync feat/x "$HEAD_SHA"
+if /usr/bin/grep -qx 'ssh=ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=30' <<<"$err"; then
+  ok "behind: the push keeps its SSH connection alive through the gauntlet"
+else bad "behind: push ssh command: $err"; fi
 if /usr/bin/grep -q 'pre-push hook says hi' <<<"$err" && ! /usr/bin/grep -q 'hook says hi' <<<"$out"; then
   ok "behind: the hooks ran, and their output went to stderr, not stdout"
 else bad "behind: hook output: out='$out' err='$err'"; fi
@@ -169,13 +173,6 @@ if [ "$rc" -eq 0 ] && [ "$(git -C "$L" rev-parse "$out^")" = "$HEAD_SHA" ] && [ 
   ok "up to date, same version: a single 'chore: bump mh to 1.0.7' commit on the head"
 else bad "bump only: rc=$rc out='$out' err=$err"; fi
 
-# 7. MERGE_PR_ALLOW_SAME_VERSION=1 on that same head: nothing to do.
-git -C "$w/c" push -q -f origin "$HEAD_SHA:refs/heads/feat/x"
-out=$(cd "$L" && MERGE_PR_ALLOW_SAME_VERSION=1 bash "$SCRIPT" feat/x "$HEAD_SHA" 2>"$ROOT_DIR/err"); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "$HEAD_SHA" ] && [ "$(remote_head)" = "$HEAD_SHA" ]; then
-  ok "same version with the opt-out: head unchanged, no push"
-else bad "opt-out: rc=$rc out='$out' err=$(cat "$ROOT_DIR/err")"; fi
-
 # 7b. contains develop, plugin.json bumped but marketplace.json not: the early return must not take it;
 # a bump commit brings marketplace.json to plugin.json's 1.0.7.
 setup none
@@ -208,6 +205,17 @@ run_sync feat/x "$HEAD_SHA"
 if [ "$rc" -ne 0 ] && [ -z "$out" ] && [ "$(remote_head)" = "$base" ] && worktrees_clean; then
   ok "branch rewound after the head was read: refused by the lease, the rewind stays"
 else bad "rewound branch: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
+
+# 8c. the push lands but git exits 141 (GitHub dropped the idle SSH connection after the gauntlet): the
+# ls-remote check sees the new head on origin, so the sync counts.
+setup none
+gw=$(mktemp -d "$ROOT_DIR/gitwrap.XXXXXX")
+printf '#!/usr/bin/env bash\n"%s" "$@"; rc=$?\nfor a in "$@"; do [ "$a" = push ] && exit 141; done\nexit $rc\n' "$(command -v git)" >"$gw/git"
+chmod +x "$gw/git"
+out=$(cd "$L" && PATH="$gw:$PATH" bash "$SCRIPT" feat/x "$HEAD_SHA" 2>"$ROOT_DIR/err"); rc=$?; err=$(cat "$ROOT_DIR/err")
+if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(remote_head)" = "$out" ] && /usr/bin/grep -q 'git push exited 141 but origin has' <<<"$err"; then
+  ok "push exits 141 after landing: ls-remote finds the head, the sync counts"
+else bad "landed push rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
 # 9. usage: both arguments are required.
 out=$(bash "$SCRIPT" feat/x 2>&1); rc=$?

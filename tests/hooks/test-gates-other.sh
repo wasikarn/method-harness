@@ -500,6 +500,49 @@ _would336 deny brace-view 'bash -c "r{m,} -rf /tmp/x"'
 test_deny "$IRRECOVERABLE" "GH #309: 3000 nested dollar-paren spans in a command with a brace deny (exit 2, no traceback)" \
   "$(bash_payload "$(python3 -c "print('echo {a,b} ' + '\"\$(' * 3000)")")"
 
+# _bracex unimportable (deleted, broken by an edit, a partial plugin cache): a command that could hold a
+# brace expansion follows brace-view's own status instead of going unread. Shadowed: allowed with one
+# would_deny row. Promoted: denied, nested shapes included. A brace that cannot expand (no "," or "..":
+# ${HOME}, awk '{print}', find -exec {}) is left alone and writes no row. The documented over-deny while
+# _bracex is broken: a real but harmless expansion (echo {a,b}) denies once brace-view is promoted.
+_nobx="$_JOURNAL_TMP/no-bracex"; _nobx_enf="$_JOURNAL_TMP/no-bracex-enforced"
+mkdir -p "$_nobx" "$_nobx_enf" && cp -R "$ROOT/hooks/gates/." "$_nobx/" && cp -R "$_enf336/." "$_nobx_enf/"
+python3 - "$_nobx" "$_nobx_enf" <<'EOF'
+import pathlib, shutil, sys
+for d in map(pathlib.Path, sys.argv[1:]):
+    (d / "_bracex.py").unlink()
+    shutil.rmtree(d / "__pycache__", ignore_errors=True)
+EOF
+_jnb="$_JOURNAL_TMP/no-bracex.jsonl"; : > "$_jnb"
+_onb=$(bash_payload 'r{m,} -rf /tmp/x' | MH_GATE_JOURNAL_PATH="$_jnb" bash "$_nobx/irrecoverable.sh" 2>/dev/null); _rnb=$?
+_wnb=$(python3 -c 'import json,sys; print(sum(json.loads(l).get("decision") == "would_deny" and json.loads(l).get("rule") == "brace-view" for l in open(sys.argv[1])))' "$_jnb")
+if [[ "$_rnb" == "0" && -z "$_onb" && "$_wnb" == "1" ]]; then
+  echo "  ✅ _bracex missing, brace-view shadowed: a brace-hidden rm -rf allows with one would_deny row"; pass=$((pass + 1))
+else
+  echo "  ❌ _bracex missing, brace-view shadowed: expected rc=0, no stdout, 1 would_deny brace-view row; got rc=$_rnb rows=$_wnb" >&2; fail=$((fail + 1))
+fi
+test_deny "$_nobx_enf/irrecoverable.sh" "_bracex missing, brace-view promoted: a brace-hidden rm -rf denies" \
+  "$(bash_payload 'r{m,} -rf /tmp/x')"
+test_deny "$_nobx_enf/irrecoverable.sh" "_bracex missing, brace-view promoted: a nested brace with the comma outside denies" \
+  "$(bash_payload 'r{m,x{y}} -rf /tmp/x')"
+test_allow "$_nobx/irrecoverable.sh" "_bracex missing, brace-view shadowed: a harmless expansion allows" \
+  "$(bash_payload 'echo {a,b}')" "MH_GATE_JOURNAL_PATH=$_jnb"
+test_deny "$_nobx_enf/irrecoverable.sh" "_bracex missing, brace-view promoted: a harmless expansion denies (documented over-deny)" \
+  "$(bash_payload 'echo {a,b}')"
+_jnb2="$_JOURNAL_TMP/no-bracex-noexp.jsonl"; : > "$_jnb2"
+for _c in 'echo ${HOME}/x' "awk '{print \$1}' f.txt" 'find . -name x -exec ls {} +' 'ls -la'; do
+  test_allow "$_nobx_enf/irrecoverable.sh" "_bracex missing, brace-view promoted: a brace that cannot expand allows: $_c" \
+    "$(bash_payload "$_c")" "MH_GATE_JOURNAL_PATH=$_jnb2"
+  test_allow "$_nobx/irrecoverable.sh" "_bracex missing, brace-view shadowed: a brace that cannot expand allows: $_c" \
+    "$(bash_payload "$_c")" "MH_GATE_JOURNAL_PATH=$_jnb2"
+done
+_rnb2=$(python3 -c 'import json,sys; print(sum(json.loads(l).get("rule") == "brace-view" for l in open(sys.argv[1])))' "$_jnb2")
+if [[ "$_rnb2" == "0" ]]; then
+  echo "  ✅ _bracex missing: a brace that cannot expand writes no brace-view row (gate-report stays clean)"; pass=$((pass + 1))
+else
+  echo "  ❌ _bracex missing: a brace that cannot expand wrote $_rnb2 brace-view row(s)" >&2; fail=$((fail + 1))
+fi
+
 # GH #375: a git global's value split by shlex at $, :, @ or a non-ASCII letter (-C $R) took the
 # variable's name for the subcommand. Cases (each deny shape checked in real shells) live in a fixture.
 _c375="$ROOT/tests/hooks/fixtures/irrecoverable-375-cases.txt"

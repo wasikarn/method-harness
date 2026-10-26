@@ -38,9 +38,10 @@ Search configured `qmd` collections first (`qmd status`), then `context7` for li
 
 `develop` is protected: PR only, from a `feat/`/`claude/` branch, reviewed via
 `mattpocock-skills:code-review`; `scripts/merge-pr.sh` refuses a PR whose last verdict comment is not
-`Fresh-context review: MERGE @ <reviewed sha>`. Branches never bump the manifests: `merge-pr.sh` syncs
-develop and bumps at merge time. No `gh` (cloud): `sync-pr-head.sh`, then `merge-pr.sh --verify`, then the
-MCP merge pinned to the head. Worktrees, the shared memory store: `docs/reference/branching-model.md`.
+`Fresh-context review: MERGE @ <reviewed sha>`. PRs never bump the version: `merge-pr.sh` syncs develop,
+cuts the next number and pushes at merge time (run it from the PR's checkout, in the background). No `gh`
+(cloud): `sync-pr-head.sh`, then `merge-pr.sh --verify`, then the MCP merge pinned to the head.
+Worktrees, the shared memory store, and the merge flow: `docs/reference/branching-model.md`.
 Ships as `mh@wasikarn` from the plugin cache; design: `docs/reference/operating-model.md`; env
 vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-ledger-module.md`.
 
@@ -49,7 +50,7 @@ vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-l
 - **Keep `core.hooksPath` relative** (`git config core.hooksPath git-hooks`): an absolute path silently runs zero hooks after a rename; verify `test -d "$(git config core.hooksPath)"`.
 - **Home paths:** `$HOME` or `~` in every committed file, never `/Users/<name>` or the bare account name; frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`, `CHANGELOG.md`) skip style sweeps, never this.
 - **Use `trash` and stage by name;** `gate:bash:irrecoverable` denies `rm -rf`, `--no-verify`, and `git add -A`/`.` outside a merge.
-- **Same-version edits are no-ops:** bump both manifests locally (uncommitted) before `claude plugin update`; re-verify a same-session edit by `Read`ing the repo path, never `Skill(<name>)`.
+- **Same-version edits are no-ops:** `claude plugin update` copies nothing until the version changes, which `merge-pr.sh` does on every merge (a local test install needs its own uncommitted bump); re-verify a same-session edit by `Read`ing the repo path, never `Skill(<name>)`.
 - **Bare `grep` is Claude Code's shell-snapshot shim** (it reformats output): use `/usr/bin/grep` or `awk` for counts.
 
 ## Repeated mistake -> doctrine
