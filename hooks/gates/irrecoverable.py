@@ -952,6 +952,9 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
                       "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "
                       "main session dispatches")
 
+# GH #593: set to one rule while a reading may only raise that rule's ask: every other deny ends the
+# window unreported, every other ask is dropped.
+_ONLY_RULE = [None]
 def _deny_nested_spawn():
     if _ONLY_RULE[0]:
         raise _ViewStop
@@ -1028,9 +1031,6 @@ _SHADOW_LOGGED = set()  # (rule, decision) already journaled this run: window co
 # ends the view (_ViewStop). A structural deny (no rule id) never fires in a view: it is an artifact
 # of the substituted text, so it ends the view too.
 _VIEW = [None]
-# GH #593: set to one rule while a reading may only raise that rule's ask: every other deny ends the
-# window unreported, every other ask is dropped.
-_ONLY_RULE = [None]
 class _ViewStop(Exception):
     pass
 
