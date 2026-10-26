@@ -1931,14 +1931,18 @@ _deny_sql_stdin_drop(cmd)
 # quotes, substitutions and comments stay what they are); the result is read as one more view
 # ("brace-view", see _views), checked by every rule. A command the expansion cannot bound (nesting,
 # size, a stand-in noncharacter) is a structural deny here, never skipped. Without _bracex the view
-# cannot be read at all, so a brace is denied under brace-view's own id: it journals while that rule is
-# shadowed and enforces once it is promoted, never stricter than a working gate. The else matters: a
-# shadowed deny returns here.
+# cannot be read at all, so a command that could hold an expansion is denied under brace-view's own id:
+# it journals while that rule is shadowed and enforces once it is promoted. Bash expands a brace only
+# with a "," or ".." in it, so that test is a superset of every expansion (nested ones included); a
+# plain ${VAR}, awk '{...}' or find -exec {} is left alone. Known over-deny while _bracex is broken: a
+# brace plus a comma anywhere (mkdir {a,b}, awk '{print $1, $2}'). The else matters: a shadowed deny
+# returns here.
 _BRACEX_TEXT = None
 if "{" in cmd:
     if _bracex is None:
-        deny("brace expansion unavailable (_bracex not importable) - a brace can hide a verb; confirm with user first",
-             rule="brace-view")
+        if "," in cmd or ".." in cmd:
+            deny("brace expansion unavailable (_bracex not importable) - a brace can hide a verb; confirm with user first",
+                 rule="brace-view")
     else:
         try:
             _BRACEX_TEXT = _bracex.expand_text(cmd, _CMD_LEN_CAP)
