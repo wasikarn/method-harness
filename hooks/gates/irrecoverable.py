@@ -19,7 +19,7 @@ try:
     import _bracex
 except Exception as _e:
     _bracex = None
-    print("[mh:gate] irrecoverable: _bracex not importable (" + str(_e) + "); a brace-hidden command is not read", file=sys.stderr)
+    print("[mh:gate] irrecoverable: _bracex not importable (" + str(_e) + "); a command with a brace and a \",\" or \"..\" goes to brace-view (journaled while shadowed)", file=sys.stderr)
 
 GATE_ID = "gate:bash:irrecoverable"
 
@@ -1946,15 +1946,28 @@ _deny_sql_stdin_drop(cmd)
 # which read the text literally. _bracex expands the whole command the way the shell does (lexed, so
 # quotes, substitutions and comments stay what they are); the result is read as one more view
 # ("brace-view", see _views), checked by every rule. A command the expansion cannot bound (nesting,
-# size, a stand-in noncharacter) is a structural deny here, never skipped.
+# size, a stand-in noncharacter) is a structural deny here, never skipped. Without _bracex the view
+# cannot be read at all, so a command that could hold an expansion is denied under brace-view's own id:
+# it journals while that rule is shadowed and enforces once it is promoted. Bash expands a brace only
+# with a "," or ".." in it, so that test is a superset of every bash expansion (nested ones included); a
+# plain ${VAR}, awk '{...}' or find -exec {} is left alone. zsh with braceccl expands r{m} too (GH #665).
+# Known over-deny while _bracex is broken: any "{" with a "," or ".." anywhere in the command, inside the
+# brace or not (mkdir {a,b}, awk '{print $1, $2}', find .. -exec ls {} +, git log a..b --format={x},
+# ${x,,}, a quoted '{a,b}'). Kept coarse on purpose: a narrower text test would be a loosening.
+# The else matters: a shadowed deny returns here.
 _BRACEX_TEXT = None
-if _bracex and "{" in cmd:
-    try:
-        _BRACEX_TEXT = _bracex.expand_text(cmd, _CMD_LEN_CAP)
-    except (_bracex.TooBig, RecursionError) as _e:
-        deny("command too long to safely tokenize (brace expansion: " + str(_e) + ") - confirm with user first")
-    if _BRACEX_TEXT == cmd:
-        _BRACEX_TEXT = None
+if "{" in cmd:
+    if _bracex is None:
+        if "," in cmd or ".." in cmd:
+            deny("brace expansion unavailable (_bracex not importable) - a brace can hide a verb; confirm with user first",
+                 rule="brace-view")
+    else:
+        try:
+            _BRACEX_TEXT = _bracex.expand_text(cmd, _CMD_LEN_CAP)
+        except (_bracex.TooBig, RecursionError) as _e:
+            deny("command too long to safely tokenize (brace expansion: " + str(_e) + ") - confirm with user first")
+        if _BRACEX_TEXT == cmd:
+            _BRACEX_TEXT = None
 
 # GH #184/#185/#194/#195/#196: the tokenizer mis-closes or never expands these shapes, which hides an
 # irrecoverable verb from every check below. Rather than teach it each grammar, fail closed on the raw

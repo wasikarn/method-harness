@@ -146,7 +146,9 @@ already set alone.
   not resolve. No hand-copy into the cache dir, no `~/.claude` symlink.
 - **The plugin runs every hook machine-wide.** A gate crash locks out every session that has
   `mh@wasikarn` enabled, not just sessions in this repo. A missing sibling `.py` or lib module
-  must fail open with a diagnostic, never exit non-zero.
+  must fail open with a diagnostic, never exit non-zero. The exception is `irrecoverable.py`, which
+  fails closed (`operating-model.md` §1). A missing `_bracex` there denies only a `{` plus a `,` or
+  `..`, under the `brace-view` rule id, so a broken module never locks Bash as a whole.
 
 ## Session environment quirks
 
