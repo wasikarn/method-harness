@@ -52,11 +52,11 @@ trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
 hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }
 
-# One planted hit per statement (line numbers in want_lines), each a shape a past check missed.
-# Most are real races (measured at exit 141). The grep -q rows inside while/until/for loops pin
-# the documented loop heuristic: there a later `read` or the next grep can drain the rest, so bash
-# may exit 0, but the scanner reports them on purpose. The `>(...)` over-reports whose fds are
-# all redirected later live in over.sh below.
+# Planted hits the scanner must report, one per statement (line numbers in want_lines), each a
+# shape a past check missed. Most are real races (measured at exit 141); some pin documented
+# heuristics or over-reports, where bash may exit 0 (grep -q in loop bodies, a writer whose
+# status is discarded, a function never called, small fixed input). The `>(...)` over-reports
+# whose fds are all redirected later live in over.sh below.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -151,7 +151,7 @@ n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
 [ "$rc" -eq 1 ] && [ "$got_lines" = "$want_lines" ] \
-  && ok "probe: all $n_want planted hits (races, plus loop-heuristic rows) found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
+  && ok "probe: all $n_want planted hits (mostly races; some pinned heuristics/over-reports) found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
 
 # Known `>(...)` over-reports: bash exits 0 for each, yet the scanner reports it, by design. Every fd holding

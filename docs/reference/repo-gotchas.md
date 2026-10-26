@@ -63,12 +63,13 @@ discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never called)
 drains the rest, and when every fd holding the `>(...)` is redirected elsewhere later on the same
 command (`cat > >(grep -q y) >/dev/null`): telling that apart needs a model of fd copies, moves and
 `{var}` fds, and two attempts at one hid real races (#650); a bare `v=$(...)` keeps the writer's
-status, so under `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` that reads
-stdin with no `-m` limit reads all of its input (GNU grep 3.11), so it is safe in a pipe; `grep -m1
-PAT` stops at its first match (`seq 2000000 | grep -m1 1 >/dev/null` gives 141 0), and `grep -q`
-stays early-exit even with `>/dev/null` (`tee >(grep -q 1 >/dev/null) < big` still exits 141). A hit
-whose line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint
-allows one: its own race probe.
+status, so under `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` reads all of
+its input (GNU grep 3.11), so it is safe in a pipe, only when it reads fd 0 directly (no file
+operand, or `-`) with no `-m` limit: `grep -m1 PAT` stops at its first match (`seq 2000000 | grep
+-m1 1 >/dev/null` gives 141 0), so does a grep naming `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0`
+(141 0), and `grep -q` stays early-exit even with `>/dev/null` (`tee >(grep -q 1 >/dev/null) < big`
+still exits 141). A hit whose line ends in the comment `# pipe-into-grep-q: deliberate` is exempt
+but reported, and the lint allows one: its own race probe.
 `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for the stdin-skipping reason, and
 skips the `_*.sh` helpers the gates source.
 
