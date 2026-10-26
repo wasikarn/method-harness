@@ -4,9 +4,10 @@
 # the gate's python is provably silent, else hands python3 the same bytes and exits with its status.
 #
 # Proof the skip is exact: the read kept its sentinel (else python runs), the payload is at most
-# 32768 bytes, ASCII, has no \u escape and matches the plain-object regex (subagent-git-guard.sh's, GH #326), so json.load gives a dict whose values
-# are scalars or objects of scalars, and every letter, digit, "_", "-" and space in a decoded string
-# sits literally in the raw text (JSON's other escapes only make " \ / and control characters).
+# 32768 bytes, ASCII, has no \u escape and matches the plain-object regex (subagent-git-guard.sh's,
+# GH #326), so json.load gives a dict whose values are scalars or objects of scalars, and every
+# letter, digit, "_", "-" and space in a decoded string sits literally in the raw text (JSON's other
+# escapes only make " \ / and control characters).
 # DEFER_ERE lists every raw text that could make that gate's python ask, journal or print, so when
 # it does not match the gate exits 0 in silence. Anything else runs python3 (stderr kept).
 # Bash cannot hold a NUL byte: tr maps it to \001, which is invalid raw JSON just as NUL is, so
