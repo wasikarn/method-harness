@@ -1048,6 +1048,8 @@ _ONLY_RULE_PASS_ON = [False]
 def _deny_nested_spawn():
     if _ONLY_RULE[0] and not _ONLY_RULE_PASS_ON[0]:
         raise _ViewStop
+    if _ONLY_RULE_PASS_ON[0]:
+        return  # the enforced view pass reads rm's rules only: no spawn scan, so no spawn-scan budget (review 8)
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1147,8 +1149,7 @@ def deny(reason, rule=None):
             raise _ViewStop
         if rule is not None:
             return
-        if _spawn_over_budget:  # the pass's one budget ran out: fail closed, as the main reading does
-            reason = "brace-expanded command too costly to scan safely - confirm with user first"
+
     elif _VIEW[0] and rule is None:
         raise _ViewStop
     if not (_ONLY_RULE_PASS_ON[0] and rule is None) and _shadowed(rule, "deny"):
@@ -2397,7 +2398,7 @@ def _scan_body(body):
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
-    if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
+    if ("agent_id" in d) and not _ONLY_RULE_PASS_ON[0] and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
                               or _subst_spawn(body)):
         deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
@@ -4483,14 +4484,9 @@ def _enforced_pass(text):
     # Another rule's deny passes on (_ONLY_RULE_PASS_ON) so the enforced rule later in the same window still
     # runs; code written to stop at a deny may then fail, which only skips that window. The first pass marked
     # the view's word windows seen, so they are cleared to be queued again.
-    # The pass is one more reading of every body, so it gets one reading's spawn-scan budget of its own (charged
-    # on top of the main reading's, a body that fit there was denied, review 4). Running out of it denies, fail
-    # closed: a window-at-a-time budget either let a costly expansion hide the rm in its own body or, capped,
-    # let a subagent payload run past the hook timeout (reviews 6, 7). The cost, a documented over-deny: a
-    # subagent command whose brace expansion copies a long eval body many times.
-    global _spawn_anchor_work, _spawn_over_budget
-    spawn_budget = (_spawn_anchor_work, _spawn_over_budget)
-    _spawn_anchor_work, _spawn_over_budget = 0, False
+    # The pass reads rm's rules only, so it runs no spawn scan (_scan_body, _deny_nested_spawn): that scan's
+    # budget, spent a second time on the expanded text, denied large legal subagent bodies, let one costly
+    # expansion hide an rm, or ran the gate near the hook timeout (reviews 4-8). A spawn is the main reading's.
     _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0] = _VIEW_ENFORCED[_VIEW[0]], True
     try:
         _WORDS_SEEN.clear()
@@ -4514,7 +4510,6 @@ def _enforced_pass(text):
             _WORD_PHASE[0] = True
     finally:
         _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0], _WORD_PHASE[0] = None, False, False
-        _spawn_anchor_work, _spawn_over_budget = spawn_budget
         del _WORDS[:]
 
 for _VIEW[0], _text in _views():
