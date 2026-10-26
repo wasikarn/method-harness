@@ -1,5 +1,5 @@
-# /graphify scope: eval fixtures and test data are ~890 files of noise, and CHANGELOG.md is ~174k words
-# of release notes; leaving them out keeps the graph on docs, skills, hooks, scripts and agents.
-evals/
-tests/
-CHANGELOG.md
+# /graphify scope: eval fixtures, test data and the release log add bulk, not structure worth
+# graphing. Root-anchored, so a nested folder with one of these names stays in the graph.
+/evals/
+/tests/
+/CHANGELOG.md
