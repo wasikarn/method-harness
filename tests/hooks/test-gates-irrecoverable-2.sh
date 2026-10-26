@@ -1012,7 +1012,29 @@ test_deny  "$IRRECOVERABLE" "GH #567: heredoc piped into bash" "$(bash_payload "
 test_allow "$IRRECOVERABLE" "GH #567 control: echo into tee" "$(bash_payload "echo 'rm -rf build' | tee notes.txt")"
 test_allow "$IRRECOVERABLE" "GH #567 control: echo into bash script.sh (stdin is data)" "$(bash_payload 'echo hi | bash x.sh')"
 test_allow "$IRRECOVERABLE" "GH #567 control: heredoc piped into grep bash" "$(bash_payload "$(printf "cat <<'EOF' | grep bash\nrm -rf build\nEOF")")"
-# Non-goal: eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
+# Non-goal: eval "$(cat <<EOF)" and fish <<EOF. A << lookalike the shell does not read as a heredoc: GH #668.
+# GH #668: a << the shell does not read as a redirection (quoted, commented, escaped, in an arithmetic
+# or parameter frame, an array) or a delimiter read wrongly no longer hides the lines after it.
+for _c in $'echo "<<EOF"\nrm -rf build\nEOF' $'echo \'<<EOF\'\nrm -rf build\nEOF' \
+  $'echo "a\n<<EOF"\nrm -rf build\nEOF' $'echo x # <<EOF\nrm -rf build\nEOF' $'echo \\<<EOF\nrm -rf build\nEOF' \
+  $'echo $(( 1 << X ))\nrm -rf build\nX' $'echo ${x:-<< X }\nrm -rf build\nX' $'echo "${x:-"<<X"}"\nrm -rf build\nX' \
+  $'a=( << X )\nrm -rf build\nX' $'cat <<\\EOF\nx\nEOF\nrm -rf build\n\\EOF' $'cat <<EOF;\nx\nEOF\nrm -rf build\nEOF;' \
+  $'cat <<EOF\r\nx\nEOF\r\nrm -rf build\nEOF' $'cat <<EOF "a\n"; rm -rf build #\nEOF\n#"' \
+  $'cat <<EOF \\\n; rm -rf build\nEOF\necho ok' $'cat <<EOF\n$(rm -rf build)\nEOF' $'cat <<EOF\nEO\\\nF\nrm -rf build\nEOF' \
+  $'bash <<\'EOF\'\ncat <<X\nEOF\nrm -rf build\nX' $'echo "$(case a in a) echo "<<X";; esac)"\nrm -rf build\nX' \
+  $'echo "$(cat <<X)"\nrm -rf build\nX' $'echo $(case a in a) echo;; esac); psql db <<\'SQL\'\nDROP TABLE t;\nSQL'; do
+  test_deny "$IRRECOVERABLE" "GH #668: $(printf '%s' "$_c" | head -1)" "$(bash_payload "$_c")"
+done
+# Real heredocs whose body only mentions a destructive verb stay data.
+for _c in $'cat <<\'EOF\'\nit\'s\nEOF\necho "<<X"\nls\nX' $'echo "$(cat <<\'EOF\'\ndon\'t\nEOF\n)"\necho "<<X"\nls\nX' \
+  $'echo ${x}; cat <<\'EOF\'\nrm -rf build\nEOF' $'echo $((1)); cat <<\'EOF\'\nrm -rf build\nEOF' \
+  $'git commit -m "$(cat <<\'EOF\'\nfix: don\'t rm -rf build\nEOF\n)"' $'git commit -F- <<\'EOF\'\nfix: no rm -rf build\nEOF' \
+  $'gh pr create --title t --body "$(cat <<\'EOF\'\nWe don\'t run rm -rf build or git push --force.\nEOF\n)"' \
+  $'cat > notes.md <<\'EOF\'\nnever rm -rf build\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #668 control: $(printf '%s' "$_c" | head -1)" "$(bash_payload "$_c")"
+done
+_huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
+_timed_case 'GH #668: a 2.1 MB command denies on length before the heredoc scan' 2 "$_huge_cmd"
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 

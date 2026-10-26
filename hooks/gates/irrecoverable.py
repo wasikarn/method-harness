@@ -247,7 +247,20 @@ def _runs_sql_client(stage):
 
 # GH #559 review 3: every heredoc a line opens is read, in order (cat <<A >/dev/null; psql db <<B), not
 # only the first. A here-string's <<< opens none.
-_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
+# GH #668: the delimiter is a whole shell word, ended by a blank or an operator (<<EOF; is EOF), quotes removed.
+_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?[ \t]*((?:[^ \t;&|()<>'\"\\]|\\.|'[^']*'|\"(?:[^\"\\]|\\.)*\")+)")
+
+def _heredoc_delim(word):
+    # (delimiter, quoted) the way the shell removes quotes, or None for a word with an expansion in it.
+    if "$" in word or "`" in word:
+        return None
+    return (re.sub(r"'([^']*)'|\"((?:[^\"\\]|\\.)*)\"|\\(.)",
+                   lambda m: m.group(1) if m.group(1) is not None else
+                   re.sub(r'\\([\\"])', r"\1", m.group(2)) if m.group(2) is not None else m.group(3), word),
+            any(ch in word for ch in "'\"\\"))
+
+def _odd_trailing_bs(line):
+    return (len(line) - len(line.rstrip("\\"))) % 2 == 1
 # A heredoc feeding an interpreter is executable code, not inert data: an interpreter word anywhere on the
 # line BEFORE the << counts. GH #559 review 4: not only the heredoc's own pipe stage, since a heredoc on a
 # compound command feeds every command in it ({ bash; } <<EOF, while read x; do bash; done <<EOF), and \b
@@ -336,6 +349,96 @@ def _reads_stdin_shell(seg):
             return False  # a script operand, or -c
     return True
 
+_HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
+
+def _quote_mask(c, stack=None, hd=False):
+    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
+    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
+    # per scanned text.
+    # GH #668 (hd, _strip_heredocs only): stack carries the state from one line to the next, and ${..},
+    # $((..)), ((..)), $[..] and name=(..) are masked too. A `case` inside $( pushes "!", which never pops
+    # and masks the rest: its pattern ) would close the $( early.
+    mask, i, n = bytearray(len(c)), 0, len(c)
+    stack = [None] if stack is None else stack
+    while i < n:
+        ch, q = c[i], stack[-1]
+        if q == "!":
+            mask[i:] = b"\1" * (n - i)
+            break
+        if q in _HD_OFF:
+            mask[i] = 1
+        if q == SQ:
+            mask[i] = 1
+            if ch == SQ:
+                stack.pop()
+        elif q == '"':
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == '"':
+                stack.pop()
+            elif hd and c.startswith("$((", i):
+                stack.append("((")
+                i += 2
+            elif ch == "$" and c[i + 1:i + 2] == "(" or hd and ch == "$" and c[i + 1:i + 2] == "{":
+                stack.append(c[i + 1])
+                i += 1
+            elif ch == "`":
+                stack.append("`")
+        elif q == "$'":
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == SQ:
+                stack.pop()
+        elif ch == "\\" and i + 1 < n:
+            mask[i + 1] = 1
+            i += 1
+        elif ch == "$" and c[i + 1:i + 2] == SQ:
+            mask[i] = mask[i + 1] = 1
+            stack.append("$'")
+            i += 1
+        elif ch in (SQ, '"'):
+            mask[i] = 1
+            stack.append(ch)
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
+            j = c.find("\n", i)  # a comment, to the end of its line
+            j = n if j < 0 else j
+            mask[i:j] = b"\1" * (j - i)
+            i = j
+            continue
+        elif not hd:
+            if q == "(" and ch in "()":
+                stack.append(ch) if ch == "(" else stack.pop()
+            elif q == "`" and ch == "`":
+                stack.pop()
+        elif c.startswith("((", i) or c.startswith("$((", i):
+            stack.append("((")
+            i += 1 if ch == "(" else 2
+        elif ch == "$" and c[i + 1:i + 2] in ("{", "[", "("):
+            stack.append(c[i + 1])
+            i += 1
+        elif ch == "=" and c[i + 1:i + 2] == "(":
+            stack.append("=(")
+            i += 1
+        elif ch == "`":
+            stack.pop() if q == "`" else stack.append("`")
+        elif q == "(" and c.startswith("case", i) and (i == 0 or c[i - 1] in " \t;&|(") and c[i + 4:i + 5] in ("", " ", "\t"):
+            stack.append("!")
+        elif (q, ch) in (("{", "}"), ("[", "]"), ("=(", ")"), ("a(", ")"), ("(", ")")):
+            stack.pop()
+        elif q == "((" and ch == ")" and c[i + 1:i + 2] == ")":
+            stack.pop()
+            i += 1
+        elif ch == "(" and q in ("((", "a("):
+            stack.append("a(")
+        elif ch == "(" and q == "(":
+            stack.append("(")
+        i += 1
+    return mask
+
 def _strip_heredocs(cmd):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
@@ -343,13 +446,31 @@ def _strip_heredocs(cmd):
     # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is checked for a
     # drop whatever the interpreter decision (GH #559 review 3), and one that
     # drops sets _SQL_HEREDOC_DROP for the SQL check.
+    # GH #668: a << counts only where the shell reads it as a redirection, so the quote state is carried
+    # from line to line (bodies skipped). Once a shape the scan does not model shows up (sure turns False)
+    # nothing more is stripped: an opener line ending inside a quote, ${ or $((, or in a backslash; a
+    # delimiter with $ or a backtick; an unquoted body that expands $(, `, ${ or joins lines; an
+    # interpreter-fed body. Openers are then read as before, for the SQL check only.
+    # shortcut: an interpreter-fed body is not re-scanned with its own state, so heredocs after it
+    # are kept; scan it recursively if that over-denies.
     lines = cmd.split("\n")
-    out, i = [], 0
+    out, i, stack, sure = [], 0, [None], True
     while i < len(lines):
         line = lines[i]
         out.append(line)
         i += 1
         ms = list(_HEREDOC_OPEN_RE.finditer(line))
+        if sure:
+            mask = _quote_mask(line, stack, hd=True)
+            real = [m for m in ms if not mask[m.start()]]
+            # Unsure too: a masked opener on a SQL client's line (the SQL check reads every opener), and a
+            # $( or backtick closing after the opener on its own line (zsh reads that heredoc as empty).
+            sure = stack[-1] != "!" and not (len(real) < len(ms) and _SQL_CLIENT_RE.search(line)) and not (real and (
+                stack[-1] not in (None, "(", "`") or _odd_trailing_bs(line)
+                or any(_heredoc_delim(m.group(2)) is None for m in real)
+                or any(not mask[k] and line[k] in ")`" for k in range(real[-1].end(), len(line)))))
+            if sure:
+                ms = real
         if not ms:
             continue
         ctx, views, has_client = _HeredocLine(line), {}, bool(_SQL_CLIENT_RE.search(line))
@@ -361,21 +482,25 @@ def _strip_heredocs(cmd):
             code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
             feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
             if code and not feeds and n_m == len(ms) - 1:
+                sure = False
                 break  # the body is code: its lines stay, read (and their own heredocs stripped) as lines
-            strip_tabs, delim = bool(m.group(1)), m.group(3)
-            body_start, found = i, False
+            strip_tabs, (delim, quoted) = bool(m.group(1)), _heredoc_delim(m.group(2)) or (m.group(2), True)
+            body_start, found, expands = i, False, False
             while i < len(lines):
                 body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
                 i += 1
                 if body_line == delim:
                     found = True
                     break
+                expands = expands or not quoted and (_odd_trailing_bs(body_line) or "$(" in body_line
+                                                     or "`" in body_line or "${" in body_line)
             if not found:
                 # Unmatched closing delimiter: put the scanned lines BACK rather
                 # than silently eat a real write statement that followed.
                 out.extend(lines[body_start:i])
                 break
-            if code:
+            sure = sure and not expands
+            if code or not sure:
                 out.extend(lines[body_start:i])
             if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops("\n".join(lines[body_start:i - 1])):
                 _SQL_HEREDOC_DROP[0] = True
@@ -519,7 +644,10 @@ def _rm_prompts_each(rest):
             operand = True
     return mode == "always"
 
-cmd = _strip_heredocs(d["tool_input"].get("command", ""))
+# GH #668: the heredoc scan runs before _CMD_LEN_CAP and a timeout allows, so a huge command skips it
+# and is denied by that cap unchanged.
+cmd = d["tool_input"].get("command", "")
+cmd = _strip_heredocs(cmd) if len(cmd) <= 2_000_000 else cmd
 
 def _mid_merge():
     # `git add -A|--all|.` is allowed only mid-merge (staging a manual conflict
@@ -878,58 +1006,6 @@ def _spawn_statement(tail, work):
         buf.append(t)
     return "".join(buf), work
 
-def _quote_mask(c):
-    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
-    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
-    # per scanned text.
-    mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
-    while i < n:
-        ch, q = c[i], stack[-1]
-        if q == SQ:
-            mask[i] = 1
-            if ch == SQ:
-                stack.pop()
-        elif q == '"':
-            mask[i] = 1
-            if ch == "\\" and i + 1 < n:
-                mask[i + 1] = 1
-                i += 1
-            elif ch == '"':
-                stack.pop()
-            elif ch == "$" and c[i + 1:i + 2] == "(":
-                stack.append("(")
-                i += 1
-            elif ch == "`":
-                stack.append("`")
-        elif q == "$'":
-            mask[i] = 1
-            if ch == "\\" and i + 1 < n:
-                mask[i + 1] = 1
-                i += 1
-            elif ch == SQ:
-                stack.pop()
-        elif ch == "\\" and i + 1 < n:
-            mask[i + 1] = 1
-            i += 1
-        elif ch == "$" and c[i + 1:i + 2] == SQ:
-            mask[i] = mask[i + 1] = 1
-            stack.append("$'")
-            i += 1
-        elif ch in (SQ, '"'):
-            mask[i] = 1
-            stack.append(ch)
-        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
-            j = c.find("\n", i)  # a comment, to the end of its line
-            j = n if j < 0 else j
-            mask[i:j] = b"\1" * (j - i)
-            i = j
-            continue
-        elif q == "(" and ch in "()":
-            stack.append(ch) if ch == "(" else stack.pop()
-        elif q == "`" and ch == "`":
-            stack.pop()
-        i += 1
-    return mask
 
 _SPAWN_SESSION_SEEN = {}  # the three anchor passes, joined and plain text, re-read the same statements
 
