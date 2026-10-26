@@ -2365,30 +2365,67 @@ def _unwrap_shell(argv0, rest):
     else:
         return
     if argv0 != "eval":
-        bodies += [b for b in (_positional_body(body, rest) for body in list(bodies)) if b and b not in bodies]
+        for body in list(bodies):
+            filled = _positional_body(body, rest)
+            if filled is False:
+                deny("shell -c body with its arguments filled in is too long to scan safely - confirm with user first")
+            if filled and filled not in bodies:
+                bodies.append(filled)
     for body in bodies:
         _scan_body(body)
 
 # GH #663: `sh -c BODY ARG0 ARGS...` runs BODY with $0 = ARG0 and $1.. / "$@" / $* = ARGS, so
 # `bash -c 'rm "$@"' -- -rf b` runs `rm -rf b`. A copy of the body with those parameters filled in from the
-# words written after it is read as well (the body as written stays read too).
-# A double-quoted body keeps the outer shell's backslash (`bash -c "rm \"\$@\""`), so `\$` counts as `$`.
-_POSITIONAL_RE = re.compile(r'"\\?\$(?:\{([@*0-9])\}|([@*0-9]))"|\\?\$(?:\{([@*0-9])\}|([@*0-9]))')
+# words written after it is read as well (the body as written stays read too). Only a parameter that is a
+# whole word is filled (`$1`, `"$1"`, `"$@"`, `${@:2}`, `${1:-x}`): one inside a larger quoted string is text
+# (`git commit -m "fix: $1"`), and one in single quotes never expands. A leading `shift [N]` drops words.
+# A double-quoted body keeps the outer shell's backslashes (`bash -c "rm \"\$@\""`), so the body is read with
+# them removed as bash does (before a $, ", \ or backtick), and a parameter counts only outside quotes:
+# a whole `"$1"` when its opening quote is unquoted, a bare `$1` when the `$` itself is (_quote_mask).
+_POSITIONAL_RE = re.compile(
+    r'(?<![^\s;&|(){`])(")?\$(?:\{([@*]|\d+)(?::(\d+)(?::(\d+))?|(?::?[-=+?]|##?|%%?)[^{}]*)?\}|([@*0-9]))'
+    r'(?(1)")(?=[\s;&|)}`]|$)')
+_POSITIONAL_SHIFT_RE = re.compile(r"\s*shift(?:\s+(\d+))?\s*(?:;|&&|\n)")
+_POSITIONAL_CAP = 150_000  # characters of filled body; past it the body is denied, not scanned
 
 def _positional_body(body, rest):
     k = next((k for k, t in enumerate(rest) if t is body), None)
-    if k is None or k + 1 >= len(rest) or not _POSITIONAL_RE.search(body):
+    if k is None or k + 1 >= len(rest) or "$" not in body:
         return None
-    args = rest[k + 1:]
-    def word(t):
-        return shlex.quote(t.replace(PH, "")) if t.replace(PH, "") else "''"
-    def fill(m):
-        name = next(g for g in m.groups() if g is not None)
+    body = re.sub(r'\\([$"\\`])', r"\1", body)
+    mask = _quote_mask(body)
+    def unquoted(m):
+        if m.group(1):  # `"$1"`: the opening quote must open a span of its own
+            return m.start() == 0 or not mask[m.start() - 1]
+        return not mask[m.start()]
+    refs = [m for m in _POSITIONAL_RE.finditer(body) if unquoted(m)]
+    if not refs:
+        return None
+    words = [shlex.quote(t.replace(PH, "")) if t.replace(PH, "") else "''" for t in rest[k + 1:]]
+    pos = words[1:]
+    m = _POSITIONAL_SHIFT_RE.match(body)
+    while m:  # `shift; git $1 $2` reads the words after the shifted ones
+        pos = pos[int(m.group(1) or 1):]
+        m = _POSITIONAL_SHIFT_RE.match(body, m.end())
+    out, size, last = [], 0, 0
+    for m in refs:
+        name = m.group(2) or m.group(5)
         if name in "@*":
-            return " ".join(word(t) for t in args[1:])
-        n = int(name)
-        return word(args[n]) if n < len(args) else ""
-    return _POSITIONAL_RE.sub(fill, body)
+            off = int(m.group(3)) if m.group(3) else 1  # ${@:k} starts at $k ($0 for k=0)
+            seq = (words[:1] + pos)[off:] if off else words[:1] + pos
+            if m.group(4):
+                seq = seq[:int(m.group(4))]
+            text = " ".join(seq)
+        else:
+            n = int(name)
+            text = words[0] if n == 0 else (pos[n - 1] if n - 1 < len(pos) else "")
+        out += [body[last:m.start()], text]
+        size += m.start() - last + len(text)
+        last = m.end()
+        if size > _POSITIONAL_CAP:
+            return False
+    out.append(body[last:])
+    return "".join(out)
 
 
 def _scan_body(body):

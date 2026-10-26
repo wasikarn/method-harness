@@ -2842,6 +2842,19 @@ test_deny  "$IRRECOVERABLE" "GH #663: bash -c '\$1 -rf b' _ rm (the verb as a pa
 test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'git \"\$@\"' _ push --force origin main" "$(bash_payload "bash -c 'git \"\$@\"' _ push --force origin main")"
 test_deny  "$IRRECOVERABLE" "GH #663: sudo sh -c 'rm \"\$@\"' sh -rf b" "$(bash_payload "sudo sh -c 'rm \"\$@\"' sh -rf b")"
 test_deny  "$IRRECOVERABLE" "GH #663: bash -c \"rm \\\"\\\$@\\\"\" -- -rf b (double-quoted body)" "$(bash_payload 'bash -c "rm \"\$@\"" -- -rf b')"
+# slices, multi-digit and operator forms, and a leading shift
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \${@:1}' _ -rf b" "$(bash_payload "bash -c 'rm \${@:1}' _ -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\${@:2}\"' _ x -rf b" "$(bash_payload "bash -c 'rm \"\${@:2}\"' _ x -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \${10} \${11}' _ 1..9 -rf b" "$(bash_payload "bash -c 'rm \${10} \${11}' _ 1 2 3 4 5 6 7 8 9 -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\${1:-}\" b' _ -rf" "$(bash_payload "bash -c 'rm \"\${1:-}\" b' _ -rf")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'shift; git \$1 \$2' _ x push --force" "$(bash_payload "bash -c 'shift; git \$1 \$2 origin main' _ x push --force")"
+# a parameter inside a larger quoted string is text (a message), and one in single quotes never expands
+test_allow "$IRRECOVERABLE" "GH #663 control: git commit -m \"fix: \$1\" with it's" "$(bash_payload "bash -c 'git commit -m \"fix: \$1\"' _ \"it's done\"")"
+test_allow "$IRRECOVERABLE" "GH #663 control: echo \"x \$1 y\" with an arg that holds ; rm -rf" "$(bash_payload "bash -c 'echo \"x \$1 y\"' _ 'a\" ; rm -rf b ; \"'")"
+test_allow "$IRRECOVERABLE" "GH #663 control: echo \"args: \$@\" with it's" "$(bash_payload "bash -c 'echo \"args: \$@\"' _ \"it's\" b")"
+# the filled body is capped: 1500 "\$@" times 1500 words would be millions of words
+_timed_case "GH #663: 1500 \"\$@\" x 1500 args then rm -rf b, denied in bounded time" 2 \
+  "sh -c 'echo $(printf '"\$@" %.0s' $(seq 1500))' _ $(printf 'a %.0s' $(seq 1500)); rm -rf b"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'rm \"\$@\"' _ a.log b.log" "$(bash_payload "bash -c 'rm \"\$@\"' _ a.log b.log")"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'echo \"\$@\"' _ rm -rf b" "$(bash_payload "bash -c 'echo \"\$@\"' _ rm -rf b")"
 test_allow "$IRRECOVERABLE" "GH #663 control: sh -c 'ls \$1' _ -la" "$(bash_payload "sh -c 'ls \$1' _ -la")"
