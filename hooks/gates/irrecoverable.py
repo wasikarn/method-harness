@@ -4481,6 +4481,11 @@ def _enforced_pass(text):
     # Another rule's deny passes on (_ONLY_RULE_PASS_ON) so the enforced rule later in the same window still
     # runs; code written to stop at a deny may then fail, which only skips that window. The first pass marked
     # the view's word windows seen, so they are cleared to be queued again.
+    # The pass is one more reading of every body, so it gets a reading's spawn-scan budget of its own: charged
+    # on top of the main reading's, a subagent body that fit there was denied as a spawn (review 4).
+    global _spawn_anchor_work, _spawn_over_budget
+    spawn_budget = (_spawn_anchor_work, _spawn_over_budget)
+    _spawn_anchor_work, _spawn_over_budget = 0, False
     _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0] = _VIEW_ENFORCED[_VIEW[0]], True
     try:
         _WORDS_SEEN.clear()
@@ -4504,6 +4509,7 @@ def _enforced_pass(text):
             _WORD_PHASE[0] = True
     finally:
         _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0], _WORD_PHASE[0] = None, False, False
+        _spawn_anchor_work, _spawn_over_budget = spawn_budget
         del _WORDS[:]
 
 for _VIEW[0], _text in _views():
