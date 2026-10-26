@@ -2738,5 +2738,30 @@ test_ask   "$IRRECOVERABLE" "GH #647: ls;gh nuke still asks" "$(bash_payload 'ls
 test_ask   "$IRRECOVERABLE" "GH #647: gh nuke, then the sub glued to a separator" "$(bash_payload 'gh nuke;ls')"
 test_allow "$IRRECOVERABLE" "GH #647 control: a PH argv0 with no gh written" "$(bash_payload 'sudo ${a} x')"
 test_allow "$IRRECOVERABLE" "GH #647 control: gh-nuke is a different program" "$(bash_payload 'echo gh-nuke x')"
+# GH #594: after a bare `--` every word is an operand, so `rm -- -rf` deletes a file named -rf. GNU rm
+# still permutes the options before `--` (`rm build -rf` is -rf).
+test_allow "$IRRECOVERABLE" "GH #594: rm -- -rf removes a file named -rf" "$(bash_payload 'rm -- -rf')"
+test_allow "$IRRECOVERABLE" "GH #594: rm -f -- -r removes a file named -r" "$(bash_payload 'rm -f -- -r')"
+test_deny  "$IRRECOVERABLE" "GH #594: rm -r -- -f is still rm -r (rm-recursive)" "$(bash_payload 'rm -r -- -f')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm -rf -- build" "$(bash_payload 'rm -rf -- build')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm build -rf (options permute before --)" "$(bash_payload 'rm build -rf')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm -r build -- -f still has -r" "$(bash_payload 'rm -r build -- -f')"
+# a -- a substitution builds may not be one: a non-empty $(x) makes it an operand and leaves -rf a flag
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm \$(x)-- -rf build" "$(bash_payload 'rm $(x)-- -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm --x -rf build (not a bare --)" "$(bash_payload 'rm --x -rf build')"
+# the tokenizer splits at a carriage return and bash does not: `a<CR>--` is one operand, and -rf after it a flag
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a<CR>-- -rf build (not a bare --)" "$(bash_payload $'rm a\r-- -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a<CR>-- -r build (rm-recursive)" "$(bash_payload $'rm a\r-- -r build')"
+# ...nor one the gate decodes from `$'\r'` into a bash -c or eval body
+test_deny  "$IRRECOVERABLE" "GH #594 control: bash -c \$'rm a\\r-- -rf b'" "$(bash_payload "bash -c \$'rm a\\r-- -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #594 control: eval \$'rm a\\r-- -rf b'" "$(bash_payload "eval \$'rm a\\r-- -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #594 control: eval rm a\$'\\r'-- -rf b" "$(bash_payload "eval rm a\$'\\r'-- -rf b")"
+test_allow "$IRRECOVERABLE" "GH #594: rm -r -i -- -f prompts for every file" "$(bash_payload 'rm -r -i -- -f')"
+# ...nor one a redirect or an interpreter's argv only seems to show: the stop needs a plain rm command
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a <<- -- -rf b (-- is the heredoc word)" "$(bash_payload $'rm a <<- -- -rf b\n--')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a >x> -- -rf b (-- is a redirect target)" "$(bash_payload 'rm a >x> -- -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: subprocess.run([rm, 'a --', -rf, b])" \
+  "$(bash_payload 'python3 -c '"'"'import subprocess; subprocess.run(["rm", "a --", "-rf", "b"])'"'"'')"
+test_allow "$IRRECOVERABLE" "GH #594: rm -f -- -r ./x.log (plain operands)" "$(bash_payload 'rm -f -- -r ./x.log')"
 
 gates_summary
