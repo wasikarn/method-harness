@@ -490,6 +490,61 @@ def _strip_heredocs(cmd):
                     _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
+def _quote_mask(c, ansi_c_starts=None):
+    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
+    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
+    # per scanned text.
+    mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
+    while i < n:
+        ch, q = c[i], stack[-1]
+        if q == SQ:
+            mask[i] = 1
+            if ch == SQ:
+                stack.pop()
+        elif q == '"':
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == '"':
+                stack.pop()
+            elif ch == "$" and c[i + 1:i + 2] == "(":
+                stack.append("(")
+                i += 1
+            elif ch == "`":
+                stack.append("`")
+        elif q == "$'":
+            mask[i] = 1
+            if ch == "\\" and i + 1 < n:
+                mask[i + 1] = 1
+                i += 1
+            elif ch == SQ:
+                stack.pop()
+        elif ch == "\\" and i + 1 < n:
+            mask[i + 1] = 1
+            i += 1
+        elif ch == "$" and c[i + 1:i + 2] == SQ:
+            if ansi_c_starts is not None:  # a $'...' the shell decodes: outside quotes, or in a $(..) / `..`
+                ansi_c_starts.add(i)
+            mask[i] = mask[i + 1] = 1
+            stack.append("$'")
+            i += 1
+        elif ch in (SQ, '"'):
+            mask[i] = 1
+            stack.append(ch)
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
+            j = c.find("\n", i)  # a comment, to the end of its line
+            j = n if j < 0 else j
+            mask[i:j] = b"\1" * (j - i)
+            i = j
+            continue
+        elif q == "(" and ch in "()":
+            stack.append(ch) if ch == "(" else stack.pop()
+        elif q == "`" and ch == "`":
+            stack.pop()
+        i += 1
+    return mask
+
 def _normalize_ansi_c_quotes(cmd):
     # shlex does not understand ANSI-C quoting ($SQ...SQ): a spliced argv0 like
     # $SQ\x74SQ never reassembles into the decoded byte. Dispatch below compares
@@ -1037,61 +1092,6 @@ def _spawn_statement(tail, work):
             break
         buf.append(t)
     return "".join(buf), work
-
-def _quote_mask(c, ansi_c_starts=None):
-    # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
-    # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
-    # per scanned text.
-    mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
-    while i < n:
-        ch, q = c[i], stack[-1]
-        if q == SQ:
-            mask[i] = 1
-            if ch == SQ:
-                stack.pop()
-        elif q == '"':
-            mask[i] = 1
-            if ch == "\\" and i + 1 < n:
-                mask[i + 1] = 1
-                i += 1
-            elif ch == '"':
-                stack.pop()
-            elif ch == "$" and c[i + 1:i + 2] == "(":
-                stack.append("(")
-                i += 1
-            elif ch == "`":
-                stack.append("`")
-        elif q == "$'":
-            mask[i] = 1
-            if ch == "\\" and i + 1 < n:
-                mask[i + 1] = 1
-                i += 1
-            elif ch == SQ:
-                stack.pop()
-        elif ch == "\\" and i + 1 < n:
-            mask[i + 1] = 1
-            i += 1
-        elif ch == "$" and c[i + 1:i + 2] == SQ:
-            if ansi_c_starts is not None:  # a $'...' the shell decodes: outside quotes, or in a $(..) / `..`
-                ansi_c_starts.add(i)
-            mask[i] = mask[i + 1] = 1
-            stack.append("$'")
-            i += 1
-        elif ch in (SQ, '"'):
-            mask[i] = 1
-            stack.append(ch)
-        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
-            j = c.find("\n", i)  # a comment, to the end of its line
-            j = n if j < 0 else j
-            mask[i:j] = b"\1" * (j - i)
-            i = j
-            continue
-        elif q == "(" and ch in "()":
-            stack.append(ch) if ch == "(" else stack.pop()
-        elif q == "`" and ch == "`":
-            stack.pop()
-        i += 1
-    return mask
 
 _SPAWN_SESSION_SEEN = {}  # the three anchor passes, joined and plain text, re-read the same statements
 
