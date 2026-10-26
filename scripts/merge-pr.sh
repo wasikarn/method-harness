@@ -54,7 +54,11 @@ if [ "$verify" = 0 ]; then
 fi
 if [ "$base" != "develop" ]; then
   echo "merge-pr: PR $pr targets '$base', not develop; the origin/develop check would prove nothing." >&2
-  echo "Retarget it (gh pr edit $pr --base develop) or ask the operator; do not fall back to a bare gh pr merge." >&2
+  if [ "$verify" = 1 ]; then
+    echo "Retarget it to develop (the MCP update_pull_request tool, base: develop) or ask the operator; do not merge it anyway." >&2
+  else
+    echo "Retarget it (gh pr edit $pr --base develop) or ask the operator; do not fall back to a bare gh pr merge." >&2
+  fi
   exit 1
 fi
 
