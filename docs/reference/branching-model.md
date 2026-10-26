@@ -76,14 +76,22 @@ is no opt-out variable; an operator who must merge without a verdict does it on 
 cloud session lacks; it has the GitHub MCP tools instead. Do not retype the checks by hand (that was
 done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
 1. read the PR's head sha, base branch and issue comments with the MCP tools, and save the comments
-   (the JSON array they return) to a file;
+   to a file. The comments come a page at a time, oldest first: request `perPage` 100 and keep
+   reading pages until one comes back short, appending each page's array to the file in order (`jq`
+   reads arrays saved one after another, like `gh --paginate` output), and check the total against
+   the PR's comment count. A page left out can hide the latest verdict: a FIX FIRST on page 2 after a
+   MERGE on page 1;
 2. if the head lacks `origin/develop` or a version above it, run `scripts/sync-pr-head.sh <head branch>
-   <head sha>` and use the sha it prints;
+   <head sha>` and use the sha it prints. A PR from a fork (its head repository is not this one)
+   cannot be synced this way, since the sync pushes to a branch of `origin`: merge develop into it and
+   bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,
    review (same verdict parser), ancestry and version checks, never a sync, push or merge. It prints
    the head on a pass, and on a head that is not synced it names the sync command;
-4. merge through the MCP merge tool with `expectedHeadSha` set to that head, straight away. If develop
-   moved first, go back to step 2.
+4. read the PR once more with the MCP tools and confirm its base is still `develop` and its head is
+   still that sha (`--verify` only knows the values it was given; the `gh` path re-reads the base
+   itself), then merge through the MCP merge tool with `expectedHeadSha` set to that head, straight
+   away. If develop moved first, go back to step 2.
 There is no load wait in this mode: a cloud container runs nothing else.
 
 The checks are local-only. The script narrows the gap; it does not close it: a push to `develop`
