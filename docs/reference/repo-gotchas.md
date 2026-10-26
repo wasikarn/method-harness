@@ -58,22 +58,23 @@ readers (`head`, `grep -m`, a command that skips stdin): there, apply the rule b
 is a pipe too, so a quiet grep reading it is checked wherever it sits, on either side of a pipe or
 in no pipe at all: its early exit kills the command writing into it with SIGPIPE (`tee >(grep -q 1)
 < big | cat` gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
-fails a pipefail pipeline or a `set -e` script. It is over-reported when the writer's status is
-discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never called) or a later reader
-drains the rest, when every fd holding the `>(...)` is redirected elsewhere later on the same
+fails a pipefail pipeline or a `set -e` script. The lint over-reports, for a pipe or a `>(...)`,
+when the writer's status is discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never
+called) or a later reader drains the rest (the scan follows neither where a status goes nor what
+reads after the grep), when every fd holding the `>(...)` is redirected elsewhere later on the same
 command (`cat > >(grep -q y) >/dev/null`: telling that apart needs a model of fd copies, moves and
 `{var}` fds, and two attempts at one hid real races, #650), and when the writer never writes to the
 fd holding the `>(...)` (`cat 2> >(grep -q y)`: whether it writes there is the program's run-time
-behaviour; the scan stays conservative rather than model each program); a bare `v=$(...)` keeps the
-writer's status, so under `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null`
-reads all of its input (GNU grep 3.11), so it is safe in a pipe, only when it reads fd 0 directly
-(no file operand, or `-`) with no `-m` limit. Two forms stop early for different reasons: `grep -m1
-PAT` stops at its first match (`seq 2000000 | grep -m1 1 >/dev/null` gives 141 0), and a grep naming
-`/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0` reads stdin as a named file, which grep does not
-drain, even with no `-m` (`seq 2000000 | grep 1 /dev/stdin >/dev/null` gives 141 0). And `grep -q`
-stays early-exit even with `>/dev/null` (`tee >(grep -q 1 >/dev/null) < big` still exits 141). A hit
-whose line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint
-allows one: its own race probe.
+behaviour, and even `cat` writes its errors to stderr, so the scan does not model each program); a
+bare `v=$(...)` keeps the writer's status, so under `set -e` that hit is a real failure. A non-quiet
+`grep PAT >/dev/null` reads all of its input (GNU grep 3.11), so it is safe in a pipe, only when it
+reads fd 0 directly (no file operand, or `-`) with no `-m` limit. Two forms stop early for different
+reasons: `grep -m1 PAT` stops at its first match (`seq 2000000 | grep -m1 1 >/dev/null` gives 141
+0), and a grep naming `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0` reads stdin as a named file,
+which grep does not drain, even with no `-m` (`seq 2000000 | grep 1 /dev/stdin >/dev/null` gives 141
+0). And `grep -q` stays early-exit even with `>/dev/null` (`tee >(grep -q 1 >/dev/null) < big` still
+exits 141). A hit whose line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but
+reported, and the lint allows one: its own race probe.
 `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for the stdin-skipping reason, and
 skips the `_*.sh` helpers the gates source.
 

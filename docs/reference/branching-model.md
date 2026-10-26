@@ -87,12 +87,13 @@ their reviews still said FIX FIRST, and #570 opened a hole that took #602 to clo
 PR **comment**, `<sha>` being the head the reviewer read; a GitHub PR review or the PR body does not count,
 nor does a line inside a ``` or ~~~ fence at any indentation (closed only by a bare line of the same
 character, at least as long), and the last verdict line in a comment wins. The last verdict on
-the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must touch only
-the two manifests or be a two-parent merge whose tree is what `git merge-tree --write-tree` makes of its parents,
-manifests aside, and whose only conflicts were in the manifests (GH #629; git >= 2.38), checked before the
-script writes anything, before its push and before the merge. So merging `develop`
-and bumping the version keep the review; any other change (an edit made inside a merge, or a conflict
-resolved in code, included), a rebase, or a force-push needs a new one. The
+the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must change only
+the two manifests' `"version"` value or be a two-parent merge whose tree is what `git merge-tree --write-tree`
+makes of its parents, the manifests' version aside, and whose only conflicts were in the manifests and resolve
+the way the script resolves them (GH #629; git >= 2.38, 2.43 for a conflicted manifest), checked before the script writes anything, before its
+push and before the merge. `plugin.json` can carry inline hooks and MCP servers, so any other manifest edit
+counts as code. So merging `develop` and bumping the version keep the review; any other change (an edit made
+inside a merge, or a conflict resolved in code, included), a rebase, or a force-push needs a new one. The
 check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
 still caught. Post the reviewer's result as that comment. It proves a verdict was posted, not who wrote it
 or that the reviewer had fresh context. There
