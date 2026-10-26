@@ -2749,5 +2749,9 @@ test_deny  "$IRRECOVERABLE" "GH #594 control: rm -r build -- -f still has -r" "$
 # a -- a substitution builds may not be one: a non-empty $(x) makes it an operand and leaves -rf a flag
 test_deny  "$IRRECOVERABLE" "GH #594 control: rm \$(x)-- -rf build" "$(bash_payload 'rm $(x)-- -rf build')"
 test_deny  "$IRRECOVERABLE" "GH #594 control: rm --x -rf build (not a bare --)" "$(bash_payload 'rm --x -rf build')"
+# the tokenizer splits at a carriage return and bash does not: `a<CR>--` is one operand, and -rf after it a flag
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a<CR>-- -rf build (not a bare --)" "$(bash_payload $'rm a\r-- -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a<CR>-- -r build (rm-recursive)" "$(bash_payload $'rm a\r-- -r build')"
+test_allow "$IRRECOVERABLE" "GH #594: rm -r -i -- -f prompts for every file" "$(bash_payload 'rm -r -i -- -f')"
 
 gates_summary

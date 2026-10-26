@@ -3794,7 +3794,9 @@ def _check_window(_wi, w):
             for t in rest:
                 # GH #594: after a bare `--` every word is an operand (`rm -- -rf` removes a file named -rf).
                 # Only a literal one: `$(x)--` is an operand once $(x) prints anything, and -rf after it a flag.
-                if t == "--":
+                # Not in a command holding a carriage return: the tokenizer splits there and bash does not,
+                # so `a<CR>--` is one operand that reads as a bare `--`.
+                if t == "--" and "\r" not in cmd:
                     break
                 # "$(true)-rf" IS "-rf" in bash but blanks to "PH-rf", which no
                 # longer starts with "-" -- strip PH, assume the dangerous
