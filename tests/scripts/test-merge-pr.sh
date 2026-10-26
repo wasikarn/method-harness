@@ -454,6 +454,55 @@ refuses "fenced MERGE before a real FIX FIRST" "is FIX FIRST"
 setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"~~~\nFresh-context review: MERGE @ $FEATURE\n~~~\"}]" run
 refuses "only a fenced MERGE" "no \"Fresh-context review"
 
+# 18. --verify, for a session without gh: the same checks from what the MCP tools return, never a gh call,
+#     sync, push or merge. vrun <head> <base> <comments file>: sets out, rc.
+vrun() {
+  [ -d "$F/work" ] || work
+  : >"$F/calls.log"
+  out=$(cd "$F/work" && PATH="$STUB:$PATH" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
+    MERGE_PR_LOCK_DIR="$F/merge.lock" bash "$SCRIPT" --verify 451 "$1" "$2" "$3" 2>&1)
+  rc=$?
+}
+no_side_effects() {
+  if [ ! -s "$F/calls.log" ] && [ "$(pushes)" = 0 ] && [ ! -d "$F/merge.lock" ]; then
+    ok "$1: no gh call, no push, no lock"
+  else bad "$1 had side effects: $(cat "$F/calls.log") pushes=$(pushes)"; fi
+}
+# a synced head (contains develop, version above it) with a MERGE verdict passes and prints the head,
+# even from a checkout on another branch (a cloud session's clone).
+setup; on feat/x "bump" set_ver 1.1.2; work; w checkout -q -b elsewhere
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | tail -n 1)" = "$tip" ]; then ok "--verify passes a synced head and prints it"; else bad "--verify pass rc=$rc: $out"; fi
+no_side_effects "--verify pass"
+# a head behind develop, or at develop's version, is refused with the sync command to run.
+setup; on develop "peer" set_ver 1.1.2
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "does not contain origin/develop; run scripts/sync-pr-head.sh" <<<"$out"; then ok "--verify refuses a head behind develop, naming the sync"; else bad "--verify behind rc=$rc: $out"; fi
+no_side_effects "--verify behind"
+setup
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "not above origin/develop's 1.1.1; run scripts/sync-pr-head.sh" <<<"$out"; then ok "--verify refuses develop's own version, naming the sync"; else bad "--verify same version rc=$rc: $out"; fi
+# the review gate reads the comments file through the same parser.
+setup; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); comments "$(verdict "MERGE @ $tip")" "$(verdict 'FIX FIRST')" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "is FIX FIRST" <<<"$out"; then ok "--verify refuses a FIX FIRST verdict"; else bad "--verify FIX FIRST rc=$rc: $out"; fi
+setup; on feat/x "late" append b.txt late; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); verdict "MERGE @ $FEATURE" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "touches more than the manifests" <<<"$out"; then ok "--verify refuses a change after the review"; else bad "--verify late change rc=$rc: $out"; fi
+vrun "$tip" develop "$F/missing.json"
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "could not read PR 451's comments" <<<"$out"; then ok "--verify refuses a missing comments file"; else bad "--verify missing file rc=$rc: $out"; fi
+vrun "$tip" main "$F/comments.json"
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "not develop" <<<"$out"; then ok "--verify refuses a non-develop base"; else bad "--verify base rc=$rc: $out"; fi
+vrun "${tip:0:12}" develop "$F/comments.json"
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q "full 40-character head sha" <<<"$out"; then ok "--verify needs the full sha (exit 2)"; else bad "--verify short sha rc=$rc: $out"; fi
+out=$(PATH="$STUB:$PATH" bash "$SCRIPT" --verify 451 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q -- "--verify <PR number>" <<<"$out"; then ok "--verify without its arguments prints usage (exit 2)"; else bad "--verify usage rc=$rc: $out"; fi
+
 # 17. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" bash "$SCRIPT" 2>&1); rc=$?
 if [ "$rc" -eq 2 ]; then ok "missing PR argument exits 2"; else bad "missing PR argument rc=$rc"; fi

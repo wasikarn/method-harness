@@ -13,16 +13,38 @@
 # One run can span a gauntlet plus lock waits (> 10 min), so start it in the background.
 # Bash 3.2. Env: MERGE_PR_LOAD_MAX (default 4), MERGE_PR_LOAD_WAIT_SECS (900),
 # MERGE_PR_LOCK_DIR ($HOME/.cache/mh/merge-pr.lock), MERGE_PR_LOCK_WAIT_SECS (3600).
+#
+# merge-pr.sh --verify <PR> <head sha> <base branch> <comments.json> — the same checks without gh, for a
+# session that has none (a Claude Code cloud session) and merges through the GitHub MCP tools. The caller
+# passes what those tools return: the head sha, the base branch, and the PR's issue comments as a JSON
+# array of objects with a "body" (read by the same verdict parser). It runs the base, review, ancestry
+# and version checks and never takes the lock, syncs, pushes or merges: a head that lacks origin/develop
+# or a version above it is refused with the scripts/sync-pr-head.sh command to run first. On a pass it
+# prints the head; merge it pinned to that sha (expectedHeadSha) right away. Before this mode, cloud
+# sessions retyped these checks by hand for every merge (#633, #644, #648).
 set -euo pipefail
 
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 # shellcheck source=_lib/gauntlet-lock.sh
 . "$HERE/_lib/gauntlet-lock.sh"
 
-pr="${1:-}"
-if [ -z "$pr" ]; then
+usage() {
   echo "usage: merge-pr.sh <PR number>" >&2
+  echo "       merge-pr.sh --verify <PR number> <head sha> <base branch> <comments.json>" >&2
   exit 2
+}
+verify=0
+if [ "${1:-}" = "--verify" ]; then
+  verify=1
+  pr="${2:-}" head="${3:-}" base="${4:-}" comments_file="${5:-}"
+  if [ -z "$pr" ] || [ -z "$head" ] || [ -z "$base" ] || [ -z "$comments_file" ] || [ $# -gt 5 ]; then usage; fi
+  if ! [[ "$head" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "merge-pr: --verify needs the full 40-character head sha, not '$head'." >&2
+    exit 2
+  fi
+else
+  pr="${1:-}"
+  [ -n "$pr" ] || usage
 fi
 
 PLUGIN=.claude-plugin/plugin.json
@@ -62,15 +84,17 @@ merge_lock_release() {
 
 git fetch origin
 
-info=$(gh pr view "$pr" --json headRefOid,baseRefName,headRefName,isCrossRepository \
-  -q '.headRefOid + " " + .baseRefName + " " + .headRefName + " " + (.isCrossRepository | tostring)')
-read -r head base branch cross <<<"$info"
-if [ -z "$head" ] || [ -z "${branch:-}" ]; then
-  die "could not read the head sha, base and head branch of PR $pr"
-fi
-# The script pushes the sync to origin's $branch; a fork PR's branch is not there.
-if [ "${cross:-}" != "false" ]; then
-  die "PR $pr comes from a fork (or gh did not say; isCrossRepository=${cross:-unknown}); the script can only sync and push a branch on origin. Merge it on GitHub."
+if [ "$verify" = 0 ]; then
+  info=$(gh pr view "$pr" --json headRefOid,baseRefName,headRefName,isCrossRepository \
+    -q '.headRefOid + " " + .baseRefName + " " + .headRefName + " " + (.isCrossRepository | tostring)')
+  read -r head base branch cross <<<"$info"
+  if [ -z "$head" ] || [ -z "${branch:-}" ]; then
+    die "could not read the head sha, base and head branch of PR $pr"
+  fi
+  # The script pushes the sync to origin's $branch; a fork PR's branch is not there.
+  if [ "${cross:-}" != "false" ]; then
+    die "PR $pr comes from a fork (or gh did not say; isCrossRepository=${cross:-unknown}); the script can only sync and push a branch on origin. Merge it on GitHub."
+  fi
 fi
 if [ "$base" != "develop" ]; then
   echo "merge-pr: PR $pr targets '$base', not develop; the origin/develop check would prove nothing." >&2
@@ -79,9 +103,11 @@ if [ "$base" != "develop" ]; then
 fi
 
 # The gauntlet runs on this working tree, so it must be the PR branch with nothing beside the commit.
-cur=$(git symbolic-ref --quiet --short HEAD) || cur=""
-if [ "$cur" != "$branch" ]; then
-  die "run this from a checkout of PR $pr's branch $branch (this one is on ${cur:-a detached HEAD}): the script commits the sync and the version there and pushes them."
+if [ "$verify" = 0 ]; then
+  cur=$(git symbolic-ref --quiet --short HEAD) || cur=""
+  if [ "$cur" != "$branch" ]; then
+    die "run this from a checkout of PR $pr's branch $branch (this one is on ${cur:-a detached HEAD}): the script commits the sync and the version there and pushes them."
+  fi
 fi
 # require_clean <when>: checked at the start, at each round, and before and after the push, since the
 # lock and load waits leave the caller time to edit this checkout.
@@ -92,11 +118,13 @@ require_clean() {
     die "the checkout has uncommitted or untracked files $1; the pre-push gauntlet runs on this tree, so it must match the commit that merges. Commit or move them, and do not edit this checkout while merge-pr.sh runs."
   fi
 }
-require_clean "at the start"
-rc=0
-git merge-base --is-ancestor "$head" HEAD || rc=$?
-if [ "$rc" -ne 0 ]; then
-  die "local $branch does not contain PR $pr's head $head (rc=$rc); pull the branch first."
+if [ "$verify" = 0 ]; then
+  require_clean "at the start"
+  rc=0
+  git merge-base --is-ancestor "$head" HEAD || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    die "local $branch does not contain PR $pr's head $head (rc=$rc); pull the branch first."
+  fi
 fi
 
 # First "version" key; awk reads all of its input, so no SIGPIPE under pipefail.
@@ -195,6 +223,13 @@ sync_and_bump() {
 # manifests agree on a plain X.Y.Z above origin/develop's. An identical bump rebases away with no
 # conflict, so two PRs once cut one number (#492/#493, #496/#497); sync_and_bump should make every
 # refusal here unreachable.
+resync_hint() {
+  if [ "$verify" = 1 ]; then
+    echo "run scripts/sync-pr-head.sh <head branch> $head, then --verify the sha it prints"
+  else
+    echo "run merge-pr.sh again so it cuts the next number"
+  fi
+}
 check_version() {
   local head_ver mkt_ver dev_ver v
   head_ver=$(manifest_version "$head" "$PLUGIN")
@@ -215,7 +250,7 @@ check_version() {
     exit 1
   fi
   if ! version_lt "$dev_ver" "$head_ver"; then
-    echo "merge-pr: PR $pr head ships version $head_ver, not above origin/develop's $dev_ver; run merge-pr.sh again so it cuts the next number." >&2
+    echo "merge-pr: PR $pr head ships version $head_ver, not above origin/develop's $dev_ver; $(resync_hint)." >&2
     exit 1
   fi
 }
@@ -239,8 +274,13 @@ REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: false, m: null};
   | "\($m.v | ascii_upcase | gsub(" "; "_")) \(($m.r | capture("^[*\\s]*@\\s*`?(?<s>[0-9a-fA-F]{7,40})\\b") | .s) // "-")"'
 check_review() {
   local verdicts last word sha revs c files
-  verdicts=$(gh api --paginate "repos/{owner}/{repo}/issues/$pr/comments" --jq "$REVIEW_JQ") ||
-    { echo "merge-pr: could not read the comments of PR $pr to find its review verdict; not merging." >&2; exit 1; }
+  if [ "$verify" = 1 ]; then
+    verdicts=$(jq -r "$REVIEW_JQ" <"$comments_file") ||
+      { echo "merge-pr: could not read PR $pr's comments from '$comments_file' (a JSON array of comments with a \"body\") to find its review verdict." >&2; exit 1; }
+  else
+    verdicts=$(gh api --paginate "repos/{owner}/{repo}/issues/$pr/comments" --jq "$REVIEW_JQ") ||
+      { echo "merge-pr: could not read the comments of PR $pr to find its review verdict; not merging." >&2; exit 1; }
+  fi
   last=$(printf '%s\n' "$verdicts" | awk 'NF == 2 { l = $0 } END { print l }')
   word=${last%% *}; sha=${last#* }
   if [ -z "$last" ]; then
@@ -339,6 +379,20 @@ push_head() {
 
 # Refuse a PR whose review does not cover it before the script writes anything.
 check_review
+
+# --verify: the checks alone; a session without gh syncs with sync-pr-head.sh and merges through MCP.
+if [ "$verify" = 1 ]; then
+  rc=0
+  git merge-base --is-ancestor origin/develop "$head" || rc=$?
+  [ "$rc" -le 1 ] || die "ancestry check against origin/develop failed (rc=$rc); is $head fetched?"
+  if [ "$rc" -eq 1 ]; then
+    die "PR $pr head $head does not contain origin/develop; $(resync_hint)."
+  fi
+  check_version
+  echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE); merge it pinned to that sha now, and verify again if develop moves first." >&2
+  echo "$head"
+  exit 0
+fi
 
 merge_lock_take
 if [ "$GAUNTLET_LOCK_HELD" != 1 ]; then

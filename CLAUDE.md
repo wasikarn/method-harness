@@ -39,7 +39,8 @@ Search configured `qmd` collections first (`qmd status`), then `context7` for li
 `develop` is protected: PR only, from a `feat/`/`claude/` branch, reviewed via
 `mattpocock-skills:code-review`; `scripts/merge-pr.sh` refuses a PR whose last verdict comment is not
 `Fresh-context review: MERGE @ <reviewed sha>`. PRs never bump the version: `merge-pr.sh` syncs develop,
-cuts the next number and pushes at merge time (run it from the PR's checkout, in the background).
+cuts the next number and pushes at merge time (run it from the PR's checkout, in the background). No `gh`
+(cloud): `sync-pr-head.sh`, then `merge-pr.sh --verify`, then the MCP merge pinned to the head.
 Worktrees, the shared memory store, and the merge flow: `docs/reference/branching-model.md`.
 Ships as `mh@wasikarn` from the plugin cache; design: `docs/reference/operating-model.md`; env
 vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-ledger-module.md`.
