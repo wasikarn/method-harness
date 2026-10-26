@@ -154,9 +154,10 @@ got_lines=$(hit_lines <<<"$out")
   && ok "probe: all $n_want planted hits (mostly races; some pinned heuristics/over-reports) found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
 
-# Known `>(...)` over-reports (docs/reference/repo-gotchas.md lists them and says why they stay):
-# bash exits 0 for each, yet the scanner reports it, by design. Rows 1-3: every fd holding the
-# `>(...)` is redirected later on the same command; row 4: the writer never writes to that fd.
+# Known over-reports (docs/reference/repo-gotchas.md lists them and says why they stay): bash
+# exits 0 for each, yet the scanner reports it, by design. Rows 1-3: every fd holding the `>(...)`
+# is redirected later on the same command; row 4: the writer never writes to that fd; row 5: the
+# status is discarded by `|| true`; row 6: a later reader drains the rest.
 # Pinned so a skip rule cannot come back unreviewed: one that clears a row must keep every race
 # above reported, and then move the row to good.sh.
 cat > "$probe/over.sh" <<'EOF'
@@ -164,12 +165,14 @@ cat < "$f" > >(grep -q y) >/dev/null
 { seq 2000000 >&2; } 2> >(grep -q 1) 2>/dev/null
 cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
 cat < "$f" 2> >(grep -q y)
+seq 2000000 | grep -q 1 || true
+seq 2000000 | { grep -q 1; cat >/dev/null; }
 EOF
 out=$(scan "$probe/over.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
-[ "$rc" -eq 1 ] && [ "$got_lines" = "1 2 3 4" ] \
-  && ok "probe: the 4 known >(...) over-reports (fds all redirected later, an fd never written) stay reported, as documented" \
-  || bad "probe: known over-reports gave rc $rc, lines [$got_lines], want rc 1 and [1 2 3 4]: a skip rule must be reviewed against the races above; stderr: $(cat "$probe/err")"
+[ "$rc" -eq 1 ] && [ "$got_lines" = "1 2 3 4 5 6" ] \
+  && ok "probe: the 6 known over-reports (fds all redirected later, an fd never written, status discarded, a later drain) stay reported, as documented" \
+  || bad "probe: known over-reports gave rc $rc, lines [$got_lines], want rc 1 and [1 2 3 4 5 6]: a skip rule must be reviewed against the races above; stderr: $(cat "$probe/err")"
 
 cat > "$probe/good.sh" <<'EOF'
 # printf "$r" | grep -q x
