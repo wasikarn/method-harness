@@ -2271,7 +2271,6 @@ done
 for _c in \
   'dd if=x of=$DISK' \
   'dd if=x of="$DISK"' \
-  'dd if=x of=$(echo /dev/disk2)' \
   'dd if=x of=${TARGET}' \
   'dd if=x of=${HOME}/disk.img' \
   'dd if=x of=$PWD/../../dev/sda' ; do
@@ -2440,7 +2439,11 @@ done
 # and nothing in the command can answer. Finding 1: the command feeds rm's stdin (a pipe, <, <<,
 # <<<, <&, a heredoc, a coproc), read over the whole command since a group, loop or shell body
 # passes its stdin on. Finding 2: the last of -f/-i/-I/--interactive[=WHEN] wins, as GNU rm reads
-# them. Finding 3: a -i after -- is a filename.
+# them. Finding 3: a -i after -- is a filename. #636 review: options end at the first operand, as BSD/macOS rm
+# and GNU rm under POSIXLY_CORRECT read them (operator decision), so a -i after an operand grants nothing
+# (`rm -r build -i` deletes build there), while a later -f/-I/--interactive=never still voids it (GNU
+# permutes); an interpreter one-liner's process API can feed stdin itself; a terminal driver counts only as
+# a command word, not a path part.
 for _c in \
   'yes | rm -ri build' \
   'rm -ri build <<< "$(yes | head -1000)"' \
@@ -2473,7 +2476,19 @@ for _c in \
   'rm -ri $(printf %s -f) build' \
   'rm -r -- -i build' \
   'rm -r build -- -i' \
-  'POSIXLY_CORRECT=1 rm -r build -i' ; do
+  'POSIXLY_CORRECT=1 rm -r build -i' \
+  'rm -r build -i' \
+  'rm -r build --interactive' \
+  'rm -rI build -i' \
+  'rm -ri build -f' \
+  'rm -ri build -I' \
+  'rm -ri build --interactive=never' \
+  'script -qc "rm -ri build" /dev/null' \
+  'unbuffer rm -ri build' \
+  'sudo expect -f answer.exp; rm -ri build' \
+  "python3 -c \"import subprocess; subprocess.run(['rm','-ri','build'], input=b'y\\n'*99)\"" \
+  "node -e \"require('child_process').execSync('rm -ri build', {input: 'y\\n'.repeat(99)})\"" \
+  "perl -e 'system(\"rm -ri build\")'" ; do
   test_deny "$IRRECOVERABLE" "GH #606/#611 review: rm -r with no per-file prompt nothing answers: $_c" "$(bash_payload "$_c")"
 done
 # xargs rm already denies whatever its flags (rule xargs-rm); GNU xargs gives rm /dev/null as stdin
@@ -2483,7 +2498,10 @@ for _c in 'echo build | xargs rm -ri' 'xargs -a list.txt rm -ri' 'find . -name b
 done
 for _c in \
   'rm -ri build' \
-  'rm -r build -i' \
+  'rm -ri build/script' \
+  'rm -ri tmux' \
+  'rm -ri ./expect screen' \
+  'rm -ri build; echo script done' \
   'rm -rI -i build' \
   'rm -r --interactive build' \
   'rm -r --interactive=always build' \

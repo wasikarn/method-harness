@@ -447,12 +447,22 @@ def _normalize_ansi_c_quotes(cmd):
 # < and | an eval or $'...' could decode. Over-reading costs only the -i exception of a recursive rm. xargs
 # is not here: rule xargs-rm denies `xargs rm` whatever its flags (GNU xargs gives rm /dev/null anyway,
 # unless -a or -o).
+# A terminal driver counts only as a command word (#636 review: `rm -ri build/script` names no driver): at a
+# line, statement, group, substitution or quote start, past assignments, wrapper words and a path.
 _RM_STDIN_FED_RE = re.compile(
     r"[|<]|(?<!\d)0>&|\\(?:x(?:3c|7c)|0?74|174|u0{0,2}(?:3c|7c)|U0{0,6}(?:3c|7c))"
-    r"|\b(?:coproc|expect|unbuffer|script|tmux|screen|socat|zpty)\b", re.IGNORECASE)
+    r"|(?:^|[;&(){}\n`'\"])\s*(?:(?:[A-Za-z_]\w*=[^\s;&|()`'\"]*|sudo|env|exec|command|builtin|nohup|nice|time|setsid|stdbuf"
+    r"|timeout|then|do|else|elif|if|while|until|!)\s+)*(?:[^\s;&|()`'\"]*/)?"
+    r"(?:coproc|expect|unbuffer|script|tmux|screen|socat|zpty)(?=[\s;&|)`'\"]|$)", re.IGNORECASE)
 _RM_STDIN_FED = []
+# #636 review: an interpreter one-liner's process API (subprocess.run(..., input=...), execSync(..., {input}))
+# can write rm's stdin itself, so an rm reached through one (_interp_commands) never keeps the -i exception.
+# Set before the body's windows are checked, which always follow the window that holds the interpreter.
+_RM_VIA_INTERP = [False]
 
 def _rm_stdin_fed():
+    if _RM_VIA_INTERP[0]:
+        return True
     if not _RM_STDIN_FED:
         raw = d["tool_input"].get("command", "")
         _RM_STDIN_FED.append(not isinstance(raw, str) or bool(_RM_STDIN_FED_RE.search(raw)))
@@ -468,13 +478,15 @@ def _rm_when(v):
     hits = {m for k, m in _RM_WHEN.items() if v and k.startswith(v)}
     return hits.pop() if len(hits) == 1 else "error"
 
-def _rm_prompts_each(rest, posix):
-    # GH #606, #611 review findings 2 and 3: whether rm asks before every file. GNU rm lets the last of
-    # -f/--force (never), -i/--interactive[=always] (each file), -I/--interactive=once (once, then deletes
-    # the tree) win, reads options after an operand too (it permutes), and stops at "--", after which -i
-    # is a filename. Under POSIXLY_CORRECT (and BSD rm) the first operand ends the options too. A word that
-    # is a substitution or a variable before "--" may expand to -f or to "--", so it voids the prompt.
-    mode = None
+def _rm_prompts_each(rest):
+    # GH #606, #611 review findings 2 and 3: whether rm asks before every file. The last of -f/--force
+    # (never), -i/--interactive[=always] (each file), -I/--interactive=once (once, then deletes the tree)
+    # wins, and "--" ends the options (a -i after it is a filename). #636 review, operator decision: the
+    # options that can grant the prompt end at the first operand, as BSD/macOS rm and GNU rm under
+    # POSIXLY_CORRECT read them (there `rm -r build -i` deletes build). GNU rm permutes, so a later -f, -I or
+    # --interactive=never|once still voids it; a later -i never grants it. A word that is a substitution or
+    # a variable before "--" may expand to -f or to "--", so it voids the prompt.
+    mode, operand = None, False
     for t in rest:
         if PH in t or "$" in t or "`" in t:
             return False
@@ -483,19 +495,26 @@ def _rm_prompts_each(rest, posix):
         if t.startswith("--"):
             name, eq, val = t.partition("=")
             if _is_flag(name, "--force"):
-                mode = "never"
+                new = "never"
             elif _is_flag(name, "--interactive"):
-                mode = _rm_when(val) if eq else "always"
+                new = _rm_when(val) if eq else "always"
+            else:
+                continue
+            if not operand:
+                mode = new
+            elif new != "always":
+                return False
         elif t.startswith("-") and len(t) > 1:
             for ch in t[1:]:
-                if ch == "f":
-                    mode = "never"
-                elif ch == "i":
-                    mode = "always"
-                elif ch == "I":
-                    mode = "once"
-        elif posix:
-            break
+                new = {"f": "never", "i": "always", "I": "once"}.get(ch)
+                if new is None:
+                    continue
+                if not operand:
+                    mode = new
+                elif new != "always":
+                    return False
+        else:
+            operand = True
     return mode == "always"
 
 cmd = _strip_heredocs(d["tool_input"].get("command", ""))
@@ -3585,7 +3604,9 @@ def _check_window(_wi, w):
     _unwrap_shell(argv0.replace(PH, ""), rest)  # `s$(true)h -c` is still sh
     _ib = _interp_body(argv0.replace(PH, ""), rest)  # GH #608
     if _ib:
-        for _c in _interp_commands(_ib):
+        _ic = _interp_commands(_ib)
+        _RM_VIA_INTERP[0] = _RM_VIA_INTERP[0] or bool(_ic)  # #636 review: the API can feed rm's stdin
+        for _c in _ic:
             _scan_body(_c)
 
     if argv0 == "find":
@@ -3727,7 +3748,7 @@ def _check_window(_wi, w):
             # unless a later -f/-I/--interactive=never|once overrides it, it sits after "--", or the command
             # feeds rm's stdin (#611 review; _rm_prompts_each, _rm_stdin_fed).
             if has_r and not has_f and not (
-                    _rm_prompts_each(rest, "POSIXLY_CORRECT" in cmd)
+                    _rm_prompts_each(rest)
                     and not _rm_stdin_fed()):
                 deny("rm -r deletes a directory tree with no undo, -f or not — " + delete_hint(), rule="rm-recursive")
 
