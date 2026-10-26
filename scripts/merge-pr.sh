@@ -209,7 +209,7 @@ sync_and_bump() {
     merge_open=1
     git merge --no-commit --no-ff "$dev" || resolve_manifest_conflicts
   elif [ "$rc" -ne 0 ]; then
-    die "ancestry check against origin/develop failed (rc=$rc); is origin/develop fetched?"
+    die "ancestry check of HEAD against origin/develop ($dev) failed (rc=$rc)."
   fi
   dev_ver=$(manifest_version "$dev" "$PLUGIN")
   is_xyz "$dev_ver" || die "origin/develop's version '$dev_ver' is not X.Y.Z; cannot cut the next one."
@@ -258,7 +258,7 @@ check_version() {
     fi
   done
   if [ "$head_ver" != "$mkt_ver" ]; then
-    echo "merge-pr: PR $pr head has plugin.json $head_ver but marketplace.json $mkt_ver; the two manifests must agree." >&2
+    echo "merge-pr: PR $pr head has plugin.json $head_ver but marketplace.json $mkt_ver; the two manifests must agree; $(resync_hint)." >&2
     exit 1
   fi
   if ! version_lt "$dev_ver" "$head_ver"; then
