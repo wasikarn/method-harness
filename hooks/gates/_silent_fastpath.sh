@@ -3,8 +3,8 @@
 # not a hook itself. mh_gate_run PY DEFER_ERE reads the payload once and exits 0 with no output when
 # the gate's python is provably silent, else hands python3 the same bytes and exits with its status.
 #
-# Proof the skip is exact: the payload is at most 32768 bytes, ASCII, has no \u escape and matches
-# the plain-object regex (subagent-git-guard.sh's, GH #326), so json.load gives a dict whose values
+# Proof the skip is exact: the read kept its sentinel (else python runs), the payload is at most
+# 32768 bytes, ASCII, has no \u escape and matches the plain-object regex (subagent-git-guard.sh's, GH #326), so json.load gives a dict whose values
 # are scalars or objects of scalars, and every letter, digit, "_", "-" and space in a decoded string
 # sits literally in the raw text (JSON's other escapes only make " \ / and control characters).
 # DEFER_ERE lists every raw text that could make that gate's python ask, journal or print, so when
@@ -14,9 +14,15 @@
 # -S skips the site import (~6 ms); the gates use the stdlib only.
 mh_gate_run() {
   local _input
-  _input=$(LC_ALL=C tr '\0' '\001'; printf x)
-  _input=${_input%x}  # the x keeps trailing newlines byte-exact
-  [ "${MH_GATE_NO_FASTPATH-}" = 1 ] || { _mh_silent "$2" && exit 0; }  # the gate canary sets it so python runs
+  # export, not an `LC_ALL=C tr` prefix: bash 5.3 sometimes drops what a command substitution writes after
+  # such a prefixed command, here the x (GH #610).
+  _input=$(export LC_ALL=C; tr '\0' '\001'; printf x)
+  # Check the x before stripping it: ${_input%x} without one scans every suffix, minutes on a large payload,
+  # past the hook timeout (which allows). A read without its x may not be byte-exact, so python decides.
+  if [ "${_input: -1}" = x ]; then
+    _input=${_input%x}  # the x keeps trailing newlines byte-exact
+    [ "${MH_GATE_NO_FASTPATH-}" = 1 ] || { _mh_silent "$2" && exit 0; }  # the gate canary sets it so python runs
+  fi
   printf '%s' "$_input" | python3 -S "$1"
   exit "${PIPESTATUS[1]}"
 }
