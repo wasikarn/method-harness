@@ -64,10 +64,12 @@ drains the rest, and when every fd holding the `>(...)` is redirected elsewhere 
 command (`cat > >(grep -q y) >/dev/null`): telling that apart needs a model of fd copies, moves and
 `{var}` fds, and two attempts at one hid real races (#650); a bare `v=$(...)` keeps the writer's
 status, so under `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` reads all of
-its input (GNU grep 3.11), so it is safe in a pipe; `grep -q` stays early-exit even with
-`>/dev/null` (`tee >(grep -q 1 >/dev/null) < big` still exits 141). A hit whose line ends in the
-comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint allows one: its own
-race probe.
+its input (GNU grep 3.11), so it is safe in a pipe, only when it reads fd 0 directly (no file
+operand, or `-`) with no `-m` limit: `grep -m1 PAT` stops at its first match (`seq 2000000 | grep
+-m1 1 >/dev/null` gives 141 0), so does a grep naming `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0`
+(141 0), and `grep -q` stays early-exit even with `>/dev/null` (`tee >(grep -q 1 >/dev/null) < big`
+still exits 141). A hit whose line ends in the comment `# pipe-into-grep-q: deliberate` is exempt
+but reported, and the lint allows one: its own race probe.
 `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for the stdin-skipping reason, and
 skips the `_*.sh` helpers the gates source.
 
@@ -160,6 +162,15 @@ already set alone.
   names non-UUID ids but does not drop them). Probe with
   `MH_GATE_JOURNAL_PATH=/dev/null` (or a scratch file when you want to read the row back), and
   use `scripts/gate-differential.sh` for old-vs-new comparisons, which already isolates it.
+- **Background load runs go in a bash file, with explicit PIDs.** The Bash tool's shell is zsh:
+  `wait $pids` does not word-split, and under `zsh -c` `kill $(jobs -p)` finds no jobs, so the
+  workers outlive the run. Twice this left a flood behind (289 processes, load ~248, 2026-10-05;
+  4 `yes` at 100% CPU for ~4 h, 2026-10-25) that failed every session's timing rows. Write the
+  run as a file and start it with `bash <file>`, collect `pids+=($!)`, `kill "${pids[@]}"` in a
+  `trap ... EXIT`, then confirm no worker is left and the load has dropped. `run-gauntlet.sh` now
+  names long-running CPU-heavy process groups of yours, a flood of low-CPU workers included
+  (`scripts/_lib/stray-procs.sh`, warn-only), but it can only catch a stray after the fact; killing
+  one that a peer session owns is the operator's call.
 
 ## Research: check qmd before web search
 
