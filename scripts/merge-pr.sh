@@ -147,9 +147,9 @@ check_version() {
 # (CLAUDE.md asks for that). There is no opt-out: an operator who must merge without a verdict does it on
 # GitHub.
 REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: null, m: null};
-    (($l | capture("^ {0,3}(?<c>`{3,}|~{3,})") | .c) // null) as $fc
-    | if .f == null and $fc != null then .f = $fc
-    elif .f != null then (if $fc != null and ($fc[0:1] == .f[0:1]) and ($fc | length) >= (.f | length) then .f = null else . end)
+    (($l | capture("^\\s*(?<c>`{3,}|~{3,})(?<t>.*)$")) // null) as $fc
+    | if .f == null and $fc != null then .f = $fc.c
+    elif .f != null then (if $fc != null and ($fc.t | test("^\\s*$")) and ($fc.c[0:1] == .f[0:1]) and ($fc.c | length) >= (.f | length) then .f = null else . end)
     else ((($l | capture("^[#*\\s]*fresh-context review\\s*:\\s*\\**\\s*(?<v>MERGE|FIX FIRST|CLOSE)\\b(?<r>.*)$"; "i")) as $c | .m = $c) // .)
     end) | .m) as $m
   | select($m != null)
@@ -202,8 +202,15 @@ check_review() {
     fi
     rc=0; tree=$(git merge-tree --write-tree --no-messages "$p1" "$p2") || rc=$?
     if [ "$rc" -gt 1 ]; then echo "merge-pr: git merge-tree of $c's parents failed (rc=$rc; needs git >= 2.38); not merging." >&2; exit 1; fi
+    # On a conflict (rc 1) the tree holds one side for a modify/delete or binary conflict, so a merge that took
+    # that side would match it: only a manifest may conflict. Each conflict line is "<mode> <oid> <stage>\t<path>".
+    if [ "$rc" -eq 1 ] && printf '%s\n' "${tree#*$'\n'}" | awk -F '\t' 'NF >= 2 && $2 != ".claude-plugin/plugin.json" && $2 != ".claude-plugin/marketplace.json" { f = 1 } END { exit !f }'; then
+      echo "merge-pr: PR $pr's merge commit $c after its MERGE review of $sha resolved a conflict outside the manifests; get a review of $head." >&2
+      exit 1
+    fi
     tree=${tree%%$'\n'*}
-    files=$(git diff --name-only "$tree" "$c^{tree}") || { echo "merge-pr: git diff of merge commit $c failed; not merging." >&2; exit 1; }
+    # --no-renames: a rename onto a manifest must still show the deleted source path.
+    files=$(git diff-tree -r --no-renames --name-only "$tree" "$c") || { echo "merge-pr: git diff-tree of merge commit $c failed; not merging." >&2; exit 1; }
     if printf '%s\n' "$files" |
       awk '$0 != "" && $0 != ".claude-plugin/plugin.json" && $0 != ".claude-plugin/marketplace.json" { f = 1 } END { exit !f }'; then
       echo "merge-pr: PR $pr's merge commit $c after its MERGE review of $sha changes more than merging its parents does (beyond the manifests); get a review of $head." >&2

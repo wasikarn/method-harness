@@ -104,15 +104,25 @@ case "$1" in
       *" --parents "*) for m in $STUB_MERGES; do [ "${m%%:*}" = "${@: -1}" ] && { r=${m%:*}; echo "${r//:/ }"; }; done ;;
       *) for c in $STUB_COMMITS; do echo "${c%%:*}"; done ;;
     esac ;;
-  # merge-tree --write-tree --no-messages <p1> <p2>: prints tree-<p1>-<p2> (plus a conflict line when
-  # STUB_MERGETREE_RC is 1) and exits STUB_MERGETREE_RC (default 0).
+  # merge-tree --write-tree --no-messages <p1> <p2>: prints tree-<p1>-<p2>, then (when STUB_MERGETREE_RC is
+  # 1) one "<mode> <oid> <stage>\t<path>" conflict line per path in STUB_MERGETREE_CONFLICTS (comma-separated,
+  # default the plugin manifest), and exits STUB_MERGETREE_RC (default 0).
   merge-tree)
-    echo "tree-$4-$5"; [ "${STUB_MERGETREE_RC:-0}" != 1 ] || echo "100644 abc 2 .claude-plugin/plugin.json"
+    echo "tree-$4-$5"
+    if [ "${STUB_MERGETREE_RC:-0}" = 1 ]; then
+      cf="${STUB_MERGETREE_CONFLICTS:-.claude-plugin/plugin.json}"
+      for f in ${cf//,/ }; do printf '100644 abc 2\t%s\n100644 def 3\t%s\n' "$f" "$f"; done
+    fi
     exit "${STUB_MERGETREE_RC:-0}" ;;
-  # diff --name-only <tree> <merge>^{tree}: the merge's files from STUB_MERGES.
-  diff) for m in $STUB_MERGES; do [ "${m%%:*}^{tree}" = "${@: -1}" ] && { f=${m##*:}; printf '%s\n' ${f//,/ }; }; done ;;
   diff-tree)
     [ -z "${STUB_DIFFTREE_FAIL:-}" ] || { echo "fatal: bad object" >&2; exit 128; }
+    # diff-tree -r --no-renames --name-only <tree> <merge>: the merge's files from STUB_MERGES, and only with
+    # --no-renames (a rename would list just its destination, GH #657 review).
+    case " $* " in *" tree-"*)
+      case " $* " in *" --no-renames "*) ;; *) echo "diff-tree without --no-renames" >&2; exit 1 ;; esac
+      for m in $STUB_MERGES; do [ "${m%%:*}" = "${@: -1}" ] && { f=${m##*:}; printf '%s\n' ${f//,/ }; }; done
+      exit 0 ;;
+    esac
     for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { f=${c#*:}; printf '%s\n' ${f//,/ }; }; done ;;
   *) exit 2 ;;
 esac
@@ -467,12 +477,26 @@ refuses "an octopus merge after the review" "exactly two parents"
 STUB_MERGES="m1:p1:p2:" STUB_MERGETREE_RC=128 run 0 headsha111 1.50
 refuses "git merge-tree failing" "merge-tree of m1's parents failed"
 
+# 6m2. #657 review: a conflict outside the manifests is refused even when the merge kept merge-tree's side
+# (a modify/delete or binary conflict leaves one side in merge-tree's tree, so the trees match).
+STUB_MERGES="m1:p1:p2:" STUB_MERGETREE_RC=1 STUB_MERGETREE_CONFLICTS="other.txt" run 0 headsha111 1.50
+refuses "a non-manifest conflict resolved to merge-tree's side" "resolved a conflict outside the manifests"
+STUB_MERGES="m1:p1:p2:" STUB_MERGETREE_RC=1 STUB_MERGETREE_CONFLICTS=".claude-plugin/plugin.json,.claude-plugin/marketplace.json" run 0 headsha111 1.50
+if [ "$rc" -eq 0 ] && merged; then ok "conflicts only in both manifests keep the review"; else bad "manifest-only conflicts refused rc=$rc: $out"; fi
+
 # 6n. GH #629: mixed fence styles. A ~~~ fence is not closed by ```, so the FIX FIRST after the ~~~ closer
 # is outside any fence and wins; a longer ```` fence is not closed by a shorter ``` inside it.
 STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"Fresh-context review: MERGE @ abcdef1\n~~~\n```\n~~~\nFresh-context review: FIX FIRST @ abcdef1"}]' run 0 headsha111 1.50
 refuses "mixed fences hiding a later FIX FIRST" "is FIX FIRST"
 STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## Fresh-context review: FIX FIRST\n````\n```\nFresh-context review: MERGE @ abc1234\n```\n````"}]' run 0 headsha111 1.50
 refuses "a MERGE inside a longer fence" "is FIX FIRST"
+
+# 6o. #657 review: a fence closer carries no text (```` ``` x ```` does not close), and an indented fence (in
+# a list item) still hides what it holds.
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## Fresh-context review: FIX FIRST\n```\n``` x\nFresh-context review: MERGE @ abc1234\n```"}]' run 0 headsha111 1.50
+refuses "a MERGE after a closer with text" "is FIX FIRST"
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## Fresh-context review: FIX FIRST\n- item\n\n      ```\n      Fresh-context review: MERGE @ abc1234\n      ```"}]' run 0 headsha111 1.50
+refuses "a MERGE in an indented fence" "is FIX FIRST"
 
 # 5. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" 2>&1); rc=$?
