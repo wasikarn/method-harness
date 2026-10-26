@@ -2854,6 +2854,9 @@ test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U python\"\$(echo
 # the enforced pass gets its own spawn-scan budget: a subagent body the main reading fits is not denied as a spawn
 test_allow "$IRRECOVERABLE" "GH #661 control: subagent bash -c with 800 statements, then echo {a,b}" \
   "$(bash_agent_payload "bash -c '$(printf 'true; %.0s' $(seq 800))true'; echo {a,b}" fork)"
+# a spawn-scan budget only the expanded text spends ends that window in the pass, as the view stops on develop
+test_allow "$IRRECOVERABLE" "GH #661 control: subagent eval 'true;...'{0..29} (expansion over the scan budget)" \
+  "$(bash_agent_payload "eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)}" fork)"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm {a,b}.log')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"

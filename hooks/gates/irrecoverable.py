@@ -1046,7 +1046,7 @@ _ONLY_RULE = [None]
 # budget limit, a nested spawn) denies there, as it does in the main reading: the text cannot be read safely.
 _ONLY_RULE_PASS_ON = [False]
 def _deny_nested_spawn():
-    if _ONLY_RULE[0] and not _ONLY_RULE_PASS_ON[0]:
+    if _ONLY_RULE[0] and (not _ONLY_RULE_PASS_ON[0] or _spawn_over_budget):
         raise _ViewStop
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
@@ -1147,6 +1147,8 @@ def deny(reason, rule=None):
             raise _ViewStop
         if rule is not None:
             return
+        if _spawn_over_budget:  # the pass's own scan budget ran out on the expanded text: that window only ends,
+            raise _ViewStop     # as the view does on develop (it is not a spawn, and the main reading fit)
     elif _VIEW[0] and rule is None:
         raise _ViewStop
     if not (_ONLY_RULE_PASS_ON[0] and rule is None) and _shadowed(rule, "deny"):
