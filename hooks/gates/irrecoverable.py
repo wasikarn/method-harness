@@ -1327,6 +1327,8 @@ PH = "\x01"
 # lex.wordchars at both call sites. No downstream restore to "#" is needed: no
 # dangerous argv0/flag/subcommand this file matches on contains "#", so a
 # placeholder byte counts as one nonflag token exactly like a real "#" would.
+# The one exception is the gh api merge-endpoint check, which matches "#" inside
+# a word and restores it there (GH #621).
 HASH_LIT = "\x02"
 # A process-substitution span ("<(cmd)"/">(cmd)", GH #181) blanks to ITS OWN
 # placeholder, never bare PH: unlike "$(...)"/backtick, whose expanded value
@@ -3165,6 +3167,13 @@ def _gh_words(scan, limit):
         i += 1
     return idx
 
+# GH #621: long flags that are boolean wherever gh defines them (the forced/write verbs' flags and their
+# kin, from each verb's `gh <group> <verb> --help`), so they take no value and a -h after one is help.
+# Short flags are left out: a letter means different things per verb (pr merge -r is --rebase, pr create
+# -r is --reviewer), and an unlisted flag keeps taking the next word, so an unsure -h still asks.
+_GH_BOOL_LONG = {"--rebase", "--clobber", "--force", "--yes", "--confirm", "--admin", "--auto", "--squash",
+                 "--merge", "--delete-branch", "--draft", "--web"}
+
 def _gh_help(scan):
     # A -h/--help that cobra reads as a flag (before "--", not a flag's value) only prints help.
     i = 0
@@ -3172,7 +3181,8 @@ def _gh_help(scan):
         t = scan[i]
         if t in ("-h", "--help"):
             return True
-        alone = not t.startswith("-") or t == "-" or "=" in t or t == "--version" or (not t.startswith("--") and len(t) > 2)
+        alone = (not t.startswith("-") or t == "-" or "=" in t or t in ("--version", *_GH_BOOL_LONG)
+                 or (not t.startswith("--") and len(t) > 2))
         i += 1 if alone else 2
     return False
 
@@ -4354,11 +4364,12 @@ def _check_window(_wi, w):
             gh_runs = not (_gh_help(gh_scan) and gh_scan[0] in _GH_BUILTINS and gh_write != "extension exec")
             # GH #565: the verb (pr's first positional word) and the endpoint's merge segment, not the word
             # anywhere: `gh pr list --search merge` and `gh api .../contents/lib/merge_sort.py` are reads.
+            # GH #621: a mid-word "#" arrives as HASH_LIT, so the endpoint check reads it back as "#".
             if gh_runs and gh_scan[0] == "pr" and [gh_scan[1:][k] for k in _gh_words(gh_scan[1:], 1)] == ["merge"]:
                 ask("gh pr merge would merge a pull request into this repo — the PR-review "
                     "flow (docs/reference/branching-model.md) expects a human to do this. "
                     "Confirm this is intentional.", rule="gh-pr-merge")
-            if gh_runs and gh_scan[0] == "api" and any(re.search(r"/merge(?:$|[/?#])", t) for t in gh_scan[1:]):
+            if gh_runs and gh_scan[0] == "api" and any(re.search(r"/merge(?:$|[/?#])", t.replace(HASH_LIT, "#")) for t in gh_scan[1:]):
                 ask("gh api .../merge calls the GitHub merge endpoint directly — the "
                     "PR-review flow (docs/reference/branching-model.md) expects a human to "
                     "do this. Confirm this is intentional.", rule="gh-api-merge")
