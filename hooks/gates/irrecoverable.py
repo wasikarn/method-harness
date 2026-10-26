@@ -1903,6 +1903,11 @@ def _sql_stdin_drop(c):
             return True
     return False
 
+def _decode_quotes(t):
+    # GH #664: shlex reads `$'rm -rf b'` as the word `$rm -rf b` and `$"x"` as `$x`. The shell gives the
+    # decoded text (ANSI-C escapes resolved; a $"..." locale string is its plain text), so that is what is read.
+    return _normalize_ansi_c_quotes(re.sub(r'(?<![\\$])\$(?=")', "", t)) if "$" in t else t
+
 def _shell_stdin_bodies(c):
     # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
     # right upstream of it. printf's format is read with \n as a newline; its other escapes stay literal.
@@ -1913,10 +1918,10 @@ def _shell_stdin_bodies(c):
             if not _reads_stdin_shell(g):
                 continue
             if "<<<" in g:
-                w = _split_words(g.split("<<<", 1)[1])
+                w = _split_words(_decode_quotes(g.split("<<<", 1)[1]))
                 if w:
                     out.append(w[0])
-            up = _split_words(segs[k - 1]) if k else None
+            up = _split_words(_decode_quotes(segs[k - 1])) if k else None
             # GH #662: the echo as written past a path, `command [-p] [--]`, `builtin` or busybox [--]
             # (`busybox echo ... | sh`). An index, not slicing: a flood of wrapper words must stay linear.
             j = 0

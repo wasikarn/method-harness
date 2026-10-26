@@ -2850,4 +2850,14 @@ test_allow "$IRRECOVERABLE" "GH #662 control: busybox --list" "$(bash_payload 'b
 test_allow "$IRRECOVERABLE" "GH #662 control: busybox rm x.log" "$(bash_payload 'busybox rm x.log')"
 test_allow "$IRRECOVERABLE" "GH #662 control: echo busybox rm -rf b" "$(bash_payload 'echo busybox rm -rf b')"
 
+# GH #664: a here-string or echo argument written with ANSI-C quoting is decoded before the stdin shell's body is read.
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'rm -rf b'" "$(bash_payload "bash <<< \$'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: sh <<< \$'rm\\x20-rf b'" "$(bash_payload "sh <<< \$'rm\\x20-rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'ls\\nrm -rf b'" "$(bash_payload "bash <<< \$'ls\\nrm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: zsh <<< \$\"rm -rf b\"" "$(bash_payload 'zsh <<< $"rm -rf b"')"
+test_deny  "$IRRECOVERABLE" "GH #664: echo \$'rm -rf b' | sh" "$(bash_payload "echo \$'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #664: dash <<< \$'git push --force origin main'" "$(bash_payload "dash <<< \$'git push --force origin main'")"
+test_allow "$IRRECOVERABLE" "GH #664 control: bash <<< \$'echo hi'" "$(bash_payload "bash <<< \$'echo hi'")"
+test_allow "$IRRECOVERABLE" "GH #664 control: grep x <<< \$'rm -rf b'" "$(bash_payload "grep x <<< \$'rm -rf b'")"
+
 gates_summary
