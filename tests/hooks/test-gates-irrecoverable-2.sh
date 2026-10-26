@@ -2502,4 +2502,209 @@ for _c in \
   test_allow "$IRRECOVERABLE" "GH #606/#611 review control: per-file prompt nothing answers, or not recursive: $_c" "$(bash_payload "$_c")"
 done
 
+# GH #588 (bypass hunt 2026-10-23 F11): the spawn anchor reads the literal word `claude` at a command
+# position, so a name made by a substitution, or claude run by a find action, passed.
+for _c in \
+  '$(echo claude) -p hi' \
+  '`echo claude` -p hi' \
+  '${C:-claude} -p hi' \
+  "\$(echo claude) 'fix the test'" \
+  'env $(echo claude) --print hi' \
+  'find . -maxdepth 0 -exec claude -p hi \;' \
+  'find . -exec env claude -p x \;' \
+  'find . -exec claude hi \;' \
+  'find . -name x -execdir claude --bg {} +' \
+  'cat p | $(which claude)' \
+  'echo hi | $(echo claude)' \
+  '$(echo claude) <<< hi' \
+  '$(echo /usr/local/bin/claude) -p x' \
+  '${C:-"claude"} -p x' \
+  'ls; $(echo claude) -p x' \
+  '"$(echo claude)" "-p" x' \
+  '"$(echo claude)" -p x' \
+  'if $(echo claude) -p x; then :; fi' \
+  '! $(echo claude) -p x' \
+  'for i in 1; do $(echo claude) -p x; done' \
+  'case x in x) $(echo claude) -p x;; esac' \
+  'x=$(echo hi) $(echo claude) -p x' \
+  'bash -c "\$(echo claude) -p x"' \
+  'bash -c "$(echo claude) -p x"' \
+  'eval "$(echo claude) -p x"' \
+  'find . -exec $(echo claude) -p x \;' \
+  'sh -c "echo hi; $(echo claude) -p x"' \
+  'sh -c "x=1 $(echo claude) -p x"' \
+  'sh -c "if true; then $(echo claude) -p x; fi"' \
+  'bash -lc "$(echo claude) -p x"' \
+  'bash -c  "$(echo claude) -p x"' \
+  'eval $(echo claude) -p x' \
+  'bash -o pipefail -c "$(echo claude) -p x"' \
+  'bash -O extglob -c "$(echo claude) -p x"' \
+  'bash --norc -c "$(echo claude) -p x"' \
+  'bash +e -c "$(echo claude) -p x"' \
+  'bash -c -- "$(echo claude) -p x"' \
+  'bash -c "$(echo "claude") -p x"' \
+  'bash -c "$(printf %s "claude") -p x"' \
+  '\bash -c "$(echo claude) -p hi"' \
+  'true; \sh -c "$(echo claude) -p hi"' \
+  'bash -e -e -e -e -e -e -e -e -e -c "$(echo claude) -p x"' \
+  'bash -o pipefail -o errexit -o nounset -O a -O b -O c -O d -O e -c "$(echo claude) -p x"' \
+  'bash --rcfile /dev/null -c "$(echo claude) -p x"' \
+  'bash --init-file x -c "$(echo claude) -p x"' ; do
+  test_deny "$IRRECOVERABLE" "GH #588: subagent spawn behind a substitution or a find action: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in \
+  '$(echo claude) --version' \
+  '$(which claude) --help' \
+  '$(cat claude.txt) -p x' \
+  '$(git rev-parse --show-toplevel)/run.sh -p x' \
+  'find . -exec claude --version \;' \
+  'find . -name claude -print' \
+  'find . -exec grep -l claude {} +' \
+  'V=$(claude --version); $(which python3) run.py' \
+  'ls $(echo claude); $(npm bin) hi' \
+  '$(which python3) run.py # `which claude`' \
+  '$(which claude) mcp list' \
+  '$(echo claude)x -p hi' \
+  'if [ -x "$(which claude)" ]; then echo ok; fi' \
+  'bash -c "$(which claude) --version"' \
+  'grep -c "$(echo claude)" file' \
+  'du -c "$(which claude)" "$(which node)"' \
+  'foo -c "$(which claude)" -p' \
+  'eval "$(echo claude) --help"; eval "$(echo claude) --help"' \
+  'echo "$(echo claude) is installed"; ls' ; do
+  test_allow "$IRRECOVERABLE" "GH #588 control: no session is started: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in '$(echo claude) -p hi' 'find . -exec claude -p hi \;' ; do
+  test_allow "$IRRECOVERABLE" "GH #588 control: the main session may start one: $_c" "$(bash_agent_payload "$_c" '')"
+done
+
+
+# GH #589 (bypass hunt 2026-10-23 F12): a substitution in a flag position blanks to a placeholder with no
+# flag letters, so rm's recursive flag (rm-rf, rm-recursive) was never seen. The "subst-literal" view reads
+# the command again with each literal substitution replaced by what it prints.
+for _c in \
+  'rm $(echo -rf) build' \
+  'rm `echo -rf` build' \
+  'rm -${X:-rf} build' \
+  'rm ${F:--rf} build' \
+  'rm ${F:+-rf} build' \
+  'rm $(printf -- -rf) build' \
+  'rm $(echo -r) build' \
+  'rm "$(echo -rf)" build' \
+  '/bin/rm $(echo -rf) build' \
+  'rm --$(echo recursive) build' \
+  'rm $(cat l) "a;b" $(echo -rf) build' \
+  'rm $(echo -r) x; rm $(echo -i) y' \
+  'sudo rm $(echo -rf) /data' \
+  'rm $( echo -rf ) x' \
+  'rm ` echo -rf` x' \
+  'rm ${X:-${Y:--rf}} x' \
+  'rm $(echo $(echo -rf)) x' \
+  'rm $(command echo -rf) x' \
+  'rm $(/bin/echo -rf) x' \
+  'rm ${F:-"-rf"} /tmp/x' \
+  "rm \${F:-'-rf'} /tmp/x" \
+  "rm \${F:-'-r'}f /tmp/x" \
+  'rm -${F:-"r"}f /tmp/x' \
+  'git reset ${M:-"--hard"}' \
+  'rm "${F:-"-rf"}" /tmp/x' \
+  'rm "${F:-\\"x"}" ${G:-"-rf"} /' \
+  'rm "${F:-\\"x"}" ${G:--rf} /' \
+  'git reset "${F:-\\"x"}" ${M:-"--hard"}' \
+  'rm "${F:-\\\\"x"}" ${G:-"-rf"} /' ; do
+  test_deny "$IRRECOVERABLE" "GH #589: rm's recursive flag held in a substitution: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'rm $(cat list.txt)' \
+  'rm $(echo build.log)' \
+  'rm -${X:-i} build.log' \
+  'rm -f $(git ls-files -d)' \
+  'rm $(echo -ri) build' \
+  'echo rm $(echo -rf)' \
+  'rm $(cat list); echo rm -rf $(date)' \
+  'git rm $(git ls-files -d)' \
+  'rm "${TMPDIR:-/tmp}/x"' \
+  'rm ${X:-build}' \
+  'git commit -m "${MSG:-"chore: x && git reset --hard"}"' \
+  'echo "${X:-"a && git reset --hard"}"' \
+  "printf '%s\\n' \"\${Q:-\\\"}\" \"; git push --force origin main; \" \"\${Q:-\\\"}\"" ; do
+  test_allow "$IRRECOVERABLE" "GH #589 control: rm with no recursive delete: $_c" "$(bash_payload "$_c")"
+done
+
+# GH #589 x #585: the subst-literal view shows dd's target, so a device named by a literal echo denies.
+# The main reading asks first (a substitution target), so stdout holds that ask: exit 2 is what blocks.
+_rc=$(bash_payload 'dd if=x of=$(echo /dev/disk2)' | bash "$IRRECOVERABLE" >/dev/null 2>&1; echo $?)
+if [[ "$_rc" == "2" ]]; then
+  echo "  ✅ DENY (exit 2): GH #589: dd if=x of=\$(echo /dev/disk2)"; pass=$((pass + 1))
+else
+  echo "  ❌ exit 2 EXPECTED, got $_rc: GH #589: dd if=x of=\$(echo /dev/disk2)" >&2; fail=$((fail + 1))
+fi
+
+
+# GH #590 (bypass hunt 2026-10-23 F13): a shell (or source / .) reading a process substitution as its
+# script ran the substitution's printed text unscanned. (`bash -c "$(echo ...)"` is read by #589's view.)
+for _c in \
+  'bash <(echo rm -rf build)' \
+  'sh <(printf "rm -rf build")' \
+  'bash -e <(echo git push --force origin main)' \
+  'source <(echo rm -rf build)' \
+  '. <(echo git reset --hard)' \
+  'bash -c "$(echo rm -rf build)"' \
+  'zsh <( echo rm -rf build )' \
+  '\bash <(echo rm -rf x)' \
+  'bash -o pipefail <(echo rm -rf x)' \
+  'bash < <(echo rm -rf build)' \
+  'bash -s < <(echo rm -rf build)' \
+  "bash <(printf '%s\\n' 'rm -rf build')" \
+  'bash <(printf %s "rm -rf build")' \
+  'bash -- <(echo rm -rf x)' \
+  'bash - <(echo rm -rf x)' \
+  'bash -x -- <(echo rm -rf x)' \
+  'bash -eo pipefail <(echo rm -rf x)' \
+  'bash -euo pipefail <(echo rm -rf x)' \
+  'bash -xO extglob <(echo rm -rf x)' \
+  "bash <(printf '%s %s %s\\n' rm -rf x)" ; do
+  test_deny "$IRRECOVERABLE" "GH #590: a shell runs a substitution's printed text: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'bash <(echo ls)' \
+  'cat <(echo rm -rf build)' \
+  'diff <(echo a) <(echo b)' \
+  'bash <(curl -s https://example.com/install.sh)' \
+  'source <(kubectl completion bash)' \
+  'bash -c "$(cat x.sh)"' \
+  'bash -x script.sh <(echo rm -rf x)' \
+  'bash -e build.sh <(echo rm -rf x)' \
+  'sh -x ./run.sh < <(echo rm -rf x)' \
+  'bash -c x <(echo rm -rf x)' ; do
+  test_allow "$IRRECOVERABLE" "GH #590 control: nothing destructive the text shows runs: $_c" "$(bash_payload "$_c")"
+done
+
+
+# GH #591 (bypass hunt 2026-10-23 F14): xargs feeds mkfs its device on stdin, so the mkfs rule saw no
+# operand. (`find ... -exec mkfs.ext4 {} \;` denies since #586 made `{}` a word.)
+for _c in \
+  'xargs mkfs.ext4 <<< /dev/sda1' \
+  'echo /dev/sda1 | xargs mkfs -t ext4' \
+  'echo /dev/sda1 | xargs sudo mkfs.ext4' \
+  'echo /dev/sda1 | xargs -n1 mke2fs' \
+  'find /dev -name sda1 -exec mkfs.ext4 {} \;' \
+  'xargs mkfs -V -t ext4 <<< /dev/sda1' \
+  'xargs mkfs.ext4 -L -V <<< /dev/sda1' \
+  'xargs mkfs.ext4 -L --version <<< /dev/sda1' \
+  'printf "0 /dev/sdb" | xargs mkfs.vfat -h' \
+  'echo d | xargs mkfs.fat -h' ; do
+  test_deny "$IRRECOVERABLE" "GH #591: mkfs on a device xargs or find hands it: $_c" "$(bash_payload "$_c")"
+done
+for _c in \
+  'xargs mkfs.ext4 --help' \
+  'xargs mkfs --version' \
+  'echo x | xargs echo mkfs.ext4' \
+  'echo mkfs.ext4' \
+  'man mkfs' \
+  'git ls-files | xargs grep -l mkfs' ; do
+  test_allow "$IRRECOVERABLE" "GH #591 control: no filesystem is made: $_c" "$(bash_payload "$_c")"
+done
+
+
 gates_summary
