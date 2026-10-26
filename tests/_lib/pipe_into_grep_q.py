@@ -12,7 +12,8 @@ A pipe's readers are the commands that can read the stdin it hands its right sid
 - directly: the command there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a
   `time`d command, and any `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies
   redirections left to right; a simple command expands its words before its redirections, a
-  compound command (`for` list, `case` subject, `for ((...))`) after them. So the words of
+  compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them;
+  `>(...)` reads the command's output, not the pipe. So the words of
   `echo "$(...)" < f` read the pipe, those of `for x in $(...); do :; done < f` read f, and a
   substitution in a redirection after `< f` reads f;
 - inside the conditions and bodies of if/while/until/for/case: a grep counts only when it reads
@@ -89,7 +90,11 @@ STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
 # Keys under which shfmt nests statements; a statement's own words are everything else.
 NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
 # Commands that expand their words before their redirections apply.
-SIMPLE = {'CallExpr', 'DeclClause', 'TestClause', 'ArithmCmd', 'LetClause'}
+# `[[ ]]` and `(( ))` are compound commands: bash applies their redirections first
+# (`echo P | { [[ $(cat) == P ]] < f; }` reads f), so they are not here.
+SIMPLE = {'CallExpr', 'DeclClause', 'LetClause'}
+# Operands that name the stdin a grep inherits.
+STDIN_FILES = ('-', '/dev/stdin', '/dev/fd/0')
 DELIBERATE = re.compile(r'#\s*pipe-into-grep-q: deliberate\s*$')
 CANARY = b'x | grep -q y\n'
 
@@ -224,7 +229,7 @@ def grep_args(args):
                 value = w.split('=', 1)[1] if inline else next(it, None)
                 if name in ('regexp', 'file'):
                     pattern_given = True
-                    patterns_from_stdin |= name == 'file' and value in ('-', '/dev/stdin')
+                    patterns_from_stdin |= name == 'file' and value in STDIN_FILES
             continue
         if w.startswith('-') and len(w) > 1:
             for n, ch in enumerate(w[1:], 1):
@@ -236,14 +241,14 @@ def grep_args(args):
                     value = w[n + 1:] or next(it, None)
                     if ch in 'ef':
                         pattern_given = True
-                        patterns_from_stdin |= ch == 'f' and value in ('-', '/dev/stdin')
+                        patterns_from_stdin |= ch == 'f' and value in STDIN_FILES
                     break
                 if not ch.isalpha():
                     break
             continue
         operands.append(w)
     files = operands if pattern_given else operands[1:]
-    if patterns_from_stdin or '-' in files or '/dev/stdin' in files:
+    if patterns_from_stdin or any(f in STDIN_FILES for f in files):
         return quiet, True
     return quiet, not files and not recursive  # -r with no file searches `.`, not stdin
 
@@ -295,7 +300,9 @@ def readers(stmt, direct=True):
         return [r for s in stmts or [] for r in readers(s, d)]
 
     def subst_readers(node):
-        return [r for sub in substs(node) for r in each(sub.get('Stmts'), direct)]
+        # An output substitution `>(...)` reads what the command writes, never the pipe.
+        return [r for sub in substs(node) if sub.get('Op') != '>('
+                for r in each(sub.get('Stmts'), direct)]
 
     # Redirections apply left to right: a substitution in one expands with whatever stdin the
     # earlier ones left, so only those up to the first that replaces stdin can see the pipe.

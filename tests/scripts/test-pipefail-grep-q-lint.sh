@@ -119,8 +119,12 @@ x | { echo "$(grep -q y)" < f; }
 x | for ((i=0; i<$(grep -q y; echo 1); i++)); do :; done
 x | while read f; do grep -q -e pat -f /dev/stdin file; done
 x | cat <<<"$(grep -q z)" < f
+x | local v=$(grep -q y) < "$f"
+x | v=$(grep -q y) < "$f"
+x | [[ $(grep -q y) ]]
+x | while read f; do grep -q pat /dev/fd/0; done
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
@@ -160,10 +164,14 @@ x | grep --col=never -c y
 x | for f in $(grep -q y); do :; done < "$f"
 x | case $(grep -q y) in a) ;; esac < "$f"
 x | grep -q y < "$f" <<<"$(grep -q z)"
+x | [[ $(grep -q y) ]] < "$f"
+x | (( $(grep -q y; echo 1) )) < "$f"
+x | cat > >(grep -q y) < "$f"
+x | cat < "$f" > >(grep -q y)
 EOF
 out=$(scan "$probe/good.sh"); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] \
-  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp/--reg -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects, loop greps on files or -r, a loop with its own stdin, --col, substitutions after a stdin redirect are clean" \
+  && ok "probe: comments, quoted text, here-strings, grep -c, -e/--regexp/--reg -q, \$((a|b)), case patterns, quoted heredocs, own-stdin redirects, loop greps on files or -r, a loop with its own stdin, --col, substitutions after a stdin redirect or in a redirected [[ ]]/(( )), >(...) are clean" \
   || bad "probe: rc $rc on the race-free file: $out $(cat "$probe/err")"
 
 # The exemption counts only as a trailing comment, and is reported, not hidden.

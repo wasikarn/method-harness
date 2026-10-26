@@ -39,14 +39,16 @@ the other files are still listed.
 A pipe's readers are the commands that can read the stdin it hands its right side: the command
 there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a `time`d command, and any
 `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies redirections left to right, a
-simple command expands its words before its redirections, and a compound command (`for` list,
-`case` subject, `for ((...))`) after them: so `x | echo "$(grep -q y)" < f` and
+simple command (incl. `local`/`declare`/`let`) expands its words before its redirections, and a
+compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them; `>(...)`
+reads the command's output, never the pipe. So `x | echo "$(grep -q y)" < f` and
 `x | cat < <(grep -q y)` race, while `x | for f in $(grep -q y); do ...; done < f` and
 `x | cat < f <<<"$(grep -q y)"` do not (bash: `echo P | for x in $(cat); do echo $x; done < f`
 prints f's contents). In the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a
-grep that reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `-f -`), so
-`while read -r f; do grep -q p "$f"; done` is clean (a heuristic). A statement whose stdin is
-redirected (`<`, `<<<`, `<&N` with a literal N other than 0) is no reader. Wrappers (`command`,
+grep that reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `/dev/fd/0`,
+or one of those after `-f`), so `while read -r f; do grep -q p "$f"; done` is clean (a
+heuristic). A statement whose stdin is redirected (`<`, `<<<`, `<&N` with a literal N other than 0)
+is no reader. Wrappers (`command`,
 `builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`, `sudo`, `nohup`, with
 `NAME=VALUE` for env and sudo) are looked through; long options, grep's and the wrappers', resolve
 as getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`, `--sig` is timeout's `--signal`),
