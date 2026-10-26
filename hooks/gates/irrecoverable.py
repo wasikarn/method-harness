@@ -2909,15 +2909,16 @@ _VAR_NAME_RE = re.compile(r"[A-Za-z_]\w*")
 # (`$(...)`, `${...}`, an array) or a chain ended by anything else (a separator, a redirection, a line
 # continuation) counts as assigned, as before. One non-overlapping pass, so the cost stays linear.
 _ASSIGN_WORD_RE = re.compile(r"""(?<![\w$=])([A-Za-z_]\w*)\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()<>'"\\`{]|\\.)*""")
+_BLANKS_RE = re.compile(r"[ \t]*")
 _PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])[\w./~"'$-]""")
 _DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
 _ASSIGNED_NAMES = set(re.findall(r"(?<![\w$])([A-Za-z_]\w*)\+?=", cmd))
 _standalone, _prefixed, _chain = set(), set(), []
 for _m in _ASSIGN_WORD_RE.finditer(cmd):
     _chain.append(_m)
-    _gap = re.match(r"[ \t]*", cmd[_m.end():_m.end() + 64]).group()
-    _nx = _ASSIGN_WORD_RE.match(cmd, _m.end() + len(_gap)) if _gap else None
-    if _nx and _nx.start() == _m.end() + len(_gap):
+    _gap = _BLANKS_RE.match(cmd, _m.end()).end()
+    _nx = _ASSIGN_WORD_RE.match(cmd, _gap) if _gap > _m.end() else None
+    if _nx:
         continue  # the chain goes on; finditer reaches the next word itself
     _prefix = bool(_PREFIX_NEXT_RE.match(cmd, _m.end())) and not _DECLARE_TAIL_RE.search(
         cmd[max(0, _chain[0].start() - 80):_chain[0].start()])
@@ -2925,18 +2926,23 @@ for _m in _ASSIGN_WORD_RE.finditer(cmd):
     _chain = []
 _ASSIGNED_NAMES -= _prefixed - _standalone
 # A word that is a whole braced expansion (`${CMD}`, "${CMD:-ls}") reaches argv0 as PH alone. Only one
-# that opens a statement is read as the program, not `${HOME}` as an argument elsewhere.
-_BRACED_VERB_NAMES = set(re.findall(r"(?:^|[;&|(){]|(?<![\w-])(?:then|do|else|!))[ \t]*\"?\$\{([A-Za-z_]\w*)"
-                                    r"(?:[:\-=+?%#/^,][^{}\n]*)?\}\"?(?=[\s;&|)}]|$)", cmd, re.M))
-# A `$NAME` that starts a word. One inside an assignment's value (`PATH=$PATH:/x make`) is never the
-# program, though a token reading that drops the `PATH=` prefix sees it as argv0.
-_WORD_START_NAMES = set(re.findall(r"(?<![^\s;&|(){])\"?\$([A-Za-z_]\w*)", cmd))
+# that opens a statement is read as the program, not `${HOME}` as an argument; an opener inside quotes
+# (`git commit -m "do ${X}"`) or an arithmetic `((` opens none.
+_BRACED_VERB_RE = re.compile(r"(?:(?P<sep>[;&|){]|(?<!\()\((?!\()|(?<![\w-])(?:then|do|else|elif|if|while|until|time|!))|^)"
+                             r"[ \t]*\"?\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,][^{}\n]*)?\}\"?(?=[\s;&|)}]|$)", re.M)
+_BRACED_VERB_NAMES = set()
+if "${" in cmd:
+    _bmask = _quote_mask(cmd)
+    for _m in _BRACED_VERB_RE.finditer(cmd):
+        _q = _m.start("sep") if _m.group("sep") else _m.start() - 1
+        if _q < 0 or not _bmask[_q]:
+            _BRACED_VERB_NAMES.add(_m.group(2))
 def _opaque_var(argv0, rest):
     # shlex splits an unquoted `$X` into "$" and "X"; a quoted "$X" stays one word.
     if argv0 and not argv0.strip(PH):
         return bool(_BRACED_VERB_NAMES - _ASSIGNED_NAMES)
     name = rest[0] if argv0 == "$" and rest else argv0[1:] if argv0.startswith("$") else ""
-    return bool(_VAR_NAME_RE.fullmatch(name)) and name in _WORD_START_NAMES and name not in _ASSIGNED_NAMES
+    return bool(_VAR_NAME_RE.fullmatch(name)) and name not in _ASSIGNED_NAMES
 
 # 2026-10-23: `gh api` write detection, so settings.json can drop its blanket Bash(gh api *) ask and
 # reads stop prompting. gh follows pflag: a value-taking short flag takes the rest of its cluster
@@ -3324,6 +3330,9 @@ def _check_window(_wi, w):
     w = w[_s:]
     if not w:
         return
+    # GH #593: a word glued to the assignment just dropped is that assignment's value (`PATH=$PATH:/x make`
+    # reads as `$` `PATH:/x`), never the program.
+    _in_value = _s > 0 and isinstance(w[0], _Glued)
     argv0, rest = basename(w[0]), w[1:]
     # A window can start at `-exec` (a second -exec after an escaped `;`) or `--`
     # (xargs -I{} -- CMD splits at the `{}` operator): the command follows.
@@ -3657,7 +3666,7 @@ def _check_window(_wi, w):
     if _a0 in ("chmod", "gchmod") and _chmod_world(rest):  # gchmod: GNU chmod from Homebrew (GH #587)
         deny("chmod 777 / a+rwx recursively or on / or ~ makes files world-writable — confirm with user first",
              rule="chmod-world")
-    if _opaque_var(argv0, rest):
+    if not _in_value and _opaque_var(argv0, rest):
         ask("the program this runs is a variable with no visible assignment — confirm what it runs",
             rule="opaque-var-verb")
     if argv0 in ("source", ".") and rest:

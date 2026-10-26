@@ -88,6 +88,19 @@ ALLOW CMD=ls 2>/dev/null; $CMD build
 ALLOW CMD=${X:-a b}; $CMD build
 ALLOW declare -x CMD=ls; $CMD build
 ALLOW export CMD=ls PATH=/x; $CMD build
+# a `$NAME` inside a shell body still runs as the program; one glued to a prefix assignment is its value
+WOULD_ASK opaque-var-verb bash -c '$CMD build'
+WOULD_ASK opaque-var-verb eval '$CMD build'
+WOULD_ASK opaque-var-verb `$CMD` build
+WOULD_ASK opaque-var-verb if ${CMD}; then echo; fi
+WOULD_ASK opaque-var-verb time ${CMD} build
+ALLOW PATH=$PATH:/x make && echo $PATH
+ALLOW PYTHONPATH=$PYTHONPATH:. pytest -q; echo "$PYTHONPATH"
+# a ${X} inside quotes or arithmetic opens no statement
+ALLOW "$(command -v python3)" x.py && git commit -m "do ${X}"
+ALLOW "$(command -v python3)" x.py; echo "a; ${OUT}"
+ALLOW $(which node) app.js; N=$(( ${COUNT} * 2 ))
+ALLOW CMD=ls; ${CMD} x; echo "done; ${OUT}"
 WOULD_ASK source-file source ./setup.sh
 WOULD_ASK source-file . ./setup.sh && git status
 # GH #592: `.` with no candidate word on the line reaches python too (irrecoverable.sh fast path)
