@@ -500,6 +500,32 @@ _would336 deny brace-view 'bash -c "r{m,} -rf /tmp/x"'
 test_deny "$IRRECOVERABLE" "GH #309: 3000 nested dollar-paren spans in a command with a brace deny (exit 2, no traceback)" \
   "$(bash_payload "$(python3 -c "print('echo {a,b} ' + '\"\$(' * 3000)")")"
 
+# _bracex unimportable (deleted, broken by an edit, a partial plugin cache): the brace view follows
+# brace-view's own status instead of dropping silently. Shadowed: allowed with one would_deny row.
+# Promoted: denied. Never stricter than a working gate: a harmless brace and a brace-free command allow.
+_nobx="$_JOURNAL_TMP/no-bracex"; _nobx_enf="$_JOURNAL_TMP/no-bracex-enforced"
+mkdir -p "$_nobx" "$_nobx_enf" && cp -R "$ROOT/hooks/gates/." "$_nobx/" && cp -R "$_enf336/." "$_nobx_enf/"
+python3 - "$_nobx" "$_nobx_enf" <<'EOF'
+import pathlib, shutil, sys
+for d in map(pathlib.Path, sys.argv[1:]):
+    (d / "_bracex.py").unlink()
+    shutil.rmtree(d / "__pycache__", ignore_errors=True)
+EOF
+_jnb="$_JOURNAL_TMP/no-bracex.jsonl"; : > "$_jnb"
+_onb=$(bash_payload 'r{m,} -rf /tmp/x' | MH_GATE_JOURNAL_PATH="$_jnb" bash "$_nobx/irrecoverable.sh" 2>/dev/null); _rnb=$?
+_wnb=$(python3 -c 'import json,sys; print(sum(json.loads(l).get("decision") == "would_deny" and json.loads(l).get("rule") == "brace-view" for l in open(sys.argv[1])))' "$_jnb")
+if [[ "$_rnb" == "0" && -z "$_onb" && "$_wnb" == "1" ]]; then
+  echo "  ✅ _bracex missing, brace-view shadowed: a brace-hidden rm -rf allows with one would_deny row"; pass=$((pass + 1))
+else
+  echo "  ❌ _bracex missing, brace-view shadowed: expected rc=0, no stdout, 1 would_deny brace-view row; got rc=$_rnb rows=$_wnb" >&2; fail=$((fail + 1))
+fi
+test_deny "$_nobx_enf/irrecoverable.sh" "_bracex missing, brace-view promoted: a brace-hidden rm -rf denies" \
+  "$(bash_payload 'r{m,} -rf /tmp/x')"
+test_allow "$_nobx/irrecoverable.sh" "_bracex missing, brace-view shadowed: a harmless brace allows" \
+  "$(bash_payload 'echo {a,b}')" "MH_GATE_JOURNAL_PATH=$_jnb"
+test_allow "$_nobx_enf/irrecoverable.sh" "_bracex missing, brace-view promoted: a brace-free command allows" \
+  "$(bash_payload 'ls -la')" "MH_GATE_JOURNAL_PATH=$_jnb"
+
 # GH #375: a git global's value split by shlex at $, :, @ or a non-ASCII letter (-C $R) took the
 # variable's name for the subcommand. Cases (each deny shape checked in real shells) live in a fixture.
 _c375="$ROOT/tests/hooks/fixtures/irrecoverable-375-cases.txt"
