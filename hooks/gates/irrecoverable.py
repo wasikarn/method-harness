@@ -324,7 +324,8 @@ def _reads_stdin_shell(seg):
         return False
     i = 0
     while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i].rsplit("/", 1)[-1] in ("sudo", "env", "command", "exec", "nohup", "time",
-                                                             "busybox", "busybox.static", "busybox-static", "toybox")):
+                                                             "busybox", "busybox.static", "busybox-static", "toybox",
+                                                             "--")):
         i += 1
     if i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
         return False
@@ -1073,7 +1074,7 @@ _SUBST_SPAWN_RE = re.compile(r"(?:^|(?<=[;&|()\n{])|(?<=-exec )|(?<=-execdir )|(
 # quoted body, which may hold a `$(...)` with quotes of its own.
 _DQ_BODY_RE = re.compile(r"(?:(?<![^\s;&|(){])\\?(?:[^\s;&|()\"'/]*/)*(?:bash|sh|zsh|dash|ksh|ash|hush)"
                          r"(?:[ \t]+[-+]{1,2}[A-Za-z][^\s\"';&|]*(?:[ \t]+(?![-+])[^\s\"';&|]+)?){0,32}?"
-                         r"[ \t]+-[A-Za-z]*c(?:[ \t]+--)?|(?<![\w./-])eval)[ \t]+\""
+                         r"[ \t]+[-+][A-Za-z]*c(?:[ \t]+--)?|(?<![\w./-])eval)[ \t]+\""
                          r"((?:\$\((?:[^()]|\([^()]*\))*\)|[^\"\\]|\\.)*)\"")
 
 def _subst_spawn(c, depth=0):
@@ -1914,10 +1915,14 @@ def _shell_stdin_bodies(c):
                 if w:
                     out.append(w[0])
             up = _split_words(segs[k - 1]) if k else None
-            # GH #662: the echo as written past a path, `command`, `builtin` or busybox (`busybox echo ... | sh`).
-            while up and up[0].rsplit("/", 1)[-1] in ("command", "builtin", "busybox", "busybox.static",
-                                                       "busybox-static", "toybox"):
-                up = up[1:]
+            # GH #662: the echo as written past a path, `command [-p] [--]`, `builtin` or busybox [--]
+            # (`busybox echo ... | sh`). An index, not slicing: a flood of wrapper words must stay linear.
+            j = 0
+            while up and j < len(up) and (up[j].rsplit("/", 1)[-1] in (
+                    "command", "builtin", "busybox", "busybox.static", "busybox-static", "toybox")
+                    or (j and up[j] in ("--", "-p"))):
+                j += 1
+            up = up[j:] if up else up
             name = up[0].rsplit("/", 1)[-1] if up else ""
             if name in ("echo", "printf"):
                 args = up[1:]
@@ -3404,7 +3409,8 @@ def _shell_body_runs(sub, hit, depth=0):
             starts = [0] + [k + 1 for k, t in enumerate(cur) if t in SHELL_KEYWORDS]
             for k in starts:
                 while k < len(cur) and (cur[k] in SHELL_KEYWORDS or _assignment(cur[k])
-                                        or basename(cur[k]).replace(PH, "") in ("eval",) + _BUSYBOX_NAMES):
+                                        or basename(cur[k]).replace(PH, "") in ("eval",) + _BUSYBOX_NAMES
+                                        or (k and cur[k] == "--" and basename(cur[k - 1]).replace(PH, "") in _BUSYBOX_NAMES)):
                     k += 1
                 while k < len(cur) and basename(cur[k]).replace(PH, "") in _STEP_WRAPPERS:
                     k = _past_wrapper_words(basename(cur[k]).replace(PH, ""), cur, k + 1)
