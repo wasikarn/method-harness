@@ -279,7 +279,6 @@ fi
 # ('git add {.,}' is not a row: the enforced copy also turns the shadowed source-file rule on, which asks
 # for the literal '{ ., }' reading, so its stdout is not empty; it is the same bypass as 'git add {..,}'.)
 for _c in \
-  'r{m,m} -rf /tmp/x' \
   'fi{nd,nd} /tmp/x -delete' \
   'git push --fo{rce,rce} origin main' \
   'git push --forc{e,e-with-lease} origin main' \
@@ -300,10 +299,6 @@ for _c in \
   'git pu{sh,} --force origin main' \
   'git rest{ore,ore} .' \
   'git br{anch,anch} -D main' \
-  'r{"m",} -rf /tmp/x' \
-  "r{'m',} -rf /tmp/x" \
-  'r{\m,} -rf /tmp/x' \
-  'r{m,$x} -rf /tmp/x' \
   'fi{"nd",} /tmp -delete' \
   'git {,"reset"} --hard' \
   'git -C . {,"reset"} --hard' \
@@ -313,51 +308,61 @@ for _c in \
   "bash -c 'git {,\"reset\"} --hard'" \
   'git push --fo{r,}{ce,} origin main' \
   'git push --fo{r{ce,x},} origin main' \
-  '{r,}{m,} -rf /tmp/x' \
-  '{r{m,},} -rf /tmp/x' \
   'git push "--"{x,force} origin main' \
   "git push \$'--'{x,force} origin main" \
   'git push origin main {--forc,x}"e"' \
   'git push \--fo{rce,} origin main' \
   $'git push --fo{rce,\\\n} origin main' \
   'git push --forc{e..e..1} origin main' \
-  'r{m..m..1} -rf /tmp/x' \
   'echo {x,#$}; git {,"reset"} --hard' \
   $'# {x,y}\'\ngit {,"reset"} --hard' \
-  'rm {-rf,\ } /tmp/x' \
   '{$(:),git} push --force origin main' \
   '{f,"x y"}ind . -delete' \
   '{,git} reset --hard' \
   '{,git} push --force origin main' \
   'env {,git} push --force origin main' \
   '{,git} push origin +main' \
-  '{r,"x y"}m -rf /tmp/x' \
-  'r{{x},m} -rf /tmp/x' \
   'git {{,},reset} --hard' \
   '{A=1}},git} reset --hard' \
   '{A=1}},git} push --force origin main' \
-  '{A=1}},rm} -rf /tmp/x' \
   '{A="x y",git} reset --hard' \
   "{A='x y',git} reset --hard" \
+  'f{ind,x\ y} /tmp/x -delete' \
+  $'f{ind,x\ry} /tmp/x -delete' \
+  'f{ind,<(:)} /tmp/x -delete' \
+  'f{ind,>(: x)} /tmp/x -delete' \
+  'chmod -R {777..0} /tmp/x' \
+  'chmod {777..700} -R /' \
+  'f{ind,>(: "a b")} /tmp/x -delete' ; do  # an escaped blank or quote inside the group: the fast path must reach python
+  _would336 deny brace-view "$_c"
+done
+# GH #661: rm's own rules (rm-rf, rm-recursive, rm-no-preserve-root) enforce in brace-view: bash runs the
+# rm these shapes build. Every other rule there stays shadow (GH #337).
+for _c in \
+  'r{m,m} -rf /tmp/x' \
+  'r{"m",} -rf /tmp/x' \
+  "r{'m',} -rf /tmp/x" \
+  'r{\m,} -rf /tmp/x' \
+  'r{m,$x} -rf /tmp/x' \
+  '{r,}{m,} -rf /tmp/x' \
+  '{r{m,},} -rf /tmp/x' \
+  'r{m..m..1} -rf /tmp/x' \
+  'rm {-rf,\ } /tmp/x' \
+  '{r,"x y"}m -rf /tmp/x' \
+  'r{{x},m} -rf /tmp/x' \
+  '{A=1}},rm} -rf /tmp/x' \
   '{r..3}m -rf /tmp/x' \
   'r{m,x\ y} -rf /tmp/x' \
   'r{m,"x\"y z"} -rf /tmp/x' \
-  'f{ind,x\ y} /tmp/x -delete' \
   $'true \\\\\nr{m,} -rf /tmp/x' \
   $'r\\\n{m,} -rf /tmp/x' \
-  $'f{ind,x\ry} /tmp/x -delete' \
   $'r{m,x\xc2\xa0y} -rf /tmp/x' \
-  'f{ind,<(:)} /tmp/x -delete' \
   'echo <(r{m,} -rf /tmp/x)' \
   'r{m,<(: x)} -rf /tmp/x' \
-  'f{ind,>(: x)} /tmp/x -delete' \
   'echo x\ #; r{m,} -rf /tmp/x' \
   'echo x\;#; r{m,} -rf /tmp/x' \
-  'chmod -R {777..0} /tmp/x' \
-  'chmod {777..700} -R /' \
-  "r{m,<('\\')} -rf /tmp/x" \
-  'f{ind,>(: "a b")} /tmp/x -delete' ; do  # an escaped blank or quote inside the group: the fast path must reach python
-  _would336 deny brace-view "$_c"
+  "r{m,<('\\')} -rf /tmp/x" ; do  # escaped blanks and quotes here too: the fast path must reach python
+  test_deny "$IRRECOVERABLE" "GH #661: a brace-built rm -rf denies through brace-view: $_c" "$(bash_payload "$_c")"
 done
 # The .sh fast path hands a command to python only when brace-route.awk sees an expanding group, so the
 # awk must see every shape _bracex expands: enumerate each string of { } , x . up to 7 characters (97,655; plus
@@ -495,7 +500,7 @@ test_allow "$IRRECOVERABLE" "GH #309 control: a heredoc with f-string braces and
 # A double-quoted body can be a shell's command text (bash -c "..."), which expands braces itself, so double
 # quotes are still read as command text. The cost is a known over-deny: a double-quoted JSON body with more
 # than a few chained objects (curl -d "{...}") exceeds the cap and is denied.
-_would336 deny brace-view 'bash -c "r{m,} -rf /tmp/x"'
+test_deny "$IRRECOVERABLE" "GH #661: bash -c with a brace-built rm -rf denies" "$(bash_payload 'bash -c "r{m,} -rf /tmp/x"')"
 # An uncaught error would exit 1, which does not block: 3000 nested substitutions must exit 2.
 test_deny "$IRRECOVERABLE" "GH #309: 3000 nested dollar-paren spans in a command with a brace deny (exit 2, no traceback)" \
   "$(bash_payload "$(python3 -c "print('echo {a,b} ' + '\"\$(' * 3000)")")"

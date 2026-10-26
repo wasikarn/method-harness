@@ -147,8 +147,9 @@ seq 2000000 2> >(grep -q 1) >&2 2>/dev/null
 { seq 2000000 >&3; } > >(grep -q 1) 3>&1- >/dev/null
 { seq 2000000 >&10; } {fd}> >(grep -q 1) {fd}>/dev/null
 x | { grep -q y; echo z; }
+x | { grep -q y; cat "$f"; }
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
@@ -163,7 +164,8 @@ got_lines=$(hit_lines <<<"$out")
 # design. Rows 1-3 and 5: every fd holding the `>(...)` or pipe is redirected later on the
 # same command; rows 4 and 6: the writer never writes to that fd; rows 7 and 8: the writer's status
 # is discarded (`|| true`, `<(...)`); row 9: a later reader drains the rest. Only the drain keeps
-# the writer alive: grep's own status does not matter (bad.sh's `x | { grep -q y; echo z; }` races).
+# the writer alive: grep's own status does not matter, and a later command that reads a file, not
+# the pipe, drains nothing (bad.sh's `x | { grep -q y; echo z; }` and `...; cat "$f"; }` race).
 # Pinned so a skip rule cannot come back unreviewed: one that clears a row must keep every race
 # above reported, and then move the row to good.sh.
 cat > "$probe/over.sh" <<'EOF'
