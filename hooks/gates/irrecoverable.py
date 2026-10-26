@@ -1031,7 +1031,12 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
                       "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "
                       "main session dispatches")
 
+# GH #593: set to one rule while a reading may only raise that rule's ask: every other deny ends the
+# window unreported, every other ask is dropped.
+_ONLY_RULE = [None]
 def _deny_nested_spawn():
+    if _ONLY_RULE[0]:
+        raise _ViewStop
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1119,6 +1124,8 @@ def _shadowed(rule, decision):
     return True
 
 def deny(reason, rule=None):
+    if _ONLY_RULE[0]:
+        raise _ViewStop
     if _VIEW[0] and rule is None:
         raise _ViewStop
     if _shadowed(rule, "deny"):
@@ -1139,7 +1146,7 @@ def ask(reason, rule=None):
     # JSON objects on stdout are not valid JSON (GH #254 validator).
     # A shadowed ask is checked first and never touches _ASKED, so a later real ask still emits.
     # In a view (GH #336) an ask adds nothing once the command already asks.
-    if (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
+    if (_ONLY_RULE[0] and rule != _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
     _ASKED.append(reason)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
@@ -2982,7 +2989,36 @@ def _chmod_world_word(rest):
 # GH #336: a program known only at run time -- a `$NAME` argv0 with no `NAME=` anywhere in the
 # command (the var-verb view below reads a visible one back) -- or a sourced file.
 _VAR_NAME_RE = re.compile(r"[A-Za-z_]\w*")
+# GH #593: an assignment prefixed to a command (`X=rm true; $X build`) lives in that command's
+# environment alone. A name counts as assigned unless every `NAME=` is such a prefix: a chain of
+# `NAME=value` words the scan reads whole, then blanks, then a plain word. A value it cannot read
+# (`$(...)`, `${...}`, an array) or a chain ended by anything else (a separator, a redirection, a line
+# continuation) counts as assigned, as before. A prefix to a program that runs a body (`CMD=ls bash -c
+# '$CMD x'`) feeds that body, so it counts too. One non-overlapping pass, so the cost stays linear.
+_ASSIGN_WORD_RE = re.compile(r"""(?<![\w$=])([A-Za-z_]\w*)\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()<>'"\\`{]|\\.)*""")
+_BLANKS_RE = re.compile(r"[ \t]*")
+_PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])([\w./~"'$-][^\s;&|()<>]*)""")
+_PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "env", "xargs", "eval", "exec", "sudo", "doas", "su",
+                        "nohup", "setsid", "stdbuf", "timeout", "nice", "ionice", "taskset", "chroot", "unshare",
+                        "script", "command", "builtin", "time", "find", "watch", "flock", "parallel", "npx",
+                        "python", "python3", "perl", "ruby", "node"}
+_DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
 _ASSIGNED_NAMES = set(re.findall(r"(?<![\w$])([A-Za-z_]\w*)\+?=", cmd))
+_standalone, _prefixed, _chain = set(), set(), []
+for _m in _ASSIGN_WORD_RE.finditer(cmd):
+    _chain.append(_m)
+    _gap = _BLANKS_RE.match(cmd, _m.end()).end()
+    _nx = _ASSIGN_WORD_RE.match(cmd, _gap) if _gap > _m.end() else None
+    if _nx:
+        continue  # the chain goes on; finditer reaches the next word itself
+    _nw = _PREFIX_NEXT_RE.match(cmd, _m.end())
+    _prefix = bool(_nw) and not _DECLARE_TAIL_RE.search(cmd[max(0, _chain[0].start() - 80):_chain[0].start()])
+    if _prefix and basename(_nw.group(1).strip("\"'")) in _PREFIX_BODY_RUNNERS:
+        _prefix = False
+    (_prefixed if _prefix else _standalone).update(c.group(1) for c in _chain)
+    _chain = []
+_ASSIGNED_NAMES -= _prefixed - _standalone
+
 def _opaque_var(argv0, rest):
     # shlex splits an unquoted `$X` into "$" and "X"; a quoted "$X" stays one word.
     name = rest[0] if argv0 == "$" and rest else argv0[1:] if argv0.startswith("$") else ""
@@ -3374,6 +3410,9 @@ def _check_window(_wi, w):
     w = w[_s:]
     if not w:
         return
+    # GH #593: a word glued to the assignment just dropped is that assignment's value (`PATH=$PATH:/x make`
+    # reads as `$` `PATH:/x`), never the program.
+    _in_value = _s > 0 and isinstance(w[0], _Glued)
     argv0, rest = basename(w[0]), w[1:]
     # A window can start at `-exec` (a second -exec after an escaped `;`) or `--`
     # (xargs -I{} -- CMD splits at the `{}` operator): the command follows.
@@ -3709,7 +3748,7 @@ def _check_window(_wi, w):
     if _a0 in ("chmod", "gchmod") and _chmod_world(rest):  # gchmod: GNU chmod from Homebrew (GH #587)
         deny("chmod 777 / a+rwx recursively or on / or ~ makes files world-writable — confirm with user first",
              rule="chmod-world")
-    if _opaque_var(argv0, rest):
+    if not _in_value and _opaque_var(argv0, rest):
         ask("the program this runs is a variable with no visible assignment — confirm what it runs",
             rule="opaque-var-verb")
     if argv0 in ("source", ".") and rest:
@@ -4314,6 +4353,41 @@ def _view_windows(text):
         if curc != cur:
             out.append(curc)
     return out
+
+# GH #593: `${CMD} build` reaches argv0 as PH, which no window can tie back to CMD. A reading with each
+# `${NAME...}` written as `$NAME` (inside out, so `${PY:-${HOME}/py}` is `$PY`) runs every window check
+# with only the opaque-var-verb ask live, so the braced form asks wherever `$CMD` would (sudo, bash -c,
+# time). Nothing else: a default rewritten away must not change what another rule reads.
+_BRACED_REF_RE = re.compile(r"\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}]*)?\}")
+def _braced_reading():
+    v = cmd
+    for _ in range(3):
+        w = _BRACED_REF_RE.sub(lambda m: "$" + m.group(1), v)
+        if w == v:
+            break
+        v = w
+    if v == cmd:
+        return
+    # Its windows stay in `windows`, so the views after it append past them and no index-keyed state
+    # (_WDEPTH, _ENV_PRE570_WINDOWS) is read by a later window; _RM_VIA_INTERP is put back.
+    start = len(windows)
+    rm_via_interp = _RM_VIA_INTERP[0]
+    _ONLY_RULE[0] = "opaque-var-verb"
+    try:
+        windows.extend(_view_windows(v))
+        i = start
+        while i < len(windows) and not _ASKED and ("opaque-var-verb", "ask") not in _SHADOW_LOGGED:
+            try:
+                _check_window(i, windows[i])
+            except _ViewStop:
+                pass
+            i += 1
+    finally:
+        _ONLY_RULE[0] = None
+        _RM_VIA_INTERP[0] = rm_via_interp
+        del _WORDS[:]  # the reading's queued words: the main reading ran its own
+if "${" in cmd and len(cmd) <= _VIEW_LEN_CAP:
+    _braced_reading()
 
 for _VIEW[0], _text in _views():
     try:

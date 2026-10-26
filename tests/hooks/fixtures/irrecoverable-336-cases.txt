@@ -58,6 +58,60 @@ ALLOW PY=python3; $PY -m pytest -q
 # 3. a verb known only at run time: ask floor (shadow)
 WOULD_ASK opaque-var-verb $X -rf build
 WOULD_ASK opaque-var-verb "$RUNNER" build
+# GH #593: a braced name is the same unknown program; a prefix assignment (`CMD=ls true`) sets the
+# name only in that command's environment, so the shell still has none when `$CMD` runs
+WOULD_ASK opaque-var-verb ${CMD} build
+WOULD_ASK opaque-var-verb "${CMD}" build
+WOULD_ASK opaque-var-verb ${CMD:-ls} build
+WOULD_ASK opaque-var-verb ls && ${CMD} build
+WOULD_ASK opaque-var-verb CMD=ls true; $CMD build
+WOULD_ASK opaque-var-verb CMD=ls true && ${CMD} build
+ALLOW CMD=ls; ${CMD} build
+ALLOW CMD=ls CMD2=x; $CMD build
+ALLOW export CMD=ls; $CMD build
+ALLOW CMD="ls -la"; $CMD build
+ALLOW CMD=$(command -v ls); $CMD build
+ALLOW echo ${CMD} build
+ALLOW ${HOME}/bin/tool build
+ALLOW X=$Y make
+ALLOW PATH=$PATH:/x true; make
+WOULD_ASK opaque-var-verb X=1 Y=2 true; $X build
+# a ${...} word that is not the program, and a value the scan cannot read counts as an assignment
+ALLOW CMD=ls; "${CMD}" build && cd "${REPO}"
+ALLOW cd "${REPO}" && "$(command -v python3)" x.py
+ALLOW CMD=$(dirname $(which ls))/ls; $CMD build
+ALLOW RUN=$(cd "$(dirname "$0")" && pwd)/run.sh; $RUN build
+ALLOW N=$((1+2)); $N
+ALLOW CMD=(python3 -m pytest); "${CMD[@]}" -q
+ALLOW CMD=ls 2>/dev/null; $CMD build
+ALLOW CMD=${X:-a b}; $CMD build
+ALLOW declare -x CMD=ls; $CMD build
+ALLOW export CMD=ls PATH=/x; $CMD build
+# a `$NAME` inside a shell body still runs as the program; one glued to a prefix assignment is its value
+WOULD_ASK opaque-var-verb bash -c '$CMD build'
+WOULD_ASK opaque-var-verb eval '$CMD build'
+WOULD_ASK opaque-var-verb `$CMD` build
+WOULD_ASK opaque-var-verb if ${CMD}; then echo; fi
+WOULD_ASK opaque-var-verb time ${CMD} build
+ALLOW PATH=$PATH:/x make && echo $PATH
+ALLOW PYTHONPATH=$PYTHONPATH:. pytest -q; echo "$PYTHONPATH"
+# a ${X} word that is not the program, as with $X
+ALLOW "$(command -v python3)" x.py && git commit -m "do ${X}"
+ALLOW "$(command -v python3)" x.py; echo "a; ${OUT}"
+ALLOW CMD=ls; ${CMD} x; echo "done; ${OUT}"
+# the braced form reads as $NAME does, wherever $NAME would be the program
+WOULD_ASK opaque-var-verb X=1 ${CMD} build
+WOULD_ASK opaque-var-verb echo $(${CMD} build)
+WOULD_ASK opaque-var-verb "${CMD[@]}" x
+WOULD_ASK opaque-var-verb sudo ${CMD} build
+WOULD_ASK opaque-var-verb bash -c '${CMD} build'
+WOULD_ASK opaque-var-verb "${PY:-${HOME}/bin/python}" -m pytest
+ALLOW echo $(date) ${HOME} && $(command -v python3) -V
+ALLOW echo X=1 ${CMD}
+ALLOW echo ${a:-${CMD}}
+# a prefix to a program that runs a body is in that body's environment
+ALLOW CMD=ls bash -c '$CMD x'
+ALLOW CMD=ls xargs -n1 sh -c '$CMD "$0"'
 WOULD_ASK source-file source ./setup.sh
 WOULD_ASK source-file . ./setup.sh && git status
 # GH #592: `.` with no candidate word on the line reaches python too (irrecoverable.sh fast path)

@@ -33,7 +33,8 @@ under `env`, never in a committed file.
 Native Claude Code variables this plugin relies on but does not own: `CLAUDE_PLUGIN_ROOT`
 (every hook command), `CLAUDE_SKILL_DIR` (set while a skill body runs; `harness-audit`,
 `memory-lint`, and `cost-report` invoke their bundled scripts through it, so it works in an eval
-sandbox where no SessionStart hook ran), `CLAUDE_ENV_FILE` (command-root-anchor writes the export there),
+sandbox where no SessionStart hook ran), `CLAUDE_ENV_FILE` (command-root-anchor writes the export there; the repo's cloud-only
+`.claude/hooks/session-start.sh` writes a PATH export when pip's shfmt is shadowed),
 `CLAUDE_CODE_EFFORT_LEVEL` (`model-bench.sh` sets it per `@effort` arm and it reaches the eval
 child; per model-config it outranks every frontmatter `effort:` pin, not yet probed inside an
 eval child; a bare arm inherits the invoking shell's value), `CLAUDE_CODE_ENABLE_TODO_TOOLS`
