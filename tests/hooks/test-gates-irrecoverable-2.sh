@@ -2003,6 +2003,23 @@ _sql_gap_cmd="$(python3 -c 'print("psql -c \"DROP " + "/* a * b */ " * 6000 + "x
 _timed_case 'GH #621: 140 KB of comment runs between DROP and a non-object finish in bounded time' 0 "$_sql_gap_cmd"
 _sql_lits_cmd="$(python3 -c 'print("mysql db <<SQL\nSELECT \`a\`" + " ,'"'"'drop table x'"'"'" * 7000 + ";\nSQL")')"
 _timed_case 'GH #621: 7000 literals after a backtick in a heredoc into mysql finish in bounded time' 0 "$_sql_lits_cmd"
+# GH #621 review: a CR (or U+2028/U+2029) ends a -- or // comment for psql and JavaScript, so a quote in
+# the comment may pair with a later literal; such a body, and any body a mongo/mongosh/redis-cli client
+# reads (JavaScript, where a ' may sit in a regex), blanks no literal and is matched raw.
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a -- comment holding an apostrophe before DROP TABLE into psql" \
+  "$(bash_payload "$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\nSELECT a[1] FROM t -- it'"'"'s\rDROP TABLE t; SELECT '"'"'x'"'"';\nSQL")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a -- comment holding an apostrophe before TRUNCATE into psql" \
+  "$(bash_payload "$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\nSELECT a[1] FROM t -- it'"'"'s\rTRUNCATE t; SELECT '"'"'x'"'"';\nSQL")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a -- comment before DROP TABLE into psql (no fallback construct)" \
+  "$(bash_payload "$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\nSELECT 1 -- x\rDROP TABLE t;\nSQL")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: an apostrophe in a mongosh regex literal before drop()" \
+  "$(bash_payload "$(python3 -c 'print("mongosh db <<'"'"'JS'"'"'\nvar a=[1]; db.x.find({a:/'"'"'/}); db.t.drop(); var y='"'"'z'"'"';\nJS")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a U+2028 ends a // comment holding an apostrophe before drop() into mongosh" \
+  "$(bash_payload "$(python3 -c 'print("mongosh db <<'"'"'JS'"'"'\nvar a=[1]; // it'"'"'s\u2028db.t.drop(); var y='"'"'z'"'"';\nJS")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: a CR ends a // comment holding an apostrophe before drop() into mongo" \
+  "$(bash_payload "$(python3 -c 'print("mongo db <<'"'"'JS'"'"'\nvar a=[1]; // it'"'"'s\rdb.t.drop(); var y='"'"'z'"'"';\nJS")')")"
+test_deny  "$IRRECOVERABLE" "GH #621 review: an apostrophe in a regex literal before drop() echoed into mongosh" \
+  "$(bash_payload "echo \"var a=[1]; db.x.find({a:/'/}); db.t.drop(); var y='z';\" | mongosh db")"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"

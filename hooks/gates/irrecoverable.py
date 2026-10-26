@@ -109,10 +109,19 @@ def _plain_literals_blanked(sql):
     out.append(sql[at:])
     return "".join(out)
 
-def _sql_drops(sql):
-    if not _SQL_UNMODELED_RE.search(sql):
+# GH #621 review: psql and JavaScript end a -- or // comment at a CR, U+2028 or U+2029 as well, so a body
+# holding one blanks nothing; nor does a body a non-SQL client reads (mongo and mongosh read JavaScript,
+# where a ' may sit in a regex literal), which keeps develop's matching.
+_SQL_LINE_ENDS_RE = re.compile("[\r\u2028\u2029]")
+_NON_SQL_CLIENTS = ("mongosh", "mongo", "redis-cli")
+_NON_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mongosh|mongo|redis-cli)(?![\w.-])")
+
+def _sql_drops(sql, sql_client=True):
+    if _SQL_LINE_ENDS_RE.search(sql):
+        pass
+    elif not _SQL_UNMODELED_RE.search(sql):
         sql = _SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)
-    elif "'" in sql:
+    elif "'" in sql and sql_client:
         sql = _plain_literals_blanked(sql)
     return bool(_SQL_DROP_RE.search(sql))
 
@@ -400,7 +409,8 @@ def _strip_heredocs(cmd):
                 break
             if code:
                 out.extend(lines[body_start:i])
-            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops("\n".join(lines[body_start:i - 1])):
+            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops(
+                    "\n".join(lines[body_start:i - 1]), not _NON_SQL_CLIENT_RE.search(line)):
                 _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
@@ -1920,7 +1930,7 @@ def _sql_stdin_drop(c):
         here = segs[k].split("<<<", 1)
         if len(here) > 1:
             data.extend(_words(here[1]))
-        if _sql_drops(" ".join(data)):
+        if _sql_drops(" ".join(data), _stage_cmd(segs[k])[0] not in _NON_SQL_CLIENTS):
             return True
     return _group_piped_sql_drop(c) if "}" in c or ")" in c else False
 
@@ -1961,7 +1971,7 @@ def _group_piped_sql_drop(c):
                         budget[0] -= len(sql)
                         if budget[0] < 0:
                             return "budget"
-                        if _sql_drops(sql):
+                        if _sql_drops(sql, a0 not in _NON_SQL_CLIENTS):
                             return True
             elif a0 in ("echo", "printf"):
                 data.extend(rest)
