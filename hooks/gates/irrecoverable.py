@@ -116,12 +116,54 @@ def _plain_literals_blanked(sql):
 _SQL_LINE_ENDS_RE = re.compile("[\r\u2028\u2029]")
 _NON_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mongosh|mongo|redis-cli)(?![\w.-])")
 
+# GH #621 review 4: a client that echoes its input copies the body to stdout or a file, from where any route
+# (a function, a variable, a temp file, a pipe past the heredoc) may hand it to a JavaScript client. So the
+# plain-literal fallback is withdrawn for the whole command when it names mongo/mongosh/redis-cli anywhere,
+# or a SQL client takes an echo flag (psql -a -b -e -E -s -L and their long names or prefixes, mysql or
+# mariadb -v and --verbose/--tee, sqlite3 -echo), or the text holds an echo, print, log or tee command
+# (psql \set ECHO, \echo, \qecho, \w; mysql tee, \T, print, \p; sqlite3 .echo, .print, .trace, .log).
+_SQL_CLIENT_ARGS_RE = re.compile(r"(?<![\w.-])(psql|mysql|mariadb|sqlite3)(?![\w.-])([^|;&\n()]*)")
+_SQL_ECHO_CMD_RE = re.compile(r"\bECHO\b|\\(?:q?echo|warn|w|write|T|p|print|tee)\b|(?:^|[\s'\"])\.(?:echo|print|trace|log)\b"
+                              r"|^\s*(?:tee|print)\b", re.M)
+_SQL_ECHO_FLAGS = {  # client: (echo short letters, short letters that take a value, echo long names)
+    "psql": ("abeEsL", "cdfvLoFPRThpU", ("echo-all", "echo-errors", "echo-queries", "echo-hidden", "log-file",
+                                          "single-step")),
+    "mysql": ("v", "#DehpPSuOT", ("verbose", "tee")),
+}
+_SQL_ECHO_FLAGS["mariadb"] = _SQL_ECHO_FLAGS["mysql"]
+
+def _sql_client_echoes(argtext):
+    client, rest = argtext
+    if client == "sqlite3":
+        return any(w.strip("'\"").lstrip("-") == "echo" for w in rest.split())
+    short, valued, longs = _SQL_ECHO_FLAGS[client]
+    for w in rest.split():
+        w = w.strip("'\"")
+        if w.startswith("--"):
+            name = w[2:].split("=", 1)[0]
+            if name and any(o.startswith(name) for o in longs):
+                return True
+        elif w.startswith("-") and len(w) > 1:
+            for ch in w[1:]:
+                if ch in short:
+                    return True
+                if ch in valued:
+                    break
+    return False
+
+def _sql_blanking_allowed(raw):
+    if not isinstance(raw, str) or _NON_SQL_CLIENT_RE.search(raw) or _SQL_ECHO_CMD_RE.search(raw):
+        return False
+    return not any(_sql_client_echoes(m.groups()) for m in _SQL_CLIENT_ARGS_RE.finditer(raw))
+
+_SQL_BLANKING = [True]  # set from the whole command before the first body is read
+
 def _sql_drops(sql, sql_client=True):
     if _SQL_LINE_ENDS_RE.search(sql):
         pass
     elif not _SQL_UNMODELED_RE.search(sql):
         sql = _SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)
-    elif "'" in sql and sql_client:
+    elif "'" in sql and sql_client and _SQL_BLANKING[0]:
         sql = _plain_literals_blanked(sql)
     return bool(_SQL_DROP_RE.search(sql))
 
@@ -552,6 +594,7 @@ def _rm_prompts_each(rest):
             operand = True
     return mode == "always"
 
+_SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
 cmd = _strip_heredocs(d["tool_input"].get("command", ""))
 
 def _mid_merge():

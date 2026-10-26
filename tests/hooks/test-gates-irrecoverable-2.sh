@@ -2064,6 +2064,42 @@ test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a 
   "$(bash_payload "echo \"$_js_body\" | psql -a | docker exec -i m mongosh")"
 test_deny  "$IRRECOVERABLE" "GH #621 review 3: a JS body echoed through psql -a into mongosh inside bash -c" \
   "$(bash_payload "bash -c \"echo \\\"$_js_body\\\" | psql -a | mongosh db\"")"
+# GH #621 review 4: a client with an echo flag (or an echo/print/tee/trace command in the body) copies the body
+# to its output, and a mongo/mongosh/redis-cli word anywhere in the command may be where it lands, so either
+# one keeps the stdin body unblanked (develop's raw match).
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql -a output piped into a function running mongosh" \
+  "$(bash_payload "f() { mongosh db; }; echo \"$_js_body\" | psql -a | f")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql -a output piped into \$M naming mongosh" \
+  "$(bash_payload "M=mongosh; echo \"$_js_body\" | psql -a | \$M db")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql -a output to a temp file mongosh then reads" \
+  "$(bash_payload "echo \"$_js_body\" | psql -a > /tmp/o; mongosh db < /tmp/o")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: a heredoc into psql -a to a temp file mongosh then reads" \
+  "$(bash_payload "$(printf "psql -a > /tmp/o <<'JS'\n%s\nJS\nmongosh db < /tmp/o" "$_js_body")")"
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: a heredoc into psql -a whose pipe continues past the body" \
+  "$(bash_payload "$(printf "psql -a <<'JS' |\n%s\nJS\nmongosh db" "$_js_body")")"
+for _flag in -a -qa -ae -e -b -E -s --echo-all --echo-q --echo-errors --echo-hidden "-L /tmp/l" --log-file=/tmp/l \
+    "-v ECHO=all" --set=ECHO=queries; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: psql $_flag echoes its input on to an unseen client" \
+    "$(bash_payload "echo \"$_js_body\" | psql $_flag db | \$M db")"
+done
+for _flag in -v -vv -sv --verbose --verb --tee=/tmp/t; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: mysql $_flag echoes its input on to an unseen client" \
+    "$(bash_payload "echo \"$_js_body\" | mysql $_flag db | \$M db")"
+done
+test_deny  "$IRRECOVERABLE" "GH #621 review 4: mariadb -v echoes its input on to an unseen client" \
+  "$(bash_payload "echo \"$_js_body\" | mariadb -v db | \$M db")"
+for _flag in -echo --echo "-cmd '.echo on'"; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: sqlite3 $_flag echoes its input on to an unseen client" \
+    "$(bash_payload "echo \"$_js_body\" | sqlite3 $_flag db | \$M db")"
+done
+for _cmd in '\\set ECHO all' '\\qecho' '\\w /tmp/q' 'tee /tmp/t' '\\p' '.echo on' '.trace stdout'; do
+  test_deny  "$IRRECOVERABLE" "GH #621 review 4: a $_cmd line in the body copies it on to an unseen client" \
+    "$(bash_payload "$(printf "psql db <<'JS' | \$M db\n%s\n%s\nJS" "$_cmd" "$_js_body")")"
+done
+test_allow "$IRRECOVERABLE" "GH #621 review 4 control: mysql -uvictor -h vhost (values, not -v) keeps the literal relief" \
+  "$(bash_payload "$(printf "mysql -uvictor -h vhost db <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621 review 4 control: psql -U alice -d app (values, not echo flags) keeps the literal relief" \
+  "$(bash_payload "$(printf "psql -U alice -d app <<'SQL'\nSELECT a[1] FROM t WHERE x = 'drop table x';\nSQL")")"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
