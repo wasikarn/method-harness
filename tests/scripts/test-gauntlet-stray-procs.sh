@@ -13,6 +13,8 @@ GAUNTLET="$HERE/../../scripts/run-gauntlet.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
+source "$HERE/../_lib/harness.sh"
+trap _cleanup_trash EXIT
 
 echo "=== stray-procs: name leftover CPU-heavy process groups (GH #158) ==="
 
@@ -82,11 +84,11 @@ out=$(env ROWS="$ROWS" bash -ec ". '$LIB'; _sp_ps() { printf '%s\n' \"\$ROWS\"; 
 [ "$out" = "after" ] && ok "a set -e caller is not aborted when strays are found and the load reader fails" || bad "set -e caller aborted on a load failure: $out"
 
 # The real readers, through PATH shims instead of overridden helpers. The ps shim acts like macOS
-# ps: an unknown -o keyword (say `etimes`, which macOS lacks) is an error, and it lists rows only
-# for `-U <your uid>`.
-source "$HERE/../_lib/harness.sh"
-trap _cleanup_trash EXIT
+# ps where the report depends on it: an unknown -o keyword (say `etimes`, which macOS lacks) is an
+# error, columns come out in the order -o asks for, no -o gives the default PID TTY TIME CMD
+# columns under a header, and it lists rows only for `-U <your uid>`.
 SHIM=$(fresh_tmpdir)
+[ -n "$SHIM" ] && [ -d "$SHIM" ] || { echo "FAIL: fresh_tmpdir gave no shim dir" >&2; exit 1; }
 cat >"$SHIM/ps" <<EOF
 #!/bin/bash
 uid="" cols=""
@@ -97,7 +99,17 @@ for c in \${cols//,/ }; do
   case "\$c" in pid=|etime=|%cpu=|command=) ;; *) echo "ps: \${c%=}: keyword not found" >&2; exit 1 ;; esac
 done
 [ "\$uid" = "$(id -u)" ] || exit 0
-printf '%s\n' '82797     04:27:19  99.4 yes' '82799     04:27:19  99.0 yes'
+row() {
+  if [ -z "\$cols" ]; then echo "\$1 ttys000    0:01.00 \$4"; return; fi
+  local out="" c
+  for c in \${cols//,/ }; do
+    case "\$c" in pid=) out="\$out \$1" ;; etime=) out="\$out \$2" ;; %cpu=) out="\$out \$3" ;; command=) out="\$out \$4" ;; esac
+  done
+  echo "\$out"
+}
+[ -n "\$cols" ] || echo "  PID TTY           TIME CMD"
+row 82797 04:27:19 99.4 yes
+row 82799 04:27:19 99.0 yes
 EOF
 printf '#!/bin/bash\necho "10:00  up 3 days,  2:00, 2 users, load averages: 3.21 2.00 1.00"\n' >"$SHIM/uptime"
 chmod +x "$SHIM/ps" "$SHIM/uptime"
