@@ -2764,4 +2764,20 @@ test_deny  "$IRRECOVERABLE" "GH #594 control: subprocess.run([rm, 'a --', -rf, b
   "$(bash_payload 'python3 -c '"'"'import subprocess; subprocess.run(["rm", "a --", "-rf", "b"])'"'"'')"
 test_allow "$IRRECOVERABLE" "GH #594: rm -f -- -r ./x.log (plain operands)" "$(bash_payload 'rm -f -- -r ./x.log')"
 
+# GH #662: `busybox [--] APPLET args` runs the applet, so every rule reads the applet as the command.
+test_deny  "$IRRECOVERABLE" "GH #662: busybox rm -rf b" "$(bash_payload 'busybox rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox -- rm -rf b" "$(bash_payload 'busybox -- rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: /bin/busybox rm -r b" "$(bash_payload '/bin/busybox rm -r b')"
+test_deny  "$IRRECOVERABLE" "GH #662: sudo busybox rm -rf b" "$(bash_payload 'sudo busybox rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox dd of=/dev/sda" "$(bash_payload 'busybox dd if=/dev/zero of=/dev/sda')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox mkfs.ext2 /dev/sda1" "$(bash_payload 'busybox mkfs.ext2 /dev/sda1')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox find . -delete" "$(bash_payload 'busybox find . -delete')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox sh -c 'rm -rf b'" "$(bash_payload "busybox sh -c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox xargs rm -rf" "$(bash_payload 'echo b | busybox xargs rm -rf')"
+test_deny  "$IRRECOVERABLE" "GH #662: busybox chmod -R 777 /" "$(bash_payload 'busybox chmod -R 777 /')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox ls -la" "$(bash_payload 'busybox ls -la')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox --list" "$(bash_payload 'busybox --list')"
+test_allow "$IRRECOVERABLE" "GH #662 control: busybox rm x.log" "$(bash_payload 'busybox rm x.log')"
+test_allow "$IRRECOVERABLE" "GH #662 control: echo busybox rm -rf b" "$(bash_payload 'echo busybox rm -rf b')"
+
 gates_summary

@@ -648,6 +648,8 @@ _RUN_WRAPPERS = {
     "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
                   "--joblog", "--results", "--delay", "--timeout", "-a", "--arg-file"), 0, (), False),
     "npx": (("-p", "--package"), 0, ("-c", "--call"), False), "bunx": (("-p", "--package"), 0, (), False),
+    # GH #662: `busybox [--] APPLET args` runs the applet (rm, dd, mkfs.ext2, find, sh, ...).
+    "busybox": ((), 0, (), False),
 }
 # A package runner's package names map to the program they install (`npx @anthropic-ai/claude-code -p x`).
 _PKG_PROGRAMS = {"claude-code": "claude"}
