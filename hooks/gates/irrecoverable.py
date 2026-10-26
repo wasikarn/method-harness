@@ -173,6 +173,7 @@ _SQL_HEREDOC_DROP = [False]
 # GH #668 round 3: the line index in the stripped command right after each data body the top-level strip
 # kept as text, checked once the tokenizer exists (see _KEPT_MARK).
 _KEPT_BODY_ENDS = []
+_HEREDOC_UNMATCHED = [False]  # the top-level strip, unsure, never found a delimiter (see _KEPT_MARK)
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -327,9 +328,10 @@ def _runs_sql_client(stage):
 # GH #668: the delimiter is a whole shell word, ended by a blank or an operator (<<EOF; is EOF), quotes removed.
 _HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?[ \t]*((?:[^ \t;&|()<>'\"\\]|\\.|'[^']*'|\"(?:[^\"\\]|\\.)*\")+)")
 
-def _heredoc_delim(word):
-    # (delimiter, quoted) the way the shell removes quotes, or None for a word with an expansion in it.
-    if "$" in word or "`" in word:
+def _heredoc_delim(word, expanding=False):
+    # (delimiter, quoted) the way the shell removes quotes, or None for a word with an expansion in it
+    # (unless expanding: bash never expands the word, it only removes quotes, so $X stays $X).
+    if not expanding and ("$" in word or "`" in word):
         return None
     return (re.sub(r"'([^']*)'|\"((?:[^\"\\]|\\.)*)\"|\\(.)",
                    lambda m: m.group(1) if m.group(1) is not None else
@@ -516,11 +518,21 @@ def _quote_mask(c, stack=None, hd=False):
             stack.pop()
             i += 1
         elif ch == "(" and q in ("((", "a("):
-            stack.append("a(")
+            stack.append("a(")  # a ( inside arithmetic: its ) closes it, not the (( frame
         elif ch == "(" and q == "(":
             stack.append("(")
         i += 1
     return mask
+
+def _in_subscript(line, mask, starts):
+    # Whether an opener at one of starts follows an unmasked [ with no unmasked ] after it. One pass.
+    br = False
+    for k in range(max(starts) + 1):
+        if k in starts and br:
+            return True
+        if not mask[k] and line[k] in "[]":
+            br = line[k] == "["
+    return False
 
 def _strip_heredocs(cmd, ends=None):
     # Heredoc bodies are literal data (a quoted commit message mentioning
@@ -540,6 +552,12 @@ def _strip_heredocs(cmd, ends=None):
     # each data body kept as text (unsure, or ended early), where the tokenizer must stand outside any
     # quote; bash reads the body as data, so a quote in it must not pair with one past the delimiter. The
     # unmatched-delimiter put-back runs to the end, and a code body is GH #681, so neither is recorded.
+    # GH #668 round 4: unsure too, checked on every line while sure: a \ in the delimiter inside a backtick
+    # (bash unescapes \\ there first), a ${ $(( (( $[ name=( or case frame still open at the line end, a
+    # stack deeper than 64 (keeps `framed` linear), an opener after an unclosed [ (a[1<<2]=3 shifts). A
+    # delimiter with $ or a backtick is still searched for with its quotes removed (bash never expands
+    # it), and an unsure body whose delimiter is never found denies (_HEREDOC_UNMATCHED): bash may end it
+    # elsewhere. Sure and not found keeps the put-back.
     lines = cmd.split("\n")
     out, i, stack, sure = [], 0, [None], True
     while i < len(lines):
@@ -556,6 +574,13 @@ def _strip_heredocs(cmd, ends=None):
                 stack[-1] not in (None, "(", "`") or _odd_trailing_bs(line)
                 or any(_heredoc_delim(m.group(2)) is None for m in real)
                 or any(not mask[k] and line[k] in ")`" for k in range(real[-1].end(), len(line)))))
+            # Checked on every line while sure: a \ in the delimiter inside a backtick (unescaped first), a
+            # frame where << is no redirection still open at the line end, a stack past 64 (bounds `framed`),
+            # an opener inside an array subscript (bash: a[1<<2]=3 is a shift).
+            if sure and (len(stack) > 64 or any(f in _HD_OFF or f == "!" for f in stack[1:])
+                         or ("`" in stack and any("\\" in m.group(2) for m in real))
+                         or real and _in_subscript(line, mask, {m.start() for m in real})):
+                sure = False
             if sure:
                 ms = real
         framed = "(" in stack or "`" in stack  # the heredoc sits in $( or a backtick (read only while sure)
@@ -569,7 +594,8 @@ def _strip_heredocs(cmd, ends=None):
             # from the line's stages parsed once.
             code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
             feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
-            strip_tabs, (delim, quoted) = bool(m.group(1)), _heredoc_delim(m.group(2)) or (m.group(2), True)
+            strip_tabs, (delim, quoted) = bool(m.group(1)), _heredoc_delim(m.group(2)) or (
+                _heredoc_delim(m.group(2), True)[0], True)
             body_start, found, expands, early = i, False, False, False
             while i < len(lines):
                 body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
@@ -594,8 +620,11 @@ def _strip_heredocs(cmd, ends=None):
                 break
             if not found:
                 # Unmatched closing delimiter: put the scanned lines BACK rather
-                # than silently eat a real write statement that followed.
+                # than silently eat a real write statement that followed. Unsure, bash may end the body
+                # where the gate does not, so the top-level call denies (_HEREDOC_UNMATCHED).
                 out.extend(lines[body_start:i])
+                if ends is not None and not sure:
+                    _HEREDOC_UNMATCHED[0] = True
                 break
             sure = sure and not expands
             if code or not sure:
@@ -745,11 +774,14 @@ def _rm_prompts_each(rest):
             operand = True
     return mode == "always"
 
-# GH #668: the heredoc scan runs before _CMD_LEN_CAP and a timeout allows, so a huge command skips it
-# and is denied by that cap unchanged.
+# shlex cost is superlinear in the longest SINGLE token (700k chars blows a 2s
+# timeout), so an oversized command denies on length ALONE before shlex runs.
+_CMD_LEN_CAP = 150_000
+# GH #668: the heredoc scan runs before the _CMD_LEN_CAP deny and a timeout allows, so a command over the
+# cap skips it and is denied by that cap unchanged.
 _SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
 cmd = d["tool_input"].get("command", "")
-cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= 2_000_000 else cmd
+cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= _CMD_LEN_CAP else cmd
 
 def _mid_merge():
     # `git add -A|--all|.` is allowed only mid-merge (staging a manual conflict
@@ -2066,9 +2098,6 @@ def _drop_ph_tokens(w):
     # w without its bare-placeholder tokens (a substitution that may expand to nothing).
     return [t for t in w if not (t and all(c == PH for c in t))]
 
-# shlex cost is superlinear in the longest SINGLE token (700k chars blows a 2s
-# timeout), so an oversized command denies on length ALONE before shlex runs.
-_CMD_LEN_CAP = 150_000
 if len(cmd) > _CMD_LEN_CAP:
     deny("command too long to safely tokenize (" + str(len(cmd)) + " chars, cap " + str(_CMD_LEN_CAP) + ") - confirm with user first")
 # GH #668 round 3: a mark line goes where each kept data body ends, and the tokenizer's own reader runs once:
@@ -2086,6 +2115,8 @@ if _KEPT_BODY_ENDS:
     if _KEPT_MARK in cmd or _newlines_to_seps(_normalize_ansi_c_quotes("\n".join(_marked))).count(
             "\n; " + _KEPT_MARK) < len(_at):
         deny("a heredoc body the gate reads as commands leaves a quote open - confirm with user first")
+if _HEREDOC_UNMATCHED[0]:
+    deny("a heredoc the gate reads unsure has no closing delimiter it can find - confirm with user first")
 
 def _sql_stdin_drop(c):
     # SQL a client reads on stdin drops or truncates: a heredoc body it reads (_SQL_HEREDOC_DROP), a

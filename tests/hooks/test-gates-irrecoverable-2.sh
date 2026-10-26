@@ -1052,7 +1052,7 @@ for _c in $'echo "<<EOF"\nrm -rf build\nEOF' $'echo \'<<EOF\'\nrm -rf build\nEOF
   $'cat <<EOF \\\n; rm -rf build\nEOF\necho ok' $'cat <<EOF\n$(rm -rf build)\nEOF' $'cat <<EOF\nEO\\\nF\nrm -rf build\nEOF' \
   $'bash <<\'EOF\'\ncat <<X\nEOF\nrm -rf build\nX' $'echo "$(case a in a) echo "<<X";; esac)"\nrm -rf build\nX' \
   $'echo "$(cat <<X)"\nrm -rf build\nX' $'echo $(case a in a) echo;; esac); psql db <<\'SQL\'\nDROP TABLE t;\nSQL'; do
-  test_deny "$IRRECOVERABLE" "GH #668: $(printf '%s' "$_c" | head -1)" "$(bash_payload "$_c")"
+  _l=${_c//$'\r'/\\r}; test_deny "$IRRECOVERABLE" "GH #668: ${_l//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 # Real heredocs whose body only mentions a destructive verb stay data.
 for _c in $'cat <<\'EOF\'\nit\'s\nEOF\necho "<<X"\nls\nX' $'echo "$(cat <<\'EOF\'\ndon\'t\nEOF\n)"\necho "<<X"\nls\nX' \
@@ -1068,7 +1068,7 @@ for _c in $'out=$(cat <<EOF\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<EOF\nms
   $'out=$(cat <<EOF\nmsg\nEOF);\nrm -rf build\nEOF' $'out=$(cat <<EOF\nmsg\nEOF) && :\nrm -rf build\nEOF' \
   $'out=$(cat <<\'EOF\'\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<-EOF\nmsg\n\tEOF)\nrm -rf build\nEOF' \
   $'bash <<\'EOF\'\npsql db <<SQL\nDROP TABLE t;\nSQL\nEOF'; do
-  test_deny "$IRRECOVERABLE" "GH #668 round 2: $(printf '%s' "$_c" | sed -n 3p)" "$(bash_payload "$_c")"
+  test_deny "$IRRECOVERABLE" "GH #668 round 2: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 # An interpreter-fed body is skipped like any body (kept as code), so a later quoted body stays data; and
 # a plain ${NAME}, an escaped backtick or an escaped \$( in an unquoted body does not expand.
@@ -1100,6 +1100,22 @@ for _c in $'python3 - <<\'EOF\'\nprint("it\'s")\n# don\'t\nEOF' $'python3 - <<\'
 done
 _huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
 _timed_case 'GH #668: a 2.1 MB command denies on length before the heredoc scan' 2 "$_huge_cmd"
+# GH #668 round 4: shapes the scan does not model turn it unsure, so nothing more is stripped: a \ in the
+# delimiter inside backticks (bash unescapes \\ first), a $(( frame still open at the line end, an opener
+# in an array subscript (a left shift), a delimiter with a $ (quotes removed, never expanded), unfound.
+_n4=0
+for _c in $'x=`cat <<E\\\\OF\nmsg\nEOF\nrm -rf build\nE\\OF\n`' $'x=`cat <<E\\\\OF\nmsg\nEOF\ngit push --force origin main\nE\\OF\n`' \
+  $'x=$((cat <<EOF\nmsg\nEOF\n) )\ncat <<\'X\'\nit\'s\nX\nrm -rf build\necho \'' \
+  $'a[1<<2]=3\nrm -rf build\n2]=3' $'a[1<<X ]=5\nrm -rf build\nX' \
+  $'cat <<"$X"\nit\'s data\n$X\nrm -rf build\necho don\'t' $'cat <<"$X"\nit\'s data\nrm -rf build\necho don\'t'; do
+  _n4=$((_n4 + 1)); test_deny "$IRRECOVERABLE" "GH #668 round 4 case $_n4: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# Quadratic before: a $(( per line left a frame open and grew the stack (800k chars took 9 s, past the hook
+# timeout that allows); a command over _CMD_LEN_CAP now skips the scan. The second guards the depth latch.
+_quad_cmd="$(python3 -c 'print("x=$((cat <<EOF\nit'"'"'s\nEOF\n) )\n" * 28571 + "rm -rf build")')"
+_timed_case 'GH #668 round 4: 800 KB of $(( heredoc lines denies in bounded time' 2 "$_quad_cmd"
+_deep_cmd="$(python3 -c 'print("\"$(\n" * 37000)')"
+_timed_case 'GH #668 round 4: 37000 nested "$( lines (148 KB) deny in bounded time' 2 "$_deep_cmd"
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 
@@ -2086,8 +2102,8 @@ _sql_nested_cmd="$(python3 -c 'print("( " * 9000 + "echo \"" + "x " * 20000 + "\
 _timed_case 'GH #621: 9000 nested groups around 40 KB of echo piped into psql finish in bounded time' 0 "$_sql_nested_cmd"
 _sql_nested_cmd="$(python3 -c 'print("( " * 5000 + "echo \"" + "x " * 10000 + "\" | psql" + " ; echo y ) | psql" * 5000 + " # DROP TABLE t")')"
 _timed_case 'GH #621: 5000 nested groups each adding a line to 20 KB of SQL deny on the read budget' 2 "$_sql_nested_cmd"
-_sql_gap_cmd="$(python3 -c 'print("psql -c \"DROP " + "/* a * b */ " * 6000 + "x\"; mysql db <<SQL\nDROP " + "# c\n" * 12000 + "x\n" + "/*" + "*" * 40000 + "\nSQL")')"
-_timed_case 'GH #621: 140 KB of comment runs between DROP and a non-object finish in bounded time' 0 "$_sql_gap_cmd"
+_sql_gap_cmd="$(python3 -c 'print("psql -c \"DROP " + "/* a * b */ " * 5000 + "x\"; mysql db <<SQL\nDROP " + "# c\n" * 10000 + "x\n" + "/*" + "*" * 35000 + "\nSQL")')"
+_timed_case 'GH #621: 135 KB of comment runs between DROP and a non-object finish in bounded time' 0 "$_sql_gap_cmd"
 _sql_lits_cmd="$(python3 -c 'print("mysql db <<SQL\nSELECT \`a\`" + " ,'"'"'drop table x'"'"'" * 7000 + ";\nSQL")')"
 _timed_case 'GH #621: 7000 literals after a backtick in a heredoc into mysql finish in bounded time' 0 "$_sql_lits_cmd"
 # GH #621 review: a CR (or U+2028/U+2029) ends a -- or // comment for psql and JavaScript, so a quote in
@@ -2158,10 +2174,10 @@ test_allow "$IRRECOVERABLE" "GH #621 review 4 control: mysql -uvictor -h vhost (
   "$(bash_payload "$(printf "mysql -uvictor -h vhost db <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
 test_allow "$IRRECOVERABLE" "GH #621 review 4 control: psql -U alice -d app (values, not echo flags) keeps the literal relief" \
   "$(bash_payload "$(printf "psql -U alice -d app <<'SQL'\nSELECT a[1] FROM t WHERE x = 'drop table x';\nSQL")")"
-_sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
-_timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
-_sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
-_timed_case 'GH #559 review 3: 15000 heredocs into a file on a psql line finish in bounded time' 0 "$_sql_many_heredocs_cmd"
+_sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 7500 + "\n" + "DROP TABLE t\na\n" * 7500)')"
+_timed_case 'GH #559 review 3: 7500 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
+_sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 7500 + "> f; psql\n" + "DROP TABLE t\na\n" * 7500)')"
+_timed_case 'GH #559 review 3: 7500 heredocs into a file on a psql line finish in bounded time' 0 "$_sql_many_heredocs_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("eval x%d;" % i for i in range(7000)) + " rm -rf ~")')"
 _timed_case 'GH #559 review 2: 7000 eval bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("bash -c x%d;" % i for i in range(5000)) + " rm -rf ~")')"
