@@ -2903,22 +2903,40 @@ def _chmod_world_word(rest):
 # GH #336: a program known only at run time -- a `$NAME` argv0 with no `NAME=` anywhere in the
 # command (the var-verb view below reads a visible one back) -- or a sourced file.
 _VAR_NAME_RE = re.compile(r"[A-Za-z_]\w*")
-# GH #593: only an assignment that is its own statement (`X=rm;`, `export X=rm`) sets the name in the
-# shell. One prefixed to a command (`X=rm true; $X build`) lives in that command's environment alone.
-_ASSIGN_VALUE = r"""(?:[^\s;&|()<>"'\\`$]|\\.|"(?:[^"\\]|\\.)*"|'[^']*'|\$\([^()]*\)|`[^`]*`|\$)*"""
-_ASSIGN_WORD = r"[A-Za-z_]\w*\+?=" + _ASSIGN_VALUE
-_ASSIGNED_NAMES = {n for chain in re.findall(
-    r"(?<![\w$=])(?:(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+)?((?:" + _ASSIGN_WORD
-    + r"[ \t]+)*" + _ASSIGN_WORD + r")[ \t]*(?=$|[;&|)}\n#])", cmd, re.M)
-    for n in re.findall(r"(?:^|(?<=[ \t]))([A-Za-z_]\w*)\+?=", chain)}
-# A word that is a whole braced expansion (`${CMD}`, "${CMD:-ls}") reaches argv0 as PH alone: its names.
-_BRACED_WORD_NAMES = set(re.findall(r"(?<![^\s;&|(){\"])\"?\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}]*)?\}\"?(?=[\s;&|)}]|$)", cmd))
+# GH #593: an assignment prefixed to a command (`X=rm true; $X build`) lives in that command's
+# environment alone. A name counts as assigned unless every `NAME=` is such a prefix: a chain of
+# `NAME=value` words the scan reads whole, then blanks, then a plain word. A value it cannot read
+# (`$(...)`, `${...}`, an array) or a chain ended by anything else (a separator, a redirection, a line
+# continuation) counts as assigned, as before. One non-overlapping pass, so the cost stays linear.
+_ASSIGN_WORD_RE = re.compile(r"""(?<![\w$=])([A-Za-z_]\w*)\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()<>'"\\`{]|\\.)*""")
+_PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])[\w./~"'$-]""")
+_DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
+_ASSIGNED_NAMES = set(re.findall(r"(?<![\w$])([A-Za-z_]\w*)\+?=", cmd))
+_standalone, _prefixed, _chain = set(), set(), []
+for _m in _ASSIGN_WORD_RE.finditer(cmd):
+    _chain.append(_m)
+    _gap = re.match(r"[ \t]*", cmd[_m.end():_m.end() + 64]).group()
+    _nx = _ASSIGN_WORD_RE.match(cmd, _m.end() + len(_gap)) if _gap else None
+    if _nx and _nx.start() == _m.end() + len(_gap):
+        continue  # the chain goes on; finditer reaches the next word itself
+    _prefix = bool(_PREFIX_NEXT_RE.match(cmd, _m.end())) and not _DECLARE_TAIL_RE.search(
+        cmd[max(0, _chain[0].start() - 80):_chain[0].start()])
+    (_prefixed if _prefix else _standalone).update(c.group(1) for c in _chain)
+    _chain = []
+_ASSIGNED_NAMES -= _prefixed - _standalone
+# A word that is a whole braced expansion (`${CMD}`, "${CMD:-ls}") reaches argv0 as PH alone. Only one
+# that opens a statement is read as the program, not `${HOME}` as an argument elsewhere.
+_BRACED_VERB_NAMES = set(re.findall(r"(?:^|[;&|(){]|(?<![\w-])(?:then|do|else|!))[ \t]*\"?\$\{([A-Za-z_]\w*)"
+                                    r"(?:[:\-=+?%#/^,][^{}\n]*)?\}\"?(?=[\s;&|)}]|$)", cmd, re.M))
+# A `$NAME` that starts a word. One inside an assignment's value (`PATH=$PATH:/x make`) is never the
+# program, though a token reading that drops the `PATH=` prefix sees it as argv0.
+_WORD_START_NAMES = set(re.findall(r"(?<![^\s;&|(){])\"?\$([A-Za-z_]\w*)", cmd))
 def _opaque_var(argv0, rest):
     # shlex splits an unquoted `$X` into "$" and "X"; a quoted "$X" stays one word.
     if argv0 and not argv0.strip(PH):
-        return bool(_BRACED_WORD_NAMES - _ASSIGNED_NAMES)
+        return bool(_BRACED_VERB_NAMES - _ASSIGNED_NAMES)
     name = rest[0] if argv0 == "$" and rest else argv0[1:] if argv0.startswith("$") else ""
-    return bool(_VAR_NAME_RE.fullmatch(name)) and name not in _ASSIGNED_NAMES
+    return bool(_VAR_NAME_RE.fullmatch(name)) and name in _WORD_START_NAMES and name not in _ASSIGNED_NAMES
 
 # 2026-10-23: `gh api` write detection, so settings.json can drop its blanket Bash(gh api *) ask and
 # reads stop prompting. gh follows pflag: a value-taking short flag takes the rest of its cluster

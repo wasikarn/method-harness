@@ -73,6 +73,21 @@ ALLOW CMD="ls -la"; $CMD build
 ALLOW CMD=$(command -v ls); $CMD build
 ALLOW echo ${CMD} build
 ALLOW ${HOME}/bin/tool build
+ALLOW X=$Y make
+ALLOW PATH=$PATH:/x true; make
+WOULD_ASK opaque-var-verb X=1 Y=2 true; $X build
+# a ${...} word read as the program only where it opens a statement, and a value the scan cannot read
+# counts as an assignment
+ALLOW CMD=ls; "${CMD}" build && cd "${REPO}"
+ALLOW cd "${REPO}" && "$(command -v python3)" x.py
+ALLOW CMD=$(dirname $(which ls))/ls; $CMD build
+ALLOW RUN=$(cd "$(dirname "$0")" && pwd)/run.sh; $RUN build
+ALLOW N=$((1+2)); $N
+ALLOW CMD=(python3 -m pytest); "${CMD[@]}" -q
+ALLOW CMD=ls 2>/dev/null; $CMD build
+ALLOW CMD=${X:-a b}; $CMD build
+ALLOW declare -x CMD=ls; $CMD build
+ALLOW export CMD=ls PATH=/x; $CMD build
 WOULD_ASK source-file source ./setup.sh
 WOULD_ASK source-file . ./setup.sh && git status
 # GH #592: `.` with no candidate word on the line reaches python too (irrecoverable.sh fast path)
