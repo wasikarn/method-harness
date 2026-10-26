@@ -2854,11 +2854,13 @@ test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U python\"\$(echo
 # the enforced pass gets its own spawn-scan budget: a subagent body the main reading fits is not denied as a spawn
 test_allow "$IRRECOVERABLE" "GH #661 control: subagent bash -c with 800 statements, then echo {a,b}" \
   "$(bash_agent_payload "bash -c '$(printf 'true; %.0s' $(seq 800))true'; echo {a,b}" fork)"
-# a spawn-scan budget only the expanded text spends ends that window in the pass, as the view stops on develop
-test_allow "$IRRECOVERABLE" "GH #661 control: subagent eval 'true;...'{0..29} (expansion over the scan budget)" \
-  "$(bash_agent_payload "eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)}" fork)"
-# ...but only that window: a later body is still read, with a budget of its own
+# the pass has one spawn-scan budget; running out of it denies (fail closed), so nothing after it, or in the
+# body that spent it, goes unread. The documented over-deny: an expansion that copies a long eval body many times.
 _x661="eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)}"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent eval 'true;...'{0..29} fails closed (documented over-deny)" \
+  "$(bash_agent_payload "$_x661" fork)"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent: the rm inside the body that spends the budget" \
+  "$(bash_agent_payload "eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)} '; rm --{r,f} b'" fork)"
 test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then bash -c 'rm --{r,f} b'" \
   "$(bash_agent_payload "$_x661; bash -c 'rm --{r,f} b'" fork)"
 test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then a brace-built claude in a body" \

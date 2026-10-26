@@ -1046,7 +1046,7 @@ _ONLY_RULE = [None]
 # budget limit, a nested spawn) denies there, as it does in the main reading: the text cannot be read safely.
 _ONLY_RULE_PASS_ON = [False]
 def _deny_nested_spawn():
-    if _ONLY_RULE[0] and (not _ONLY_RULE_PASS_ON[0] or _spawn_over_budget):
+    if _ONLY_RULE[0] and not _ONLY_RULE_PASS_ON[0]:
         raise _ViewStop
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
@@ -1147,8 +1147,8 @@ def deny(reason, rule=None):
             raise _ViewStop
         if rule is not None:
             return
-        if _spawn_over_budget:  # the pass's own scan budget ran out on the expanded text: that window only ends,
-            raise _ViewStop     # as the view does on develop (it is not a spawn, and the main reading fit)
+        if _spawn_over_budget:  # the pass's one budget ran out: fail closed, as the main reading does
+            reason = "brace-expanded command too costly to scan safely - confirm with user first"
     elif _VIEW[0] and rule is None:
         raise _ViewStop
     if not (_ONLY_RULE_PASS_ON[0] and rule is None) and _shadowed(rule, "deny"):
@@ -4483,8 +4483,11 @@ def _enforced_pass(text):
     # Another rule's deny passes on (_ONLY_RULE_PASS_ON) so the enforced rule later in the same window still
     # runs; code written to stop at a deny may then fail, which only skips that window. The first pass marked
     # the view's word windows seen, so they are cleared to be queued again.
-    # The pass is one more reading of every body, so it gets a reading's spawn-scan budget of its own: charged
-    # on top of the main reading's, a subagent body that fit there was denied as a spawn (review 4).
+    # The pass is one more reading of every body, so it gets one reading's spawn-scan budget of its own (charged
+    # on top of the main reading's, a body that fit there was denied, review 4). Running out of it denies, fail
+    # closed: a window-at-a-time budget either let a costly expansion hide the rm in its own body or, capped,
+    # let a subagent payload run past the hook timeout (reviews 6, 7). The cost, a documented over-deny: a
+    # subagent command whose brace expansion copies a long eval body many times.
     global _spawn_anchor_work, _spawn_over_budget
     spawn_budget = (_spawn_anchor_work, _spawn_over_budget)
     _spawn_anchor_work, _spawn_over_budget = 0, False
@@ -4493,16 +4496,8 @@ def _enforced_pass(text):
         _WORDS_SEEN.clear()
         i = len(windows)
         windows.extend(_view_windows(text))
-        spent = 0
         while True:
             while i < len(windows):  # a window's checks may append more (bash -c bodies, xargs, find)
-                # Each window scans with a budget of its own, so a window that exhausts it (an eval body the
-                # expansion copied many times) ends alone, not every body after it. The pass as a whole is
-                # capped at two budgets, past which it denies: many costly windows must not outrun the timeout.
-                spent += _spawn_anchor_work
-                _spawn_anchor_work, _spawn_over_budget = 0, False
-                if spent > 2 * _SPAWN_ANCHOR_BUDGET:  # a structural deny: in this pass it denies (see deny())
-                    deny("brace-expanded command too costly to scan safely - confirm with user first")
                 try:
                     _check_window(i, windows[i])
                 except (_ViewStop, Exception):  # never SystemExit: an enforced deny exits as it should
