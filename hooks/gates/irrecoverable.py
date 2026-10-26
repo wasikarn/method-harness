@@ -38,11 +38,25 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
     sys.exit(2)
 
 SQ = chr(39)
+DQ = chr(34)  # GH #697: _dequoted decodes $'..' before the heredoc pass
 _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
 # 2026-10-24 sweep: a SQL client reads SQL on stdin too (a heredoc, a here-string, a pipe), where the
 # -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
 # checked with the stdin text further down (_sql_stdin_drop). A SQL comment separates words like a blank.
 _SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb|mongosh|mongo|redis-cli)(?![\w.-])")
+# GH #697: a client name or flag split by shell quoting (ps""ql, 'psql', $'-a', E""CHO) is the same word to the
+# shell, so the name and flag checks below also read the text as the verb views do (_views): $'..' decoded,
+# $".." read as "..", then every quote and backslash dropped. A word that may name the client at run time ($C,
+# ${C}, $(..), `..`) is _OPAQUE_ARGV0 (_stage_cmd) and counts as a client that may read JavaScript.
+_OPAQUE_ARGV0 = "$"
+
+def _dequoted(text):
+    if "$'" in text or '$"' in text:
+        text = re.sub(r"\$(?=\")", "", _normalize_ansi_c_quotes(text))
+    return re.sub(r"[\"'\\]", "", text)
+
+def _may_name_client(text):
+    return bool(_SQL_CLIENT_RE.search(text) or _SQL_CLIENT_RE.search(_dequoted(text))) or "$" in text or "`" in text
 # GH #621: a block comment may hold a * (/* a * b */), and MySQL's # comment runs to the end of the line.
 _SQL_GAP = r"(?:\s|/\*(?:[^*]|\*(?!/)){0,200}\*/|--[^\n]{0,200}\n|#[^\n]{0,200}\n)+"
 # GH #607: the rest of the data-destroying statements a client takes: DROP of any stored object (and
@@ -132,13 +146,16 @@ _SQL_ECHO_FLAGS = {  # client: (echo short letters, short letters that take a va
 }
 _SQL_ECHO_FLAGS["mariadb"] = _SQL_ECHO_FLAGS["mysql"]
 
-def _sql_client_echoes(argtext):
+def _sql_client_echoes(argtext, dash_vars=frozenset()):
     client, rest = argtext
     if client == "sqlite3":
         return any(w.strip("'\"").lstrip("-") == "echo" for w in rest.split())
     short, valued, longs = _SQL_ECHO_FLAGS[client]
     for w in rest.split():
         w = w.strip("'\"")
+        v = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", w)
+        if v and v.group(1) in dash_vars:
+            return True  # GH #697: a flag the command puts in a variable (F=-a; psql $F)
         if w.startswith("--"):
             name = w[2:].split("=", 1)[0]
             if name and any(o.startswith(name) for o in longs):
@@ -151,10 +168,16 @@ def _sql_client_echoes(argtext):
                     break
     return False
 
+_SQL_RC_ENV_RE = re.compile(r"\b(?:PSQLRC|MYSQL_HOME|MYSQL_TEST_LOGIN_FILE|SQLITE_HISTORY)\b")
+
 def _sql_blanking_allowed(raw):
-    if not isinstance(raw, str) or _NON_SQL_CLIENT_RE.search(raw) or _SQL_ECHO_CMD_RE.search(raw):
+    if not isinstance(raw, str):
         return False
-    return not any(_sql_client_echoes(m.groups()) for m in _SQL_CLIENT_ARGS_RE.finditer(raw))
+    dq = _dequoted(raw)  # GH #697: mon""gosh, -v E""CHO=all and $'-a' are read as the shell reads them
+    if any(rx.search(t) for t in (raw, dq) for rx in (_NON_SQL_CLIENT_RE, _SQL_ECHO_CMD_RE, _SQL_RC_ENV_RE)):
+        return False
+    dash_vars = {m.group(1) for m in re.finditer(r"(?<![\w$])([A-Za-z_]\w*)=-", dq)}
+    return not any(_sql_client_echoes(m.groups(), dash_vars) for m in _SQL_CLIENT_ARGS_RE.finditer(dq))
 
 _SQL_BLANKING = [True]  # set from the whole command before the first body is read
 
@@ -276,8 +299,8 @@ def _stage_cmd(stage):
     # the wrappers in _SQL_STAGE_WRAPPERS and a docker exec's flags and container; (None, ()) for none.
     words = _words(stage)
     wrap, skip, duration, docker = None, False, False, 0
-    for t in words:
-        t = t.lstrip("$({`").rstrip(")}`;")
+    for t0 in words:
+        t = t0.lstrip("$({`").rstrip(")}`;")
         if skip:
             skip = False
             continue
@@ -313,11 +336,20 @@ def _stage_cmd(stage):
         if b in _SQL_STAGE_WRAPPERS or (wrap == "rtk" and b in ("proxy", "run", "err", "test", "summary")):
             wrap, duration = b, b in ("timeout", "gtimeout")
             continue
+        if t0[:1] in ("$", "`") and b not in _SQL_CLIENTS:
+            return _OPAQUE_ARGV0, words  # GH #697: $C, ${C}, $(..), `..` may name a client
         return b, words
     return None, ()
 
 def _runs_sql_client(stage):
-    return _stage_cmd(stage)[0] in _SQL_CLIENTS
+    return _stage_cmd(stage)[0] in _SQL_CLIENTS + (_OPAQUE_ARGV0,)
+
+def _has_opaque_argv0(text):
+    # GH #697: some command of text is run by a name held in a variable or substitution.
+    if "$" not in text and "`" not in text:
+        return False
+    return any(_stage_cmd(text[s + a:s + b])[0] == _OPAQUE_ARGV0
+               for s, e in _pieces(text) for a, b in _pieces(text[s:e], pipe=True))
 
 # GH #559 review 3: every heredoc a line opens is read, in order (cat <<A >/dev/null; psql db <<B), not
 # only the first. A here-string's <<< opens none.
@@ -426,7 +458,7 @@ def _strip_heredocs(cmd):
         ms = list(_HEREDOC_OPEN_RE.finditer(line))
         if not ms:
             continue
-        ctx, views, has_client = _HeredocLine(line), {}, bool(_SQL_CLIENT_RE.search(line))
+        ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
         for n_m, m in enumerate(ms):
@@ -451,9 +483,11 @@ def _strip_heredocs(cmd):
                 break
             if code:
                 out.extend(lines[body_start:i])
-            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops(
-                    "\n".join(lines[body_start:i - 1]), not _NON_SQL_CLIENT_RE.search(line)):
-                _SQL_HEREDOC_DROP[0] = True
+            if feeds and not _SQL_HEREDOC_DROP[0]:
+                if line_sql is None:  # GH #697 review: read once per line, not once per heredoc on it
+                    line_sql = not _NON_SQL_CLIENT_RE.search(_dequoted(line)) and not _has_opaque_argv0(line)
+                if _sql_drops("\n".join(lines[body_start:i - 1]), line_sql):
+                    _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
 def _normalize_ansi_c_quotes(cmd):
@@ -1327,8 +1361,7 @@ def delete_hint():
 # cleanly (a residual "\n--force" would miss the exact-match flag check).
 # Inside a "#" comment the newline still ends the comment (a trailing backslash
 # has no continuation effect there), so it still gets the separator. Comment
-# and quote state are tracked char by char with backslash-escape parity.
-DQ = chr(34)
+# and quote state are tracked char by char with backslash-escape parity (DQ is set beside SQ above).
 # GH #233: shlex drops quotes, so a quoted operator-only argument (";", "&&", "|") would reach the
 # window split as a bare separator and hide a later flag. At the closing quote, such a body is
 # swapped for HASH_LIT (a wordchar, one nonflag token); the quotes stay.
@@ -2030,8 +2063,10 @@ def _sql_stdin_drop(c):
     # words (git diff | grep -v 'DROP TABLE' | psql) are arguments, not the SQL that reaches the client.
     if _SQL_HEREDOC_DROP[0]:
         return True
-    if not _SQL_CLIENT_RE.search(c) or not _SQL_DROP_RE.search(re.sub(r"[\\'\"]", "", c)):
+    if not _may_name_client(c) or not _SQL_DROP_RE.search(_dequoted(c)):
         return False
+    if "$'" in c:
+        c = _normalize_ansi_c_quotes(c)  # GH #697: echo $'DROP TABLE t' | $'psql' reads decoded
     for s, e in _pieces(c):
         segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
         k = next((k for k, g in enumerate(segs) if _runs_sql_client(g)), None)
@@ -2048,7 +2083,8 @@ def _sql_stdin_drop(c):
         if len(here) > 1:
             data.extend(_words(here[1]))
         # GH #621 review 3: psql -a echoes its input on, so a non-SQL client anywhere downstream reads it too.
-        if _sql_drops(" ".join(data), not _NON_SQL_CLIENT_RE.search("|".join(segs[k:]))):
+        if _sql_drops(" ".join(data), not _NON_SQL_CLIENT_RE.search(_dequoted("|".join(segs[k:])))
+                      and not any(_stage_cmd(g)[0] == _OPAQUE_ARGV0 for g in segs[k:])):
             return True
     return _group_piped_sql_drop(c) if "}" in c or ")" in c else False
 
@@ -2068,7 +2104,7 @@ class _SqlFrame:
 
 def _group_piped_sql_drop(c):
     data, seen, n = [], set(), len(c)
-    js_any = bool(_NON_SQL_CLIENT_RE.search(c))  # a later stage is not read yet when the first client is
+    js_any = bool(_NON_SQL_CLIENT_RE.search(_dequoted(c))) or _has_opaque_argv0(c)  # later stages are unread
     budget = [4 * n + 100_000]
     frames = [_SqlFrame(None, 0, 0)]
 
@@ -2079,7 +2115,7 @@ def _group_piped_sql_drop(c):
             f.has_group = f.has_group or piped
         else:
             a0, rest = _stage_cmd(text)
-            if a0 in _SQL_CLIENTS:
+            if a0 in _SQL_CLIENTS or a0 == _OPAQUE_ARGV0:
                 if f.has_group and not f.done:
                     f.done = True
                     here = text.split("<<<", 1)
