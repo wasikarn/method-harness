@@ -2821,4 +2821,17 @@ test_allow "$IRRECOVERABLE" "GH #662 control: busybox --list" "$(bash_payload 'b
 test_allow "$IRRECOVERABLE" "GH #662 control: busybox rm x.log" "$(bash_payload 'busybox rm x.log')"
 test_allow "$IRRECOVERABLE" "GH #662 control: echo busybox rm -rf b" "$(bash_payload 'echo busybox rm -rf b')"
 
+# GH #661: bash brace-expands rm's own words before rm parses them: `--{r,f}` is `--r --f`, i.e. -rf.
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{r,f} b" "$(bash_payload 'rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{recursive,force} b" "$(bash_payload 'rm --{recursive,force} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm {-r,-f} b" "$(bash_payload 'rm {-r,-f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{r,} b (rm-recursive)" "$(bash_payload 'rm --{r,} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --{rec,verbose} b (rm-recursive)" "$(bash_payload 'rm --{rec,verbose} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: sudo rm --{r,f} b" "$(bash_payload 'sudo rm --{r,f} b')"
+test_deny  "$IRRECOVERABLE" "GH #661: bash -c 'rm --{r,f} b'" "$(bash_payload "bash -c 'rm --{r,f} b'")"
+test_deny  "$IRRECOVERABLE" "GH #661: rm --no-preserve-{root,x} -r /" "$(bash_payload 'rm --no-preserve-{root,x} -r /')"
+test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm {a,b}.log')"
+test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
+test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
+
 gates_summary

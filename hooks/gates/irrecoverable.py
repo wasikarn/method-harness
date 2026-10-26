@@ -1120,7 +1120,14 @@ _VIEW = [None]
 class _ViewStop(Exception):
     pass
 
+# GH #661: the rules a shadowed view still enforces. brace-view stays shadow for every other rule (GH #337),
+# but rm's own rules must read the words bash builds: `rm --{r,f} b` is `rm --r --f b`, and no token
+# reading keeps such a word whole (`--{r,} b` loses its `}`).
+_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root"})}
+
 def _shadowed(rule, decision):
+    if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
+        return False
     rule = next((r for r in (rule, _VIEW[0]) if r in SHADOW_RULES), None)
     if rule is None:
         return False
