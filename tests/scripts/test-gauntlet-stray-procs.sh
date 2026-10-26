@@ -28,6 +28,16 @@ ROWS='82797     04:27:19  99.4 yes
  5555        29:59  99.0 sleeper
  6666     01:00:00  80.0 exact80
  7777     01:00:00  79.9 under80'
+# The Claude desktop app runs all day, its helpers summing 341% CPU on 2026-10-26: an app's own
+# processes are not a stray run. A build tool shipped inside an app bundle (Xcode's) still is.
+ROWS="$ROWS
+ 7801  01-17:41:36  90.0 /Applications/Claude.app/Contents/MacOS/Claude
+ 7802  01-17:41:33 200.0 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper --type=renderer
+ 7803  01-05:41:54  51.2 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper --type=gpu-process
+ 7804     04:00:00  99.0 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+ 7901     01:00:00 150.0 /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -scheme App
+ 7902     04:00:00  99.0 /opt/homebrew/Cellar/python@3.15/3.15.1/Frameworks/Python.framework/Versions/3.15/Resources/Python.app/Contents/MacOS/Python /tmp/fuzz.py
+ 7903     02:00:00  95.0 $HOME/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude -p run"
 for i in $(seq 1 30); do ROWS="$ROWS
  $((9000 + i))        45:00   4.0 /tmp/racer.sh"; done
 for i in $(seq 1 43); do ROWS="$ROWS
@@ -54,6 +64,10 @@ case "$out" in *under80*) bad "a 79.9% process was named: $out" ;; *) ok "just u
 case "$(line racer.sh)" in *"30 processes at 120"*) ok "30 workers at 4% each sum to one named group (the 2026-10-05 flood shape)" ;; *) bad "low-CPU flood not named: $out" ;; esac
 case "$out" in *SetStoreUpdateService*) bad "43 idle copies were named: $out" ;; *) ok "many idle copies of one command are not named" ;; esac
 case "$out" in *zsh*) bad "a 2% process was named: $out" ;; *) ok "a long but idle process is not named" ;; esac
+case "$out" in *Claude:*|*Google*) bad "a desktop app's own processes were named: $out" ;; *) ok "an /Applications app's own executables are not named, a bundle name with a space included" ;; esac
+case "$(line xcodebuild)" in *"pids 7901"*) ok "a build tool inside an app bundle (Contents/Developer) is still named" ;; *) bad "xcodebuild row missing: $out" ;; esac
+case "$(line Python)" in *"pids 7902"*) ok "a framework python3 run (it re-execs through Python.app/Contents/MacOS) is still named" ;; *) bad "Homebrew Python row missing: $out" ;; esac
+case "$(line claude)" in *"pids 7903"*) ok "a long headless claude CLI run (ClaudeCode.app outside /Applications) is still named" ;; *) bad "claude CLI row missing: $out" ;; esac
 case "$out" in *sleeper*) bad "a 29:59 process was named: $out" ;; *) ok "one second under the minimum age is not named" ;; esac
 case "$out" in *"load 6.25"*) ok "the warning states the load average" ;; *) bad "load missing: $out" ;; esac
 case "$out" in *"rc=0") ok "it returns 0 even when it finds strays (a warning, never a gate)" ;; *) bad "non-zero rc: $out" ;; esac
