@@ -2362,8 +2362,31 @@ def _unwrap_shell(argv0, rest):
                 bodies.append(b)
     else:
         return
+    if argv0 != "eval":
+        bodies += [b for b in (_positional_body(body, rest) for body in list(bodies)) if b and b not in bodies]
     for body in bodies:
         _scan_body(body)
+
+# GH #663: `sh -c BODY ARG0 ARGS...` runs BODY with $0 = ARG0 and $1.. / "$@" / $* = ARGS, so
+# `bash -c 'rm "$@"' -- -rf b` runs `rm -rf b`. A copy of the body with those parameters filled in from the
+# words written after it is read as well (the body as written stays read too).
+# A double-quoted body keeps the outer shell's backslash (`bash -c "rm \"\$@\""`), so `\$` counts as `$`.
+_POSITIONAL_RE = re.compile(r'"\\?\$(?:\{([@*0-9])\}|([@*0-9]))"|\\?\$(?:\{([@*0-9])\}|([@*0-9]))')
+
+def _positional_body(body, rest):
+    k = next((k for k, t in enumerate(rest) if t is body), None)
+    if k is None or k + 1 >= len(rest) or not _POSITIONAL_RE.search(body):
+        return None
+    args = rest[k + 1:]
+    def word(t):
+        return shlex.quote(t.replace(PH, "")) if t.replace(PH, "") else "''"
+    def fill(m):
+        name = next(g for g in m.groups() if g is not None)
+        if name in "@*":
+            return " ".join(word(t) for t in args[1:])
+        n = int(name)
+        return word(args[n]) if n < len(args) else ""
+    return _POSITIONAL_RE.sub(fill, body)
 
 
 def _scan_body(body):

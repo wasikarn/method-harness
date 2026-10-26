@@ -2821,4 +2821,18 @@ test_allow "$IRRECOVERABLE" "GH #662 control: busybox --list" "$(bash_payload 'b
 test_allow "$IRRECOVERABLE" "GH #662 control: busybox rm x.log" "$(bash_payload 'busybox rm x.log')"
 test_allow "$IRRECOVERABLE" "GH #662 control: echo busybox rm -rf b" "$(bash_payload 'echo busybox rm -rf b')"
 
+# GH #663: `sh -c BODY ARG0 ARGS...` sets $0 to ARG0 and $1.. / "$@" to ARGS, so the body runs with them.
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\$@\"' -- -rf b" "$(bash_payload "bash -c 'rm \"\$@\"' -- -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: sh -c 'rm \$@' _ -rf b" "$(bash_payload "sh -c 'rm \$@' _ -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: sh -c 'rm \"\$1\" \"\$2\"' _ -rf b" "$(bash_payload "sh -c 'rm \"\$1\" \"\$2\"' _ -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \$*' _ -r b" "$(bash_payload "bash -c 'rm \$*' _ -r b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\${@}\"' x -rf b" "$(bash_payload "bash -c 'rm \"\${@}\"' x -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c '\$1 -rf b' _ rm (the verb as a parameter)" "$(bash_payload "bash -c '\$1 -rf b' _ rm")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'git \"\$@\"' _ push --force origin main" "$(bash_payload "bash -c 'git \"\$@\"' _ push --force origin main")"
+test_deny  "$IRRECOVERABLE" "GH #663: sudo sh -c 'rm \"\$@\"' sh -rf b" "$(bash_payload "sudo sh -c 'rm \"\$@\"' sh -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c \"rm \\\"\\\$@\\\"\" -- -rf b (double-quoted body)" "$(bash_payload 'bash -c "rm \"\$@\"" -- -rf b')"
+test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'rm \"\$@\"' _ a.log b.log" "$(bash_payload "bash -c 'rm \"\$@\"' _ a.log b.log")"
+test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'echo \"\$@\"' _ rm -rf b" "$(bash_payload "bash -c 'echo \"\$@\"' _ rm -rf b")"
+test_allow "$IRRECOVERABLE" "GH #663 control: sh -c 'ls \$1' _ -la" "$(bash_payload "sh -c 'ls \$1' _ -la")"
+
 gates_summary
