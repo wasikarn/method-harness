@@ -3079,6 +3079,10 @@ for _c in 'ls ${HOME:-/tmp}' 'echo ${x:-$(date)}' 'echo "${x:-$(date)}"' 'echo $
 done
 _timed_case 'GH #693: 10000 ${x:-$(date)} words are read in bounded time' 0 \
   "echo $(printf '${x:-$(date)} %.0s' $(seq 10000))"
+_timed_case 'GH #693: a ${x:-$(rm -rf ~/x)} target before 9000 padding words denies in bounded time' 2 \
+  "echo \${x:-\$(rm -rf ~/x)} $(printf '${x:-$(date)} %.0s' $(seq 9000))"
+_timed_case 'GH #693: a ${x:-$(rm -rf ~/x)} target after 9000 padding words denies in bounded time' 2 \
+  "echo $(printf '${x:-$(date)} %.0s' $(seq 9000)) \${x:-\$(rm -rf ~/x)}"
 _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
   "echo $(printf '${x:-a %.0s' $(seq 20000))"
 # each nested funsub level appends its body blanked, not raw, so nested text is not read once per level

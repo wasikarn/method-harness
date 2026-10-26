@@ -1531,6 +1531,7 @@ def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
             k = s.find("`", j + 1)
             if k == -1:
                 return None
+            depth_work_used[0] += k - j  # the skipped span is charged per char, like every other step
             j = k + 1
             continue
         if opener == "{" and tc == "$" and s[j + 1:j + 2] == "(":
@@ -2413,7 +2414,7 @@ except ValueError:
 # A scan that could not finish left a span un-blanked -- deny before dispatch.
 def _deny_if_depth_blown():
     if _DEPTH_BUDGET_BLOWN[0]:
-        deny("command too long to safely tokenize (nested substitution exceeded depth-scan budget) - confirm with user first")
+        deny("could not safely tokenize command (nested substitution exceeded the depth-scan budget, or a funsub body has an unbalanced quote) - confirm with user first")
 _deny_if_depth_blown()
 
 # GH #254: a "{" or "}" inside a word is literal in bash ("feat{1}"), but shlex splits the word there
