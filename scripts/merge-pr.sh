@@ -312,9 +312,12 @@ run_gauntlet_here() {
 # shows it as the PR head. A push that exits non-zero after the hook passed (exit 141, an idle SSH
 # drop) still counts when origin has the commit.
 push_head() {
-  local rc=0 remote n=0
+  local rc=0 remote n=0 ssh_cmd
+  # git opens the SSH connection before the pre-push hook runs, so it idles through the whole gauntlet
+  # and GitHub drops it (exit 141 on #634's first merge run, 2026-10-26): keep it alive.
+  ssh_cmd="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand || echo ssh)} -o ServerAliveInterval=30"
   # MH_GAUNTLET_LOCK_OWNER is this script's merge-lock pid; the hook must queue on the gauntlet lock.
-  env -u MH_GAUNTLET_LOCK_OWNER git push origin "HEAD:refs/heads/$branch" || rc=$?
+  env -u MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND="$ssh_cmd" git push origin "HEAD:refs/heads/$branch" || rc=$?
   remote=$(remote_head) || exit 1
   if [ "$remote" != "$head" ]; then
     die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push gauntlet failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch, and a fix commit needs a new review verdict."

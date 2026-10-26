@@ -19,7 +19,7 @@ safe_trash() { [ -n "${1:-}" ] && trash "$1" 2>/dev/null; return 0; }
 # The fixture's git must not read the operator's config (hooks, signing) or a caller's lock state.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-unset GAUNTLET_LOCK_DIR MH_GAUNTLET_LOCK_OWNER
+unset GAUNTLET_LOCK_DIR MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND
 # A git hook exports GIT_DIR; the fixture's git commits and pushes would then target the real repo.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 
@@ -83,6 +83,7 @@ n=0; [ ! -f "$STUB_DIR/prepush.n" ] || n=$(cat "$STUB_DIR/prepush.n"); n=$((n + 
   echo "dirty=$(git status --porcelain | tr '\n' ' ')"
   echo "lockdir=${GAUNTLET_LOCK_DIR-} owner=${MH_GAUNTLET_LOCK_OWNER-}"
   if [ -d "$MERGE_PR_LOCK_DIR" ]; then echo "mergelock=held"; else echo "mergelock=free"; fi
+  echo "ssh=${GIT_SSH_COMMAND-}"
 } >>"$STUB_DIR/prepush.log"
 [ -z "${STUB_PREPUSH_FAIL:-}" ] || { echo "gauntlet: red" >&2; exit 1; }
 [ -z "${STUB_PREPUSH_DIRTY:-}" ] || echo edit >>b.txt
@@ -229,6 +230,7 @@ if /usr/bin/grep -qx "head=$(remote_tip feat/x)" "$F/prepush.log" && /usr/bin/gr
 else bad "pre-push saw: $(cat "$F/prepush.log")"; fi
 if /usr/bin/grep -qx "lockdir= owner=" "$F/prepush.log"; then ok "the merge lock does not leak into the pre-push hook"; else bad "hook env: $(cat "$F/prepush.log")"; fi
 if /usr/bin/grep -qx "mergelock=held" "$F/prepush.log"; then ok "the merge lock is held while the gauntlet runs"; else bad "lock during push: $(cat "$F/prepush.log")"; fi
+if /usr/bin/grep -qx "ssh=ssh -o ServerAliveInterval=30" "$F/prepush.log"; then ok "the push keeps its SSH connection alive through the gauntlet"; else bad "push ssh: $(cat "$F/prepush.log")"; fi
 if w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then ok "the merged head contains origin/develop"; else bad "head misses develop"; fi
 
 # 2. up to date with develop, same version: a plain bump commit on the PR head.

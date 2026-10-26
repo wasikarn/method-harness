@@ -58,9 +58,10 @@ refuses on any change. It:
    conflicts are the manifests, the script merges them again with the version set aside, so the
    PR's other manifest edits survive, then keeps the PR's own version if it is higher (a deliberate
    minor bump); any other conflict refuses (merge by hand, push, rerun);
-6. pushes to the PR branch, so the pre-push gauntlet runs on the exact tree that will merge. It
-   checks the push by `git ls-remote`, not the exit code (exit 141 is an idle SSH drop after the
-   hook), and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
+6. pushes to the PR branch, so the pre-push gauntlet runs on the exact tree that will merge. Git
+   opens the SSH connection before the hook runs, so the push adds `-o ServerAliveInterval=30` to
+   the ssh command (GitHub dropped the idle connection on the first real run, exit 141). It checks
+   the push by `git ls-remote`, not the exit code, and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
    on the local branch: fix, commit, rerun (a fix commit that touches more than the manifests needs
    a new review verdict). If the tree changed while the gauntlet ran, it refuses the merge. When
    origin already has the head (an earlier run pushed it, or an older PR is already up to date and
