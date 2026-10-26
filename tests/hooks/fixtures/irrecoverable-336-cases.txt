@@ -101,6 +101,20 @@ ALLOW "$(command -v python3)" x.py && git commit -m "do ${X}"
 ALLOW "$(command -v python3)" x.py; echo "a; ${OUT}"
 ALLOW $(which node) app.js; N=$(( ${COUNT} * 2 ))
 ALLOW CMD=ls; ${CMD} x; echo "done; ${OUT}"
+# the braced form is read from the text: after a prefix chain, in $( ), as an array's whole word
+WOULD_ASK opaque-var-verb X=1 ${CMD} build
+WOULD_ASK opaque-var-verb echo $(${CMD} build)
+WOULD_ASK opaque-var-verb "${CMD[@]}" x
+ALLOW arr+=(${A})
+ALLOW local -a arr=(${A})
+ALLOW echo $(date) ${HOME} && $(command -v python3) -V
+ALLOW [[ -z $a || ${X} ]] && echo y
+ALLOW ./do ${ARG}
+ALLOW echo X=1 ${CMD}
+ALLOW echo ${a:-${CMD}}
+# a prefix to a program that runs a body is in that body's environment
+ALLOW CMD=ls bash -c '$CMD x'
+ALLOW CMD=ls xargs -n1 sh -c '$CMD "$0"'
 WOULD_ASK source-file source ./setup.sh
 WOULD_ASK source-file . ./setup.sh && git status
 # GH #592: `.` with no candidate word on the line reaches python too (irrecoverable.sh fast path)

@@ -2907,40 +2907,69 @@ _VAR_NAME_RE = re.compile(r"[A-Za-z_]\w*")
 # environment alone. A name counts as assigned unless every `NAME=` is such a prefix: a chain of
 # `NAME=value` words the scan reads whole, then blanks, then a plain word. A value it cannot read
 # (`$(...)`, `${...}`, an array) or a chain ended by anything else (a separator, a redirection, a line
-# continuation) counts as assigned, as before. One non-overlapping pass, so the cost stays linear.
+# continuation) counts as assigned, as before. A prefix to a program that runs a body (`CMD=ls bash -c
+# '$CMD x'`) feeds that body, so it counts too. One non-overlapping pass, so the cost stays linear.
 _ASSIGN_WORD_RE = re.compile(r"""(?<![\w$=])([A-Za-z_]\w*)\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()<>'"\\`{]|\\.)*""")
 _BLANKS_RE = re.compile(r"[ \t]*")
-_PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])[\w./~"'$-]""")
+_PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])([\w./~"'$-][^\s;&|()<>]*)""")
+_PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "env", "xargs", "eval", "exec", "sudo", "nohup",
+                        "timeout", "nice", "command", "builtin", "time", "find", "watch", "flock", "parallel"}
 _DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
+# A word that is a whole braced expansion (`${CMD}`, "${CMD:-ls}", "${CMD[@]}").
+_BRACED_WORD_RE = re.compile(r"[ \t]*\"?\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}\n]*)?\}\"?(?=[\s;&|)}]|$)")
 _ASSIGNED_NAMES = set(re.findall(r"(?<![\w$])([A-Za-z_]\w*)\+?=", cmd))
-_standalone, _prefixed, _chain = set(), set(), []
+_standalone, _prefixed, _chain, _braced_after_prefix = set(), set(), [], []
 for _m in _ASSIGN_WORD_RE.finditer(cmd):
     _chain.append(_m)
     _gap = _BLANKS_RE.match(cmd, _m.end()).end()
     _nx = _ASSIGN_WORD_RE.match(cmd, _gap) if _gap > _m.end() else None
     if _nx:
         continue  # the chain goes on; finditer reaches the next word itself
-    _prefix = bool(_PREFIX_NEXT_RE.match(cmd, _m.end())) and not _DECLARE_TAIL_RE.search(
-        cmd[max(0, _chain[0].start() - 80):_chain[0].start()])
+    _nw = _PREFIX_NEXT_RE.match(cmd, _m.end())
+    _prefix = bool(_nw) and not _DECLARE_TAIL_RE.search(cmd[max(0, _chain[0].start() - 80):_chain[0].start()])
+    if _prefix and basename(_nw.group(1).strip("\"'")) in _PREFIX_BODY_RUNNERS:
+        _prefix = False
     (_prefixed if _prefix else _standalone).update(c.group(1) for c in _chain)
+    if _prefix:
+        _braced_after_prefix.append((_chain[0].start(), _m.end()))
     _chain = []
 _ASSIGNED_NAMES -= _prefixed - _standalone
-# A word that is a whole braced expansion (`${CMD}`, "${CMD:-ls}") reaches argv0 as PH alone. Only one
-# that opens a statement is read as the program, not `${HOME}` as an argument; an opener inside quotes
-# (`git commit -m "do ${X}"`) or an arithmetic `((` opens none.
-_BRACED_VERB_RE = re.compile(r"(?:(?P<sep>[;&|){]|(?<!\()\((?!\()|(?<![\w-])(?:then|do|else|elif|if|while|until|time|!))|^)"
-                             r"[ \t]*\"?\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,][^{}\n]*)?\}\"?(?=[\s;&|)}]|$)", re.M)
-_BRACED_VERB_NAMES = set()
-if "${" in cmd:
-    _bmask = _quote_mask(cmd)
-    for _m in _BRACED_VERB_RE.finditer(cmd):
-        _q = _m.start("sep") if _m.group("sep") else _m.start() - 1
-        if _q < 0 or not _bmask[_q]:
-            _BRACED_VERB_NAMES.add(_m.group(2))
+
+# `${CMD} build` reaches argv0 as PH alone, which no window can tie back to CMD, so the braced form is read
+# from the raw text, once: a whole `${NAME...}` word where a statement starts. Openers: line start, a
+# separator, `{ `, a `(` that is not an array's `=(` or arithmetic, a keyword (not a path's last part),
+# or a prefix-assignment chain that itself opens a statement. An opener inside quotes or `[[ ]]` opens none.
+_BRACED_OPENER_RE = re.compile(r"(?:(?P<sep>[;&|]|\{(?=[ \t])|(?<![=(])\((?!\()|(?<![\w/.-])(?:then|do|else|elif|if|while|until|time|!)(?=[ \t]))|^)", re.M)
+def _braced_verb_names():
+    if "${" not in cmd:
+        return set()
+    mask = _quote_mask(cmd)
+    opened = None
+    for m in re.finditer(r"\[\[(?=[ \t])|(?<=[ \t])\]\]", cmd):  # mask [[ ... ]] too
+        if mask[m.start()]:
+            continue
+        if cmd[m.start()] == "[":
+            opened = m.start()
+        elif opened is not None:
+            mask[opened:m.end()] = b"\x01" * (m.end() - opened)
+            opened = None
+    names = set()
+    for m in _BRACED_OPENER_RE.finditer(cmd):
+        q = m.start("sep") if m.group("sep") is not None else m.start() - 1  # the opener, or the newline
+        w = _BRACED_WORD_RE.match(cmd, m.end())
+        if w and (q < 0 or not mask[q]):
+            names.add(w.group(1))
+    for start, end in _braced_after_prefix:  # `X=1 ${CMD} build`, when the chain opens a statement
+        w = _BRACED_WORD_RE.match(cmd, end)
+        pre = cmd[:start].rstrip(" \t")
+        if w and (not pre or (pre[-1] in ";&|\n" and not mask[len(pre) - 1])):
+            names.add(w.group(1))
+    return names
+if _braced_verb_names() - _ASSIGNED_NAMES:
+    ask("the program this runs is a variable with no visible assignment — confirm what it runs",
+        rule="opaque-var-verb")
 def _opaque_var(argv0, rest):
     # shlex splits an unquoted `$X` into "$" and "X"; a quoted "$X" stays one word.
-    if argv0 and not argv0.strip(PH):
-        return bool(_BRACED_VERB_NAMES - _ASSIGNED_NAMES)
     name = rest[0] if argv0 == "$" and rest else argv0[1:] if argv0.startswith("$") else ""
     return bool(_VAR_NAME_RE.fullmatch(name)) and name not in _ASSIGNED_NAMES
 
