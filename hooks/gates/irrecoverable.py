@@ -4493,8 +4493,16 @@ def _enforced_pass(text):
         _WORDS_SEEN.clear()
         i = len(windows)
         windows.extend(_view_windows(text))
+        spent = 0
         while True:
             while i < len(windows):  # a window's checks may append more (bash -c bodies, xargs, find)
+                # Each window scans with a budget of its own, so a window that exhausts it (an eval body the
+                # expansion copied many times) ends alone, not every body after it. The pass as a whole is
+                # capped at two budgets, past which it denies: many costly windows must not outrun the timeout.
+                spent += _spawn_anchor_work
+                _spawn_anchor_work, _spawn_over_budget = 0, False
+                if spent > 2 * _SPAWN_ANCHOR_BUDGET:  # a structural deny: in this pass it denies (see deny())
+                    deny("brace-expanded command too costly to scan safely - confirm with user first")
                 try:
                     _check_window(i, windows[i])
                 except (_ViewStop, Exception):  # never SystemExit: an enforced deny exits as it should

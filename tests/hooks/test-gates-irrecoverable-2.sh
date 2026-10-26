@@ -2857,6 +2857,14 @@ test_allow "$IRRECOVERABLE" "GH #661 control: subagent bash -c with 800 statemen
 # a spawn-scan budget only the expanded text spends ends that window in the pass, as the view stops on develop
 test_allow "$IRRECOVERABLE" "GH #661 control: subagent eval 'true;...'{0..29} (expansion over the scan budget)" \
   "$(bash_agent_payload "eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)}" fork)"
+# ...but only that window: a later body is still read, with a budget of its own
+_x661="eval '$(printf 'true;%.0s' $(seq 50))true'{$(seq -s, 0 29)}"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then bash -c 'rm --{r,f} b'" \
+  "$(bash_agent_payload "$_x661; bash -c 'rm --{r,f} b'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then a brace-built claude in a body" \
+  "$(bash_agent_payload "$_x661; bash -c 'cl{aude,aude} -p x'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then e{val,val} x3 rm --{r,f} b" \
+  "$(bash_agent_payload "$_x661; e{val,val} e{val,val} e{val,val} rm --{r,f} b" fork)"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm {a,b}.log')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
