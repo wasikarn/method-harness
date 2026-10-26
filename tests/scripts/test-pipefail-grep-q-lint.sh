@@ -52,7 +52,8 @@ trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
 hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }
 
-# One race per statement (line numbers in want_lines), each a shape a past check missed.
+# One real race per statement (line numbers in want_lines), each a shape a past check missed or
+# measured at exit 141; known over-reports live in over.sh below, not here.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -134,7 +135,6 @@ tee >(grep -q y) < "$f" | cat
 tee >(grep -q y) < "$f"
 f() { cat "$1" > >(grep -q y); }
 cat < "$f" > >(grep -q y) >&1
-cat < "$f" 2> >(grep -q y) >/dev/null
 seq 2000000 2> >(grep -q 1) >&2 2>/dev/null
 { seq 2000000 >&2; } > >(grep -q 1) 2>&1 >/dev/null
 { seq 2000000 >&3; } > >(grep -q 1) 3>&1 >/dev/null
@@ -142,16 +142,30 @@ seq 2000000 2> >(grep -q 1) >&2 2>/dev/null
 { seq 2000000 >&2; } >& >(grep -q 1) >/dev/null
 { seq 2000000 >&3; } > >(grep -q 1) 3>&1- >/dev/null
 { seq 2000000 >&10; } {fd}> >(grep -q 1) {fd}>/dev/null
-cat < "$f" > >(grep -q y) >/dev/null
-cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
 EOF
-want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90"
+want_lines="1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 22 26 27 28 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87"
 n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
 [ "$rc" -eq 1 ] && [ "$got_lines" = "$want_lines" ] \
   && ok "probe: all $n_want planted races found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
+
+# Known over-reports: bash exits 0 for each, yet the scanner reports it, by design. Every fd holding
+# the `>(...)` is redirected elsewhere later on the same command, so nothing is written into it;
+# telling that apart needs a model of fd copies, moves and `{var}` fds, and two attempts at one hid
+# real races (#650). Pinned so a skip rule cannot come back unreviewed: one that clears these rows
+# must also keep every race above reported, and then move them to good.sh.
+cat > "$probe/over.sh" <<'EOF'
+cat < "$f" > >(grep -q y) >/dev/null
+cat < "$f" 2> >(grep -q y) 2>/dev/null
+cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
+EOF
+out=$(scan "$probe/over.sh"); rc=$?
+got_lines=$(hit_lines <<<"$out")
+[ "$rc" -eq 1 ] && [ "$got_lines" = "1 2 3" ] \
+  && ok "probe: the 3 known over-reports (a >(...) whose fds are all redirected later) stay reported, as documented" \
+  || bad "probe: known over-reports gave rc $rc, lines [$got_lines], want rc 1 and [1 2 3]: a skip rule must be reviewed against the races above; stderr: $(cat "$probe/err")"
 
 cat > "$probe/good.sh" <<'EOF'
 # printf "$r" | grep -q x
