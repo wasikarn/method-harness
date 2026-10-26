@@ -1505,7 +1505,7 @@ def _close_bracket(s, j, opener, closer, depth_work_used):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None if depth else j
 
-def _close_psub(s, j, depth_work_used):
+def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
     # The "<(...)" / ">(...)" closer search, same contract as _close_bracket but quote-aware, unlike
     # the "$(...)"/"${...}" one: a ")" inside a quoted string in the body
     # ("<(echo \")\"; rm -rf x)") is not a real closer, and the
@@ -1515,6 +1515,8 @@ def _close_psub(s, j, depth_work_used):
     # adversarial pass; the identical gap in "$(...)" itself is
     # pre-existing and unrelated -- filed as GH #184, not fixed
     # here). Each step (one char, or an escaped pair) charges one budget unit.
+    # GH #693: opener "{" finds a funsub's closer; a $(...)/backtick in it may hold a "}" or a quote, so
+    # it is skipped whole (an unclosed one leaves the funsub unclosed).
     n, depth = len(s), 1
     tsq = tdq = False
     while j < n and depth and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
@@ -1524,6 +1526,17 @@ def _close_psub(s, j, depth_work_used):
             if tc == SQ:
                 tsq = False
             j += 1
+            continue
+        if opener == "{" and tc == "`":
+            k = s.find("`", j + 1)
+            if k == -1:
+                return None
+            j = k + 1
+            continue
+        if opener == "{" and tc == "$" and s[j + 1:j + 2] == "(":
+            j = _close_psub(s, j + 2, depth_work_used)
+            if j is None:
+                return None
             continue
         if tdq:
             if tc == "\\" and j + 1 < n and s[j + 1] in (DQ, "\\", "$", "`"):
@@ -1540,9 +1553,9 @@ def _close_psub(s, j, depth_work_used):
         if tc == "\\" and j + 1 < n:
             j += 2
             continue
-        if tc == "(":
+        if tc == opener:
             depth += 1
-        elif tc == ")":
+        elif tc == closer:
             depth -= 1
         j += 1
     if depth and depth_work_used[0] > _DEPTH_SCAN_BUDGET:
@@ -1567,7 +1580,13 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         bodies.append(s[i + 2:j - 1])
         return PH, j
     if c == "$" and nxt == "{":
-        j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
+        # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
+        # (`${ echo 'a}'; V; }`) is no closer: find it quote-aware, as for <(...).
+        funsub = s[i + 2:i + 3] in (" ", "\t", "\n", "|")
+        if funsub:
+            j = _close_psub(s, i + 2, depth_work_used, "{", "}")
+        else:
+            j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
         if j is None:
             # No closer: bash would refuse the text, but GH #233's "}"-masking can eat a real one
             # (`"${x:-"'$(V)'"}"`), so the rest is read as the word, quote-blind, charged to the budget.
@@ -1579,18 +1598,25 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
             return None
         # GH #693: the word inside ${...} (default, pattern, subscript, offset) still expands, so a
         # $(...)/backtick/<(...) in it runs: scan the body as the <(...) branch does, quote-blind (bash's
-        # quote rules there vary by operator; fail closed), and keep only the nested bodies. A bash 5.3
-        # funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command: append it and scan it with normal quoting
-        # (a backtick nested in an appended body is not read again downstream).
+        # quote rules there vary by operator; fail closed), and keep only the nested bodies. A funsub
+        # body is scanned with normal quoting and appended blanked, as the <(...) body is (a backtick
+        # nested in an appended body is not read again downstream, and a raw one would repeat its nested
+        # bodies once per level).
         body = s[i + 2:j - 1]
-        funsub = body[:1] in (" ", "\t", "\n", "|")
         if funsub:
             body = body[1:] if body[0] == "|" else body
-            bodies.append(body)
-        if _depth < 50:
-            _scan_once(body, bodies, depth_work_used, _depth + 1, in_param=not funsub)
-        else:
+        if _depth >= 50:
             _DEPTH_BUDGET_BLOWN[0] = True
+        elif not funsub:
+            _scan_once(body, bodies, depth_work_used, _depth + 1, in_param=True)
+        else:
+            body = _scan_once(body, bodies, depth_work_used, _depth + 1)
+            try:
+                shlex.split(body)
+            except ValueError:
+                # an unbalanced quote here would pair with one left in the main text and hide its tail
+                _DEPTH_BUDGET_BLOWN[0] = True
+            bodies.append(body)
         return PH, j
     if c in ("<", ">") and not in_dquote and nxt == "(":
         # Process substitution (GH #181): "<(cmd)"/">(cmd)" is a WORD,
@@ -1620,10 +1646,9 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         # neighbor characters and evading exact-match dispatch
         # (an adversarial pass caught this live: "<(echo `rm -rf
         # x`)" reached shlex as "`rm", never matching "rm").
-        # Recursively re-scanning it here (this branch only --
-        # the sibling "$(...)"/"${...}" branches above share the
-        # identical gap, confirmed pre-existing, filed as GH
-        # #185, not fixed here) closes that while a shared
+        # Recursively re-scanning it here (the "${...}" branch
+        # above does the same since GH #693; "$(...)" shares the
+        # gap, filed as GH #185) closes that while a shared
         # depth_work_used bounds the total work across every
         # recursion level to one budget; _depth caps the
         # recursion itself, since a budget check alone doesn't
@@ -1639,12 +1664,12 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
     return None
 
 # One left-to-right pass with real quote/comment state; collects
-# backtick/$(...) bodies (never ${...}) into the shared `bodies` list.
-# `depth_work_used`/`_depth`: only the <(...)/>(...) branch (GH #181)
-# passes these, to recursively re-scan ITS OWN extracted body for a
-# nested different-type substitution before splicing it back in verbatim
-# (a backtick nested inside "<(...)" was found live/unscanned by an
-# adversarial pass -- see the GH #181 comment on that branch). The
+# backtick/$(...) bodies, and those nested in ${...} (GH #693), into the shared `bodies` list.
+# `depth_work_used`/`_depth`: the <(...)/>(...) branch (GH #181) and the ${...} branch
+# pass these, to recursively re-scan their own extracted body for a
+# nested different-type substitution (a backtick nested inside "<(...)"
+# was found live/unscanned by an adversarial pass -- see the GH #181
+# comment on that branch); `in_param` reads a ${...} word quote-blind. The
 # top-level fixed-point loop below never passes them, so its own budget
 # and depth are unchanged from before. Sharing one `depth_work_used`
 # list across the whole recursion (never a fresh one per call) keeps the
