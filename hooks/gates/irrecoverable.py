@@ -3251,6 +3251,128 @@ def _env_split_options(body):
             return words[:n]
     return words
 
+# GH #621: GNU env's own reading of a -S string (coreutils 9.4, checked with printf): the words env
+# puts back into its argv before it reads on (its options too, so `"-i" rm -rf x` runs rm), or None
+# when env rejects the string (an unterminated quote, `\q`, `\c` in double quotes, a bad `${`), so
+# it runs nothing. Outside quotes `\_` and space, tab, newline, CR, VT and FF end a word, and `\c`
+# or a `#` that starts a word ends the string (`env -S '#x' rm -rf x` runs rm); inside double quotes
+# `\_` is a space. `\t \n \v \f \r` are characters, never word breaks; `\" \' \# \$ \\` are the
+# character itself. Single quotes keep everything but `\\` and `\'`. `${NAME}` stays as its text
+# (env expands it; the gate cannot know the value), as develop's shlex reading kept it.
+_ENV_S_ESC = {"t": "\t", "n": "\n", "v": "\v", "f": "\f", "r": "\r",
+              '"': '"', "'": "'", "#": "#", "$": "$", "\\": "\\"}
+_ENV_S_VAR = re.compile(r"\$\{[A-Za-z_]\w*\}")
+
+def _env_split(body):
+    words, cur, started, q, k, n = [], [], False, "", 0, len(body)
+    while k < n:
+        ch = body[k]
+        if q == "'":
+            if ch == "'":
+                q = ""
+            elif ch == "\\" and body[k + 1:k + 2] in ("\\", "'"):
+                k += 1
+                cur.append(body[k])
+            else:
+                cur.append(ch)
+        elif ch == "\\":
+            e = body[k + 1:k + 2]
+            k += 1
+            if e == "_" and not q:
+                if started:
+                    words.append("".join(cur))
+                cur, started = [], False
+            elif e == "_":
+                cur.append(" ")
+            elif e == "c" and not q:
+                break
+            elif e in _ENV_S_ESC:
+                cur.append(_ENV_S_ESC[e])
+                started = True
+            else:
+                return None  # `\c` in double quotes, an unknown escape, a trailing backslash
+        elif ch == "$":
+            m = _ENV_S_VAR.match(body, k)
+            if not m:
+                return None  # env takes only ${NAME}
+            cur.append(m.group())
+            started, k = True, m.end() - 1
+        elif q == '"':
+            if ch == '"':
+                q = ""
+            else:
+                cur.append(ch)
+        elif ch in " \t\n\r\v\f":
+            if started:
+                words.append("".join(cur))
+            cur, started = [], False
+        elif ch == "#" and not started:
+            break
+        else:
+            if ch in "'\"":
+                q = ch
+            else:
+                cur.append(ch)
+            started = True
+        k += 1
+    else:
+        if q:
+            return None
+    if started:
+        words.append("".join(cur))
+    return words
+
+# GH #621: getopt_long's reading of an env long option: the exact name, else the one option the
+# prefix names (`--ch` is --chdir), else None (ambiguous `--d`, or unknown: env fails, runs nothing).
+_ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "block-signal", "default-signal",
+             "ignore-signal", "list-signal-handling", "debug", "help", "version")
+
+def _env_long(t):
+    name = t[2:].split("=", 1)[0]
+    if not name or name in _ENV_LONG:
+        return name or None
+    hits = [o for o in _ENV_LONG if o.startswith(name)]
+    return hits[0] if len(hits) == 1 else None
+
+def _env_develop_reading(rest, i):
+    """GH #621: env's words as the gate read them before #621 (long options bare flags, only an
+    option-led -S string split, by shlex), so no shape that denied then allows now. Returns the words
+    from the command on, or None (no command, or a -S string scanned as a command line, which it
+    scans here as it did then)."""
+    splits = 0
+    while i < len(rest):
+        t = rest[i].replace(PH, "")
+        long_name, body = t[2:].split("=", 1)[0], None
+        if t.startswith("--") and len(long_name) > 0 and "split-string".startswith(long_name):
+            if "=" in t:
+                body, i = rest[i].split("=", 1)[1], i + 1
+            elif i + 1 < len(rest):
+                body, i = rest[i + 1], i + 2
+            else:
+                return None
+            m = None
+        else:
+            m = re.match(r"-[^-CPSu]*([CPSu])", t)
+            if m:
+                attached = t[m.end():]
+                if m.group(1) == "S" and (attached or i + 1 < len(rest)):
+                    body = rest[i][rest[i].index("S") + 1:] if attached else rest[i + 1]
+                i += 1 if attached else 2
+        if body is not None:
+            words = _env_split_options(body)
+            splits += 1
+            if words is None or splits > _ENV_SPLIT_MAX:
+                _scan_body(" ".join([body] + rest[i:]))
+                return None
+            rest, i = words + rest[i:], 0
+        elif m:
+            pass
+        elif t.startswith("-") or _assignment(rest[i]):
+            i += 1
+        else:
+            return rest[i:]
+    return None
+
 # One window's checks. A function, not the loop body, so the GH #336 views below rerun it.
 # xargs's short options that take a value (GNU and BSD), and its long ones that take the next word.
 _XARGS_VALUE_LETTERS = "IJRSnPLdsEa"
@@ -3287,7 +3409,10 @@ def _past_wrapper_words(name, rest, i):
     while i < len(rest):
         t = rest[i].replace(PH, "")
         if t.startswith("-") and len(t) > 1:
-            i += 2 if t in vals else 1
+            # GH #621: env's long options by getopt_long's prefix rule (`--ch DIR`, `--un NAME`).
+            long_val = name == "env" and t.startswith("--") and "=" not in t \
+                and _env_long(t) in ("chdir", "unset", "split-string")
+            i += 2 if t in vals or long_val else 1
         elif _assignment(rest[i]) and name in ("env", "sudo", "doas"):
             i += 1
         else:
@@ -3513,7 +3638,7 @@ def _check_window(_wi, w):
     # separate GH issues (2026-09-20 audit).
     # rest[o:] is the command after the wrappers read so far: an index, one slice after the loop, so a
     # long wrapper chain stays linear (each rest[i + 1:] copied the tail again).
-    o, env_splits, via_run_wrapper = 0, 0, False
+    o, env_splits, via_run_wrapper, env_side = 0, 0, False, 0
     while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
@@ -3535,11 +3660,21 @@ def _check_window(_wi, w):
             # with -S is ALSO read the way the gate read it before #570 (-S a bare flag, `-u` takes
             # a value), as one more window at this depth: either reading denies, so no shape that
             # denied before #570 allows now. _count_handover bounds a chain of them (each copies the tail).
+            # GH #621: --chdir and --unset (and their unambiguous prefixes, `--ch`, `--un`) take the next
+            # word, so the command is the word after it; that reading also gets the pre-#570 window, which
+            # reads them as bare flags. Every -S string is split the way GNU env splits it (_env_split) and
+            # its words go back into this loop, option-led or not (`"-i" rm`, `rm\_-rf\_x`, `#x` then the
+            # real arguments); a string that is not option-led on its raw text is also scanned as a command
+            # line, as before.
             i, body, pre_rest, pre_o, split_seen = o, None, rest, o, False
             while i < len(rest):
                 t = rest[i].replace(PH, "")
-                long_name = t[2:].split("=", 1)[0]
-                if t.startswith("--") and len(long_name) > 0 and "split-string".startswith(long_name):
+                long_name = _env_long(t) if t.startswith("--") else None
+                if long_name in ("chdir", "unset") and "=" not in t:
+                    split_seen = True
+                    i += 2
+                    continue
+                if long_name == "split-string":
                     if "=" in t:
                         body, i = rest[i].split("=", 1)[1], i + 1
                     elif i + 1 < len(rest):
@@ -3556,14 +3691,18 @@ def _check_window(_wi, w):
                         i += 1 if attached else 2
                 if body is not None:
                     split_seen = True
-                    words = _env_split_options(body)
+                    old = _env_split_options(body)
+                    words = _env_split(body)
+                    if words is None:
+                        words = old
                     if words is None:
                         break
                     env_splits += 1
                     if env_splits > _ENV_SPLIT_MAX:
-                        deny("env -S strings that start with an option, more than %d deep - confirm with user first"
-                             % _ENV_SPLIT_MAX)
+                        deny("env -S strings, more than %d deep - confirm with user first" % _ENV_SPLIT_MAX)
                         break
+                    if old is None:
+                        _scan_body(" ".join([body] + rest[i:]))
                     rest, i, body = words + rest[i:], 0, None
                 elif m:
                     pass
@@ -3574,8 +3713,15 @@ def _check_window(_wi, w):
                 else:
                     break
             if split_seen:
-                if _wi in _ENV_PRE570_WINDOWS:  # only a chain of them copies the tail again and again
-                    _count_handover("env -S")
+                if _wi in _ENV_PRE570_WINDOWS or env_side:  # only a chain of them copies the tail again and again
+                    _count_handover("env -S / --chdir / --unset")
+                env_side += 1
+                # GH #621: and the reading before #621, when it finds another command.
+                side = _env_develop_reading(pre_rest, pre_o)
+                if side and (body is not None or side != rest[i:]):
+                    _WDEPTH[len(windows)] = _cur_depth
+                    _ENV_PRE570_WINDOWS.add(len(windows))
+                    windows.append(side)
                 j = pre_o
                 while j < len(pre_rest):
                     t = pre_rest[j].replace(PH, "")
@@ -3818,6 +3964,10 @@ def _check_window(_wi, w):
     # Only past one of those wrappers: elsewhere the anchor decides, and a window can read `claude` as argv0 where
     # the shell does not run it (`builtin claude`, `"A=1" claude`).
     if via_run_wrapper and "agent_id" in d and _a0 == "claude" and any(t.replace(PH, "").split("=", 1)[0] in _SPAWN_WINDOW_FLAGS for t in rest):
+        _deny_nested_spawn()
+    # GH #621: the spawn anchor reads the raw -S text, so env's own word breaks (`claude\_-p\_hi`) hide claude's
+    # words from it; past an env -S split the words env runs are read here.
+    if env_splits and "agent_id" in d and _a0 == "claude" and _claude_words_spawn(rest):
         _deny_nested_spawn()
     if (_a0 in ("mkfs", "mke2fs") or _a0.startswith("mkfs.")) and any(
             not t.replace(PH, "").startswith("-") for t in rest):

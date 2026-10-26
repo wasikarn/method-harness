@@ -1015,6 +1015,24 @@ _env_S_dos_cmd="$(python3 -c 'print("env " + "-S -S " * 11000 + " ".join(["-S\x2
 _timed_case 'GH #560: 22000 -S words and 8000 option-only -S strings are read in bounded time' 2 "$_env_S_dos_cmd"
 _env_iS_dos_cmd="$(python3 -c 'print("env -iS ls; " * 10000 + "env -" + "i" * 20000 + "S ls")')"
 _timed_case 'GH #560: 10000 env -iS commands and a 20 KB cluster are read in bounded time' 0 "$_env_iS_dos_cmd"
+# GH #621: --chdir and --unset (and getopt_long's unambiguous prefixes) take the next word; a -S string
+# is split the way GNU env splits it (`\_` ends a word, a word starting with `#` ends the string) and its
+# words, options first or not, go back into env's option loop.
+for _c in "env --chdir /tmp rm -rf x" "env --ch /tmp rm -rf x" "env --chd /tmp rm -rf x" \
+  "env --chdir /tmp git push --force" "env --unset FOO rm -rf x" "env --un FOO rm -rf x" "env --uns FOO rm -rf x" \
+  "env -S '--unset FOO rm -rf x'" "env -S 'rm\\_-rf\\_x'" "env -S 'git\\_push\\_--force'" \
+  "env -S '\"-i\" rm -rf x'" "env -S \"'-i' rm -rf x\"" "env -S '#x' rm -rf x" "env -S '#x' git push --force" \
+  "env -S '\\_-i rm -rf x'" "env -S '\\_#x' rm -rf x" "env -iS '\\_\\_-i\\_rm -rf x'"; do
+  test_deny "$IRRECOVERABLE" "GH #621: env long option value / GNU -S split: $_c" "$(bash_payload "$_c")"
+done
+test_deny  "$IRRECOVERABLE" "GH #621: subagent: env -S 'claude\\_-p\\_hi'" "$(bash_agent_payload "env -S 'claude\\_-p\\_hi'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #621: subagent: env -S '#x' claude -p hi" "$(bash_agent_payload "env -S '#x' claude -p hi" fork)"
+test_deny  "$IRRECOVERABLE" "GH #621: subagent: env --ch /tmp claude -p hi" "$(bash_agent_payload 'env --ch /tmp claude -p hi' fork)"
+for _c in "env -i FOO=1 ls" "env --chdir /tmp make" "env --ch /tmp make" "env --unset HOME ls" "env -S 'ls -la'" \
+  "env -S '-i #' ls -la" "env -S 'echo\\_hi'" "env -S '#x' ls -la" "env -S '\"-i\" ls'"; do
+  test_allow "$IRRECOVERABLE" "GH #621 control: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" "GH #621 control: subagent: env -S 'claude\\_--version'" "$(bash_agent_payload "env -S 'claude\\_--version'" fork)"
 # GH #567: a shell reading stdin gets its commands from a heredoc piped in, a here-string, or an echo/printf.
 test_deny  "$IRRECOVERABLE" "GH #567: bash <<< rm -rf" "$(bash_payload "bash <<< 'rm -rf build'")"
 test_deny  "$IRRECOVERABLE" "GH #567: echo into bash" "$(bash_payload "echo 'git push --force' | bash")"
