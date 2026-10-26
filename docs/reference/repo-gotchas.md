@@ -162,8 +162,9 @@ already set alone.
   4 `yes` at 100% CPU for ~4 h, 2026-10-25) that failed every session's timing rows. Write the
   run as a file and start it with `bash <file>`, collect `pids+=($!)`, `kill "${pids[@]}"` in a
   `trap ... EXIT`, then confirm no worker is left and the load has dropped. `run-gauntlet.sh` now
-  names long-running CPU-heavy processes of yours (`scripts/_lib/stray-procs.sh`, warn-only), but
-  it can only catch a stray after the fact; killing one that a peer session owns is the operator's call.
+  names long-running CPU-heavy process groups of yours, a flood of low-CPU workers included
+  (`scripts/_lib/stray-procs.sh`, warn-only), but it can only catch a stray after the fact; killing
+  one that a peer session owns is the operator's call.
 
 ## Research: check qmd before web search
 
