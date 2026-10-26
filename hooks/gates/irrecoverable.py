@@ -428,12 +428,21 @@ def _normalize_ansi_c_quotes(cmd):
                     if 0 <= cp <= 0x10FFFF:
                         decoded.append(chr(cp))
                         i = j
+                    elif digits:  # past U+10FFFF bash consumes the digits and yields nothing
+                        i = j
                     else:
                         decoded.append(body[i:i + 2])
                         i += 2
-                elif nxt == "c" and i + 2 < n:  # \cX: control-X (\cJ is a newline; \c\\ is control-backslash)
-                    decoded.append(chr(ord(body[i + 2].upper()) ^ 0x40))
-                    i += 4 if body[i + 2] == "\\" and body[i + 3:i + 4] == "\\" else 3
+                elif nxt == "c" and i + 2 < n:  # \cX: X & 0x1f as bash computes it (\cJ and \c* are a newline)
+                    x = body[i + 2]
+                    if x == "?":
+                        decoded.append("\x7f")
+                    elif ord(x) < 128:
+                        decoded.append(chr(ord(x) & 0x1f))
+                    else:  # bash takes the first byte of a multibyte character; the rest stay
+                        b = x.encode("utf-8", "surrogatepass")
+                        decoded.append(chr(b[0] & 0x1f) + b[1:].decode("latin-1"))
+                    i += 4 if x == "\\" and body[i + 3:i + 4] == "\\" else 3
                 elif nxt in OCTAL:
                     j, digits = i + 1, ""
                     while j < n and len(digits) < 3 and body[j] in OCTAL:
@@ -448,7 +457,7 @@ def _normalize_ansi_c_quotes(cmd):
                 decoded.append(c)
                 i += 1
         spliced = []
-        for ch in decoded:
+        for ch in "".join(decoded).split("\x00", 1)[0]:  # a NUL ends the value, as in bash
             if ch == SQ:
                 spliced.append(SQ + "\\" + SQ + SQ)
             else:
