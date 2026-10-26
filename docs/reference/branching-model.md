@@ -54,7 +54,9 @@ refuses on any change. It:
    dir), so one merge runs at a time and develop holds still during its gauntlet; after 3600 s it
    refuses instead of running unlocked;
 4. waits for load below 4 (default 900 s, then fails with the load figure);
-5. merges `origin/develop` into the branch when it is behind, and writes develop's version + 1 into
+5. merges `origin/develop` into the branch when it is behind (the develop tip its own last fetch saw:
+   every worktree shares the `origin/develop` ref and peer sessions fetch all the time, so it never
+   re-reads the ref between fetches), and writes develop's version + 1 into
    both manifests unless they already agree on a higher one. The sync and the bump are one commit
    (`Merge origin/develop into <branch>; bump mh to N`), or `chore: bump mh to N` when no sync was
    needed. An older PR that still bumps its own version conflicts on that line: when the only

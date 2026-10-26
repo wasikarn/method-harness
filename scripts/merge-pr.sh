@@ -50,6 +50,14 @@ fi
 PLUGIN=.claude-plugin/plugin.json
 MARKET=.claude-plugin/marketplace.json
 die() { echo "merge-pr: $*" >&2; exit 1; }
+# fetch_develop <failure message>: fetch, then pin $dev to the develop tip just fetched. Every worktree
+# of this repo shares the origin/develop ref and peer sessions fetch all the time, so the script reads
+# develop only through $dev: on #634's first real merge a peer's fetch moved the ref between the sync
+# and the version check, and the head was compared with a develop it had never merged.
+fetch_develop() {
+  git fetch origin || die "$1"
+  dev=$(git rev-parse --verify -q 'origin/develop^{commit}') || die "cannot resolve origin/develop after the fetch."
+}
 
 # On any exit: abort a sync merge this script left open, drop a version edit it left uncommitted, and
 # free the merge lock. A failed step therefore leaves the branch as the last commit the script made.
@@ -82,7 +90,7 @@ merge_lock_release() {
   gauntlet_lock_release
 }
 
-git fetch origin
+fetch_develop "git fetch origin failed; not merging."
 
 if [ "$verify" = 0 ]; then
   info=$(gh pr view "$pr" --json headRefOid,baseRefName,headRefName,isCrossRepository \
@@ -195,15 +203,15 @@ resolve_manifest_conflicts() {
 # version + 1 into both manifests unless they already agree on a higher one, and commit what changed.
 sync_and_bump() {
   local dev_ver cur_ver mkt_ver new="" merging=0 rc=0
-  git merge-base --is-ancestor origin/develop HEAD || rc=$?
+  git merge-base --is-ancestor "$dev" HEAD || rc=$?
   if [ "$rc" -eq 1 ]; then
     merging=1
     merge_open=1
-    git merge --no-commit --no-ff origin/develop || resolve_manifest_conflicts
+    git merge --no-commit --no-ff "$dev" || resolve_manifest_conflicts
   elif [ "$rc" -ne 0 ]; then
     die "ancestry check against origin/develop failed (rc=$rc); is origin/develop fetched?"
   fi
-  dev_ver=$(manifest_version origin/develop "$PLUGIN")
+  dev_ver=$(manifest_version "$dev" "$PLUGIN")
   is_xyz "$dev_ver" || die "origin/develop's version '$dev_ver' is not X.Y.Z; cannot cut the next one."
   cur_ver=$(first_version <"$PLUGIN")
   mkt_ver=$(first_version <"$MARKET")
@@ -238,7 +246,7 @@ check_version() {
   local head_ver mkt_ver dev_ver v
   head_ver=$(manifest_version "$head" "$PLUGIN")
   mkt_ver=$(manifest_version "$head" "$MARKET")
-  dev_ver=$(manifest_version origin/develop "$PLUGIN")
+  dev_ver=$(manifest_version "$dev" "$PLUGIN")
   if [ -z "$head_ver" ] || [ -z "$mkt_ver" ] || [ -z "$dev_ver" ]; then
     echo "merge-pr: could not read the manifest version of the PR head or origin/develop." >&2
     exit 1
@@ -307,7 +315,7 @@ check_review() {
     echo "merge-pr: PR $pr's MERGE verdict reviewed $sha, which is not in the head's history (unknown sha or rewritten history); get a review of $head." >&2
     exit 1
   fi
-  revs=$(git rev-list --no-merges "$sha..$head" ^origin/develop) || { echo "merge-pr: git rev-list $sha..$head failed." >&2; exit 1; }
+  revs=$(git rev-list --no-merges "$sha..$head" "^$dev") || { echo "merge-pr: git rev-list $sha..$head failed." >&2; exit 1; }
   for c in $revs; do
     files=$(git diff-tree --no-commit-id --name-only -r "$c") || { echo "merge-pr: git diff-tree $c failed; not merging." >&2; exit 1; }
     if printf '%s\n' "$files" |
@@ -318,7 +326,7 @@ check_review() {
   done
   # A merge after the review must be the plain merge of its two parents (GH #629); git merge-tree --write-tree
   # (git >= 2.38) prints that tree first, exiting 1 when it holds conflicts (a conflicted manifest is fine).
-  merges=$(git rev-list --merges "$sha..$head" ^origin/develop) || { echo "merge-pr: git rev-list --merges $sha..$head failed." >&2; exit 1; }
+  merges=$(git rev-list --merges "$sha..$head" "^$dev") || { echo "merge-pr: git rev-list --merges $sha..$head failed." >&2; exit 1; }
   for c in $merges; do
     parents=$(git rev-list --parents -n 1 "$c") || { echo "merge-pr: cannot read the parents of $c." >&2; exit 1; }
     parents=${parents#* }; p1=${parents%% *}; p2=${parents#* }
@@ -418,7 +426,7 @@ check_review
 # --verify: the checks alone; a session without gh syncs with sync-pr-head.sh and merges through MCP.
 if [ "$verify" = 1 ]; then
   rc=0
-  git merge-base --is-ancestor origin/develop "$head" || rc=$?
+  git merge-base --is-ancestor "$dev" "$head" || rc=$?
   [ "$rc" -le 1 ] || die "ancestry check against origin/develop failed (rc=$rc); is $head fetched?"
   if [ "$rc" -eq 1 ]; then
     die "PR $pr head $head does not contain origin/develop; $(resync_hint)."
@@ -434,7 +442,7 @@ if [ "$GAUNTLET_LOCK_HELD" != 1 ]; then
   die "could not take the merge lock at $merge_lock_dir within ${MERGE_PR_LOCK_WAIT_SECS:-3600}s (another merge-pr.sh is running, or the dir cannot be made); not merging."
 fi
 # develop may have moved while this run waited for the lock.
-git fetch origin || die "git fetch failed after taking the merge lock; not merging."
+fetch_develop "git fetch failed after taking the merge lock; not merging."
 
 round=1
 while :; do
@@ -452,9 +460,9 @@ while :; do
     run_gauntlet_here
   fi
   # A merge made outside this script lands no matter the lock: fetch, and sync again if it did.
-  git fetch origin || die "git fetch failed after the push; not merging."
+  fetch_develop "git fetch failed after the push; not merging."
   rc=0
-  git merge-base --is-ancestor origin/develop "$head" || rc=$?
+  git merge-base --is-ancestor "$dev" "$head" || rc=$?
   [ "$rc" -eq 0 ] && break
   [ "$rc" -eq 1 ] || die "ancestry check against origin/develop failed (rc=$rc)."
   [ "$round" -lt 3 ] || die "origin/develop moved during each of 3 rounds (merges made outside merge-pr.sh?); not merging."

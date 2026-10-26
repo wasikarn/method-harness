@@ -69,9 +69,16 @@ cat >"$STUB/uptime" <<'EOF'
 echo "10:00  up 1 day, 2 users, load averages: $STUB_LOAD 2.00 2.00"
 EOF
 # A pre-commit hook that fails when STUB_PRECOMMIT_FAIL is set (a red lint on the sync or bump commit).
+# With STUB_PRECOMMIT_PEER set, its first call lands a peer merge on origin's develop and fetches it, as
+# another worktree's `git fetch` moves the shared origin/develop ref while the script runs (2026-10-26).
 cat >"$STUB/hooks/pre-commit" <<'EOF'
 #!/usr/bin/env bash
 [ -z "${STUB_PRECOMMIT_FAIL:-}" ] || { echo "pre-commit: red" >&2; exit 1; }
+if [ -n "${STUB_PRECOMMIT_PEER:-}" ] && [ ! -f "$STUB_DIR/precommit-peer.done" ]; then
+  : >"$STUB_DIR/precommit-peer.done"
+  (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; bash "$STUB_PEER")
+  git fetch -q origin
+fi
 exit 0
 EOF
 # The work clone's pre-push hook stands in for the gauntlet: it records the tree it ran on and the lock
@@ -300,6 +307,16 @@ if [ "$(pushes)" = 2 ] && /usr/bin/grep -q "round 2 of 3" <<<"$out"; then ok "a 
 if [ "$(ver_of "$F/work/$PLUGIN")" = "1.1.3" ] && w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then
   ok "the second round cut above the peer's 1.1.2"
 else bad "after round 2: $(ver_of "$F/work/$PLUGIN")"; fi
+
+# 7b. a peer's fetch moves the shared origin/develop ref while the sync commit is made (the first real
+#     merge of #634 hit this: synced to 1.1.400, cut 1.1.401, then compared with a develop already at
+#     1.1.401). The script checks against the develop it merged, finds the move after its push, syncs again.
+setup; on develop "peer 1.1.2" set_ver 1.1.2
+STUB_PRECOMMIT_PEER=1 run
+merges "develop moved by a peer's fetch mid-sync"
+if [ "$(ver_of "$F/work/$PLUGIN")" = "1.1.4" ] && w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then
+  ok "the next round cut above the peer's 1.1.3"
+else bad "after a peer fetch: $(ver_of "$F/work/$PLUGIN"): $out"; fi
 
 # 8. a red gauntlet: the push does not land; refuse and keep the sync commit. A rerun pushes that commit.
 setup; on develop "peer 1.1.2" set_ver 1.1.2
