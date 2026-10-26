@@ -1038,12 +1038,19 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
                       "or piped input, -p/--print, --agent, --bg/--background, -w/--worktree) -- only the "
                       "main session dispatches")
 
-# GH #593: set to one rule while a reading may only raise that rule's ask: every other deny ends the
-# window unreported, every other ask is dropped.
+# GH #593 / #661: the rules a reading may decide with, or None for all: a deny by any other rule (or a
+# structural one) ends the window unreported, and any other ask is dropped.
 _ONLY_RULE = [None]
+# GH #661: in the enforced view pass, a deny by another rule that has an id returns instead of ending the window,
+# so the enforced rule further on in the same window is still reached. A structural deny (no id: a depth limit,
+# the handover budget, an untokenizable body) denies there, as it does in the main reading: the text cannot be
+# read safely. The pass runs no spawn check (that is the main reading's).
+_ONLY_RULE_PASS_ON = [False]
 def _deny_nested_spawn():
-    if _ONLY_RULE[0]:
+    if _ONLY_RULE[0] and not _ONLY_RULE_PASS_ON[0]:
         raise _ViewStop
+    if _ONLY_RULE_PASS_ON[0]:
+        return  # the enforced view pass reads rm's rules only: no spawn scan, so no spawn-scan budget (review 8)
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1120,7 +1127,14 @@ _VIEW = [None]
 class _ViewStop(Exception):
     pass
 
+# GH #661: the rules a shadowed view still enforces. brace-view stays shadow for every other rule (GH #337),
+# but rm's own rules must read the words bash builds: `rm --{r,f} b` is `rm --r --f b`, and no token
+# reading keeps such a word whole (`--{r,} b` loses its `}`).
+_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root"})}
+
 def _shadowed(rule, decision):
+    if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
+        return False
     rule = next((r for r in (rule, _VIEW[0]) if r in SHADOW_RULES), None)
     if rule is None:
         return False
@@ -1131,16 +1145,22 @@ def _shadowed(rule, decision):
     return True
 
 def deny(reason, rule=None):
-    if _ONLY_RULE[0]:
+    if _ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]:
+        if not _ONLY_RULE_PASS_ON[0]:
+            raise _ViewStop
+        if rule is not None:
+            return
+
+    elif _VIEW[0] and rule is None:
         raise _ViewStop
-    if _VIEW[0] and rule is None:
-        raise _ViewStop
-    if _shadowed(rule, "deny"):
+    if not (_ONLY_RULE_PASS_ON[0] and rule is None) and _shadowed(rule, "deny"):
         if _VIEW[0]:
             raise _ViewStop
         return
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
-    journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"), rule=_VIEW[0] or rule)
+    # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
+    journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
+            rule=rule if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) else _VIEW[0] or rule)
     sys.exit(2)
 
 _ASKED = []
@@ -1153,7 +1173,7 @@ def ask(reason, rule=None):
     # JSON objects on stdout are not valid JSON (GH #254 validator).
     # A shadowed ask is checked first and never touches _ASKED, so a later real ask still emits.
     # In a view (GH #336) an ask adds nothing once the command already asks.
-    if (_ONLY_RULE[0] and rule != _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
+    if (_ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
     _ASKED.append(reason)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
@@ -2381,7 +2401,7 @@ def _scan_body(body):
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
-    if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
+    if ("agent_id" in d) and not _ONLY_RULE_PASS_ON[0] and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
                               or _subst_spawn(body)):
         deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
@@ -4602,7 +4622,7 @@ def _braced_reading():
     # (_WDEPTH, _ENV_PRE570_WINDOWS) is read by a later window; _RM_VIA_INTERP is put back.
     start = len(windows)
     rm_via_interp = _RM_VIA_INTERP[0]
-    _ONLY_RULE[0] = "opaque-var-verb"
+    _ONLY_RULE[0] = frozenset({"opaque-var-verb"})
     try:
         windows.extend(_view_windows(v))
         i = start
@@ -4619,6 +4639,41 @@ def _braced_reading():
 if "${" in cmd and len(cmd) <= _VIEW_LEN_CAP:
     _braced_reading()
 
+def _enforced_pass(text):
+    # GH #661: a shadowed view stops at its first hit, so a rule it enforces (_VIEW_ENFORCED) may not have read
+    # the windows after that hit (`fi{nd,nd} x -delete; rm --{r,f} b`). This pass reads every window once more
+    # with only those rules live; any other rule's deny ends that window alone.
+    # Another rule's deny passes on (_ONLY_RULE_PASS_ON) so the enforced rule later in the same window still
+    # runs; code written to stop at a deny may then fail, which only skips that window. The first pass marked
+    # the view's word windows seen, so they are cleared to be queued again.
+    # The pass reads rm's rules only, so it runs no spawn scan (_scan_body, _deny_nested_spawn): that scan's
+    # budget, spent a second time on the expanded text, denied large legal subagent bodies, let one costly
+    # expansion hide an rm, or ran the gate near the hook timeout (reviews 4-8). A spawn is the main reading's.
+    _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0] = _VIEW_ENFORCED[_VIEW[0]], True
+    try:
+        _WORDS_SEEN.clear()
+        i = len(windows)
+        windows.extend(_view_windows(text))
+        while True:
+            while i < len(windows):  # a window's checks may append more (bash -c bodies, xargs, find)
+                try:
+                    _check_window(i, windows[i])
+                except (_ViewStop, Exception):  # never SystemExit: an enforced deny exits as it should
+                    pass
+                i += 1
+            if not _WORDS:
+                break
+            for depth, ww in _WORDS[:]:  # the word windows, as _run_words reads them (in the word phase)
+                wc = _drop_ph_tokens(ww)
+                for x in ((ww, wc) if wc != ww else (ww,)):
+                    _WDEPTH[len(windows)] = depth
+                    windows.append(x)
+            del _WORDS[:]
+            _WORD_PHASE[0] = True
+    finally:
+        _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0], _WORD_PHASE[0] = None, False, False
+        del _WORDS[:]
+
 for _VIEW[0], _text in _views():
     try:
         _start = len(windows)
@@ -4627,5 +4682,7 @@ for _VIEW[0], _text in _views():
         _run_words()
     except _ViewStop:
         del _WORDS[:]
+        if _VIEW[0] in _VIEW_ENFORCED:
+            _enforced_pass(_text)
 
 sys.exit(0)
