@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Project SessionStart hook: install the gauntlet's tools in Claude Code cloud sessions: trash-cli
+# Project SessionStart hook: in Claude Code cloud sessions, wire core.hooksPath when a fresh clone
+# lacks it, and install the gauntlet's tools: trash-cli
 # (tests reset state with `trash`) and shfmt >= 3.5 (run-gauntlet.sh refuses to start without it;
 # tests/scripts/test-pipefail-grep-q-lint.sh parses every shell file with it). Local machines are
 # never touched (macOS: `brew install trash shfmt`). Never blocks a session: every failure is a
@@ -17,12 +18,29 @@ shfmt_ok() {
   [ "$maj" -gt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -ge 5 ]; }
 }
 
+note() { echo "session-start: $*" >&2; }
+
+# A fresh cloud clone has no core.hooksPath, so its commits and pushes run zero gates (there is no
+# CI). Wire the relative path CLAUDE.md requires; a repo value already set, even a broken one, is
+# left for the operator (docs/reference/repo-gotchas.md "Git hooks"). Only the repo's own config
+# counts: a global hooksPath would run its hooks instead of git-hooks. git resolves a relative
+# hooksPath from the top of the work tree, so git-hooks is looked for there.
+proj=${CLAUDE_PROJECT_DIR:-}
+top=""
+[ -n "$proj" ] && command -v git >/dev/null && top=$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$top" ] && [ -d "$top/git-hooks" ] \
+  && ! git -C "$top" config --local --get core.hooksPath >/dev/null 2>&1; then
+  if git -C "$top" config --local core.hooksPath git-hooks </dev/null >&2; then
+    note "set core.hooksPath to git-hooks (it was unset, so no git hook would run)"
+  else
+    note "git config core.hooksPath git-hooks failed; commits will run no hooks"
+  fi
+fi
+
 need=()
 command -v trash >/dev/null || need+=(trash-cli)
 shfmt_ok || need+=(shfmt)
 [ "${#need[@]}" -gt 0 ] || exit 0
-
-note() { echo "session-start: $*" >&2; }
 
 sudo="" apt=1
 if ! command -v apt-get >/dev/null; then
