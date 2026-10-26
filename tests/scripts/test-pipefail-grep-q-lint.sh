@@ -24,7 +24,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 echo "=== nothing pipes into grep -q (pipefail turns its early exit into a failure) ==="
 
 if ! command -v shfmt >/dev/null 2>&1; then
-  bad "shfmt not found on PATH, so this lint cannot run (shfmt >= 3.5; macOS: brew install shfmt; Linux: pip install shfmt-py, or apt install shfmt on Ubuntu 24.04+)"
+  bad "shfmt not found on PATH, so this lint cannot run (macOS: brew install shfmt; Linux: pip install shfmt-py, not Ubuntu's apt package)"
   echo "=== Summary: $pass passed, $fail failed ==="
   exit 1
 fi
