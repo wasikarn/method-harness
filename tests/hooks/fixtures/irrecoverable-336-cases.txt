@@ -58,6 +58,21 @@ ALLOW PY=python3; $PY -m pytest -q
 # 3. a verb known only at run time: ask floor (shadow)
 WOULD_ASK opaque-var-verb $X -rf build
 WOULD_ASK opaque-var-verb "$RUNNER" build
+# GH #593: a braced name is the same unknown program; a prefix assignment (`CMD=ls true`) sets the
+# name only in that command's environment, so the shell still has none when `$CMD` runs
+WOULD_ASK opaque-var-verb ${CMD} build
+WOULD_ASK opaque-var-verb "${CMD}" build
+WOULD_ASK opaque-var-verb ${CMD:-ls} build
+WOULD_ASK opaque-var-verb ls && ${CMD} build
+WOULD_ASK opaque-var-verb CMD=ls true; $CMD build
+WOULD_ASK opaque-var-verb CMD=ls true && ${CMD} build
+ALLOW CMD=ls; ${CMD} build
+ALLOW CMD=ls CMD2=x; $CMD build
+ALLOW export CMD=ls; $CMD build
+ALLOW CMD="ls -la"; $CMD build
+ALLOW CMD=$(command -v ls); $CMD build
+ALLOW echo ${CMD} build
+ALLOW ${HOME}/bin/tool build
 WOULD_ASK source-file source ./setup.sh
 WOULD_ASK source-file . ./setup.sh && git status
 # GH #592: `.` with no candidate word on the line reaches python too (irrecoverable.sh fast path)

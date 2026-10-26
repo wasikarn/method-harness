@@ -2903,9 +2903,20 @@ def _chmod_world_word(rest):
 # GH #336: a program known only at run time -- a `$NAME` argv0 with no `NAME=` anywhere in the
 # command (the var-verb view below reads a visible one back) -- or a sourced file.
 _VAR_NAME_RE = re.compile(r"[A-Za-z_]\w*")
-_ASSIGNED_NAMES = set(re.findall(r"(?<![\w$])([A-Za-z_]\w*)\+?=", cmd))
+# GH #593: only an assignment that is its own statement (`X=rm;`, `export X=rm`) sets the name in the
+# shell. One prefixed to a command (`X=rm true; $X build`) lives in that command's environment alone.
+_ASSIGN_VALUE = r"""(?:[^\s;&|()<>"'\\`$]|\\.|"(?:[^"\\]|\\.)*"|'[^']*'|\$\([^()]*\)|`[^`]*`|\$)*"""
+_ASSIGN_WORD = r"[A-Za-z_]\w*\+?=" + _ASSIGN_VALUE
+_ASSIGNED_NAMES = {n for chain in re.findall(
+    r"(?<![\w$=])(?:(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+)?((?:" + _ASSIGN_WORD
+    + r"[ \t]+)*" + _ASSIGN_WORD + r")[ \t]*(?=$|[;&|)}\n#])", cmd, re.M)
+    for n in re.findall(r"(?:^|(?<=[ \t]))([A-Za-z_]\w*)\+?=", chain)}
+# A word that is a whole braced expansion (`${CMD}`, "${CMD:-ls}") reaches argv0 as PH alone: its names.
+_BRACED_WORD_NAMES = set(re.findall(r"(?<![^\s;&|(){\"])\"?\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}]*)?\}\"?(?=[\s;&|)}]|$)", cmd))
 def _opaque_var(argv0, rest):
     # shlex splits an unquoted `$X` into "$" and "X"; a quoted "$X" stays one word.
+    if argv0 and not argv0.strip(PH):
+        return bool(_BRACED_WORD_NAMES - _ASSIGNED_NAMES)
     name = rest[0] if argv0 == "$" and rest else argv0[1:] if argv0.startswith("$") else ""
     return bool(_VAR_NAME_RE.fullmatch(name)) and name not in _ASSIGNED_NAMES
 
