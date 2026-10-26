@@ -96,17 +96,9 @@ def _sql_drops(sql):
 # GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
 # matched once where it is stripped (rescanning every stored body per bash -c / eval body was quadratic).
 _SQL_HEREDOC_DROP = [False]
-# GH #668 round 3, GH #681: set when _strip_heredocs keeps a body as text that leaves a quote open.
-_HEREDOC_QUOTE_OPEN = [False]
-
-def _check_kept_body(lines):
-    # The rules read a kept body as shell text, bash reads it as data: an odd quote in it would pair with a
-    # quote past the delimiter and hide the lines between as one quoted word. Not hd: the tokenizer opens no
-    # ${ frame inside "..", so neither may this check ("${ " in a python string must stay allowed).
-    if not _HEREDOC_QUOTE_OPEN[0]:
-        stack = [None]
-        _quote_mask("\n".join(lines), stack)
-        _HEREDOC_QUOTE_OPEN[0] = stack != [None]
+# GH #668 round 3: the line index in the stripped command right after each data body the top-level strip
+# kept as text, checked once the tokenizer exists (see _KEPT_MARK).
+_KEPT_BODY_ENDS = []
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -453,7 +445,7 @@ def _quote_mask(c, stack=None, hd=False):
         i += 1
     return mask
 
-def _strip_heredocs(cmd):
+def _strip_heredocs(cmd, ends=None):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
     # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
@@ -463,13 +455,14 @@ def _strip_heredocs(cmd):
     # GH #668: a << counts only where the shell reads it as a redirection, so the quote state is carried
     # from line to line (bodies skipped). Once a shape the scan does not model shows up (sure turns False)
     # nothing more is stripped: an opener line ending inside a quote, ${ or $((, or in a backslash; a
-    # delimiter with $ or a backtick; an unquoted body that expands $(, `, ${..} or joins lines; a body
-    # line that starts with the delimiter but is not it. Openers are then read as before, for the SQL
-    # check only. An interpreter-fed body is skipped like any other (its text is the child's, not this
-    # shell's) but kept whole as code, its own heredocs unstripped.
-    # GH #668 round 3, GH #681: a body kept as text (code, unsure, or ended early) that leaves a quote open
-    # sets _HEREDOC_QUOTE_OPEN, and the gate denies: keeping it is not safe, since the tokenizer pairs that
-    # quote with one past the delimiter. The unmatched-delimiter put-back runs to the end, so it is exempt.
+    # delimiter with $ or a backtick; an unquoted body that expands $(, `, ${..} or joins lines; inside
+    # $( or a backtick (or once unsure), a body line that starts with the delimiter but is not it. Openers
+    # are then read as before, for the SQL check only. An interpreter-fed body is skipped like any other
+    # (its text is the child's, not this shell's) but kept whole as code, its own heredocs unstripped.
+    # GH #668 round 3: ends (the top-level call's _KEPT_BODY_ENDS) gets the index in the output right after
+    # each data body kept as text (unsure, or ended early), where the tokenizer must stand outside any
+    # quote; bash reads the body as data, so a quote in it must not pair with one past the delimiter. The
+    # unmatched-delimiter put-back runs to the end, and a code body is GH #681, so neither is recorded.
     lines = cmd.split("\n")
     out, i, stack, sure = [], 0, [None], True
     while i < len(lines):
@@ -488,6 +481,7 @@ def _strip_heredocs(cmd):
                 or any(not mask[k] and line[k] in ")`" for k in range(real[-1].end(), len(line)))))
             if sure:
                 ms = real
+        framed = "(" in stack or "`" in stack  # the heredoc sits in $( or a backtick (read only while sure)
         if not ms:
             continue
         ctx, views, has_client = _HeredocLine(line), {}, bool(_SQL_CLIENT_RE.search(line))
@@ -506,7 +500,7 @@ def _strip_heredocs(cmd):
                 if body_line == delim:
                     found = True
                     break
-                if body_line.startswith(delim):
+                if body_line.startswith(delim) and (framed or not sure):
                     early = True  # bash inside $( ends the body at EOF) too
                     break
                 expands = expands or not quoted and (_odd_trailing_bs(body_line)
@@ -517,7 +511,8 @@ def _strip_heredocs(cmd):
             if early:
                 # Unsure from here: the body is kept and the EOF) line is read again as a command line.
                 out.extend(lines[body_start:i - 1])
-                _check_kept_body(lines[body_start:i - 1])
+                if ends is not None and not code:
+                    ends.append(len(out))
                 i, sure = i - 1, False
                 break
             if not found:
@@ -528,7 +523,8 @@ def _strip_heredocs(cmd):
             sure = sure and not expands
             if code or not sure:
                 out.extend(lines[body_start:i])
-                _check_kept_body(lines[body_start:i - 1])
+                if ends is not None and not code:
+                    ends.append(len(out))
             if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops("\n".join(lines[body_start:i - 1])):
                 _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
@@ -674,7 +670,7 @@ def _rm_prompts_each(rest):
 # GH #668: the heredoc scan runs before _CMD_LEN_CAP and a timeout allows, so a huge command skips it
 # and is denied by that cap unchanged.
 cmd = d["tool_input"].get("command", "")
-cmd = _strip_heredocs(cmd) if len(cmd) <= 2_000_000 else cmd
+cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= 2_000_000 else cmd
 
 def _mid_merge():
     # `git add -A|--all|.` is allowed only mid-merge (staging a manual conflict
@@ -1974,9 +1970,21 @@ def _drop_ph_tokens(w):
 _CMD_LEN_CAP = 150_000
 if len(cmd) > _CMD_LEN_CAP:
     deny("command too long to safely tokenize (" + str(len(cmd)) + " chars, cap " + str(_CMD_LEN_CAP) + ") - confirm with user first")
-# Structural (text the tokenizer would misread), so no rule id and no shadow (repo-gotchas.md, GH #337).
-if _HEREDOC_QUOTE_OPEN[0]:
-    deny("a heredoc body the gate reads as commands leaves a quote open - confirm with user first")
+# GH #668 round 3: a mark line goes where each kept data body ends, and the tokenizer's own reader runs once:
+# a mark not at a statement start sits in a quote or a join, so a quote in the body (or on its opener
+# line) pairs with one past the delimiter and would hide the lines between. A command holding the mark
+# (a noncharacter) could forge one. Structural, so no rule id and no shadow (repo-gotchas.md, GH #337).
+_KEPT_MARK = "﷑"
+if _KEPT_BODY_ENDS:
+    _at, _marked, _lns = set(_KEPT_BODY_ENDS), [], cmd.split("\n")
+    for _k in range(len(_lns) + 1):  # index len(_lns): a body that ends the command
+        if _k in _at:
+            _marked.append(_KEPT_MARK)
+        if _k < len(_lns):
+            _marked.append(_lns[_k])
+    if _KEPT_MARK in cmd or _newlines_to_seps(_normalize_ansi_c_quotes("\n".join(_marked))).count(
+            "\n; " + _KEPT_MARK) < len(_at):
+        deny("a heredoc body the gate reads as commands leaves a quote open - confirm with user first")
 
 def _sql_stdin_drop(c):
     # SQL a client reads on stdin drops or truncates: a heredoc body it reads (_SQL_HEREDOC_DROP), a
@@ -2482,8 +2490,7 @@ def _scan_body(body):
     # The same body comes back from every window copy (see _BODY_READINGS), so each is checked once.
     if body not in _SQL_BODIES_SEEN:
         _SQL_BODIES_SEEN.add(body)
-        # Stripped for the SQL check only (the rules read the body whole), so _HEREDOC_QUOTE_OPEN set here
-        # guards nothing and is not checked.
+        # Stripped for the SQL check only (the rules read the body whole), so it records no kept bodies.
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
