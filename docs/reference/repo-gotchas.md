@@ -110,7 +110,9 @@ already set alone.
   `settings.json` and restart.
 - **Same-version edits are no-ops.** Claude Code loads the plugin from
   `~/.claude/plugins/cache/<marketplace>/mh/<version>/` at startup; `claude plugin update`
-  copies nothing unless `plugin.json`'s version changed. Bump both manifests before updating.
+  copies nothing unless `plugin.json`'s version changed. Bump both manifests before updating,
+  locally: do not commit that bump, since branches never bump (`merge-pr.sh` gives the PR its version at
+  merge time, `branching-model.md`). A committed one is harmless, kept only when above develop's.
   This applies to third-party plugins too: `mattpocock-skills` once sat 3 commits behind
   upstream while `update` reported "already latest". Fix: uninstall, `trash` the cache dir,
   reinstall.

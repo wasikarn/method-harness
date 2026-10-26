@@ -268,7 +268,8 @@ synced_and_merged "non-numeric version"
 STUB_HEAD_VER=1.1.196-rc1 STUB_HEAD_MKT_VER=1.1.196-rc1 STUB_SYNC_VER=1.1.196-rc1 MERGE_PR_SYNC_TRIES=1 run 0 syncsha1 1.50
 refuses "non-numeric version after the sync" "after 1 sync rounds"
 
-# 4f7. a leading zero reads as the same number to awk but not to the equal-version guard: synced.
+# 4f7. a leading zero reads as the same number to awk but not to the equal-version guard, so it goes to
+# the sync (the stub syncs it; the real sync-pr-head.sh refuses a non-X.Y.Z version, which 4e3 covers).
 STUB_HEAD_VER=01.1.5 STUB_HEAD_MKT_VER=01.1.5 STUB_DEV_VER=1.1.5 run 0 syncsha1 1.50
 synced_and_merged "leading-zero version"
 
@@ -276,7 +277,8 @@ synced_and_merged "leading-zero version"
 MERGE_PR_ALLOW_SAME_VERSION=1 STUB_HEAD_VER=1.1.5 STUB_DEV_VER=1.1.5 run 0 headsha111 1.50
 merged_unsynced "same version with the opt-out"
 
-# 4h. unreadable manifest version at the head: synced (the sync reads develop's and writes both).
+# 4h. unreadable manifest version at the head: it goes to the sync (the stub syncs it; the real
+# sync-pr-head.sh refuses a head whose plugin.json version it cannot read, which 4e3 covers).
 STUB_HEAD_VER='' run 0 syncsha1 1.50
 synced_and_merged "unreadable version"
 
@@ -345,6 +347,14 @@ refuses "only a fenced MERGE" "no \"Fresh-context review"
 # 6l. git diff-tree fails on a commit after the reviewed sha: refuse (it used to read as not substantive).
 STUB_COMMITS="c2:hooks/gates/irrecoverable.py" STUB_DIFFTREE_FAIL=1 run 0 headsha111 1.50
 refuses "diff-tree failure" "diff-tree c2 failed"
+
+# 4l. a MERGE_PR_SYNC_TRIES that is not a whole number would disarm the round cap: refuse up front, before
+# the load wait (load 7.25 would otherwise wait) and before any sync.
+MERGE_PR_SYNC_TRIES=abc run 1 syncsha1 7.25
+refuses "non-numeric MERGE_PR_SYNC_TRIES" "MERGE_PR_SYNC_TRIES must be a whole number"
+if [ "$(syncs)" -eq 0 ] && ! /usr/bin/grep -q 'load' <<<"$out"; then ok "refused before the load wait and any sync"; else bad "late refusal: $out"; fi
+MERGE_PR_SYNC_TRIES=0 run 1 syncsha1 1.50
+refuses "MERGE_PR_SYNC_TRIES=0 on a head that needs a sync" "after 0 sync rounds"
 
 # 5. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" 2>&1); rc=$?
