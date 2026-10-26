@@ -3765,6 +3765,10 @@ def _check_window(_wi, w):
             # recursive, dir, verbose, help, version) leave --r and --f unambiguous.
             has_r = has_f = False
             for t in rest:
+                # GH #594: after a bare `--` every word is an operand (`rm -- -rf` removes a file named -rf).
+                # Only a literal one: `$(x)--` is an operand once $(x) prints anything, and -rf after it a flag.
+                if t == "--":
+                    break
                 # "$(true)-rf" IS "-rf" in bash but blanks to "PH-rf", which no
                 # longer starts with "-" -- strip PH, assume the dangerous
                 # (empty-substitution) resolution.

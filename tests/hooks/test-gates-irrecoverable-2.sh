@@ -2725,4 +2725,16 @@ for _c in \
 done
 
 
+# GH #594: after a bare `--` every word is an operand, so `rm -- -rf` deletes a file named -rf. GNU rm
+# still permutes the options before `--` (`rm build -rf` is -rf).
+test_allow "$IRRECOVERABLE" "GH #594: rm -- -rf removes a file named -rf" "$(bash_payload 'rm -- -rf')"
+test_allow "$IRRECOVERABLE" "GH #594: rm -f -- -r removes a file named -r" "$(bash_payload 'rm -f -- -r')"
+test_deny  "$IRRECOVERABLE" "GH #594: rm -r -- -f is still rm -r (rm-recursive)" "$(bash_payload 'rm -r -- -f')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm -rf -- build" "$(bash_payload 'rm -rf -- build')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm build -rf (options permute before --)" "$(bash_payload 'rm build -rf')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm -r build -- -f still has -r" "$(bash_payload 'rm -r build -- -f')"
+# a -- a substitution builds may not be one: a non-empty $(x) makes it an operand and leaves -rf a flag
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm \$(x)-- -rf build" "$(bash_payload 'rm $(x)-- -rf build')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm --x -rf build (not a bare --)" "$(bash_payload 'rm --x -rf build')"
+
 gates_summary
