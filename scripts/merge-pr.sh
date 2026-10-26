@@ -299,7 +299,7 @@ same_but_version() {
 # merged_but_version <conflict lines> <manifest> <merge commit>: the commit's manifest is what merging the
 # three stages gives with the version set aside, the way resolve_manifest_conflicts makes it.
 merged_but_version() {
-  local stages b o t m rc=0
+  local stages b o t m c rc=0
   stages=$(printf '%s\n' "$1" | awk -F '\t' -v p="$2" '$2 == p { split($1, x, " "); s[x[3]] = x[2] } END { print s[1] " " s[2] " " s[3] }')
   set -- $stages "$2" "$3"
   [ "$#" -eq 5 ] || return 1  # a side is missing (add/add or delete): not a version-only conflict
@@ -307,8 +307,10 @@ merged_but_version() {
   o=$(git show "$2" | with_version 0.0.0-merge | git hash-object -w --stdin) || return 1
   t=$(git show "$3" | with_version 0.0.0-merge | git hash-object -w --stdin) || return 1
   m=$(git merge-file -p --object-id "$o" "$b" "$t") || rc=$?
+  if [ "$rc" -ge 128 ]; then echo "merge-pr: git merge-file failed on $4 of $5 (rc=$rc; it needs git 2.43 or later); not merging." >&2; exit 1; fi
   [ "$rc" -eq 0 ] || return 1
-  [ "$m" = "$(git show "$5:$4" | with_version 0.0.0-merge)" ]
+  c=$(git show "$5:$4" | with_version 0.0.0-merge) || return 1
+  [ "$m" = "$c" ]
 }
 check_review() {
   local verdicts last word sha revs c f files merges parents p1 p2 tree conflicts rc

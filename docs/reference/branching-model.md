@@ -90,7 +90,7 @@ character, at least as long), and the last verdict line in a comment wins. The l
 the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must change only
 the two manifests' `"version"` value or be a two-parent merge whose tree is what `git merge-tree --write-tree`
 makes of its parents, the manifests' version aside, and whose only conflicts were in the manifests and resolve
-the way the script resolves them (GH #629; git >= 2.38), checked before the script writes anything, before its
+the way the script resolves them (GH #629; git >= 2.38, 2.43 for a conflicted manifest), checked before the script writes anything, before its
 push and before the merge. `plugin.json` can carry inline hooks and MCP servers, so any other manifest edit
 counts as code. So merging `develop` and bumping the version keep the review; any other change (an edit made
 inside a merge, or a conflict resolved in code, included), a rebase, or a force-push needs a new one. The
