@@ -457,6 +457,9 @@ verify_refuses "--verify comments file not JSON" "could not read PR 451's commen
 # 7e. base other than develop, and malformed arguments: refused (usage errors exit 2).
 verify_run 0 "$FULL" main
 verify_refuses "--verify non-develop base" "not develop"
+if /usr/bin/grep -q 'update_pull_request' <<<"$err" && ! /usr/bin/grep -q 'gh pr edit' <<<"$err"; then
+  ok "--verify non-develop base: names the MCP retarget, not gh (a session without gh runs this mode)"
+else bad "--verify wrong-base hint: $err"; fi
 verify_run 0 headsha111
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && /usr/bin/grep -q 'full 40-character head sha' <<<"$err"; then ok "--verify short head sha: exit 2"; else bad "--verify short sha: rc=$rc err='$err'"; fi
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" --verify 451 "$FULL" develop 2>&1); rc=$?
