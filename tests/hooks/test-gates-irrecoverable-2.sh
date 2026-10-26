@@ -3040,6 +3040,15 @@ test_deny  "$IRRECOVERABLE" 'GH #664: r$'"'"'\UFFFFFFFF'"'"'m -rf b' "$(bash_pay
 test_allow "$IRRECOVERABLE" 'GH #664 control: echo $'"'"'\cß'"'"' (no crash)' "$(bash_payload 'echo $'"'"'\cß'"'"'')"
 test_allow "$IRRECOVERABLE" 'GH #664 control: bash <<< $'"'"'echo hi\c{rm -rf b'"'"' (\c{ is ESC, not ;)' "$(bash_payload 'bash <<< $'"'"'echo hi\c{rm -rf b'"'"'')"
 test_allow "$IRRECOVERABLE" "GH #664 control: echo \"\\\$\" | sh" "$(bash_payload 'echo "\$" | sh')"
+# a $'...' inside double quotes is literal to that shell (the stdin shell decodes it later), and \x{HH} decodes
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< "$'"'"'\x22'"'"'; rm -rf b; #"' "$(bash_payload 'bash <<< "$'"'"'\x22'"'"'; rm -rf b; #"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: echo "x$'"'"'\x22'"'"'; rm -rf b; : $'"'"'\x22'"'"'" | bash' "$(bash_payload 'echo "x$'"'"'\x22'"'"'; rm -rf b; : $'"'"'\x22'"'"'" | bash')"
+test_deny  "$IRRECOVERABLE" 'GH #664: echo "$'"'"'\x22'"'"'"; rm -rf b; echo "$'"'"'\x22'"'"'" (top level)' "$(bash_payload 'echo "$'"'"'\x22'"'"'"; rm -rf b; echo "$'"'"'\x22'"'"'"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< $'"'"'\x{72}m -rf b'"'"'' "$(bash_payload 'bash <<< $'"'"'\x{72}m -rf b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #664: $'"'"'\x{172}m'"'"' -rf b (top level, & 0xFF)' "$(bash_payload '$'"'"'\x{172}m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash -c "$'"'"'\x72m'"'"' -rf b" (decoded when the body is read)' "$(bash_payload 'bash -c "$'"'"'\x72m'"'"' -rf b"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: a literal $'"'"' in "..." does not swallow a live one after it' "$(bash_payload '"$'"'"'" ; $'"'"'\x72m'"'"' -rf b')"
+test_allow "$IRRECOVERABLE" 'GH #664 control: echo "$'"'"'say hi'"'"'"' "$(bash_payload 'echo "$'"'"'say hi'"'"'"')"
 test_allow "$IRRECOVERABLE" "GH #664 control: bash <<< \$'echo hi'" "$(bash_payload "bash <<< \$'echo hi'")"
 test_allow "$IRRECOVERABLE" "GH #664 control: grep x <<< \$'rm -rf b'" "$(bash_payload "grep x <<< \$'rm -rf b'")"
 

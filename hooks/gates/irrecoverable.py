@@ -483,6 +483,17 @@ def _normalize_ansi_c_quotes(cmd):
                 if nxt in SIMPLE:
                     decoded.append(SIMPLE[nxt])
                     i += 2
+                elif nxt == "x" and body[i + 2:i + 3] == "{":  # \x{HH...}: any hex digits, the byte is & 0xFF
+                    j, digits = i + 3, ""
+                    while j < n and body[j] in HEXDIGITS:
+                        digits += body[j]
+                        j += 1
+                    if digits:
+                        decoded.append(chr(int(digits, 16) & 0xFF))
+                        i = j + 1 if body[j:j + 1] == "}" else j
+                    else:
+                        decoded.append(body[i:i + 2])
+                        i += 2
                 elif nxt == "x":
                     j, digits = i + 2, ""
                     while j < n and len(digits) < 2 and body[j] in HEXDIGITS:
@@ -538,7 +549,21 @@ def _normalize_ansi_c_quotes(cmd):
             else:
                 spliced.append(ch)
         return SQ + "".join(spliced) + SQ
-    return _ANSI_C_QUOTE_RE.sub(_decode_ansi_c, cmd)
+    # Only a $'...' the shell reading this text would decode: not inside "..." or '...' (GH #664 review 3: a
+    # double-quoted $'\x22' is literal there, and decoding it early hid what followed it). A $(...) or `...`
+    # inside "..." is a context of its own, so a $'...' there is decoded (_quote_mask).
+    if "$" + SQ not in cmd:
+        return cmd
+    live = set()
+    _quote_mask(cmd, live)
+    out, last = [], 0
+    for i in sorted(live):  # matched at each live start, so a literal $' in "..." cannot swallow a live one
+        m = _ANSI_C_QUOTE_RE.match(cmd, i) if i >= last else None
+        if m:
+            out += [cmd[last:i], _decode_ansi_c(m)]
+            last = m.end()
+    out.append(cmd[last:])
+    return "".join(out)
 
 # GH #606, #611 review finding 1: rm -i asks per file, and the Bash tool's stdin gives EOF, which rm reads
 # as "no". The command can answer for it instead: a pipe (yes | rm -ri), any < redirect (<, <<, <<<, <&, <>,
@@ -979,7 +1004,7 @@ def _spawn_statement(tail, work):
         buf.append(t)
     return "".join(buf), work
 
-def _quote_mask(c):
+def _quote_mask(c, ansi_c_starts=None):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
     # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
     # per scanned text.
@@ -1013,6 +1038,8 @@ def _quote_mask(c):
             mask[i + 1] = 1
             i += 1
         elif ch == "$" and c[i + 1:i + 2] == SQ:
+            if ansi_c_starts is not None:  # a $'...' the shell decodes: outside quotes, or in a $(..) / `..`
+                ansi_c_starts.add(i)
             mask[i] = mask[i + 1] = 1
             stack.append("$'")
             i += 1
