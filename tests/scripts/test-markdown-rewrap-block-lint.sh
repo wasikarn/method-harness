@@ -7,7 +7,8 @@
 # pairing the later backticks wrongly. Flagged, outside fences and front matter:
 # - a `>` glued to the next character (`>(`, `>/dev/null`, `>&2`) on a line right after a non-blank,
 #   non-quote line: a deliberate quote is `> text`, a wrapped shell redirect is not;
-# - an ATX heading right after a paragraph line (not a list item, table row, quote, heading or HTML).
+# - an ATX heading right after a paragraph line (not a list item, table row, quote, heading, HTML).
+# Fences follow CommonMark: a backtick opener's info string has no backtick, and a closer is bare.
 # Lists are out of scope: a list right after its lead-in line is common and deliberate.
 # Fix a hit by rewrapping so the marker stays mid-line, or with a blank line before a real heading.
 set -uo pipefail
@@ -23,7 +24,7 @@ hits() {
 import re, sys
 glued = re.compile(r'^ {0,3}>[^ \t>]')
 heading = re.compile(r'^ {0,3}#{1,6}(?:[ \t]|$)')
-fence = re.compile(r'^ {0,3}(`{3,}|~{3,})')
+fence = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
 quote = re.compile(r'^ {0,3}>')
 not_para = re.compile(r'^ {0,3}(?:>|#|[-+*][ \t]|\d+[.)][ \t]|\||<)')
 for f in sys.argv[1:]:
@@ -42,11 +43,14 @@ for f in sys.argv[1:]:
         line = lines[n]
         m = fence.match(line)
         if open_fence:
-            if m and m.group(1)[0] == open_fence[0] and len(m.group(1)) >= len(open_fence):
+            # a closer is the same character, at least as long, with nothing after it but spaces
+            if (m and m.group(1)[0] == open_fence[0] and len(m.group(1)) >= len(open_fence)
+                    and not m.group(2).strip()):
                 open_fence = None
             prev = ''
             continue
-        if m:
+        # a backtick fence's info string has no backtick: ```code``` text is an inline span
+        if m and not (m.group(1)[0] == '`' and '`' in m.group(2)):
             open_fence, prev = m.group(1), ''
             continue
         if prev.strip() and not quote.match(prev):
@@ -66,6 +70,14 @@ a redirect wrapped as
 >/dev/null keeps going
 the next note is
 # not a heading the writer meant
+```inline``` code span, not a fence, so the scan goes on
+>(wrapped redirect after it)
+```sh
+```sh is not a closer: a closer has nothing after its backticks
+# a comment inside the still-open block
+```
+text after the real closer
+>&2 wrapped again
 EOF
 cat > "$probe/good.md" <<'EOF'
 ---
@@ -86,17 +98,22 @@ echo text
 >(grep -q y)
 # shell comment
 ```
+~~~~
+```sh
+# an inner fence and its closer stay code until the longer tilde fence closes
+```
+~~~~
 EOF
 got=$(hits "$probe/bad.md" | sed 's/^[^:]*:\([0-9]*\):.*/\1/' | tr '\n' ' ')
-[ "$got" = "2 4 6 " ] && ok "probe: a glued > after text and a heading after a paragraph are caught (lines 2 4 6)" \
-  || bad "probe: bad.md gave lines [$got], want [2 4 6 ]"
+[ "$got" = "2 4 6 8 14 " ] && ok "probe: a glued > after text and a heading after a paragraph are caught, also past an inline triple-backtick span and a closer with an info string (lines 2 4 6 8 14)" \
+  || bad "probe: bad.md gave lines [$got], want [2 4 6 8 14 ]"
 out=$(hits "$probe/good.md")
 [ -z "$out" ] && ok "probe: quotes after a label, quote continuations, headings after a blank or a list, fences and front matter pass" \
   || bad "probe: good.md was flagged: $out"
 [ -n "$probe" ] && trash "$probe"
 
 files=()
-while IFS= read -r f; do files+=("$ROOT/$f"); done < <(git -C "$ROOT" ls-files '*.md')
+while IFS= read -r -d '' f; do files+=("$ROOT/$f"); done < <(git -C "$ROOT" ls-files -z '*.md')
 out=$(hits "${files[@]}")
 [ -z "$out" ] && ok "no tracked Markdown line opens a block mid-paragraph" \
   || bad "a Markdown line opens a block mid-paragraph (rewrap so the marker stays mid-line, or add a blank line before a real heading): $(printf '%s' "$out" | sed "s|$ROOT/||" | tr '\n' ';')"
