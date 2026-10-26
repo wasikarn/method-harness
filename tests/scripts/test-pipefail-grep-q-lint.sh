@@ -56,7 +56,7 @@ hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p'
 # shape a past check missed. Most are real races (measured at exit 141); some pin documented
 # heuristics or over-reports, where bash may exit 0 (grep -q in loop bodies, a writer whose
 # status is discarded, a function never called, small fixed input). The `>(...)` over-reports
-# whose fds are all redirected later live in over.sh below.
+# (fds all redirected later, an fd the writer never writes) live in over.sh below.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -163,7 +163,7 @@ cat > "$probe/over.sh" <<'EOF'
 cat < "$f" > >(grep -q y) >/dev/null
 { seq 2000000 >&2; } 2> >(grep -q 1) 2>/dev/null
 cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
-cat < "$f" 2> >(grep -q y) >/dev/null
+cat < "$f" 2> >(grep -q y)
 EOF
 out=$(scan "$probe/over.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
