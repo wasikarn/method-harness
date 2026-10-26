@@ -55,9 +55,9 @@ hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p'
 # Planted hits the scanner must report, one per statement (line numbers in want_lines), each a
 # shape a past check missed. Most are real races (measured at exit 141); some pin documented
 # heuristics or over-reports, where bash may exit 0 (grep -q in loop bodies, a writer whose
-# status is discarded by `$(...)` or `<(...)`, a function never called, small fixed input). The
-# other documented over-reports (fds all redirected later, an fd the writer never writes to,
-# `|| true`, a later drain) live in over.sh below.
+# status is discarded by `$(...)`, a function never called, small fixed input). The other
+# documented over-reports (fds all redirected later, an fd the writer never writes to, `|| true`,
+# `<(...)`, a later drain) live in over.sh below.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -156,11 +156,12 @@ got_lines=$(hit_lines <<<"$out")
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
 
 # Known over-reports (docs/reference/repo-gotchas.md lists them and says why they stay; the
-# `$(...)`, `<(...)` and never-called-function ones are among bad.sh's rows above): bash exits 0
-# for each, yet the scanner reports it, by design. Rows 1-3 and 5: every fd holding the `>(...)` or
-# pipe is redirected later on the same command; rows 4 and 6: the writer never writes to that fd;
-# row 7: the status is discarded by `|| true`; row 8: a later reader drains the rest (grep's
-# status kept, so only the drain makes it safe).
+# `$(...)` and never-called-function ones are among bad.sh's rows above): no writer here can die of
+# SIGPIPE (exit 141; rows 5 and 6 exit 1 only because grep sees no input), yet the scanner reports
+# each, by design. Rows 1-3 and 5: every fd holding the `>(...)` or pipe is redirected later on the
+# same command; rows 4 and 6: the writer never writes to that fd; rows 7 and 8: the writer's status
+# is discarded (`|| true`, `<(...)`); row 9: a later reader drains the rest (grep's status kept, so
+# only the drain makes it safe).
 # Pinned so a skip rule cannot come back unreviewed: one that clears a row must keep every race
 # above reported, and then move the row to good.sh.
 cat > "$probe/over.sh" <<'EOF'
@@ -169,15 +170,16 @@ cat < "$f" > >(grep -q y) >/dev/null
 cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
 cat < "$f" 2> >(grep -q y)
 seq 2000000 >/dev/null | grep -q 1
-{ seq 2000000 >&2; } 2>/dev/null | grep -q 1
+true | grep -q 1
 seq 2000000 | grep -q 1 || true
+cat <(seq 2000000 | grep -q 1) >/dev/null
 seq 2000000 | { grep -q 1; r=$?; cat >/dev/null; exit "$r"; }
 EOF
 out=$(scan "$probe/over.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
-[ "$rc" -eq 1 ] && [ "$got_lines" = "1 2 3 4 5 6 7 8" ] \
-  && ok "probe: the 8 known over-reports (fds all redirected later, an fd never written, status discarded, a later drain) stay reported, as documented" \
-  || bad "probe: known over-reports gave rc $rc, lines [$got_lines], want rc 1 and [1 2 3 4 5 6 7 8]: a skip rule must be reviewed against the races above; stderr: $(cat "$probe/err")"
+[ "$rc" -eq 1 ] && [ "$got_lines" = "1 2 3 4 5 6 7 8 9" ] \
+  && ok "probe: the 9 known over-reports (fds all redirected later, an fd never written, status discarded, a later drain) stay reported, as documented" \
+  || bad "probe: known over-reports gave rc $rc, lines [$got_lines], want rc 1 and [1 2 3 4 5 6 7 8 9]: a skip rule must be reviewed against the races above; stderr: $(cat "$probe/err")"
 
 cat > "$probe/good.sh" <<'EOF'
 # printf "$r" | grep -q x
