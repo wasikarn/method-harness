@@ -138,20 +138,24 @@ check_version() {
 # <sha> being the head the reviewer read. The last verdict on the PR must be MERGE, and every commit after
 # <sha> must be a merge of develop or touch only the two manifests (a version bump): a sync before the merge
 # keeps the review, any other change needs a new one. Binding to the sha, not to times, means a commit made
-# before the review but pushed after it, or a backdated one, is still caught. A line inside a ``` fence does
-# not count, and the last verdict line in a comment wins. Only issue comments are read (not PR reviews or the
-# body). This proves a verdict was posted, not who wrote it or that the reviewer had fresh context (CLAUDE.md
-# asks for that), and a conflict resolved inside a merge commit is not checked. There is no opt-out: an
-# operator who must merge without a verdict does it on GitHub.
-REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: false, m: null};
-    if ($l | test("^\\s*(```|~~~)")) then .f = (.f | not)
-    elif .f then .
+# before the review but pushed after it, or a backdated one, is still caught. A merge commit counts only
+# when its tree is what `git merge-tree` makes of its two parents, the manifests aside (GH #629: an edit
+# made inside a merge, or a conflict resolved in code, needs a new review). A line inside a ``` or ~~~
+# fence does not count (a fence closes only on the same character, at least as long, as CommonMark has
+# it), and the last verdict line in a comment wins. Only issue comments are read (not PR reviews or the
+# body). This proves a verdict was posted, not who wrote it or that the reviewer had fresh context
+# (CLAUDE.md asks for that). There is no opt-out: an operator who must merge without a verdict does it on
+# GitHub.
+REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: null, m: null};
+    (($l | capture("^ {0,3}(?<c>`{3,}|~{3,})") | .c) // null) as $fc
+    | if .f == null and $fc != null then .f = $fc
+    elif .f != null then (if $fc != null and ($fc[0:1] == .f[0:1]) and ($fc | length) >= (.f | length) then .f = null else . end)
     else ((($l | capture("^[#*\\s]*fresh-context review\\s*:\\s*\\**\\s*(?<v>MERGE|FIX FIRST|CLOSE)\\b(?<r>.*)$"; "i")) as $c | .m = $c) // .)
     end) | .m) as $m
   | select($m != null)
   | "\($m.v | ascii_upcase | gsub(" "; "_")) \(($m.r | capture("^[*\\s]*@\\s*`?(?<s>[0-9a-fA-F]{7,40})\\b") | .s) // "-")"'
 check_review() {
-  local verdicts last word sha revs c files
+  local verdicts last word sha revs c files merges parents p1 p2 tree rc
   if [ "$verify" = 1 ]; then
     verdicts=$(jq -r "$REVIEW_JQ" <"$comments_file") ||
       { echo "merge-pr: could not read PR $pr's comments from '$comments_file' (a JSON array of comments with a \"body\") to find its review verdict." >&2; exit 1; }
@@ -183,6 +187,26 @@ check_review() {
     if printf '%s\n' "$files" |
       awk '$0 != "" && $0 != ".claude-plugin/plugin.json" && $0 != ".claude-plugin/marketplace.json" { f = 1 } END { exit !f }'; then
       echo "merge-pr: PR $pr changed after its MERGE review of $sha: commit $c touches more than the manifests; get a review of $head." >&2
+      exit 1
+    fi
+  done
+  # A merge after the review must be the plain merge of its two parents (GH #629); git merge-tree --write-tree
+  # (git >= 2.38) prints that tree first, exiting 1 when it holds conflicts (a conflicted manifest is fine).
+  merges=$(git rev-list --merges "$sha..$head" ^origin/develop) || { echo "merge-pr: git rev-list --merges $sha..$head failed." >&2; exit 1; }
+  for c in $merges; do
+    parents=$(git rev-list --parents -n 1 "$c") || { echo "merge-pr: cannot read the parents of $c." >&2; exit 1; }
+    parents=${parents#* }; p1=${parents%% *}; p2=${parents#* }
+    if [ "$p2" = "$parents" ] || [ "${p2#* }" != "$p2" ]; then
+      echo "merge-pr: PR $pr's merge commit $c after its MERGE review of $sha does not have exactly two parents; get a review of $head." >&2
+      exit 1
+    fi
+    rc=0; tree=$(git merge-tree --write-tree --no-messages "$p1" "$p2") || rc=$?
+    if [ "$rc" -gt 1 ]; then echo "merge-pr: git merge-tree of $c's parents failed (rc=$rc; needs git >= 2.38); not merging." >&2; exit 1; fi
+    tree=${tree%%$'\n'*}
+    files=$(git diff --name-only "$tree" "$c^{tree}") || { echo "merge-pr: git diff of merge commit $c failed; not merging." >&2; exit 1; }
+    if printf '%s\n' "$files" |
+      awk '$0 != "" && $0 != ".claude-plugin/plugin.json" && $0 != ".claude-plugin/marketplace.json" { f = 1 } END { exit !f }'; then
+      echo "merge-pr: PR $pr's merge commit $c after its MERGE review of $sha changes more than merging its parents does (beyond the manifests); get a review of $head." >&2
       exit 1
     fi
   done
