@@ -348,13 +348,95 @@ refuses "only a fenced MERGE" "no \"Fresh-context review"
 STUB_COMMITS="c2:hooks/gates/irrecoverable.py" STUB_DIFFTREE_FAIL=1 run 0 headsha111 1.50
 refuses "diff-tree failure" "diff-tree c2 failed"
 
-# 4l. a MERGE_PR_SYNC_TRIES that is not a whole number would disarm the round cap: refuse up front, before
-# the load wait (load 7.25 would otherwise wait) and before any sync.
-MERGE_PR_SYNC_TRIES=abc run 1 syncsha1 7.25
-refuses "non-numeric MERGE_PR_SYNC_TRIES" "MERGE_PR_SYNC_TRIES must be a whole number"
-if [ "$(syncs)" -eq 0 ] && ! /usr/bin/grep -q 'load' <<<"$out"; then ok "refused before the load wait and any sync"; else bad "late refusal: $out"; fi
+# 4l. a MERGE_PR_SYNC_TRIES that is not a whole number below 10000 would disarm the round cap (a
+# non-number, or one too big for bash's integers, makes `[ -ge ]` fail as false): refuse up front with
+# exit 2, before the load wait (load 7.25 would otherwise wait) and before any sync.
+for bad_tries in abc 99999999999999999999 10000; do
+  MERGE_PR_SYNC_TRIES=$bad_tries run 1 syncsha1 7.25
+  refuses "MERGE_PR_SYNC_TRIES=$bad_tries" "MERGE_PR_SYNC_TRIES must be a whole number of sync rounds below 10000"
+  if [ "$rc" -eq 2 ] && [ "$(syncs)" -eq 0 ] && ! /usr/bin/grep -q 'load' <<<"$out"; then
+    ok "MERGE_PR_SYNC_TRIES=$bad_tries: exit 2, before the load wait and any sync"
+  else bad "MERGE_PR_SYNC_TRIES=$bad_tries: rc=$rc syncs=$(syncs) out=$out"; fi
+done
+MERGE_PR_SYNC_TRIES=9999 run 1 syncsha1 1.50
+synced_and_merged "MERGE_PR_SYNC_TRIES=9999 (the largest accepted)"
 MERGE_PR_SYNC_TRIES=0 run 1 syncsha1 1.50
 refuses "MERGE_PR_SYNC_TRIES=0 on a head that needs a sync" "after 0 sync rounds"
+
+# 7. --verify <PR> <head> <base> <comments.json>: the same checks without gh, for a cloud session that
+# merges through the GitHub MCP tools. The comments file holds what those tools return. It must never
+# call gh, sync, push or merge; on a pass it prints the head (stdout) and exits 0.
+FULL=1111111111111111111111111111111111111111
+# verify_run <ancestor-rc> [head] [base] [comments file]: sets rc, out (stdout), err; the comments file
+# defaults to STUB_COMMENTS_JSON (a MERGE @ abc1234 verdict) written to disk. Any gh call lands in the log.
+verify_run() {
+  local f="$STUB/comments.json"
+  printf '%s' "${STUB_COMMENTS_JSON-$(verdict 'MERGE @ abc1234')}" >"$f"
+  : >"$LOG"
+  rm -f "$STUB/fetch" "$STUB/merge-base" "$STUB/show-develop" "$STUB/api" "$STUB/sync-n"
+  out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_DIR="$STUB" STUB_HEAD=headsha111 \
+    STUB_COMMITS="${STUB_COMMITS-}" STUB_ANCESTOR="$1" STUB_REMOTE_HEAD=none STUB_LOAD=9.99 \
+    STUB_HEAD_VER="${STUB_HEAD_VER-1.1.2}" STUB_DEV_VER="${STUB_DEV_VER-1.1.1}" \
+    MERGE_PR_SYNC="$STUB/sync" MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 \
+    bash "$SCRIPT" --verify 451 "${2:-$FULL}" "${3:-develop}" "${4:-$f}" 2>"$STUB/err")
+  rc=$?
+  err=$(cat "$STUB/err")
+}
+# verify_quiet <label>: no gh call, no sync, no merge (load 9.99 also shows the load wait never ran).
+verify_quiet() {
+  if /usr/bin/grep -q '^gh ' "$LOG" || [ "$(syncs)" -ne 0 ]; then bad "$1: called gh or the sync: $(cat "$LOG")"
+  else ok "$1: no gh call, no sync, no merge"; fi
+}
+# verify_refuses <label> <pattern>: non-zero exit, empty stdout, the reason on stderr, and quiet.
+verify_refuses() {
+  if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q -- "$2" <<<"$err"; then ok "$1: refused ('$2')"
+  else bad "$1: rc=$rc out='$out' err='$err'"; fi
+  verify_quiet "$1"
+}
+
+# 7a. synced and reviewed: pass, the head on stdout.
+verify_run 0
+if [ "$rc" -eq 0 ] && [ "$out" = "$FULL" ] && /usr/bin/grep -q "passes at $FULL" <<<"$err"; then
+  ok "--verify pass: exit 0, the head alone on stdout"
+else bad "--verify pass: rc=$rc out='$out' err='$err'"; fi
+verify_quiet "--verify pass"
+if /usr/bin/grep -q "^git merge-base --is-ancestor origin/develop $FULL$" "$LOG" && /usr/bin/grep -q '^git fetch' "$LOG"; then
+  ok "--verify fetches and checks ancestry against origin/develop"
+else bad "--verify skipped the fetch or the ancestry check: $(cat "$LOG")"; fi
+
+# 7b. behind develop, or a version not above it: refused with the sync command, never synced itself.
+verify_run 1
+verify_refuses "--verify behind develop" "Run scripts/sync-pr-head.sh <head branch> $FULL"
+STUB_HEAD_VER=1.1.1 verify_run 0
+verify_refuses "--verify same version as develop" "the same as origin/develop"
+STUB_HEAD_MKT_VER=1.1.9 verify_run 0
+verify_refuses "--verify manifests disagree" "marketplace.json 1.1.9"
+
+# 7c. the review rule is the gh path's, parser and all.
+STUB_COMMENTS_JSON=$(comments "$(verdict 'MERGE @ abc1234')" "$(verdict 'FIX FIRST')") verify_run 0
+verify_refuses "--verify latest verdict FIX FIRST" "is FIX FIRST, not MERGE"
+STUB_COMMENTS_JSON='[{"body":"```\nFresh-context review: MERGE @ abc1234\n```"}]' verify_run 0
+verify_refuses "--verify only a fenced MERGE" "no \"Fresh-context review: MERGE @ <sha>\""
+STUB_COMMITS="c2:hooks/gates/irrecoverable.py" verify_run 0
+verify_refuses "--verify a change after the reviewed sha" "commit c2 touches more than the manifests"
+STUB_COMMITS="c2:.claude-plugin/plugin.json,.claude-plugin/marketplace.json" verify_run 0
+if [ "$rc" -eq 0 ] && [ "$out" = "$FULL" ]; then ok "--verify a bump after the review keeps it"; else bad "--verify bump after review: rc=$rc err='$err'"; fi
+STUB_REVIEWED_ANCESTOR=1 verify_run 0
+verify_refuses "--verify reviewed sha not in the head's history" "not in the head's history"
+
+# 7d. the comments file is missing or not JSON: refused, not read as "no verdict needed".
+verify_run 0 "$FULL" develop "$STUB/no-such-file.json"
+verify_refuses "--verify missing comments file" "could not read PR 451's comments"
+STUB_COMMENTS_JSON='not json' verify_run 0
+verify_refuses "--verify comments file not JSON" "could not read PR 451's comments"
+
+# 7e. base other than develop, and malformed arguments: refused (usage errors exit 2).
+verify_run 0 "$FULL" main
+verify_refuses "--verify non-develop base" "not develop"
+verify_run 0 headsha111
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && /usr/bin/grep -q 'full 40-character head sha' <<<"$err"; then ok "--verify short head sha: exit 2"; else bad "--verify short sha: rc=$rc err='$err'"; fi
+out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" --verify 451 "$FULL" develop 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'usage:' <<<"$out"; then ok "--verify missing comments argument: usage, exit 2"; else bad "--verify usage: rc=$rc out=$out"; fi
 
 # 5. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" 2>&1); rc=$?

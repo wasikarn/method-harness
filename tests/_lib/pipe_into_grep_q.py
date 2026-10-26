@@ -1,7 +1,9 @@
-"""pipe_into_grep_q.py FILE... -- print FILE:LINE for every pipe (`|` or `|&`) into a quiet grep.
+"""pipe_into_grep_q.py FILE... -- print FILE:LINE for every pipe (`|`, `|&`, or an output process
+substitution `>(...)`) into a quiet grep.
 
 Under `set -o pipefail`, `writer | grep -q PAT` races: grep -q exits on its first match, a writer
-still writing dies of SIGPIPE (141), and pipefail turns the match into a failure.
+still writing dies of SIGPIPE (141), and pipefail turns the match into a failure. A `>(grep -q ...)`
+kills the command writing into it the same way, which also fails a `set -e` script with no pipe.
 
 The shell is parsed by shfmt's JSON syntax tree (mvdan.cc/sh, `--to-json`, shfmt >= 3.5), not by a
 regex or a hand-written lexer: both missed sites or crashed in review (GH #578, #597, #598). shfmt
@@ -26,8 +28,11 @@ reader; `<&0` and `<&"$fd"` may still be the pipe, so they are.
 
 A `>(...)` is checked the same way, wherever it sits (either side of a pipe, or no pipe at all):
 its readers are what the command writes into it, and a quiet grep there kills that command with
-SIGPIPE. Its status can still be discarded (inside `$(...)`/`<(...)`, behind `|| true`, a function
-defined but never run) or the grep followed by a reader of the rest; those are over-reported.
+SIGPIPE. Over-reported: a writer whose status is discarded (`echo "$(...)"`, `<(...)`, `|| true`, a
+function never called; a bare `v=$(...)` keeps the status, so under `set -e` it is a real failure),
+a grep followed by a reader that drains the rest, and a `>(...)` whose fds are all redirected
+elsewhere later on the same command (`cat > >(grep -q y) >/dev/null`): telling that last one apart
+needs a model of fd copies, moves and `{var}` fds, and getting it wrong hides real races.
 
 A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
 wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
