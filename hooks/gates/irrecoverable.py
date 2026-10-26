@@ -252,7 +252,7 @@ _HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?\s*([" + SQ + r"\"]?)([^\s" + S
 # line BEFORE the << counts. GH #559 review 4: not only the heredoc's own pipe stage, since a heredoc on a
 # compound command feeds every command in it ({ bash; } <<EOF, while read x; do bash; done <<EOF), and \b
 # keeps zsh-5.9 and python3.12 interpreters. Matched once per line, at its first interpreter word.
-_INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
+_INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|ash|hush|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _HEREDOC_SCAN_BUDGET = [3_000_000]  # chars a $( re-read of heredoc lines may parse; past it, a client is assumed
 
 class _HeredocLine:
@@ -311,7 +311,7 @@ def _heredoc_feeds_sql_client(ctx, openers, views, pos):
 # GH #567: a shell reads its commands on stdin too: a heredoc piped into it (cat <<EOF | bash), a here-string
 # (bash <<< 'cmd') or the words an echo/printf pipes into it (echo 'cmd' | sh). Only a shell that reads stdin
 # counts: one with no -c and no script operand (`bash -s args` reads stdin, `bash x.sh` does not).
-_STDIN_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+_STDIN_SHELLS = ("bash", "sh", "zsh", "dash", "ksh", "ash", "hush")  # ash, hush: busybox (GH #662)
 def _split_words(seg):
     try:
         return shlex.split(seg)
@@ -323,7 +323,8 @@ def _reads_stdin_shell(seg):
     if not w:
         return False
     i = 0
-    while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i] in ("sudo", "env", "command", "exec", "nohup", "time")):
+    while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i].rsplit("/", 1)[-1] in ("sudo", "env", "command", "exec", "nohup", "time",
+                                                             "busybox", "busybox.static", "busybox-static", "toybox")):
         i += 1
     if i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
         return False
@@ -648,9 +649,12 @@ _RUN_WRAPPERS = {
     "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
                   "--joblog", "--results", "--delay", "--timeout", "-a", "--arg-file"), 0, (), False),
     "npx": (("-p", "--package"), 0, ("-c", "--call"), False), "bunx": (("-p", "--package"), 0, (), False),
-    # GH #662: `busybox [--] APPLET args` runs the applet (rm, dd, mkfs.ext2, find, sh, ...).
-    "busybox": ((), 0, (), False),
+    # GH #662: `busybox [--] APPLET args` runs the applet (rm, dd, mkfs.ext2, find, sh, ...); toybox likewise.
+    **{_bb: ((), 0, (), False) for _bb in ("busybox", "busybox.static", "busybox-static", "toybox")},
 }
+# GH #662: the walks with their own wrapper list (xargs, find -exec, a shell reading stdin) read past these too.
+_BUSYBOX_NAMES = ("busybox", "busybox.static", "busybox-static", "toybox")
+_STEP_WRAPPERS = PREFIX_WRAPPERS + _BUSYBOX_NAMES
 # A package runner's package names map to the program they install (`npx @anthropic-ai/claude-code -p x`).
 _PKG_PROGRAMS = {"claude-code": "claude"}
 _SPAWN_WINDOW_FLAGS = ("-p", "--print", "--agent", "--bg", "--worktree")
@@ -1067,7 +1071,7 @@ _SUBST_SPAWN_RE = re.compile(r"(?:^|(?<=[;&|()\n{])|(?<=-exec )|(?<=-execdir )|(
 # `--norc`, `+e`, `-lc`; bounded and option-led, so a statement of many `bash` words stays linear: a 33rd
 # option before `-c` is a known gap; an unbounded scan took 23-60 s at 140 KB, past the hook timeout) and an optional `--`, or `eval`; then a double-
 # quoted body, which may hold a `$(...)` with quotes of its own.
-_DQ_BODY_RE = re.compile(r"(?:(?<![^\s;&|(){])\\?(?:[^\s;&|()\"'/]*/)*(?:bash|sh|zsh|dash|ksh)"
+_DQ_BODY_RE = re.compile(r"(?:(?<![^\s;&|(){])\\?(?:[^\s;&|()\"'/]*/)*(?:bash|sh|zsh|dash|ksh|ash|hush)"
                          r"(?:[ \t]+[-+]{1,2}[A-Za-z][^\s\"';&|]*(?:[ \t]+(?![-+])[^\s\"';&|]+)?){0,32}?"
                          r"[ \t]+-[A-Za-z]*c(?:[ \t]+--)?|(?<![\w./-])eval)[ \t]+\""
                          r"((?:\$\((?:[^()]|\([^()]*\))*\)|[^\"\\]|\\.)*)\"")
@@ -2147,7 +2151,7 @@ def _past_dash_words(rest, i=0):
 # stripped the quotes but blanked substitutions only inside a DOUBLE-quoted body
 # (a single-quoted one is inert to the outer shell and live to the inner), so
 # the body is blanked again here and its PH tokens duplicate-classify below.
-_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "hush"}  # ash, hush: busybox (GH #662)
 _MAX_SHELL_DEPTH = 5
 _WDEPTH = {}      # window index -> unwrap depth (absent = 0, an original window)
 _XARGS_HANDOVERS = [0]  # windows appended for `xargs <wrapper> ...` (bounded, see the xargs branch)
@@ -2226,7 +2230,8 @@ _LONG_VALUE_OPTS = ("--rcfile", "--init-file")  # bash long options that take a 
 # bash reads every o/O in a cluster as taking the next word; zsh, ksh and dash follow getopt; `sh`
 # is bash on macOS and dash on Linux, so both readings are scanned (a wrong reading only scans one
 # extra word).
-_SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (True,), "sh": (False, True)}
+_SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (True,), "sh": (False, True),
+                 "ash": (True,), "hush": (True,)}
 
 
 # GH #608: an interpreter one-liner (python -c, perl/ruby -e, node -e/-p) runs a command through a string it
@@ -3000,7 +3005,7 @@ _VAR_NAME_RE = re.compile(r"[A-Za-z_]\w*")
 _ASSIGN_WORD_RE = re.compile(r"""(?<![\w$=])([A-Za-z_]\w*)\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()<>'"\\`{]|\\.)*""")
 _BLANKS_RE = re.compile(r"[ \t]*")
 _PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])([\w./~"'$-][^\s;&|()<>]*)""")
-_PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "env", "xargs", "eval", "exec", "sudo", "doas", "su",
+_PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "hush", "env", "xargs", "eval", "exec", "sudo", "doas", "su",
                         "nohup", "setsid", "stdbuf", "timeout", "nice", "ionice", "taskset", "chroot", "unshare",
                         "script", "command", "builtin", "time", "find", "watch", "flock", "parallel", "npx",
                         "python", "python3", "perl", "ruby", "node"}
@@ -3358,14 +3363,14 @@ def _find_action_spawns(sub):
     # GH #588: a find action running claude (past its wrappers) that starts a session; find hands it
     # each path as a word, so `-exec claude {} \;` gives claude a prompt.
     a0 = basename(sub[0]).replace(PH, "")
-    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    i = _past_wrapper_words(a0, sub, 1) if a0 in _STEP_WRAPPERS else 0
     return i < len(sub) and basename(sub[i]).replace(PH, "") == "claude" and _claude_words_spawn(sub[i + 1:])
 
 def _find_action_chmod_world(sub):
     # GH #587: a find action running chmod (past its wrappers) with a world-writable mode applies it to
     # every file find yields, as `chmod -R` does.
     a0 = basename(sub[0]).replace(PH, "")
-    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    i = _past_wrapper_words(a0, sub, 1) if a0 in _STEP_WRAPPERS else 0
     return (i < len(sub) and basename(sub[i]).replace(PH, "") in ("chmod", "gchmod") and _chmod_world(sub[i + 1:], True)
             or _shell_body_runs(sub, lambda cur, k: basename(cur[k]).replace(PH, "") in ("chmod", "gchmod")
                                 and _chmod_world(cur[k + 1:], True)))
@@ -3381,7 +3386,7 @@ def _shell_body_runs(sub, hit, depth=0):
     if depth > 3 or not sub:
         return False
     a0 = basename(sub[0]).replace(PH, "")
-    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    i = _past_wrapper_words(a0, sub, 1) if a0 in _STEP_WRAPPERS else 0
     if i >= len(sub) or basename(sub[i]).replace(PH, "") not in _SHELLS:
         return False
     sh = basename(sub[i]).replace(PH, "")
@@ -3393,9 +3398,9 @@ def _shell_body_runs(sub, hit, depth=0):
             starts = [0] + [k + 1 for k, t in enumerate(cur) if t in SHELL_KEYWORDS]
             for k in starts:
                 while k < len(cur) and (cur[k] in SHELL_KEYWORDS or _assignment(cur[k])
-                                        or basename(cur[k]).replace(PH, "") in ("eval", "busybox")):
+                                        or basename(cur[k]).replace(PH, "") in ("eval",) + _BUSYBOX_NAMES):
                     k += 1
-                while k < len(cur) and basename(cur[k]).replace(PH, "") in PREFIX_WRAPPERS:
+                while k < len(cur) and basename(cur[k]).replace(PH, "") in _STEP_WRAPPERS:
                     k = _past_wrapper_words(basename(cur[k]).replace(PH, ""), cur, k + 1)
                 if k < len(cur) and hit(cur, k):
                     return True
@@ -3726,7 +3731,7 @@ def _check_window(_wi, w):
                 _unwrap_shell(basename(t).replace(PH, ""), rest[j + 1:])
                 break
         for j, t in enumerate(rest):  # xargs env sh -c / xargs rtk run -c: a wrapper hands over the command
-            if basename(t).replace(PH, "") in PREFIX_WRAPPERS:
+            if basename(t).replace(PH, "") in _STEP_WRAPPERS:
                 # Each wrapper window re-enters this branch when it hands over another xargs and
                 # copies its tail: chained `xargs env xargs env ...` is quadratic, so bound the chain.
                 _count_handover("xargs")
@@ -3738,7 +3743,7 @@ def _check_window(_wi, w):
         # `find -exec rm`, which denies with no flags at all. Wrappers between (`xargs sudo -u x rm`,
         # `xargs nice -n 5 rm`, `xargs env FOO=1 rm`, `xargs timeout 5 rm`) are read past.
         _xr = _xc
-        while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS:
+        while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in _STEP_WRAPPERS:
             _xr = _past_wrapper_words(basename(rest[_xr]).replace(PH, ""), rest, _xr + 1)
         # GH #591: xargs hands mkfs its device as a word, so the mkfs rule's operand test never sees one.
         _xm = basename(rest[_xr]).replace(PH, "") if _xr < len(rest) else ""
@@ -4309,7 +4314,7 @@ def _default_subst(v, quoted=True):
 # which the eval unwrap scans. The shell name must start a word (`\bash` too), so a long word is not
 # rescanned from every position; up to 32 options may come before the script, only a cluster ending in o/O
 # (`-o`, `-eo`), --rcfile and --init-file taking a value (`bash -x script.sh <(...)` runs script.sh, so its psub is only an argument).
-_PSUB_SCRIPT_RE = re.compile(r"(?<![^\s;&|(){])\\?(?:[^\s;&|()<>]*/)?(?:bash|sh|zsh|dash|ksh|source|\.)"
+_PSUB_SCRIPT_RE = re.compile(r"(?<![^\s;&|(){])\\?(?:[^\s;&|()<>]*/)?(?:bash|sh|zsh|dash|ksh|ash|hush|source|\.)"
                              r"(?:[ \t]+(?:[-+][A-Za-z]*[oO][ \t]+[^\s;&|()<>]+|--(?:rcfile|init-file)[ \t]+[^\s;&|()<>]+"
                              r"|[-+][^\s;&|()<>]*)){0,32}?"
                              r"[ \t]+(?:<[ \t]*)?<\(" + _ECHO_WORD + r"((?:[ \t]+[^\s()$`]+)*)[ \t]*\)")
