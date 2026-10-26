@@ -13,6 +13,9 @@ a squashed feature branch is not merged by ancestry, so only `git branch -D` rem
 Enforcement layers, weakest to strongest:
 - `git-hooks/pre-push` refuses a direct push whose remote ref is `refs/heads/develop`, before the
   gauntlet even runs — local, defense-in-depth, one manual retry if a stdin ref line is malformed.
+  It also refuses to *create* a branch that changes a file (not the manifests) `develop` changed since
+  the branch point, listing those commits: merge `develop`, check none already makes the change, push
+  again (84c57d69 had fixed what #613's first branch re-fixed). Parallel open PRs are not checked.
 - `gate:bash:irrecoverable` asks (not denies — a merge can be a legitimate, operator-approved
   action) on `gh pr merge` / `gh api .../merge` from an interactive Claude Code session. This
   covers only a session running with mh loaded — it does **not** constrain the GitHub web UI, a
