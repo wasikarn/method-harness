@@ -426,6 +426,9 @@ def _quote_mask(c, stack=None, hd=False):
         elif ch == "$" and c[i + 1:i + 2] in ("{", "[", "("):
             stack.append(c[i + 1])
             i += 1
+        elif ch in "<>" and c[i + 1:i + 2] == "(":  # <( and >( read their body as $( does
+            stack.append("(")
+            i += 1
         elif ch == "=" and c[i + 1:i + 2] == "(":
             stack.append("=(")
             i += 1

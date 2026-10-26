@@ -1054,7 +1054,9 @@ done
 # Out of scope: the same desync in an interpreter-fed (code) body, GH #681.
 for _c in $'cat <<EOF\n$(echo) it\'s\nEOF\nrm -rf build\necho \'' $'cat <<EOF\n`echo` it\'s\nEOF\nrm -rf build\necho \'' \
   $'cat <<EOF\n$(echo) "\nEOF\nrm -rf build\necho "' $'cat <<EOF\nline \\\nit\'s\nEOF\nrm -rf build\necho \'' \
-  $'cat > f <<EOF\nx="` echo \' " \' `"\nEOF\nrm -rf build\necho \''; do
+  $'cat > f <<EOF\nx="` echo \' " \' `"\nEOF\nrm -rf build\necho \'' \
+  $'cat <(cat <<EOF\nin\nEOF) ; git push --force origin main\nEOF' $'cat >(cat <<EOF\nout\nEOF) ; git push --force origin main\nEOF' \
+  $'x=${ cat <<EOF\nfunsub\nEOF }\ngit push --force origin main\nEOF\n}'; do
   test_deny "$IRRECOVERABLE" "GH #668 round 3: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c")"
 done
 # Only inside $( or backticks does bash end a body at a line that starts with the delimiter (EOF)). Each
@@ -1063,7 +1065,8 @@ for _c in $'python3 - <<\'EOF\'\nprint("it\'s")\n# don\'t\nEOF' $'python3 - <<\'
   $'cat > f.sh <<EOF\necho "built at $(date)" \'ok\'\nEOF' $'bash <<\'EOF\'\necho "a"; echo \'b\'\nEOF' \
   $'python3 - <<\'E\'\nError = ValueError("it\'s")\nprint(Error)\nE' $'cat > f <<EOF\nv="$(echo \'x\')"\nEOF' \
   $'python3 - <<\'EOF\'\ns = """\nEOF marker\n"""\nprint("it\'s")\nEOF' $'cat > notes.md <<\'E\'\nExceptions aren\'t rare\nE' \
-  $'python3 - <<\'E\'\nx = 1\nExc = 2\nprint(x)\nE\ncat > n.md <<\'X\'\nit\'s\nX'; do
+  $'python3 - <<\'E\'\nx = 1\nExc = 2\nprint(x)\nE\ncat > n.md <<\'X\'\nit\'s\nX' \
+  $'diff <(cat <<\'EOF\'\nwe never rm -rf build\nEOF\n) f'; do
   test_allow "$IRRECOVERABLE" "GH #668 round 3 control: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c"$'\necho "$PWD"')"
 done
 _huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
