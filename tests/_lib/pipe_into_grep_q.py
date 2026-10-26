@@ -28,8 +28,8 @@ reader; `<&0` and `<&"$fd"` may still be the pipe, so they are.
 
 A `>(...)` is checked the same way, wherever it sits (either side of a pipe, or no pipe at all):
 its readers are what the command writes into it, and a quiet grep there kills that command with
-SIGPIPE. What it over-reports, and why each stays reported, is listed in
-docs/reference/repo-gotchas.md (the pipefail paragraph).
+SIGPIPE. What it over-reports, for a pipe or a `>(...)`, and why each stays reported, is listed
+in docs/reference/repo-gotchas.md (the pipefail paragraph).
 
 A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
 wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
