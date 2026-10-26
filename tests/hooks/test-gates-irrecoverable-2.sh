@@ -2725,6 +2725,19 @@ for _c in \
 done
 
 
+# GH #647: a PH argv0 reads as every dangerous verb, gh included, and each such window searched the whole
+# command for a written `gh <sub>`: quadratic, so padding pushed a later deny past the 8 s hook timeout.
+_timed_case "GH #647: 60 KB of 'sudo \${a} x;' then git reset --hard, denied in bounded time" 2 \
+  "git status; $(printf 'sudo ${a} x; %.0s' $(seq 4600))git reset --hard"
+_timed_case "GH #647: a written gh, then 4000 distinct PH subcommands, then git reset --hard, denied in bounded time" 2 \
+  "gh -R o/r issue list; $(for i in $(seq 4000); do printf 'sudo ${a} x%d; ' "$i"; done)git reset --hard"
+# the gh-unknown-subcommand reading it replaced: a `gh <sub>` the command writes, past gh's own flags
+test_ask   "$IRRECOVERABLE" "GH #647: gh -R o/r nuke still asks" "$(bash_payload 'gh -R o/r nuke')"
+test_ask   "$IRRECOVERABLE" "GH #647: gh --repo o/r nuke still asks" "$(bash_payload 'gh --repo o/r nuke')"
+test_ask   "$IRRECOVERABLE" "GH #647: ls;gh nuke still asks" "$(bash_payload 'ls;gh nuke')"
+test_ask   "$IRRECOVERABLE" "GH #647: gh nuke, then the sub glued to a separator" "$(bash_payload 'gh nuke;ls')"
+test_allow "$IRRECOVERABLE" "GH #647 control: a PH argv0 with no gh written" "$(bash_payload 'sudo ${a} x')"
+test_allow "$IRRECOVERABLE" "GH #647 control: gh-nuke is a different program" "$(bash_payload 'echo gh-nuke x')"
 # GH #594: after a bare `--` every word is an operand, so `rm -- -rf` deletes a file named -rf. GNU rm
 # still permutes the options before `--` (`rm build -rf` is -rf).
 test_allow "$IRRECOVERABLE" "GH #594: rm -- -rf removes a file named -rf" "$(bash_payload 'rm -- -rf')"

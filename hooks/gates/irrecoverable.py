@@ -3401,6 +3401,33 @@ def _shell_body_runs(sub, hit, depth=0):
                     return True
     return False
 
+# GH #647: the words the command writes as a `gh <sub>`: past `gh` (not inside a word or path), a run of
+# `-flag [value]` pairs, then the sub as far as a word character goes. A PH argv0 reads as every dangerous
+# verb, gh included, so a regex search of the whole command per window was quadratic: padding of
+# `sudo ${a} x;` pushed a later deny past the 8 s hook timeout. One forward pass over the words, cached.
+_GH_SUBS = []
+def _gh_written_subs():
+    if _GH_SUBS:
+        return _GH_SUBS[0]
+    words = [(m.start(), m.group()) for m in re.finditer(r"\S+", cmd)]
+    starts = [p for p, _ in words]
+    reach = bytearray(len(words) + 2)
+    for m in re.finditer(r"(?<![\w./-])gh(?=\s)", cmd):
+        reach[bisect.bisect_left(starts, m.end())] = 1
+    subs = set()
+    for i, (_, t) in enumerate(words):
+        if not reach[i]:
+            continue
+        lead = re.match(r"[\w-]*", t).group()
+        if lead:
+            subs.add(lead)
+        if t.startswith("-") and len(t) > 1:  # a flag: the sub may follow it, or follow its value
+            reach[i + 1] = 1
+            if i + 1 < len(words) and not words[i + 1][1].startswith("-"):
+                reach[i + 2] = 1
+    _GH_SUBS.append(subs)
+    return subs
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
@@ -4156,8 +4183,7 @@ def _check_window(_wi, w):
             # Only a "gh <sub>" written in the command: the KNOWN_DANGEROUS splice duplication and the
             # views put a candidate "gh" before any word ("rm${IFS}-rf build" yields "gh build").
             if (re.fullmatch(r"[a-z][a-z0-9-]*", gh_scan[0]) and gh_scan[0] not in _GH_BUILTINS
-                    and re.search(r"(?<![\w./-])gh(?:\s+-\S+(?:\s+[^\s-]\S*)?)*?\s+" + re.escape(gh_scan[0])
-                                  + r"(?![\w-])", cmd)):
+                    and gh_scan[0] in _gh_written_subs()):
                 ask(f"gh {gh_scan[0]} is not a built-in gh command — an alias or extension can run "
                     "gh api out of sight. Confirm what it runs.", rule="gh-unknown-subcommand")
 
