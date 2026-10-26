@@ -96,6 +96,17 @@ def _sql_drops(sql):
 # GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
 # matched once where it is stripped (rescanning every stored body per bash -c / eval body was quadratic).
 _SQL_HEREDOC_DROP = [False]
+# GH #668 round 3, GH #681: set when _strip_heredocs keeps a body as text that leaves a quote open.
+_HEREDOC_QUOTE_OPEN = [False]
+
+def _check_kept_body(lines):
+    # The rules read a kept body as shell text, bash reads it as data: an odd quote in it would pair with a
+    # quote past the delimiter and hide the lines between as one quoted word. Not hd: the tokenizer opens no
+    # ${ frame inside "..", so neither may this check ("${ " in a python string must stay allowed).
+    if not _HEREDOC_QUOTE_OPEN[0]:
+        stack = [None]
+        _quote_mask("\n".join(lines), stack)
+        _HEREDOC_QUOTE_OPEN[0] = stack != [None]
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -456,6 +467,9 @@ def _strip_heredocs(cmd):
     # line that starts with the delimiter but is not it. Openers are then read as before, for the SQL
     # check only. An interpreter-fed body is skipped like any other (its text is the child's, not this
     # shell's) but kept whole as code, its own heredocs unstripped.
+    # GH #668 round 3, GH #681: a body kept as text (code, unsure, or ended early) that leaves a quote open
+    # sets _HEREDOC_QUOTE_OPEN, and the gate denies: keeping it is not safe, since the tokenizer pairs that
+    # quote with one past the delimiter. The unmatched-delimiter put-back runs to the end, so it is exempt.
     lines = cmd.split("\n")
     out, i, stack, sure = [], 0, [None], True
     while i < len(lines):
@@ -503,6 +517,7 @@ def _strip_heredocs(cmd):
             if early:
                 # Unsure from here: the body is kept and the EOF) line is read again as a command line.
                 out.extend(lines[body_start:i - 1])
+                _check_kept_body(lines[body_start:i - 1])
                 i, sure = i - 1, False
                 break
             if not found:
@@ -513,6 +528,7 @@ def _strip_heredocs(cmd):
             sure = sure and not expands
             if code or not sure:
                 out.extend(lines[body_start:i])
+                _check_kept_body(lines[body_start:i - 1])
             if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops("\n".join(lines[body_start:i - 1])):
                 _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
@@ -1958,6 +1974,9 @@ def _drop_ph_tokens(w):
 _CMD_LEN_CAP = 150_000
 if len(cmd) > _CMD_LEN_CAP:
     deny("command too long to safely tokenize (" + str(len(cmd)) + " chars, cap " + str(_CMD_LEN_CAP) + ") - confirm with user first")
+# Structural (text the tokenizer would misread), so no rule id and no shadow (repo-gotchas.md, GH #337).
+if _HEREDOC_QUOTE_OPEN[0]:
+    deny("a heredoc body the gate reads as commands leaves a quote open - confirm with user first")
 
 def _sql_stdin_drop(c):
     # SQL a client reads on stdin drops or truncates: a heredoc body it reads (_SQL_HEREDOC_DROP), a
@@ -2463,6 +2482,8 @@ def _scan_body(body):
     # The same body comes back from every window copy (see _BODY_READINGS), so each is checked once.
     if body not in _SQL_BODIES_SEEN:
         _SQL_BODIES_SEEN.add(body)
+        # Stripped for the SQL check only (the rules read the body whole), so _HEREDOC_QUOTE_OPEN set here
+        # guards nothing and is not checked.
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.

@@ -1048,6 +1048,18 @@ for _c in $'python3 - <<\'EOF\'\nprint("x")\nEOF\ncat > notes.md <<\'EOF\'\nWe d
   $'cat > notes.md <<EOF\nrm -rf build, not \\$(date)\nEOF'; do
   test_allow "$IRRECOVERABLE" "GH #668 round 2 control: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c")"
 done
+# GH #668 round 3, GH #681: a body the gate keeps as text (code, or kept once unsure) is read as shell text,
+# but bash reads it as data, so an odd quote in it paired with a quote past the delimiter and hid the line.
+for _c in $'cat <<EOF\n$(echo) it\'s\nEOF\nrm -rf build\necho \'' $'cat <<EOF\n`echo` it\'s\nEOF\nrm -rf build\necho \'' \
+  $'cat <<EOF\n$(echo) "\nEOF\nrm -rf build\necho "' $'cat <<EOF\nline \\\nit\'s\nEOF\nrm -rf build\necho \'' \
+  $'python3 - <<\'EOF\'\nx = \'\nEOF\nrm -rf build\necho \'' $'bash <<\'EOF\'\necho "\nEOF\nrm -rf build\n#"' \
+  $'python3 - <<\'EOF\'\nprint("it\'s")\nx = \'\nEOF\nrm -rf build\n#\''; do
+  test_deny "$IRRECOVERABLE" "GH #668 round 3: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c")"
+done
+for _c in $'python3 - <<\'EOF\'\nprint("it\'s")\n# don\'t\nEOF' $'python3 - <<\'EOF\'\ns = """a "b" it\'s"""\nprint(s)\nEOF' \
+  $'cat > f.sh <<EOF\necho "built at $(date)" \'ok\'\nEOF' $'bash <<\'EOF\'\necho "a"; echo \'b\'\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #668 round 3 control: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c")"
+done
 _huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
 _timed_case 'GH #668: a 2.1 MB command denies on length before the heredoc scan' 2 "$_huge_cmd"
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
