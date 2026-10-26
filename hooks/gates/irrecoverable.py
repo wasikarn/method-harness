@@ -3428,11 +3428,13 @@ def _gh_written_subs():
     _GH_SUBS.append(subs)
     return subs
 
-_CMD_HAS_CR = []
-def _cmd_has_cr():
-    if not _CMD_HAS_CR:
-        _CMD_HAS_CR.append("\r" in cmd or "\r" in _normalize_ansi_c_quotes(cmd))
-    return _CMD_HAS_CR[0]
+# GH #594: `rm -- -rf` removes a file named -rf. A bare `--` ends rm's options, but a reading can show one
+# bash never passes (a CR the tokenizer splits at, `<<- --` read as a redirect target, an interpreter's
+# argv joined into shell words), and a stop there hides the flags after it. So the stop is trusted only
+# when the whole command is plain `rm [flags] -- operands`: space or tab between words, and no quote,
+# `$`, backslash, redirect, glob or separator anywhere, as for git branch -D (_BRANCH_D_PLAIN_RE).
+_RM_PLAIN_DASHDASH = re.fullmatch(r"[ \t]*rm(?:[ \t]+(?:-[A-Za-z]+|--[a-z-]+))*[ \t]+--(?:[ \t]+[\w./+,:@%-]+)+[ \t]*",
+                                  cmd) is not None
 
 def _check_window(_wi, w):
     global _cur_depth
@@ -3798,12 +3800,8 @@ def _check_window(_wi, w):
             # recursive, dir, verbose, help, version) leave --r and --f unambiguous.
             has_r = has_f = False
             for t in rest:
-                # GH #594: after a bare `--` every word is an operand (`rm -- -rf` removes a file named -rf).
-                # Only a literal one: `$(x)--` is an operand once $(x) prints anything, and -rf after it a flag.
-                # Not in a command holding a carriage return, raw or decoded from `$'\r'` into a bash -c or
-                # eval body: the tokenizer splits there and bash does not, so `a<CR>--` is one operand that
-                # reads as a bare `--`.
-                if t == "--" and not _cmd_has_cr():
+                # GH #594: after a bare `--` every word is an operand, in a plain command only (_RM_PLAIN_DASHDASH).
+                if t == "--" and _RM_PLAIN_DASHDASH:
                     break
                 # "$(true)-rf" IS "-rf" in bash but blanks to "PH-rf", which no
                 # longer starts with "-" -- strip PH, assume the dangerous

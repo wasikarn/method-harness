@@ -2757,5 +2757,11 @@ test_deny  "$IRRECOVERABLE" "GH #594 control: bash -c \$'rm a\\r-- -rf b'" "$(ba
 test_deny  "$IRRECOVERABLE" "GH #594 control: eval \$'rm a\\r-- -rf b'" "$(bash_payload "eval \$'rm a\\r-- -rf b'")"
 test_deny  "$IRRECOVERABLE" "GH #594 control: eval rm a\$'\\r'-- -rf b" "$(bash_payload "eval rm a\$'\\r'-- -rf b")"
 test_allow "$IRRECOVERABLE" "GH #594: rm -r -i -- -f prompts for every file" "$(bash_payload 'rm -r -i -- -f')"
+# ...nor one a redirect or an interpreter's argv only seems to show: the stop needs a plain rm command
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a <<- -- -rf b (-- is the heredoc word)" "$(bash_payload $'rm a <<- -- -rf b\n--')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: rm a >x> -- -rf b (-- is a redirect target)" "$(bash_payload 'rm a >x> -- -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #594 control: subprocess.run([rm, 'a --', -rf, b])" \
+  "$(bash_payload 'python3 -c '"'"'import subprocess; subprocess.run(["rm", "a --", "-rf", "b"])'"'"'')"
+test_allow "$IRRECOVERABLE" "GH #594: rm -f -- -r ./x.log (plain operands)" "$(bash_payload 'rm -f -- -r ./x.log')"
 
 gates_summary
