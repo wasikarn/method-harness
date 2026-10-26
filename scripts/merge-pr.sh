@@ -35,6 +35,13 @@ if [ "$base" != "develop" ]; then
 fi
 
 sync_script="${MERGE_PR_SYNC:-$(cd -P "$(dirname "$0")" && pwd)/sync-pr-head.sh}"
+tries="${MERGE_PR_SYNC_TRIES:-3}"
+# A non-number would make the round cap's `[ -ge ]` fail as false, so the cap would never stop the loop.
+case "$tries" in
+  '' | *[!0-9]*)
+    echo "merge-pr: MERGE_PR_SYNC_TRIES must be a whole number of sync rounds, not '$tries'." >&2
+    exit 2 ;;
+esac
 
 check_ancestry() {
   local rc=0
@@ -174,7 +181,6 @@ done
 branch_info=$(gh pr view "$pr" --json headRefName,isCrossRepository -q '.headRefName + " " + (.isCrossRepository | tostring)')
 branch=${branch_info% *}
 cross=${branch_info#* }
-tries="${MERGE_PR_SYNC_TRIES:-3}"
 round=0
 while :; do
   git fetch origin || { echo "merge-pr: git fetch failed after the load wait; not merging." >&2; exit 1; }
