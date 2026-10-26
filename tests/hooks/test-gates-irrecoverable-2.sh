@@ -2100,6 +2100,40 @@ test_allow "$IRRECOVERABLE" "GH #621 review 4 control: mysql -uvictor -h vhost (
   "$(bash_payload "$(printf "mysql -uvictor -h vhost db <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
 test_allow "$IRRECOVERABLE" "GH #621 review 4 control: psql -U alice -d app (values, not echo flags) keeps the literal relief" \
   "$(bash_payload "$(printf "psql -U alice -d app <<'SQL'\nSELECT a[1] FROM t WHERE x = 'drop table x';\nSQL")")"
+# GH #697: the stdin check reads a client name the way the shell does (quotes, backslashes, $'..' dropped), and a
+# command named by a variable or substitution ($C, ${C}, $(..), `..`) counts as a client that may read JavaScript.
+for _c in 'ps""ql db' "'psql' db" 'p\sql db' "\$'psql' db" "\$'\\x70sql' db" 'sudo -u postgres ps""ql db' \
+    'env X=1 "psql" db' "docker exec -i pg ps''ql" '/usr/bin/ps""ql db' 'my"sql" db' '$C db' '${C} db' \
+    '$(command -v psql) db' '`which psql` db'; do
+  test_deny  "$IRRECOVERABLE" "GH #697: DROP TABLE echoed into $_c" "$(bash_payload "echo 'DROP TABLE t' | $_c")"
+done
+test_deny  "$IRRECOVERABLE" "GH #697: drop() echoed into mon\"\"gosh" "$(bash_payload "echo 'db.t.drop()' | mon\"\"gosh db")"
+test_deny  "$IRRECOVERABLE" "GH #697: a heredoc ps\"\"ql reads" "$(bash_payload "$(printf "ps\"\"ql db <<'SQL'\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #697: a heredoc cat pipes into \$C" "$(bash_payload "$(printf "cat <<'SQL' | \$C db\nDROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #697: a here-string ps\"\"ql reads" "$(bash_payload "ps\"\"ql db <<< 'DROP TABLE t'")"
+test_deny  "$IRRECOVERABLE" "GH #697: DROP TABLE echoed in a { } group into ps\"\"ql" \
+  "$(bash_payload "{ echo 'DROP TABLE t'; } | ps\"\"ql db")"
+test_deny  "$IRRECOVERABLE" "GH #697: a JS body echoed into \$C keeps its literals" "$(bash_payload "echo \"$_js_body\" | \$C db")"
+test_deny  "$IRRECOVERABLE" "GH #697: mon\"\"gosh later in the command withdraws the literal relief" \
+  "$(bash_payload "echo \"$_js_body\" | psql db > /tmp/o; mon\"\"gosh db < /tmp/o")"
+for _flag in '-v E""CHO=all' "\$'-a'" '$F' '-e""cho-all'; do
+  test_deny  "$IRRECOVERABLE" "GH #697: psql $_flag withdraws the literal relief" \
+    "$(bash_payload "F=-a; echo \"$_js_body\" | psql $_flag db > /tmp/o")"
+done
+test_deny  "$IRRECOVERABLE" "GH #697: PSQLRC withdraws the literal relief" \
+  "$(bash_payload "echo \"$_js_body\" | PSQLRC=/tmp/rc psql db > /tmp/o")"
+test_deny  "$IRRECOVERABLE" "GH #697: sqlite3 -e\"\"cho withdraws the literal relief" \
+  "$(bash_payload "echo \"$_js_body\" | sqlite3 -e\"\"cho db > /tmp/o")"
+test_allow "$IRRECOVERABLE" "GH #697 control: a SELECT echoed into ps\"\"ql" "$(bash_payload "echo 'SELECT 1' | ps\"\"ql db")"
+test_allow "$IRRECOVERABLE" "GH #697 control: DROP TABLE echoed into gr\"\"ep" "$(bash_payload "echo 'DROP TABLE t' | gr\"\"ep -v x")"
+test_allow "$IRRECOVERABLE" "GH #697 control: echo hi into \"\$PAGER\"" "$(bash_payload 'echo hi | "$PAGER"')"
+test_allow "$IRRECOVERABLE" "GH #697 control: a SELECT heredoc ps\"\"ql reads" \
+  "$(bash_payload "$(printf "ps\"\"ql db <<'SQL'\nSELECT 1;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #697 control: psql \"\$DATABASE_URL\" keeps the literal relief" \
+  "$(bash_payload "$(printf "psql \"\$DATABASE_URL\" <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
+# GH #697 review: the per-line checks run once per line, not once per heredoc on it (3000 openers took 15 s).
+_sql_opaque_heredocs_cmd="$(python3 -c 'print("psql db $X " + "<<a " * 3000 + "\n" + "SELECT 1\na\n" * 2999 + "DROP TABLE t\na")')"
+_timed_case 'GH #697 review: 3000 heredocs on a psql line with a $X word, the last a DROP, deny in bounded time' 2 "$_sql_opaque_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
