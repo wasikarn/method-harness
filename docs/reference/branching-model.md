@@ -66,13 +66,17 @@ It also refuses a PR without a current review verdict (2026-10-25: #569–#576 a
 their reviews still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
 `Fresh-context review: MERGE @ <sha>` (or `FIX FIRST` / `CLOSE`; case and markdown emphasis ignored) in a
 PR **comment**, `<sha>` being the head the reviewer read; a GitHub PR review or the PR body does not count,
-nor does a line inside a ``` or ~~~ fence, and the last verdict line in a comment wins. The last verdict on
-the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must be a merge
-of `develop` or touch only the two manifests, checked before and after the load wait. So merging `develop`
-and bumping the version keep the review; any other change, a rebase, or a force-push needs a new one. The
+nor does a line inside a ``` or ~~~ fence at any indentation (closed only by a bare line of the same
+character, at least as long), and the last verdict line in a comment wins. The last verdict on
+the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must touch only
+the two manifests or be a two-parent merge whose tree is what `git merge-tree --write-tree` makes of its parents,
+manifests aside, and whose only conflicts were in the manifests (GH #629; git >= 2.38), checked before and
+after the load wait. So merging `develop`
+and bumping the version keep the review; any other change (an edit made inside a merge, or a conflict
+resolved in code, included), a rebase, or a force-push needs a new one. The
 check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
 still caught. Post the reviewer's result as that comment. It proves a verdict was posted, not who wrote it
-or that the reviewer had fresh context, and a conflict resolved inside a merge commit is not checked. There
+or that the reviewer had fresh context. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
 **Without `gh` (a Claude Code cloud session).** The script reads the PR and merges through `gh`, which a
