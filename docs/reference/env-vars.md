@@ -27,7 +27,9 @@ under `env`, never in a committed file.
 | `MH_GAUNTLET_LOCK_OWNER` | `scripts/_lib/gauntlet-lock.sh` | Exported by the lock holder with its pid, so a child (a test that runs the pre-push hook) skips the queue instead of deadlocking. Not a user knob. |
 | `MERGE_PR_LOAD_MAX` | `scripts/merge-pr.sh` | Load average below which the script merges (default `4`); `tests/scripts/test-merge-pr.sh` sets `4` explicitly. |
 | `MERGE_PR_LOAD_WAIT_SECS` | `scripts/merge-pr.sh` | Seconds the script waits for load to drop before it fails with the load figure (default `900`); the test sets `0`. |
-| `MERGE_PR_ALLOW_SAME_VERSION` | `scripts/merge-pr.sh` | Set to `1` to skip only the refusal of a head whose manifest version equals `origin/develop`'s, for a PR that needs no bump. A lower version still refuses; the test sets it to cover both cases. |
+| `MERGE_PR_ALLOW_SAME_VERSION` | `scripts/merge-pr.sh`, `scripts/sync-pr-head.sh` | Set to `1` for a PR that needs no bump: a head whose manifest version equals `origin/develop`'s merges as is, and a sync sets develop's own version instead of the next one. A lower version is still synced; the tests set it to cover both cases. |
+| `MERGE_PR_SYNC_TRIES` | `scripts/merge-pr.sh` | Sync rounds (merge develop, bump, push) the script runs while develop keeps moving before it gives up (default `3`). |
+| `MERGE_PR_SYNC` | `scripts/merge-pr.sh` | Path of the sync script (default `scripts/sync-pr-head.sh`). Test-only: `tests/scripts/test-merge-pr.sh` points it at a stub. |
 
 Native Claude Code variables this plugin relies on but does not own: `CLAUDE_PLUGIN_ROOT`
 (every hook command), `CLAUDE_SKILL_DIR` (set while a skill body runs; `harness-audit`,
