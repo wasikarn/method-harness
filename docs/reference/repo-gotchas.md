@@ -60,10 +60,11 @@ in no pipe at all: its early exit kills the command writing into it with SIGPIPE
 < big | cat` gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
 fails a pipefail pipeline or a `set -e` script. It is over-reported when the writer's status is
 discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never called) or a later reader
-drains the rest, when the writer never writes to the fd holding the `>(...)` (`cat 2> >(grep -q
-y)`), and when every fd holding the `>(...)` is redirected elsewhere later on the same command (`cat
-> >(grep -q y) >/dev/null`): telling that apart needs a model of fd copies, moves and `{var}` fds,
-and two attempts at one hid real races (#650); a bare `v=$(...)` keeps the writer's status, so under
+drains the rest, when every fd holding the `>(...)` is redirected elsewhere later on the same
+command (`cat > >(grep -q y) >/dev/null`: telling that apart needs a model of fd copies, moves and
+`{var}` fds, and two attempts at one hid real races, #650), and when the writer never writes to the
+fd holding the `>(...)` (`cat 2> >(grep -q y)`: whether it writes there is the program's run-time
+behaviour, which no static scan can know); a bare `v=$(...)` keeps the writer's status, so under
 `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` reads all of its input (GNU
 grep 3.11), so it is safe in a pipe, only when it reads fd 0 directly (no file operand, or `-`) with
 no `-m` limit. Two forms stop early for different reasons: `grep -m1 PAT` stops at its first match
