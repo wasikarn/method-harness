@@ -19,7 +19,7 @@ try:
     import _bracex
 except Exception as _e:
     _bracex = None
-    print("[mh:gate] irrecoverable: _bracex not importable (" + str(_e) + "); a command with a brace is denied under brace-view", file=sys.stderr)
+    print("[mh:gate] irrecoverable: _bracex not importable (" + str(_e) + "); a command with a brace and a \",\" or \"..\" goes to brace-view (journaled while shadowed)", file=sys.stderr)
 
 GATE_ID = "gate:bash:irrecoverable"
 
@@ -1933,8 +1933,8 @@ _deny_sql_stdin_drop(cmd)
 # size, a stand-in noncharacter) is a structural deny here, never skipped. Without _bracex the view
 # cannot be read at all, so a command that could hold an expansion is denied under brace-view's own id:
 # it journals while that rule is shadowed and enforces once it is promoted. Bash expands a brace only
-# with a "," or ".." in it, so that test is a superset of every expansion (nested ones included); a
-# plain ${VAR}, awk '{...}' or find -exec {} is left alone. Known over-deny while _bracex is broken: a
+# with a "," or ".." in it, so that test is a superset of every bash expansion (nested ones included); a
+# plain ${VAR}, awk '{...}' or find -exec {} is left alone. zsh with braceccl expands r{m} too (GH #665). Known over-deny while _bracex is broken: a
 # brace plus a comma anywhere (mkdir {a,b}, awk '{print $1, $2}'). The else matters: a shadowed deny
 # returns here.
 _BRACEX_TEXT = None
