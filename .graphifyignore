@@ -1,0 +1,5 @@
+# /graphify scope: eval fixtures, test data and the release log add bulk, not structure worth
+# graphing. Root-anchored, so a nested folder with one of these names stays in the graph.
+/evals/
+/tests/
+/CHANGELOG.md
