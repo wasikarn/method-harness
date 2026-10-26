@@ -1,7 +1,9 @@
-"""pipe_into_grep_q.py FILE... -- print FILE:LINE for every pipe (`|` or `|&`) into a quiet grep.
+"""pipe_into_grep_q.py FILE... -- print FILE:LINE for every pipe (`|`, `|&`, or an output process
+substitution `>(...)`) into a quiet grep.
 
 Under `set -o pipefail`, `writer | grep -q PAT` races: grep -q exits on its first match, a writer
-still writing dies of SIGPIPE (141), and pipefail turns the match into a failure.
+still writing dies of SIGPIPE (141), and pipefail turns the match into a failure. A `>(grep -q ...)`
+kills the command writing into it the same way, which also fails a `set -e` script with no pipe.
 
 The shell is parsed by shfmt's JSON syntax tree (mvdan.cc/sh, `--to-json`, shfmt >= 3.5), not by a
 regex or a hand-written lexer: both missed sites or crashed in review (GH #578, #597, #598). shfmt
@@ -26,8 +28,10 @@ reader; `<&0` and `<&"$fd"` may still be the pipe, so they are.
 
 A `>(...)` is checked the same way, wherever it sits (either side of a pipe, or no pipe at all):
 its readers are what the command writes into it, and a quiet grep there kills that command with
-SIGPIPE. Its status can still be discarded (inside `$(...)`/`<(...)`, behind `|| true`, a function
-defined but never run) or the grep followed by a reader of the rest; those are over-reported.
+SIGPIPE. A `>(...)` that a later redirection of the same fd replaces (`cat > >(grep -q y) >/dev/null`)
+gets nothing written into it and is not checked. Over-reported: a writer whose status is discarded
+(`echo "$(...)"`, `<(...)`, `|| true`, a function never called; a bare `v=$(...)` keeps the status,
+so under `set -e` it is a real failure) and a grep followed by a reader that drains the rest.
 
 A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
 wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
@@ -93,6 +97,9 @@ WRAPPERS = {
 }
 ASSIGNING = {'env', 'sudo'}  # wrappers that take NAME=VALUE words before the command
 STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
+# Output redirections -> the fds they point elsewhere (default fd 1; `&>`/`&>>` both 1 and 2).
+OUT_REDIRS = {'>', '>>', '>|', '>&'}
+BOTH_REDIRS = {'&>', '&>>'}
 # Keys under which shfmt nests statements; a statement's own words are everything else.
 NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
 # Commands that expand their words before their redirections apply.
@@ -352,6 +359,45 @@ def readers(stmt, direct=True):
     return out
 
 
+def written_fds(r):
+    """The fds an output redirection points elsewhere."""
+    op = r.get('Op')
+    if op in BOTH_REDIRS:
+        return {'1', '2'}
+    if op in OUT_REDIRS:
+        fd = (r.get('N') or {}).get('Value', '1')
+        if op == '>&' and literal(r.get('Word') or {}) == fd:
+            return set()  # `>&1` on fd 1 duplicates it onto itself: nothing replaced
+        return {fd}
+    return set()
+
+
+def dead_outputs(tree):
+    """ids of the `>(...)` nodes a later redirection of the same fd replaces: bash applies a
+    statement's redirections left to right, so `cat > >(grep -q y) >/dev/null` writes to /dev/null
+    and nothing reaches the grep."""
+    dead = set()
+
+    def walk(n):
+        if isinstance(n, dict):
+            redirs = n.get('Redirs') or []
+            for i, r in enumerate(redirs):
+                fds = written_fds(r)
+                if not fds or not any(fds & written_fds(later) for later in redirs[i + 1:]):
+                    continue
+                for p in (r.get('Word') or {}).get('Parts') or []:
+                    if p.get('Type') == 'ProcSubst' and p.get('Op') == '>(':
+                        dead.add(id(p))
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(tree)
+    return dead
+
+
 def hits(tree):
     out = []
 
@@ -373,7 +419,7 @@ def hits(tree):
             # exits early and that command dies of SIGPIPE (bash: `tee >(grep -q 1) < big | cat`
             # gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
             # fails a pipefail pipeline or a `set -e` script, so it counts wherever it sits.
-            if n.get('Type') == 'ProcSubst' and n.get('Op') == '>(':
+            if n.get('Type') == 'ProcSubst' and n.get('Op') == '>(' and id(n) not in dead:
                 check([r for s in n.get('Stmts') or [] for r in readers(s)])
             for v in n.values():
                 walk(v)
@@ -381,6 +427,7 @@ def hits(tree):
             for v in n:
                 walk(v)
 
+    dead = dead_outputs(tree)
     walk(tree)
     return sorted(set(out))
 
