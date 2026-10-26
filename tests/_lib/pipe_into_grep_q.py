@@ -13,11 +13,12 @@ A pipe's readers are the commands that can read the stdin it hands its right sid
   `time`d command, and any `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies
   redirections left to right; a simple command expands its words before its redirections, a
   compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them;
-  `>(...)` reads the command's output, not the pipe. So the words of
+  a grep -q in `>(...)` reads the command's output, but its early exit kills that command with
+  SIGPIPE, so it counts wherever it sits. So the words of
   `echo "$(...)" < f` read the pipe, those of `for x in $(...); do :; done < f` read f, and a
   substitution in a redirection after `< f` reads f;
 - inside the conditions and bodies of if/while/until/for/case: a grep counts only when it reads
-  stdin: no file operand and no -r, or a `-` or `/dev/stdin` operand, or `-f -`
+  stdin: no file operand and no -r, or a `-`, `/dev/stdin` or `/dev/fd/0` operand or `-f` value
   (`while read -r f; do grep -q p "$f"; done` reads files, not the pipe). This part is a
   heuristic: a grep with a file operand after `cat` drained nothing is not flagged there.
 A statement whose stdin is redirected (`<`, `<<<`, `<<`, `<&N` with a literal N other than 0) is no
@@ -300,9 +301,17 @@ def readers(stmt, direct=True):
         return [r for s in stmts or [] for r in readers(s, d)]
 
     def subst_readers(node):
-        # An output substitution `>(...)` reads what the command writes, never the pipe.
+        # An output substitution `>(...)` reads what the command writes, not the pipe: see below.
         return [r for sub in substs(node) if sub.get('Op') != '>('
                 for r in each(sub.get('Stmts'), direct)]
+
+    # A grep -q in `>(...)` exits early and the command writing into it dies of SIGPIPE, which
+    # pipefail turns into the pipeline's failure (bash: `seq 2000000 | tee >(grep -q 1) >/dev/null`
+    # gives PIPESTATUS 141 141; `cat < f > >(grep -q 1)` dies the same way). So on a pipe's right
+    # side it counts wherever it sits, whatever the statement's stdin.
+    outputs = [r for node in [stmt.get('Cmd') or {}] + list(stmt.get('Redirs') or [])
+               for sub in substs(node) if sub.get('Op') == '>('
+               for r in each(sub.get('Stmts'), direct)]
 
     # Redirections apply left to right: a substitution in one expands with whatever stdin the
     # earlier ones left, so only those up to the first that replaces stdin can see the pipe.
@@ -317,7 +326,7 @@ def readers(stmt, direct=True):
     # read the pipe either way; a compound command (for list, case subject) applies them first
     # (bash: `echo P | for x in $(cat); do echo $x; done < f` prints f's contents).
     simple = t in SIMPLE
-    out = (subst_readers(cmd) if simple or not replaced else []) + redir_out
+    out = (subst_readers(cmd) if simple or not replaced else []) + redir_out + outputs
     if replaced:
         return out
     if t == 'CallExpr':

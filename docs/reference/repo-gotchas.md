@@ -40,8 +40,10 @@ A pipe's readers are the commands that can read the stdin it hands its right sid
 there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a `time`d command, and any
 `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies redirections left to right, a
 simple command (incl. `local`/`declare`/`let`) expands its words before its redirections, and a
-compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them; `>(...)`
-reads the command's output, never the pipe. So `x | echo "$(grep -q y)" < f` and
+compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them. A
+`grep -q` in `>(...)` reads the command's output, but its early exit kills that command with SIGPIPE
+(`seq 2000000 | tee >(grep -q 1) >/dev/null` gives 141 141), so on a pipe's right side it counts
+wherever it sits. So `x | echo "$(grep -q y)" < f` and
 `x | cat < <(grep -q y)` race, while `x | for f in $(grep -q y); do ...; done < f` and
 `x | cat < f <<<"$(grep -q y)"` do not (bash: `echo P | for x in $(cat); do echo $x; done < f`
 prints f's contents). In the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a
