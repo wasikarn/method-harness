@@ -15,10 +15,13 @@
 #      whole file would silently drop the branch's edit (PR #644 review).
 #   2. set both manifests to the head's own version when it is above develop's (a deliberate bump,
 #      say a minor one), else develop's + 1, in one manifest-only commit.
-#   3. push to origin/<branch>, leased on <head>. The pre-push gauntlet runs on the exact tree that
-#      merges; a branch that is no longer exactly <head> (someone pushed or rewound it) is refused.
+#   3. push to origin/<branch>, leased on <head>, with merge-pr.sh's SSH keepalive. The pre-push
+#      gauntlet runs on the exact tree that merges; a branch that is no longer exactly <head> (someone
+#      pushed or rewound it) is refused. A push that exits non-zero but landed (ls-remote) still counts.
 # Prints the new head sha on stdout; everything else goes to stderr. The caller fetches origin first.
-# A merge commit and a manifest-only commit both keep a PR's review verdict (merge-pr.sh check_review).
+# Both commits keep a PR's review verdict (merge-pr.sh check_review): the version commit touches only the
+# manifests, and since GH #629 a merge keeps it only as a plain two-parent merge whose conflicts were all
+# in the manifests, which is the one step 1 makes.
 # Bash 3.2.
 set -euo pipefail
 
@@ -92,7 +95,7 @@ if [ "$behind" -eq 1 ]; then
       git -C "$wt" merge --abort >/dev/null 2>&1 || true
       echo "sync-pr-head: merging origin/develop into $branch conflicts in files it cannot resolve:" >&2
       printf '%s\n' "$others" | sed 's/^/  /' >&2
-      echo "Merge origin/develop into the branch yourself, resolve, and push; then run merge-pr.sh again." >&2
+      echo "Merge origin/develop into the branch yourself, resolve, and push (a conflict resolved outside the manifests needs a new review); then fetch, run sync-pr-head.sh again on the new head, and merge-pr.sh --verify the sha it prints." >&2
       exit 1
     fi
     for f in "$PJ" "$MJ"; do
@@ -116,6 +119,16 @@ if ! git -C "$wt" diff --quiet -- "$PJ" "$MJ"; then
   git -C "$wt" commit -q -m "chore: bump mh to $target (merge-pr.sh; origin/develop at $dev_ver)" >&2
 fi
 
-git -C "$wt" push --force-with-lease="refs/heads/$branch:$head" origin "HEAD:refs/heads/$branch" >&2 ||
-  { echo "sync-pr-head: push to origin/$branch failed (no longer at $head, or the pre-push gauntlet failed)." >&2; exit 1; }
-git -C "$wt" rev-parse HEAD
+new=$(git -C "$wt" rev-parse HEAD)
+# git opens the SSH connection before the pre-push hook, so it idles through the whole gauntlet and
+# GitHub drops it (exit 141); the same keepalive as merge-pr.sh's push_head.
+ssh_cmd="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand || echo "${GIT_SSH:-ssh}")} -o ServerAliveInterval=10 -o ServerAliveCountMax=30"
+rc=0
+GIT_SSH_COMMAND="$ssh_cmd" git -C "$wt" push --force-with-lease="refs/heads/$branch:$head" origin "HEAD:refs/heads/$branch" >&2 || rc=$?
+line=$(git ls-remote origin "refs/heads/$branch") || { echo "sync-pr-head: git ls-remote origin failed after the push (rc=$rc)." >&2; exit 1; }
+if [ "${line%%[[:space:]]*}" != "$new" ]; then
+  echo "sync-pr-head: push to origin/$branch failed (rc=$rc): either the branch is no longer at $head (fetch and run sync-pr-head.sh on the new head) or the pre-push gauntlet failed (fix, commit, push, and get a new review)." >&2
+  exit 1
+fi
+[ "$rc" -eq 0 ] || echo "sync-pr-head: git push exited $rc but origin has $new; going on." >&2
+echo "$new"
