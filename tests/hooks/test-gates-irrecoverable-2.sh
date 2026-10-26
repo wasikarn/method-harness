@@ -1033,6 +1033,21 @@ for _c in $'cat <<\'EOF\'\nit\'s\nEOF\necho "<<X"\nls\nX' $'echo "$(cat <<\'EOF\
   $'cat > notes.md <<\'EOF\'\nnever rm -rf build\nEOF'; do
   test_allow "$IRRECOVERABLE" "GH #668 control: $(printf '%s' "$_c" | head -1)" "$(bash_payload "$_c")"
 done
+# GH #668 round 2: inside $( bash ends a heredoc at a line that starts with the delimiter (EOF), EOF ),
+# EOF); ...) and runs the next line, where the gate waited for an exact EOF line.
+for _c in $'out=$(cat <<EOF\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<EOF\nmsg\nEOF )\nrm -rf build\nEOF' \
+  $'out=$(cat <<EOF\nmsg\nEOF);\nrm -rf build\nEOF' $'out=$(cat <<EOF\nmsg\nEOF) && :\nrm -rf build\nEOF' \
+  $'out=$(cat <<\'EOF\'\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<-EOF\nmsg\n\tEOF)\nrm -rf build\nEOF' \
+  $'bash <<\'EOF\'\npsql db <<SQL\nDROP TABLE t;\nSQL\nEOF'; do
+  test_deny "$IRRECOVERABLE" "GH #668 round 2: $(printf '%s' "$_c" | sed -n 3p)" "$(bash_payload "$_c")"
+done
+# An interpreter-fed body is skipped like any body (kept as code), so a later quoted body stays data; and
+# a plain ${NAME}, an escaped backtick or an escaped \$( in an unquoted body does not expand.
+for _c in $'python3 - <<\'EOF\'\nprint("x")\nEOF\ncat > notes.md <<\'EOF\'\nWe don\'t run rm -rf build {ever}.\nEOF' \
+  $'cat > notes.md <<EOF\nrm -rf build ran at ${TS}\nEOF' $'cat > notes.md <<EOF\nrm -rf build, not \\`ls\\`\nEOF' \
+  $'cat > notes.md <<EOF\nrm -rf build, not \\$(date)\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #668 round 2 control: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c")"
+done
 _huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
 _timed_case 'GH #668: a 2.1 MB command denies on length before the heredoc scan' 2 "$_huge_cmd"
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \

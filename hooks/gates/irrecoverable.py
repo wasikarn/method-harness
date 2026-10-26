@@ -259,6 +259,9 @@ def _heredoc_delim(word):
                    re.sub(r'\\([\\"])', r"\1", m.group(2)) if m.group(2) is not None else m.group(3), word),
             any(ch in word for ch in "'\"\\"))
 
+# An unquoted body line that expands: an unescaped backtick, $( or ${ with more than a plain name inside.
+_BODY_EXPANDS_RE = re.compile(r"(?<!\\)(?:\\\\)*(?:`|\$\(|\$\{(?![A-Za-z_][A-Za-z0-9_]*\}))")
+
 def _odd_trailing_bs(line):
     return (len(line) - len(line.rstrip("\\"))) % 2 == 1
 # A heredoc feeding an interpreter is executable code, not inert data: an interpreter word anywhere on the
@@ -449,10 +452,10 @@ def _strip_heredocs(cmd):
     # GH #668: a << counts only where the shell reads it as a redirection, so the quote state is carried
     # from line to line (bodies skipped). Once a shape the scan does not model shows up (sure turns False)
     # nothing more is stripped: an opener line ending inside a quote, ${ or $((, or in a backslash; a
-    # delimiter with $ or a backtick; an unquoted body that expands $(, `, ${ or joins lines; an
-    # interpreter-fed body. Openers are then read as before, for the SQL check only.
-    # shortcut: an interpreter-fed body is not re-scanned with its own state, so heredocs after it
-    # are kept; scan it recursively if that over-denies.
+    # delimiter with $ or a backtick; an unquoted body that expands $(, `, ${..} or joins lines; a body
+    # line that starts with the delimiter but is not it. Openers are then read as before, for the SQL
+    # check only. An interpreter-fed body is skipped like any other (its text is the child's, not this
+    # shell's) but kept whole as code, its own heredocs unstripped.
     lines = cmd.split("\n")
     out, i, stack, sure = [], 0, [None], True
     while i < len(lines):
@@ -481,19 +484,27 @@ def _strip_heredocs(cmd):
             # from the line's stages parsed once.
             code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
             feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
-            if code and not feeds and n_m == len(ms) - 1:
-                sure = False
-                break  # the body is code: its lines stay, read (and their own heredocs stripped) as lines
             strip_tabs, (delim, quoted) = bool(m.group(1)), _heredoc_delim(m.group(2)) or (m.group(2), True)
-            body_start, found, expands = i, False, False
+            body_start, found, expands, early = i, False, False, False
             while i < len(lines):
                 body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
                 i += 1
                 if body_line == delim:
                     found = True
                     break
-                expands = expands or not quoted and (_odd_trailing_bs(body_line) or "$(" in body_line
-                                                     or "`" in body_line or "${" in body_line)
+                if body_line.startswith(delim):
+                    early = True  # bash inside $( ends the body at EOF) too
+                    break
+                expands = expands or not quoted and (_odd_trailing_bs(body_line)
+                                                     or bool(_BODY_EXPANDS_RE.search(body_line)))
+            body = "\n".join(lines[body_start:i])
+            if code and not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(body) and _sql_drops(body):
+                _SQL_HEREDOC_DROP[0] = True  # its own heredocs are not read, so a client in it reads its drop
+            if early:
+                # Unsure from here: the body is kept and the EOF) line is read again as a command line.
+                out.extend(lines[body_start:i - 1])
+                i, sure = i - 1, False
+                break
             if not found:
                 # Unmatched closing delimiter: put the scanned lines BACK rather
                 # than silently eat a real write statement that followed.
