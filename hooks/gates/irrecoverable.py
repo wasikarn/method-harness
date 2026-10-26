@@ -2395,57 +2395,113 @@ def _unwrap_shell(argv0, rest):
         _scan_body(body)
 
 # GH #663: `sh -c BODY ARG0 ARGS...` runs BODY with $0 = ARG0 and $1.. / "$@" / $* = ARGS, so
-# `bash -c 'rm "$@"' -- -rf b` runs `rm -rf b`. A copy of the body with those parameters filled in from the
-# words written after it is read as well (the body as written stays read too). Only a parameter that is a
-# whole word is filled (`$1`, `"$1"`, `"$@"`, `${@:2}`, `${1:-x}`): one inside a larger quoted string is text
-# (`git commit -m "fix: $1"`), and one in single quotes never expands. A leading `shift [N]` drops words.
-# A double-quoted body keeps the outer shell's backslashes (`bash -c "rm \"\$@\""`), so the body is read with
-# them removed as bash does (before a $, ", \ or backtick), and a parameter counts only outside quotes:
-# a whole `"$1"` when its opening quote is unquoted, a bare `$1` when the `$` itself is (_quote_mask).
-_POSITIONAL_RE = re.compile(
-    r'(?<![^\s;&|(){`])(")?\$(?:\{([@*]|\d+)(?::(\d+)(?::(\d+))?|(?::?[-=+?]|##?|%%?)[^{}]*)?\}|([@*0-9]))'
-    r'(?(1)")(?=[\s;&|)}`]|$)')
+# `bash -c 'rm "$@"' -- -rf b` runs `rm -rf b`. A copy of the body with each positional parameter expanded as the
+# shell would is read as well (the body as written stays read too). The body is walked with its quote state:
+# in single quotes nothing expands; in double quotes a value is inserted escaped (a message stays a message,
+# `"-$1"` still makes a flag), and "$@" becomes one quoted word per argument; unquoted, a value is split on
+# blanks and each piece is shell-quoted, so `-$1`, `r$1`, `$1$2` and a value of `rm -rf b` read as the shell
+# runs them while a value's `;` is never a separator. A double-quoted body keeps the outer shell's backslash
+# before a $ or backtick, which is dropped first. Operators (defaults, # % patterns, case, /x/y, substrings,
+# @ slices) are applied; an unknown one gives the plain value. A leading `shift [N]` drops arguments.
 _POSITIONAL_SHIFT_RE = re.compile(r"\s*shift(?:\s+(\d+))?\s*(?:;|&&|\n)")
-_POSITIONAL_CAP = 150_000  # characters of filled body; past it the body is denied, not scanned
+_POSITIONAL_PARAM_RE = re.compile(r"\$(?:\{([@*#]|\d+)([^{}]*)\}|([@*#0-9]))")
+_POSITIONAL_SLICE_RE = re.compile(r":\s*\(?\s*(-?\d+)\s*\)?(?::\s*\(?\s*(-?\d+)\s*\)?)?")
+_POSITIONAL_CAP = 150_000  # characters filled in across the whole command; past it the command denies
+_POSITIONAL_SPENT = [0]
+
+def _positional_op(vals, op, is_list):
+    # One bash parameter operator applied to the value(s); an operator not modelled gives the values unchanged.
+    import fnmatch
+    v = " ".join(vals)
+    m = re.fullmatch(r"(:?)([-=?+])(.*)", op, re.S)
+    if m:
+        unset = not vals or (m.group(1) and not v)
+        if m.group(2) == "+":
+            return [] if unset else [m.group(3)]
+        return [m.group(3)] if unset and m.group(2) in "-=" else vals
+    m = _POSITIONAL_SLICE_RE.fullmatch(op)
+    if m:  # ${@:k[:n]} / ${1:k[:n]}
+        k, n = int(m.group(1)), (int(m.group(2)) if m.group(2) is not None else None)
+        seq = vals if is_list else v
+        part = seq[k:] if k >= 0 else seq[len(seq) + k:] if -k <= len(seq) else seq[:0]
+        part = part if n is None else (part[:n] if n >= 0 else part[:n])
+        return list(part) if is_list else [part]
+    def each(f):
+        return [f(x) for x in vals]
+    m = re.fullmatch(r"(##?|%%?)(.*)", op, re.S)
+    if m:
+        pat, longest, front = m.group(2), len(m.group(1)) == 2, m.group(1)[0] == "#"
+        def cut(x):
+            cuts = [i for i in range(len(x) + 1) if fnmatch.fnmatchcase(x[:i] if front else x[i:], pat)]
+            if not cuts:
+                return x
+            i = (max(cuts) if longest else min(cuts)) if front else (min(cuts) if longest else max(cuts))
+            return x[i:] if front else x[:i]
+        return each(cut)
+    case = {",,": str.lower, "^^": str.upper, ",": lambda x: x[:1].lower() + x[1:], "^": lambda x: x[:1].upper() + x[1:]}
+    if op in case:
+        return each(case[op])
+    m = re.fullmatch(r"/(/?)([^/]*)/?(.*)", op, re.S)
+    if m and not re.search(r"[*?\[]", m.group(2)):
+        return each(lambda x: x.replace(m.group(2), m.group(3)) if m.group(1) else x.replace(m.group(2), m.group(3), 1))
+    return vals
 
 def _positional_body(body, rest):
     k = next((k for k, t in enumerate(rest) if t is body), None)
     if k is None or k + 1 >= len(rest) or "$" not in body:
         return None
-    body = re.sub(r'\\([$"\\`])', r"\1", body)
-    mask = _quote_mask(body)
-    def unquoted(m):
-        if m.group(1):  # `"$1"`: the opening quote must open a span of its own
-            return m.start() == 0 or not mask[m.start() - 1]
-        return not mask[m.start()]
-    refs = [m for m in _POSITIONAL_RE.finditer(body) if unquoted(m)]
-    if not refs:
-        return None
-    words = [shlex.quote(t.replace(PH, "")) if t.replace(PH, "") else "''" for t in rest[k + 1:]]
+    body = re.sub(r"\\([$`])", r"\1", body)
+    words = [t.replace(PH, "") for t in rest[k + 1:]]
     pos = words[1:]
     m = _POSITIONAL_SHIFT_RE.match(body)
     while m:  # `shift; git $1 $2` reads the words after the shifted ones
         pos = pos[int(m.group(1) or 1):]
         m = _POSITIONAL_SHIFT_RE.match(body, m.end())
-    out, size, last = [], 0, 0
-    for m in refs:
-        name = m.group(2) or m.group(5)
-        if name in "@*":
-            off = int(m.group(3)) if m.group(3) else 1  # ${@:k} starts at $k ($0 for k=0)
-            seq = (words[:1] + pos)[off:] if off else words[:1] + pos
-            if m.group(4):
-                seq = seq[:int(m.group(4))]
-            text = " ".join(seq)
+    out, i, n, quote, found = [], 0, len(body), None, False
+    while i < n:
+        c = body[i]
+        if quote == SQ:
+            quote = None if c == SQ else quote
+            out.append(c)
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(body[i:i + 2])
+            i += 2
+            continue
+        if c == SQ and quote is None or c == '"':
+            quote = (SQ if c == SQ else None if quote == '"' else '"')
+            out.append(c)
+            i += 1
+            continue
+        m = _POSITIONAL_PARAM_RE.match(body, i) if c == "$" else None
+        if not m:
+            out.append(c)
+            i += 1
+            continue
+        found = True
+        name, op = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), "")
+        if name in "@*":  # a ${@:k} slice counts $0 as position 0; every other form starts at $1
+            vals, is_list = ([words[0]] + pos if _POSITIONAL_SLICE_RE.fullmatch(op) else list(pos)), True
+        elif name == "#":
+            vals, is_list = [str(len(pos))], False
         else:
-            n = int(name)
-            text = words[0] if n == 0 else (pos[n - 1] if n - 1 < len(pos) else "")
-        out += [body[last:m.start()], text]
-        size += m.start() - last + len(text)
-        last = m.end()
-        if size > _POSITIONAL_CAP:
+            num = int(name)
+            vals = [words[0]] if num == 0 else ([pos[num - 1]] if num - 1 < len(pos) else [])
+            is_list = False
+        if op:
+            vals = _positional_op(vals, op, is_list)
+        if quote == '"':
+            esc = [re.sub(r'([\\"$`])', r"\\\1", x) for x in vals]
+            text = '" "'.join(esc) if name == "@" else " ".join(esc)
+        else:
+            text = " ".join(shlex.quote(p) for x in vals for p in x.split())
+        _POSITIONAL_SPENT[0] += len(text)
+        if _POSITIONAL_SPENT[0] > _POSITIONAL_CAP:
             return False
-    out.append(body[last:])
-    return "".join(out)
+        out.append(text)
+        i = m.end()
+    return "".join(out) if found else None
 
 
 def _scan_body(body):
