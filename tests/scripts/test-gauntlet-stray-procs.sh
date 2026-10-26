@@ -81,8 +81,8 @@ out=$(bash -ec ". '$LIB'; _sp_ps() { return 1; }; stray_procs_report; echo after
 # Wiring: the gauntlet reports before it starts the layers (the failure-path call and its place
 # above the failing: list are covered by test-gauntlet-failed-summary.sh). Text check only;
 # running the gauntlet from a gauntlet test would recurse.
-first=$(/usr/bin/grep -n '^stray_procs_report' "$GAUNTLET" | head -1 | cut -d: -f1)
-layers=$(/usr/bin/grep -n '^run_hook_tests >' "$GAUNTLET" | head -1 | cut -d: -f1)
+first=$(/usr/bin/grep -n -m1 '^stray_procs_report' "$GAUNTLET" | cut -d: -f1)
+layers=$(/usr/bin/grep -n -m1 '^run_hook_tests >' "$GAUNTLET" | cut -d: -f1)
 if [ -n "$first" ] && [ -n "$layers" ] && [ "$first" -lt "$layers" ]; then
   ok "run-gauntlet.sh calls stray_procs_report before it starts the layers"
 else

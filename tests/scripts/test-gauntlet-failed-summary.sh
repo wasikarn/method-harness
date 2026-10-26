@@ -71,8 +71,15 @@ elif [ -z "$LOGDIR" ]; then
   bad "mktemp -d failed for the log dir"
 else
   printf -- '--- tests/x.sh\nnoise\nfailed-at: tests/scripts/test-red.sh: ❌ row\nfailing: tests/scripts/test-red.sh\n' >"$LOGDIR/tests"
-  # stray_procs_report reads the real ps; stub it so only the lists are under test here.
+  # stray_procs_report reads the real ps; a stub stands in, and its line proves the call runs.
   out=$(bash -c "LOG='$LOGDIR'; fail=1; stray_procs_report() { echo 'gauntlet: warning: stub'; }; $TAIL" 2>&1)
+  stub_at=$(printf '%s\n' "$out" | /usr/bin/grep -n -m1 -F 'gauntlet: warning: stub' | cut -d: -f1)
+  list_at=$(printf '%s\n' "$out" | /usr/bin/grep -n -m1 '^failing:' | cut -d: -f1)
+  if [ -n "$stub_at" ] && [ -n "$list_at" ] && [ "$stub_at" -lt "$list_at" ]; then
+    ok "a failed run reports stray processes, above the failing: list (GH #158)"
+  else
+    bad "no stray report above the failing: list (stub line '$stub_at', failing: line '$list_at'): <$out>"
+  fi
   last=$(printf '%s\n' "$out" | tail -n 1)
   if /usr/bin/grep -qF 'failing: tests/scripts/test-red.sh' <<<"$last"; then
     ok "the last line of a failed run repeats the failing: list"
