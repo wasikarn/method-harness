@@ -3,7 +3,7 @@
 # long-running CPU-heavy process groups. Two real floods drive the rows: 4 `yes` at 100% CPU for
 # ~4 h (2026-10-25) and 289 stress workers at load ~248, about 4% each on 12 cores (2026-10-05).
 # Each case sources the library in a fresh `bash -c` and replaces its ps/load readers with fixture
-# text, so no row depends on real CPU time.
+# text, so no row depends on real CPU time; the last rows run the real readers against PATH shims.
 set -uo pipefail
 # An operator may set these in settings.json env; the rows below assume the defaults.
 unset GAUNTLET_STRAY_MIN_SECS GAUNTLET_STRAY_MIN_CPU
@@ -76,7 +76,37 @@ out=$(run 'printf "%s\n" "$ROWS"' GAUNTLET_STRAY_MIN_SECS=1h GAUNTLET_STRAY_MIN_
 case "$out" in *zsh*|*"3 processes"*) bad "a non-numeric threshold changed the result: $out" ;; *"pids 82797"*) ok "a non-numeric threshold falls back to the default" ;; *) bad "fallback run lost the yes group: $out" ;; esac
 
 out=$(bash -ec ". '$LIB'; _sp_ps() { return 1; }; stray_procs_report; echo after" 2>/dev/null)
-[ "$out" = "after" ] && ok "a set -e caller is not aborted" || bad "set -e caller aborted: $out"
+[ "$out" = "after" ] && ok "a set -e caller is not aborted when ps fails" || bad "set -e caller aborted: $out"
+
+out=$(env ROWS="$ROWS" bash -ec ". '$LIB'; _sp_ps() { printf '%s\n' \"\$ROWS\"; }; _sp_load() { return 1; }; stray_procs_report; echo after" 2>/dev/null)
+[ "$out" = "after" ] && ok "a set -e caller is not aborted when strays are found and the load reader fails" || bad "set -e caller aborted on a load failure: $out"
+
+# The real readers, through PATH shims instead of overridden helpers. The ps shim acts like macOS
+# ps: an unknown -o keyword (say `etimes`, which macOS lacks) is an error, and it lists rows only
+# for `-U <your uid>`.
+source "$HERE/../_lib/harness.sh"
+trap _cleanup_trash EXIT
+SHIM=$(fresh_tmpdir)
+cat >"$SHIM/ps" <<EOF
+#!/bin/bash
+uid="" cols=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in -U) uid=\$2; shift 2 ;; -o) cols=\$2; shift 2 ;; *) shift ;; esac
+done
+for c in \${cols//,/ }; do
+  case "\$c" in pid=|etime=|%cpu=|command=) ;; *) echo "ps: \${c%=}: keyword not found" >&2; exit 1 ;; esac
+done
+[ "\$uid" = "$(id -u)" ] || exit 0
+printf '%s\n' '82797     04:27:19  99.4 yes' '82799     04:27:19  99.0 yes'
+EOF
+printf '#!/bin/bash\necho "10:00  up 3 days,  2:00, 2 users, load averages: 3.21 2.00 1.00"\n' >"$SHIM/uptime"
+chmod +x "$SHIM/ps" "$SHIM/uptime"
+out=$(PATH="$SHIM:$PATH" bash -c ". '$LIB'; stray_procs_report" 2>&1)
+case "$out" in *"yes: 2 processes"*"pids 82797 82799"*) ok "the real ps call (-U uid, -o pid=,etime=,%cpu=,command=) feeds the report" ;; *) bad "real ps call did not feed the report: $out" ;; esac
+case "$out" in *"load 3.21;"*) ok "the real load reader parses macOS uptime ('load averages: 3.21 2.00 1.00')" ;; *) bad "macOS uptime not parsed: $out" ;; esac
+printf '#!/bin/bash\necho " 10:00:00 up 3 days,  2:00,  1 user,  load average: 4.56, 2.00, 1.00"\n' >"$SHIM/uptime"
+out=$(PATH="$SHIM:$PATH" bash -c ". '$LIB'; stray_procs_report" 2>&1)
+case "$out" in *"load 4.56;"*) ok "the real load reader parses Linux uptime ('load average: 4.56, 2.00, 1.00')" ;; *) bad "Linux uptime not parsed: $out" ;; esac
 
 # Wiring: the gauntlet reports before it starts the layers (the failure-path call and its place
 # above the failing: list are covered by test-gauntlet-failed-summary.sh). Text check only;
