@@ -2943,6 +2943,20 @@ _s663=""; for _i in $(seq 20); do _s663+="sh -c 'echo $_f663' _ $_a663; "; done
 _t0=$(date +%s); bash_agent_payload "${_s663}rm -rf b" fork | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; _rc=$?; _t1=$(( $(date +%s) - _t0 ))
 if [[ "$_rc" == 2 ]] && [ "$_t1" -le 4 ]; then echo "  ✅ GH #663: subagent flood of filled bodies denied in bounded time (rc=2 in ${_t1}s)"; pass=$((pass + 1))
 else echo "  ❌ GH #663: subagent flood of filled bodies: expected rc=2 within 4s, got rc=$_rc in ${_t1}s" >&2; fail=$((fail + 1)); fi
+# GH #663 review 3: default words, shift past $#, ${!#}, pattern quoting, anchors, comments, $'...'
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${1+"$@"}'"'"' _ -rf b' "$(bash_payload 'sh -c '"'"'rm ${1+"$@"}'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${3:-$2} b'"'"' _ x -rf' "$(bash_payload 'sh -c '"'"'rm ${3:-$2} b'"'"' _ x -rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${3:-${2}} b'"'"' _ x -rf' "$(bash_payload 'sh -c '"'"'rm ${3:-${2}} b'"'"' _ x -rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'shift 3; rm $1 $2'"'"' _ -rf b (a failed shift keeps the args)' "$(bash_payload 'bash -c '"'"'shift 3; rm $1 $2'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'rm ${!#} b'"'"' _ -rf' "$(bash_payload 'bash -c '"'"'rm ${!#} b'"'"' _ -rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "${1#"x"}" b'"'"' _ x-rf' "$(bash_payload 'sh -c '"'"'rm "${1#"x"}" b'"'"' _ x-rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'rm "${1#[^x]}" b'"'"' _ a-rf' "$(bash_payload 'bash -c '"'"'rm "${1#[^x]}" b'"'"' _ a-rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'rm "${1/#x/-}" b'"'"' _ xrf' "$(bash_payload 'bash -c '"'"'rm "${1/#x/-}" b'"'"' _ xrf')"
+_c663=$'bash -c \'echo hi # it\'"\'"\'s\nrm "$@"\' _ -rf b'
+test_deny  "$IRRECOVERABLE" 'GH #663: a comment with an apostrophe before rm "$@"' "$(bash_payload "$_c663")"
+test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'sh -c "echo \"\$@\"" _ "$@"'"'"' _ a b (nested forwarding)' "$(bash_payload 'sh -c '"'"'sh -c "echo \"\$@\"" _ "$@"'"'"' _ a b')"
+_timed_case "GH #663: a \${1##*/} cut on a 100 KB value is read in bounded time" 2 \
+  "sh -c 'echo \"\${1##*/}\"; rm -rf b' _ $(printf 'a/%.0s' $(seq 45000))"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'rm \"\$@\"' _ a.log b.log" "$(bash_payload "bash -c 'rm \"\$@\"' _ a.log b.log")"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'echo \"\$@\"' _ rm -rf b" "$(bash_payload "bash -c 'echo \"\$@\"' _ rm -rf b")"
 test_allow "$IRRECOVERABLE" "GH #663 control: sh -c 'ls \$1' _ -la" "$(bash_payload "sh -c 'ls \$1' _ -la")"

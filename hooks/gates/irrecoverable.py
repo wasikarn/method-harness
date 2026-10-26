@@ -2404,34 +2404,55 @@ def _unwrap_shell(argv0, rest):
 # before a $ or backtick, which is dropped first. Operators (defaults, # % patterns, case, /x/y, substrings,
 # @ slices) are applied; an unknown one gives the plain value. A leading `shift [N]` drops arguments.
 _POSITIONAL_SHIFT_RE = re.compile(r"\s*shift(?:\s+(\d+))?\s*(?:;|&&|\n)")
-_POSITIONAL_PARAM_RE = re.compile(r"\$(?:\{([@*#]|\d+)([^{}]*)\}|([@*#0-9]))")
+_POSITIONAL_PARAM_RE = re.compile(r"\$([@*#0-9])")
+_POSITIONAL_NAME_RE = re.compile(r"(!#|[@*#]|\d+)")
 _POSITIONAL_SLICE_RE = re.compile(r":\s*\(?\s*(-?\d+)\s*\)?(?::\s*\(?\s*(-?\d+)\s*\)?)?")
-_POSITIONAL_CAP = 150_000  # characters filled in across the whole command; past it the command denies
+_POSITIONAL_CAP = 150_000  # characters of work across the whole command; past it the command denies
+_POSITIONAL_CUT_MAX = 4096  # a # % pattern cut longer than this keeps the raw value (the cut is O(n^2))
 _POSITIONAL_SPENT = [0]
 
-def _positional_op(vals, op, is_list):
-    # One bash parameter operator applied to the value(s); an operator not modelled gives the values unchanged.
+class _PositionalOverCap(Exception):
+    pass
+
+def _positional_charge(n):
+    _POSITIONAL_SPENT[0] += n
+    if _POSITIONAL_SPENT[0] > _POSITIONAL_CAP:
+        raise _PositionalOverCap
+
+def _positional_pattern(pat):
+    # A # % / pattern as bash reads it: quotes and backslashes removed, `[^` the same as `[!`.
+    pat = re.sub(r"""\\(.)|'([^']*)'|"((?:[^"\\]|\\.)*)\"""", lambda m: re.sub(r"([*?\[])", r"[\1]",
+                 m.group(1) if m.group(1) is not None else m.group(2) if m.group(2) is not None
+                 else re.sub(r"\\(.)", r"\1", m.group(3))), pat)
+    return pat.replace("[^", "[!")
+
+def _positional_op(vals, op, is_list, expand):
+    # One bash parameter operator applied to the value(s). A default or alternate word is itself expanded
+    # (`${1+"$@"}`, `${3:-$2}`); an operator not modelled gives the values unchanged.
     import fnmatch
     v = " ".join(vals)
     m = re.fullmatch(r"(:?)([-=?+])(.*)", op, re.S)
     if m:
         unset = not vals or (m.group(1) and not v)
         if m.group(2) == "+":
-            return [] if unset else [m.group(3)]
-        return [m.group(3)] if unset and m.group(2) in "-=" else vals
+            return None if unset else expand(m.group(3))
+        return expand(m.group(3)) if unset and m.group(2) in "-=" else vals
     m = _POSITIONAL_SLICE_RE.fullmatch(op)
     if m:  # ${@:k[:n]} / ${1:k[:n]}
         k, n = int(m.group(1)), (int(m.group(2)) if m.group(2) is not None else None)
         seq = vals if is_list else v
         part = seq[k:] if k >= 0 else seq[len(seq) + k:] if -k <= len(seq) else seq[:0]
-        part = part if n is None else (part[:n] if n >= 0 else part[:n])
+        part = part if n is None else part[:n]
         return list(part) if is_list else [part]
     def each(f):
         return [f(x) for x in vals]
     m = re.fullmatch(r"(##?|%%?)(.*)", op, re.S)
     if m:
-        pat, longest, front = m.group(2), len(m.group(1)) == 2, m.group(1)[0] == "#"
+        pat, longest, front = _positional_pattern(m.group(2)), len(m.group(1)) == 2, m.group(1)[0] == "#"
         def cut(x):
+            if len(x) > _POSITIONAL_CUT_MAX:
+                return x
+            _positional_charge(len(x) * len(x) // 64 + 1)
             cuts = [i for i in range(len(x) + 1) if fnmatch.fnmatchcase(x[:i] if front else x[i:], pat)]
             if not cuts:
                 return x
@@ -2441,67 +2462,139 @@ def _positional_op(vals, op, is_list):
     case = {",,": str.lower, "^^": str.upper, ",": lambda x: x[:1].lower() + x[1:], "^": lambda x: x[:1].upper() + x[1:]}
     if op in case:
         return each(case[op])
-    m = re.fullmatch(r"/(/?)([^/]*)/?(.*)", op, re.S)
-    if m and not re.search(r"[*?\[]", m.group(2)):
-        return each(lambda x: x.replace(m.group(2), m.group(3)) if m.group(1) else x.replace(m.group(2), m.group(3), 1))
+    m = re.fullmatch(r"/([/#%]?)((?:[^/\\]|\\.)*)(?:/(.*))?", op, re.S)
+    if m:
+        kind, pat, rep = m.group(1), _positional_pattern(m.group(2)), m.group(3) or ""
+        if re.search(r"[*?\[]", pat):
+            return vals
+        def sub(x):
+            if kind == "#":
+                return rep + x[len(pat):] if x.startswith(pat) else x
+            if kind == "%":
+                return x[:len(x) - len(pat)] + rep if pat and x.endswith(pat) else x
+            return x.replace(pat, rep) if kind == "/" else x.replace(pat, rep, 1)
+        return each(sub)
     return vals
 
-def _positional_body(body, rest):
-    k = next((k for k, t in enumerate(rest) if t is body), None)
-    if k is None or k + 1 >= len(rest) or "$" not in body:
-        return None
-    body = re.sub(r"\\([$`])", r"\1", body)
-    words = [t.replace(PH, "") for t in rest[k + 1:]]
-    pos = words[1:]
-    m = _POSITIONAL_SHIFT_RE.match(body)
-    while m:  # `shift; git $1 $2` reads the words after the shifted ones
-        pos = pos[int(m.group(1) or 1):]
-        m = _POSITIONAL_SHIFT_RE.match(body, m.end())
-    out, i, n, quote, found = [], 0, len(body), None, False
+def _brace_end(t, i):
+    # The index just past the `}` closing the `{` at t[i], counting nested braces; -1 when unclosed.
+    depth, j, n = 1, i + 1, len(t)
+    while j < n:
+        c = t[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if not depth:
+                return j + 1
+        j += 1
+    return -1
+
+def _pos_expand(text, args, quoted):
+    # The text with every positional parameter expanded, walking its quote state (see _positional_body).
+    # Returns (expanded text, whether a parameter was found).
+    words, pos = args
+    out, i, n, quote, found = [], 0, len(text), '"' if quoted else None, False
     while i < n:
-        c = body[i]
-        if quote == SQ:
+        c = text[i]
+        if quote in (SQ, "$'"):
+            if quote == "$'" and c == "\\" and i + 1 < n:
+                out.append(text[i:i + 2])
+                i += 2
+                continue
             quote = None if c == SQ else quote
             out.append(c)
             i += 1
             continue
         if c == "\\" and i + 1 < n:
-            out.append(body[i:i + 2])
+            out.append(text[i:i + 2])
             i += 2
             continue
-        if c == SQ and quote is None or c == '"':
-            quote = (SQ if c == SQ else None if quote == '"' else '"')
+        if quote is None and c == "#" and (not out or out[-1][-1:] in " \t\n;&|("):
+            j = text.find("\n", i)  # a comment runs to the end of the line, quotes and all
+            j = n if j < 0 else j
+            out.append(text[i:j])
+            i = j
+            continue
+        if quote is None and c == "$" and text[i + 1:i + 2] == SQ:
+            quote = "$'"
+            out.append("$'")
+            i += 2
+            continue
+        if c == SQ and quote is None or c == '"' and not quoted:
+            quote = SQ if c == SQ else None if quote == '"' else '"'
             out.append(c)
             i += 1
             continue
-        m = _POSITIONAL_PARAM_RE.match(body, i) if c == "$" else None
-        if not m:
+        if c != "$":
             out.append(c)
             i += 1
             continue
+        if text[i + 1:i + 2] == "{":
+            end = _brace_end(text, i + 1)
+            nm = _POSITIONAL_NAME_RE.match(text, i + 2) if end > 0 else None
+            if not nm:
+                out.append(c)
+                i += 1
+                continue
+            name, op, nxt = nm.group(1), text[nm.end():end - 1], end
+        else:
+            m = _POSITIONAL_PARAM_RE.match(text, i)
+            if not m:
+                out.append(c)
+                i += 1
+                continue
+            name, op, nxt = m.group(1), "", m.end()
         found = True
-        name, op = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), "")
         if name in "@*":  # a ${@:k} slice counts $0 as position 0; every other form starts at $1
             vals, is_list = ([words[0]] + pos if _POSITIONAL_SLICE_RE.fullmatch(op) else list(pos)), True
         elif name == "#":
             vals, is_list = [str(len(pos))], False
+        elif name == "!#":
+            vals, is_list = [pos[-1] if pos else words[0]], False
         else:
             num = int(name)
             vals = [words[0]] if num == 0 else ([pos[num - 1]] if num - 1 < len(pos) else [])
             is_list = False
+        raw = False
         if op:
-            vals = _positional_op(vals, op, is_list)
-        if quote == '"':
+            res = _positional_op(vals, op, is_list, lambda w: [_pos_expand(w, args, quote == '"')[0]])
+            vals, raw = ([] if res is None else res), op[:2].lstrip(":")[:1] in ("-", "=", "+") and res is not vals
+        if raw:  # an expanded default word is already shell text
+            text_out = " ".join(vals)
+        elif quote == '"':
             esc = [re.sub(r'([\\"$`])', r"\\\1", x) for x in vals]
-            text = '" "'.join(esc) if name == "@" else " ".join(esc)
+            text_out = '" "'.join(esc) if name == "@" else " ".join(esc)
         else:
-            text = " ".join(shlex.quote(p) for x in vals for p in x.split())
-        _POSITIONAL_SPENT[0] += len(text)
-        if _POSITIONAL_SPENT[0] > _POSITIONAL_CAP:
-            return False
-        out.append(text)
-        i = m.end()
-    return "".join(out) if found else None
+            text_out = " ".join(shlex.quote(p) for x in vals for p in x.split())
+        _positional_charge(len(text_out))
+        out.append(text_out)
+        i = nxt
+    return "".join(out), found
+
+def _positional_body(body, rest):
+    k = next((k for k, t in enumerate(rest) if t is body), None)
+    if k is None or k + 1 >= len(rest) or "$" not in body:
+        return None
+    # A double-quoted outer body keeps the outer shell's backslash before $ and backtick: drop it, unless the
+    # body has an unescaped parameter of its own (then `\$` is the body's own escape for a nested shell).
+    if not re.search(r"(?<!\\)\$(?:[@*#0-9]|\{)", body):
+        body = re.sub(r"\\([$`])", r"\1", body)
+    words = [t.replace(PH, "") for t in rest[k + 1:]]
+    pos = words[1:]
+    m = _POSITIONAL_SHIFT_RE.match(body)
+    while m:  # `shift; git $1 $2` reads the words after the shifted ones; a shift past $# fails and keeps them
+        cnt = int(m.group(1) or 1)
+        pos = pos[cnt:] if cnt <= len(pos) else pos
+        m = _POSITIONAL_SHIFT_RE.match(body, m.end())
+    try:
+        filled, found = _pos_expand(body, (words, pos), False)
+    except _PositionalOverCap:
+        return False
+    return filled if found else None
 
 
 def _scan_body(body):
