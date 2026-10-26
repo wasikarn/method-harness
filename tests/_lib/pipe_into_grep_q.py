@@ -12,11 +12,13 @@ A pipe's readers are the commands that can read the stdin it hands its right sid
 - directly: the command there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a
   `time`d command, and any `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies
   redirections left to right; a simple command expands its words before its redirections, a
-  compound command (`for` list, `case` subject, `for ((...))`) after them. So the words of
+  compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them;
+  a grep -q in `>(...)` reads the command's output, but its early exit kills that command with
+  SIGPIPE, so it counts wherever it sits. So the words of
   `echo "$(...)" < f` read the pipe, those of `for x in $(...); do :; done < f` read f, and a
   substitution in a redirection after `< f` reads f;
 - inside the conditions and bodies of if/while/until/for/case: a grep counts only when it reads
-  stdin: no file operand and no -r, or a `-` or `/dev/stdin` operand, or `-f -`
+  stdin: no file operand and no -r, or a `-`, `/dev/stdin` or `/dev/fd/0` operand or `-f` value
   (`while read -r f; do grep -q p "$f"; done` reads files, not the pipe). This part is a
   heuristic: a grep with a file operand after `cat` drained nothing is not flagged there.
 A statement whose stdin is redirected (`<`, `<<<`, `<<`, `<&N` with a literal N other than 0) is no
@@ -89,7 +91,11 @@ STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
 # Keys under which shfmt nests statements; a statement's own words are everything else.
 NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
 # Commands that expand their words before their redirections apply.
-SIMPLE = {'CallExpr', 'DeclClause', 'TestClause', 'ArithmCmd', 'LetClause'}
+# `[[ ]]` and `(( ))` are compound commands: bash applies their redirections first
+# (`echo P | { [[ $(cat) == P ]] < f; }` reads f), so they are not here.
+SIMPLE = {'CallExpr', 'DeclClause', 'LetClause'}
+# Operands that name the stdin a grep inherits.
+STDIN_FILES = ('-', '/dev/stdin', '/dev/fd/0', '/proc/self/fd/0')
 DELIBERATE = re.compile(r'#\s*pipe-into-grep-q: deliberate\s*$')
 CANARY = b'x | grep -q y\n'
 
@@ -224,7 +230,7 @@ def grep_args(args):
                 value = w.split('=', 1)[1] if inline else next(it, None)
                 if name in ('regexp', 'file'):
                     pattern_given = True
-                    patterns_from_stdin |= name == 'file' and value in ('-', '/dev/stdin')
+                    patterns_from_stdin |= name == 'file' and value in STDIN_FILES
             continue
         if w.startswith('-') and len(w) > 1:
             for n, ch in enumerate(w[1:], 1):
@@ -236,14 +242,14 @@ def grep_args(args):
                     value = w[n + 1:] or next(it, None)
                     if ch in 'ef':
                         pattern_given = True
-                        patterns_from_stdin |= ch == 'f' and value in ('-', '/dev/stdin')
+                        patterns_from_stdin |= ch == 'f' and value in STDIN_FILES
                     break
                 if not ch.isalpha():
                     break
             continue
         operands.append(w)
     files = operands if pattern_given else operands[1:]
-    if patterns_from_stdin or '-' in files or '/dev/stdin' in files:
+    if patterns_from_stdin or any(f in STDIN_FILES for f in files):
         return quiet, True
     return quiet, not files and not recursive  # -r with no file searches `.`, not stdin
 
@@ -286,6 +292,25 @@ def substs(node):
     return out
 
 
+def output_substs(node):
+    """Every `>(...)` in a statement's whole subtree (nested statements too), not inside another one."""
+    out = []
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get('Type') == 'ProcSubst' and n.get('Op') == '>(':
+                out.append(n)
+                return
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(node)
+    return out
+
+
 def readers(stmt, direct=True):
     """(command, direct) pairs for the commands that can read the stdin this statement gets."""
     if not stmt:
@@ -295,7 +320,17 @@ def readers(stmt, direct=True):
         return [r for s in stmts or [] for r in readers(s, d)]
 
     def subst_readers(node):
-        return [r for sub in substs(node) for r in each(sub.get('Stmts'), direct)]
+        # An output substitution `>(...)` reads what the command writes, not the pipe: see below.
+        return [r for sub in substs(node) if sub.get('Op') != '>('
+                for r in each(sub.get('Stmts'), direct)]
+
+    # A grep -q in `>(...)` exits early and the command writing into it dies of SIGPIPE, which
+    # pipefail turns into the pipeline's failure (bash: `seq 2000000 | tee >(grep -q 1) >/dev/null`
+    # gives PIPESTATUS 141 141; `cat < f > >(grep -q 1)` dies the same way). So on a pipe's right
+    # side it counts wherever it sits, whatever the statement's stdin: also inside a group, subshell
+    # or loop body whose stdin is redirected (`x | while read -r l; do cat "$l" > >(grep -q y);
+    # done < f` gives 141 141 too), so the whole subtree is searched, not only this statement.
+    outputs = [r for sub in output_substs(stmt) for r in each(sub.get('Stmts'), direct)]
 
     # Redirections apply left to right: a substitution in one expands with whatever stdin the
     # earlier ones left, so only those up to the first that replaces stdin can see the pipe.
@@ -310,7 +345,7 @@ def readers(stmt, direct=True):
     # read the pipe either way; a compound command (for list, case subject) applies them first
     # (bash: `echo P | for x in $(cat); do echo $x; done < f` prints f's contents).
     simple = t in SIMPLE
-    out = (subst_readers(cmd) if simple or not replaced else []) + redir_out
+    out = (subst_readers(cmd) if simple or not replaced else []) + redir_out + outputs
     if replaced:
         return out
     if t == 'CallExpr':
