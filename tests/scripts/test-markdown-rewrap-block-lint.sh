@@ -42,6 +42,7 @@ BLOCK = set('address article aside base basefont blockquote body caption center 
             'h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav '
             'noframes ol optgroup option p param search section summary table tbody td tfoot th '
             'thead title tr track ul'.split())
+list_item = re.compile(r'^ {0,3}(?:[-+*]|\d+[.)])[ \t]')
 scanned = 0
 for f in sys.argv[1:]:
     try:
@@ -55,9 +56,18 @@ for f in sys.argv[1:]:
             if lines[j].strip() in ('---', '...'):
                 start = j + 1
                 break
-    open_fence, html, in_quote, prev = None, None, False, ''
+    open_fence, html, in_quote, in_list, prev = None, None, False, False, ''
     for n in range(start, len(lines)):
         line = lines[n]
+        m = fence.match(line)
+        # code comes first: an HTML-looking line inside a fence is code, not an HTML block
+        if open_fence:
+            # a closer is the same character, at least as long, with nothing after it but spaces
+            if (m and m.group(1)[0] == open_fence[0] and len(m.group(1)) >= len(open_fence)
+                    and not m.group(2).strip()):
+                open_fence = None
+            prev = ''
+            continue
         if html:
             # a comment ends at -->, a raw block (<pre>, <script>, ...) at its closing tag, any
             # other HTML block at a blank line
@@ -67,7 +77,11 @@ for f in sys.argv[1:]:
             prev = ''
             continue
         if not line.strip():
-            in_quote, prev = False, ''
+            in_quote, in_list, prev = False, False, ''
+            continue
+        # a backtick fence's info string has no backtick: ```code``` text is an inline span
+        if m and not (m.group(1)[0] == '`' and '`' in m.group(2)):
+            open_fence, in_quote, in_list, prev = m.group(1), False, False, ''
             continue
         if re.match(r'^ {0,3}<!--', line):
             if '-->' not in line:
@@ -87,26 +101,17 @@ for f in sys.argv[1:]:
             if name in BLOCK or (not prev.strip() and html_alone.match(line)):
                 html, prev = 'block', ''
                 continue
-        m = fence.match(line)
-        if open_fence:
-            # a closer is the same character, at least as long, with nothing after it but spaces
-            if (m and m.group(1)[0] == open_fence[0] and len(m.group(1)) >= len(open_fence)
-                    and not m.group(2).strip()):
-                open_fence = None
-            prev = ''
-            continue
-        # a backtick fence's info string has no backtick: ```code``` text is an inline span
-        if m and not (m.group(1)[0] == '`' and '`' in m.group(2)):
-            open_fence, in_quote, prev = m.group(1), False, ''
-            continue
         if prev.strip() and not leaf.match(prev):
+            # a heading right after a list item's lines ends the list; it splits no paragraph
             if ((glued.match(line) and not in_quote)
-                    or (heading.match(line) and not not_para.match(prev))):
+                    or (heading.match(line) and not in_list and not not_para.match(prev))):
                 print(f'{f}:{n + 1}: {line}')
         if quote.match(line):
             in_quote = True
         elif heading.match(line) or leaf.match(line):
-            in_quote = False
+            in_quote = in_list = False
+        if list_item.match(line):
+            in_list = True
         prev = line
 if os.environ.get('SCANNED_OUT'):
     with open(os.environ['SCANNED_OUT'], 'w') as out:
@@ -146,6 +151,13 @@ an append redirect wrapped as
 
 <https://example.com> starts a paragraph, not an HTML block
 >(wrapped after an autolink)
+
+```html
+<pre>
+<!-- an unclosed comment inside a fence is code
+```
+text after an html fence
+>(wrapped after the fence)
 EOF
 cat > "$probe/good.md" <<'EOF'
 ---
@@ -205,12 +217,27 @@ x
 
 # still raw inside pre until its closing tag
 </pre>
+
+```html
+<div>
+```
+```
+# a shell comment in a later fence stays code
+>(grep -q y)
+```
+
+- a bullet that wraps
+  onto a second line
+# Heading after a multi-line list item
+1. an item
+   wrapped
+## Heading after a wrapped numbered item
 EOF
 got=$(hits "$probe/bad.md" | sed 's/^[^:]*:\([0-9]*\):.*/\1/' | tr '\n' ' ')
-[ "$got" = "2 5 8 10 16 20 23 26 " ] && ok "probe: a glued > after text and a heading after a paragraph are caught, also past an inline triple-backtick span, a closer with an info string and a quote ended by a blank line (lines 2 5 8 10 16 20 23 26)" \
-  || bad "probe: bad.md gave lines [$got], want [2 5 8 10 16 20 23 26 ]"
+[ "$got" = "2 5 8 10 16 20 23 26 33 " ] && ok "probe: a glued > after text and a heading after a paragraph are caught, also past an inline triple-backtick span, a closer with an info string and a quote ended by a blank line (lines 2 5 8 10 16 20 23 26 33)" \
+  || bad "probe: bad.md gave lines [$got], want [2 5 8 10 16 20 23 26 33 ]"
 out=$(hits "$probe/good.md")
-[ -z "$out" ] && ok "probe: quotes after a label, lazy quote lines, headings after a blank, a list, a rule, a link ref or a setext underline, fences, HTML blocks, comments and front matter pass" \
+[ -z "$out" ] && ok "probe: quotes after a label, lazy quote lines, headings after a blank, a list item (one line or wrapped), a rule, a link ref or a setext underline, fences (HTML-looking lines inside are code), HTML blocks, comments and front matter pass" \
   || bad "probe: good.md was flagged: $out"
 files=()
 while IFS= read -r -d '' f; do files+=("$ROOT/$f"); done < <(git -C "$ROOT" ls-files -z '*.md')
