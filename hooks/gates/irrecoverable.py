@@ -386,8 +386,8 @@ def _normalize_ansi_c_quotes(cmd):
     # $SQ\x74SQ never reassembles into the decoded byte. Dispatch below compares
     # argv0 by EXACT string, so the escape must actually be RESOLVED (a
     # boundary-only re-quote still yields the literal token "gi\x74").
-    # Bounded escape set: \xHH, \nnn octal, \n \t \r \\ \SQ \DQ; anything else
-    # stays a literal (non-matching, safe-direction) pair.
+    # Bounded escape set: \xHH, \nnn octal, \uHHHH, \UHHHHHHHH, \cX (control-X), \n \t \r \a \b \e \E \f \v
+    # \\ \SQ \DQ (GH #664: \u, \U and \c spelled a verb bash decodes); anything else stays a literal pair.
     # A decoded SQ byte (\SQ, \047, \x27) cannot sit inside the SQ...SQ wrapper
     # returned here, so a second pass splices it into the close-escape-reopen
     # idiom -- otherwise the unbalanced quote desyncs _newlines_to_seps.
@@ -395,7 +395,8 @@ def _normalize_ansi_c_quotes(cmd):
     # after this) does not read them as statement separators.
     OCTAL = "01234567"
     HEXDIGITS = "0123456789abcdefABCDEF"
-    SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", SQ: SQ, DQ: DQ}
+    SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f",
+              "v": "\v", "\\": "\\", SQ: SQ, DQ: DQ}
     def _decode_ansi_c(m):
         body = m.group(1)
         decoded = []
@@ -418,6 +419,21 @@ def _normalize_ansi_c_quotes(cmd):
                     else:
                         decoded.append(body[i:i + 2])
                         i += 2
+                elif nxt in "uU":
+                    j, digits = i + 2, ""
+                    while j < n and len(digits) < (4 if nxt == "u" else 8) and body[j] in HEXDIGITS:
+                        digits += body[j]
+                        j += 1
+                    cp = int(digits, 16) if digits else -1
+                    if 0 <= cp <= 0x10FFFF:
+                        decoded.append(chr(cp))
+                        i = j
+                    else:
+                        decoded.append(body[i:i + 2])
+                        i += 2
+                elif nxt == "c" and i + 2 < n:  # \cX: control-X (\cJ is a newline; \c\\ is control-backslash)
+                    decoded.append(chr(ord(body[i + 2].upper()) ^ 0x40))
+                    i += 4 if body[i + 2] == "\\" and body[i + 3:i + 4] == "\\" else 3
                 elif nxt in OCTAL:
                     j, digits = i + 1, ""
                     while j < n and len(digits) < 3 and body[j] in OCTAL:
@@ -1906,7 +1922,10 @@ def _sql_stdin_drop(c):
 def _decode_quotes(t):
     # GH #664: shlex reads `$'rm -rf b'` as the word `$rm -rf b` and `$"x"` as `$x`. The shell gives the
     # decoded text (ANSI-C escapes resolved; a $"..." locale string is its plain text), so that is what is read.
-    return _normalize_ansi_c_quotes(re.sub(r'(?<![\\$])\$(?=")', "", t)) if "$" in t else t
+    # A `$"` is a locale string unless an odd run of backslashes escapes its `$` (`\\$"x"` is `\` then $"x").
+    return _normalize_ansi_c_quotes(re.sub(r'(?<![\\$])(\\*)\$(?=")',
+                                           lambda m: m.group(0) if len(m.group(1)) % 2 else m.group(1), t)) \
+        if "$" in t else t
 
 def _shell_stdin_bodies(c):
     # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf

@@ -2857,6 +2857,13 @@ test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'ls\\nrm -rf b'" "$(bash_payloa
 test_deny  "$IRRECOVERABLE" "GH #664: zsh <<< \$\"rm -rf b\"" "$(bash_payload 'zsh <<< $"rm -rf b"')"
 test_deny  "$IRRECOVERABLE" "GH #664: echo \$'rm -rf b' | sh" "$(bash_payload "echo \$'rm -rf b' | sh")"
 test_deny  "$IRRECOVERABLE" "GH #664: dash <<< \$'git push --force origin main'" "$(bash_payload "dash <<< \$'git push --force origin main'")"
+# an even backslash run escapes nothing, and \u, \U and \cX are decoded too (also at the top level)
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \\\\\$\"rm -rf b\"" "$(bash_payload 'bash <<< \\$"rm -rf b"')"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'\\u0072m -rf b'" "$(bash_payload "bash <<< \$'\\u0072m -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'\\U00000072m -rf b'" "$(bash_payload "bash <<< \$'\\U00000072m -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'echo hi\\cJrm -rf b'" "$(bash_payload "bash <<< \$'echo hi\\cJrm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: \$'\\u0072m' -rf b (top level)" "$(bash_payload "\$'\\u0072m' -rf b")"
+test_allow "$IRRECOVERABLE" "GH #664 control: echo \"\\\$\" | sh" "$(bash_payload 'echo "\$" | sh')"
 test_allow "$IRRECOVERABLE" "GH #664 control: bash <<< \$'echo hi'" "$(bash_payload "bash <<< \$'echo hi'")"
 test_allow "$IRRECOVERABLE" "GH #664 control: grep x <<< \$'rm -rf b'" "$(bash_payload "grep x <<< \$'rm -rf b'")"
 
