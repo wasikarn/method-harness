@@ -3019,4 +3019,29 @@ test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm 
 test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
 
+# GH #693: a $(...)/backtick in the word of a ${...} (default, pattern, subscript, offset) runs, and a bash 5.3
+# funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command; the ${...} body was never read.
+_p693=('echo ${x:-$(@V@)}' 'echo ${x-$(@V@)}' 'echo ${x:=$(@V@)}' 'echo ${x:?$(@V@)}' 'echo ${x:+$(@V@)}'
+  'echo ${x#$(@V@)}' 'echo ${x##$(@V@)}' 'echo ${x%$(@V@)}' 'echo ${x%%$(@V@)}' ': ${x/$(@V@)/}'
+  ': ${x//$(@V@)/y}' 'echo ${x[$(@V@)]}' 'echo ${x:$(@V@)}' 'echo ${x:0:$(@V@)}' 'echo "${x:-$(@V@)}"'
+  'echo ${x:-`@V@`}' 'echo ${x:-${y:-$(@V@)}}' 'x=${x:-$(@V@)}' 'echo ${x:-a #$(@V@)}'
+  "echo \"\${x:-'\$(@V@)'}\"" 'echo ${ @V@; }' 'echo ${| @V@; }' 'echo ${ echo $(@V@); }'
+  'echo ${ echo `@V@`; }')
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p693[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #693: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in 'ls ${HOME:-/tmp}' 'echo ${x:-$(date)}' 'echo "${x:-$(date)}"' 'echo ${x//a/b}' 'echo ${#x}' \
+  'echo ${PWD##*/}' 'echo ${1:?usage}' 'cmd ${var:+--flag}' 'printf %s "${arr[@]}"' 'echo $((1+$(date +%s)))' \
+  'echo ${x:-$(rm --help)}' 'echo "${HOME}/rm -rf"' 'echo ${ date; }' 'echo ${x:- default}' \
+  "echo '\${x:-\$(rm -rf ~/x)}'" 'echo ${x:-\$(rm -rf ~/x)}'; do
+  test_allow "$IRRECOVERABLE" "GH #693 control: $_c" "$(bash_payload "$_c")"
+done
+_timed_case 'GH #693: 10000 ${x:-$(date)} words are read in bounded time' 0 \
+  "echo $(printf '${x:-$(date)} %.0s' $(seq 10000))"
+_timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
+  "echo $(printf '${x:-a %.0s' $(seq 20000))"
+
 gates_summary

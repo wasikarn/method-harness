@@ -1402,7 +1402,8 @@ def _newlines_to_seps(s):
 # leading-only strip: a mid-flag PH like --for<PH>ce is an exact-match bypass).
 # Blanking must not DISCARD the body ("$ (git push --force)" is a real deny), so
 # every backtick/$(...)/<(...)/>(...) body is re-appended as its own statement;
-# ${...} bodies are not (parameter expansion, not a command). Single-quoted
+# a ${...} body is scanned for those nested spans, and a bash 5.3 funsub body
+# (`${ cmd; }`) is appended as a command (GH #693). Single-quoted
 # spans are never blanked; double-quoted $(...) IS live in bash -- telling them
 # apart needs the real quote-state scan below, not a regex. A span inside a "#"
 # comment passes through unchanged. <(...)/>(...) (GH #181) is never a real
@@ -1534,7 +1535,30 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         return PH, j
     if c == "$" and nxt == "{":
         j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
-        return None if j is None else (PH, j)
+        if j is None:
+            # No closer: bash would refuse the text, but GH #233's "}"-masking can eat a real one
+            # (`"${x:-"'$(V)'"}"`), so the rest is read as the word, quote-blind, charged to the budget.
+            depth_work_used[0] += len(s) - i
+            if depth_work_used[0] > _DEPTH_SCAN_BUDGET or _depth >= 50:
+                _DEPTH_BUDGET_BLOWN[0] = True
+            else:
+                _scan_once(s[i + 2:], bodies, depth_work_used, _depth + 1, in_param=True)
+            return None
+        # GH #693: the word inside ${...} (default, pattern, subscript, offset) still expands, so a
+        # $(...)/backtick/<(...) in it runs: scan the body as the <(...) branch does, quote-blind (bash's
+        # quote rules there vary by operator; fail closed), and keep only the nested bodies. A bash 5.3
+        # funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command: append it and scan it with normal quoting
+        # (a backtick nested in an appended body is not read again downstream).
+        body = s[i + 2:j - 1]
+        funsub = body[:1] in (" ", "\t", "\n", "|")
+        if funsub:
+            body = body[1:] if body[0] == "|" else body
+            bodies.append(body)
+        if _depth < 50:
+            _scan_once(body, bodies, depth_work_used, _depth + 1, in_param=not funsub)
+        else:
+            _DEPTH_BUDGET_BLOWN[0] = True
+        return PH, j
     if c in ("<", ">") and not in_dquote and nxt == "(":
         # Process substitution (GH #181): "<(cmd)"/">(cmd)" is a WORD,
         # never a real redirect (a real "<"/">" redirect target can't
@@ -1595,7 +1619,7 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
 # depth; `_depth` caps the recursion itself, since a budget check alone
 # does not stop Python's own RecursionError on ~1000 properly-closed,
 # budget-cheap nested spans.
-def _scan_once(s, bodies, depth_work_used=None, _depth=0):
+def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
     if depth_work_used is None:
         depth_work_used = [0]
     out = []
@@ -1621,12 +1645,13 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0):
                 continue
             # else: fall through -- substitutions ARE live inside double quotes
         else:
-            if c == SQ:
+            # in_param (a ${...} word, GH #693): quote- and comment-blind, so every $(/backtick/<( is live.
+            if c == SQ and not in_param:
                 out.append(c)
                 i = _copy_squote(s, i + 1, out)
                 last_escaped = False
                 continue
-            if c == DQ:
+            if c == DQ and not in_param:
                 in_dquote = True
                 out.append(c); i += 1
                 last_escaped = False
@@ -1636,7 +1661,7 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0):
                 i += 2
                 last_escaped = True
                 continue
-            if c == "#" and not last_escaped and (not out or out[-1] in _REDIRECT_TARGET_STOP):
+            if c == "#" and not in_param and not last_escaped and (not out or out[-1] in _REDIRECT_TARGET_STOP):
                 out.append(c)
                 i = _copy_comment(s, i + 1, out, "\n")
                 last_escaped = False
