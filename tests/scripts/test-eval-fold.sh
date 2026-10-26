@@ -11,7 +11,8 @@ LIB="$ROOT/scripts/_lib/eval-fold.py"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d)" || exit 1
+[ -n "$TMP" ] || { echo "test-eval-fold: mktemp gave an empty path" >&2; exit 1; }
 trap 'trash "$TMP"' EXIT
 
 echo "=== eval-fold self-test ==="
