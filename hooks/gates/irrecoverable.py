@@ -43,7 +43,8 @@ _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
 # -c/-e scan in the rule loop never looks. The stripped heredoc bodies a client reads are kept here and
 # checked with the stdin text further down (_sql_stdin_drop). A SQL comment separates words like a blank.
 _SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mysql|psql|sqlite3|mariadb|mongosh|mongo|redis-cli)(?![\w.-])")
-_SQL_GAP = r"(?:\s|/\*[^*]{0,200}\*/|--[^\n]{0,200}\n)+"
+# GH #621: a block comment may hold a * (/* a * b */), and MySQL's # comment runs to the end of the line.
+_SQL_GAP = r"(?:\s|/\*(?:[^*]|\*(?!/)){0,200}\*/|--[^\n]{0,200}\n|#[^\n]{0,200}\n)+"
 # GH #607: the rest of the data-destroying statements a client takes: DROP of any stored object (and
 # ALTER ... DROP COLUMN), DELETE FROM and UPDATE ... SET with no WHERE before the statement ends, mongo's
 # dropDatabase(), drop(), deleteMany({}) and remove({}), and redis FLUSHALL / FLUSHDB.
@@ -88,9 +89,82 @@ _SQL_LITERAL_RE = re.compile(r"'[^']*'?|\"[^\"]*\"?|--[^\n]*|/\*(?:[^*]|\*(?!/))
 # review 4: so is a backtick or a [, a quote to MySQL or sqlite3 but plain text to psql.
 _SQL_UNMODELED_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$|\\|/\*!|#|--(?!\s)|[`\[]")
 
-def _sql_drops(sql):
-    if not _SQL_UNMODELED_RE.search(sql):
+# GH #621: matched raw, a literal that only mentions a drop denied (SELECT `id` ... WHERE note='truncate table x').
+# The plain '...' literals are still one word there, read in order up to the first quote that is not one:
+# a literal holding a backslash (a MySQL escape shifts every later pairing), or the end of any construct
+# the quote may have opened inside (a backtick, ], ", $tag$, */ or a newline that ends a # or -- comment).
+_SQL_PLAIN_LITERAL_RE = re.compile(r"'([^'\\`\[\]\"$\n]*)'")
+
+def _plain_literals_blanked(sql):
+    out, at = [], 0
+    while True:
+        q = sql.find("'", at)
+        if q < 0:
+            break
+        m = _SQL_PLAIN_LITERAL_RE.match(sql, q)
+        if not m or "*/" in m.group(1):
+            break
+        out.append(sql[at:q] + " s ")
+        at = m.end()
+    out.append(sql[at:])
+    return "".join(out)
+
+# GH #621 review: psql and JavaScript end a -- or // comment at a CR, U+2028 or U+2029 as well, so a body
+# holding one blanks nothing; nor does a body a non-SQL client reads (mongo and mongosh read JavaScript,
+# where a ' may sit in a regex literal), which keeps develop's matching. A non-SQL client named anywhere on
+# the heredoc's line or downstream in the pipeline counts (psql -a | mongosh hands the body on).
+_SQL_LINE_ENDS_RE = re.compile("[\r\u2028\u2029]")
+_NON_SQL_CLIENT_RE = re.compile(r"(?<![\w.-])(?:mongosh|mongo|redis-cli)(?![\w.-])")
+
+# GH #621 review 4: a client that echoes its input copies the body to stdout or a file, from where any route
+# (a function, a variable, a temp file, a pipe past the heredoc) may hand it to a JavaScript client. So the
+# plain-literal fallback is withdrawn for the whole command when it names mongo/mongosh/redis-cli anywhere,
+# or a SQL client takes an echo flag (psql -a -b -e -E -s -L and their long names or prefixes, mysql or
+# mariadb -v and --verbose/--tee, sqlite3 -echo), or the text holds an echo, print, log or tee command
+# (psql \set ECHO, \echo, \qecho, \w; mysql tee, \T, print, \p; sqlite3 .echo, .print, .trace, .log).
+_SQL_CLIENT_ARGS_RE = re.compile(r"(?<![\w.-])(psql|mysql|mariadb|sqlite3)(?![\w.-])([^|;&\n()]*)")
+_SQL_ECHO_CMD_RE = re.compile(r"\bECHO\b|\\(?:q?echo|warn|w|write|T|p|print|tee)\b|(?:^|[\s'\"])\.(?:echo|print|trace|log)\b"
+                              r"|^\s*(?:tee|print)\b", re.M)
+_SQL_ECHO_FLAGS = {  # client: (echo short letters, short letters that take a value, echo long names)
+    "psql": ("abeEsL", "cdfvLoFPRThpU", ("echo-all", "echo-errors", "echo-queries", "echo-hidden", "log-file",
+                                          "single-step")),
+    "mysql": ("v", "#DehpPSuOT", ("verbose", "tee")),
+}
+_SQL_ECHO_FLAGS["mariadb"] = _SQL_ECHO_FLAGS["mysql"]
+
+def _sql_client_echoes(argtext):
+    client, rest = argtext
+    if client == "sqlite3":
+        return any(w.strip("'\"").lstrip("-") == "echo" for w in rest.split())
+    short, valued, longs = _SQL_ECHO_FLAGS[client]
+    for w in rest.split():
+        w = w.strip("'\"")
+        if w.startswith("--"):
+            name = w[2:].split("=", 1)[0]
+            if name and any(o.startswith(name) for o in longs):
+                return True
+        elif w.startswith("-") and len(w) > 1:
+            for ch in w[1:]:
+                if ch in short:
+                    return True
+                if ch in valued:
+                    break
+    return False
+
+def _sql_blanking_allowed(raw):
+    if not isinstance(raw, str) or _NON_SQL_CLIENT_RE.search(raw) or _SQL_ECHO_CMD_RE.search(raw):
+        return False
+    return not any(_sql_client_echoes(m.groups()) for m in _SQL_CLIENT_ARGS_RE.finditer(raw))
+
+_SQL_BLANKING = [True]  # set from the whole command before the first body is read
+
+def _sql_drops(sql, sql_client=True):
+    if _SQL_LINE_ENDS_RE.search(sql):
+        pass
+    elif not _SQL_UNMODELED_RE.search(sql):
         sql = _SQL_LITERAL_RE.sub(lambda m: " " if m.group()[0] in "-/" else " s ", sql)
+    elif "'" in sql and sql_client and _SQL_BLANKING[0]:
+        sql = _plain_literals_blanked(sql)
     return bool(_SQL_DROP_RE.search(sql))
 
 # GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
@@ -377,7 +451,8 @@ def _strip_heredocs(cmd):
                 break
             if code:
                 out.extend(lines[body_start:i])
-            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops("\n".join(lines[body_start:i - 1])):
+            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops(
+                    "\n".join(lines[body_start:i - 1]), not _NON_SQL_CLIENT_RE.search(line)):
                 _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
@@ -519,6 +594,7 @@ def _rm_prompts_each(rest):
             operand = True
     return mode == "always"
 
+_SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
 cmd = _strip_heredocs(d["tool_input"].get("command", ""))
 
 def _mid_merge():
@@ -1919,8 +1995,120 @@ def _sql_stdin_drop(c):
         here = segs[k].split("<<<", 1)
         if len(here) > 1:
             data.extend(_words(here[1]))
-        if _sql_drops(" ".join(data)):
+        # GH #621 review 3: psql -a echoes its input on, so a non-SQL client anywhere downstream reads it too.
+        if _sql_drops(" ".join(data), not _NON_SQL_CLIENT_RE.search("|".join(segs[k:]))):
             return True
+    return _group_piped_sql_drop(c) if "}" in c or ")" in c else False
+
+# GH #621: a { } or ( ) group piped into a client feeds it the output of every command in the group, but the
+# split above cuts { echo 'DROP TABLE t'; } | psql at the ; and loses the echo. This second reading walks
+# the command once with a stack of open groups (and $( ) substitutions) and, at the first client of a
+# pipeline whose upstream holds a group, reads the echo/printf/cat <<< words of every stage upstream of it,
+# the group's inner stages included. A stage's own text leaves out its nested groups, so each character is
+# read once; the text the clients read is budgeted at four times the command, and an overrun denies.
+
+class _SqlFrame:
+    __slots__ = ("kind", "seg", "parts", "pipe", "data_at", "has_group", "group", "blank", "done")
+    def __init__(self, kind, seg, pipe):
+        self.kind, self.seg, self.parts, self.pipe, self.data_at = kind, seg, [], pipe, pipe
+        self.has_group = self.group = self.done = False
+        self.blank = True
+
+def _group_piped_sql_drop(c):
+    data, seen, n = [], set(), len(c)
+    js_any = bool(_NON_SQL_CLIENT_RE.search(c))  # a later stage is not read yet when the first client is
+    budget = [4 * n + 100_000]
+    frames = [_SqlFrame(None, 0, 0)]
+
+    def end_stage(f, i, piped):
+        f.parts.append(c[f.seg:i])
+        text = "".join(f.parts)
+        if f.group:
+            f.has_group = f.has_group or piped
+        else:
+            a0, rest = _stage_cmd(text)
+            if a0 in _SQL_CLIENTS:
+                if f.has_group and not f.done:
+                    f.done = True
+                    here = text.split("<<<", 1)
+                    key = (f.pipe, f.data_at) if len(here) == 1 else None
+                    if key not in seen:
+                        seen.add(key)
+                        sql = " ".join(data[f.pipe:f.data_at] + (list(_words(here[1])) if len(here) > 1 else []))
+                        budget[0] -= len(sql)
+                        if budget[0] < 0:
+                            return "budget"
+                        if _sql_drops(sql, not js_any):
+                            return True
+            elif a0 in ("echo", "printf"):
+                data.extend(rest)
+            elif a0 == "cat" and "<<<" in text:
+                data.extend(_words(text.split("<<<", 1)[1]))
+        if not piped:
+            f.pipe, f.has_group, f.done = len(data), False, False
+        f.parts, f.group, f.blank, f.data_at = [], False, True, len(data)
+        return False
+
+    i, q, last, last2 = 0, None, "", ""
+    while i < n:
+        ch, w, f = c[i], 0, frames[-1]
+        if q:
+            if ch == "\\" and q == '"':
+                i += 1
+            elif ch == q:
+                q = None
+            i += 1
+            continue
+        if ch == "\\":
+            f.blank = False
+            i += 2
+            last, last2 = ch, last
+            continue
+        if ch in "'\"":
+            q, f.blank = ch, False
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
+            j = c.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif ch == "\n" and (last == "|" or last + last2 == "&&"):
+            pass
+        elif ch == "(" or (ch == "{" and f.blank and c[i + 1:i + 2] in (" ", "\t", "\n")):
+            group = f.blank and c[i - 1:i] not in ("$", "<", ">")
+            f.parts.append(c[f.seg:i])
+            f.seg, f.blank = n, False  # set again where the group closes
+            frames.append(_SqlFrame("(" + ("g" if group else "") if ch == "(" else "{g", i + 1, len(data)))
+        elif len(frames) > 1 and ((ch == ")" and f.kind[0] == "(") or (ch == "}" and f.kind == "{g" and f.blank)):
+            r = end_stage(f, i, False)
+            if r:
+                return r
+            frames.pop()
+            p = frames[-1]
+            p.seg, p.blank = i + 1, False
+            p.group = p.group or f.kind.endswith("g")
+        elif c.startswith(("&&", "||"), i):
+            w = 2
+        elif ch == "|":
+            w = 2 if c[i + 1:i + 2] == "&" else 1
+            r = end_stage(f, i, True)
+            if r:
+                return r
+            f.seg, w = i + w, -w
+        elif ch in ";\n" or (ch == "&" and c[i - 1:i] not in (">", "<", "|") and c[i + 1:i + 2] != ">"):
+            w = 1
+        elif ch not in " \t":
+            f.blank = False
+        if w > 0:
+            r = end_stage(f, i, False)
+            if r:
+                return r
+            f.seg = i + w
+        if ch not in " \t\n":
+            last, last2 = ch, last
+        i += abs(w) or 1
+    for f in reversed(frames):
+        r = end_stage(f, n, False)
+        if r:
+            return r
     return False
 
 def _shell_stdin_bodies(c):
@@ -1958,7 +2146,10 @@ _SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN
 _SQL_BODIES_SEEN = set()  # bash -c / eval bodies already checked by _deny_sql_stdin_drop
 
 def _deny_sql_stdin_drop(c):
-    if _sql_stdin_drop(c):
+    r = _sql_stdin_drop(c)
+    if r == "budget":
+        deny("command too long to safely read the SQL its { } and ( ) groups pipe into a client - confirm with user first", rule="sql-drop")
+    if r:
         deny("destructive SQL (DROP TABLE/DATABASE/SCHEMA or TRUNCATE) sent to a SQL client on stdin — confirm with user first", rule="sql-drop")
 
 _deny_sql_stdin_drop(cmd)
