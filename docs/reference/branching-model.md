@@ -72,6 +72,20 @@ still caught. Post the reviewer's result as that comment. It proves a verdict wa
 or that the reviewer had fresh context, and a conflict resolved inside a merge commit is not checked. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
+**Without `gh` (a Claude Code cloud session).** The script reads the PR and merges through `gh`, which a
+cloud session lacks; it has the GitHub MCP tools instead. Do not retype the checks by hand (that was
+done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
+1. read the PR's head sha, base branch and issue comments with the MCP tools, and save the comments
+   (the JSON array they return) to a file;
+2. if the head lacks `origin/develop` or a version above it, run `scripts/sync-pr-head.sh <head branch>
+   <head sha>` and use the sha it prints;
+3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,
+   review (same verdict parser), ancestry and version checks, never a sync, push or merge. It prints
+   the head on a pass, and on a head that is not synced it names the sync command;
+4. merge through the MCP merge tool with `expectedHeadSha` set to that head, straight away. If develop
+   moved first, go back to step 2.
+There is no load wait in this mode: a cloud container runs nothing else.
+
 The checks are local-only. The script narrows the gap; it does not close it: a push to `develop`
 from another clone between the check and the merge can still race, and nothing stops a merge made
 outside the script. The script's own `gh pr merge` call runs inside the script, so

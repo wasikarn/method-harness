@@ -58,12 +58,16 @@ readers (`head`, `grep -m`, a command that skips stdin): there, apply the rule b
 is a pipe too, so a quiet grep reading it is checked wherever it sits, on either side of a pipe or
 in no pipe at all: its early exit kills the command writing into it with SIGPIPE (`tee >(grep -q 1)
 < big | cat` gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
-fails a pipefail pipeline or a `set -e` script. That is over-reported when the writer's status is
-discarded (inside `$(...)`/`<(...)`, behind `|| true`, a function never called) or a later reader
-drains the rest.
-(GNU grep 3.11 writing to `>/dev/null` reads all of its input, so that form is safe.) A hit whose
-line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint
-allows one: its own race probe.
+fails a pipefail pipeline or a `set -e` script. It is over-reported when the writer's status is
+discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never called) or a later reader
+drains the rest, and when every fd holding the `>(...)` is redirected elsewhere later on the same
+command (`cat > >(grep -q y) >/dev/null`): telling that apart needs a model of fd copies, moves and
+`{var}` fds, and two attempts at one hid real races (#650); a bare `v=$(...)` keeps the writer's
+status, so under `set -e` that hit is a real failure. A non-quiet `grep PAT >/dev/null` reads all of
+its input (GNU grep 3.11), so it is safe in a pipe; `grep -q` stays early-exit even with
+`>/dev/null` (`tee >(grep -q 1 >/dev/null) < big` still exits 141). A hit whose line ends in the
+comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint allows one: its own
+race probe.
 `scripts/gate-canary.sh` feeds gates through `< <(printf ...)` for the stdin-skipping reason, and
 skips the `_*.sh` helpers the gates source.
 
@@ -112,7 +116,9 @@ already set alone.
   `settings.json` and restart.
 - **Same-version edits are no-ops.** Claude Code loads the plugin from
   `~/.claude/plugins/cache/<marketplace>/mh/<version>/` at startup; `claude plugin update`
-  copies nothing unless `plugin.json`'s version changed. Bump both manifests before updating.
+  copies nothing unless `plugin.json`'s version changed. Bump both manifests before updating,
+  locally: do not commit that bump, since branches never bump (`merge-pr.sh` gives the PR its version at
+  merge time, `branching-model.md`). A committed one is harmless, kept only when above develop's.
   This applies to third-party plugins too: `mattpocock-skills` once sat 3 commits behind
   upstream while `update` reported "already latest". Fix: uninstall, `trash` the cache dir,
   reinstall.

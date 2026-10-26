@@ -32,9 +32,10 @@ manifests() {
 commit() { git -C "$1" ls-files -z -mo --exclude-standard | git -C "$1" add --pathspec-from-file=- --pathspec-file-nul && git -C "$1" commit -q -m "$2"; }
 ver() { awk -F'"' '/"version"/ && !s { print $4; s = 1 }' "$1"; }
 
-# setup [feature edit: none|bump:<v>|conflict|desc] [develop's new version, default 1.0.6]: origin with
-# develop at 1.0.5, feat/x branched from it (b.txt, plus the edit), then develop moves on (c.txt and the
-# new version). Sets O (bare origin), L (the clone the script runs in, fetched), HEAD_SHA (feat/x).
+# setup [feature edit: none|bump:<v>|conflict|desc] [develop's new version, default 1.0.6] [develop's
+# new description, default d]: origin with develop at 1.0.5, feat/x branched from it (b.txt, plus the
+# edit), then develop moves on (c.txt, the new version and description). Sets O (bare origin), L (the
+# clone the script runs in, fetched), HEAD_SHA (feat/x).
 setup() {
   local d w
   d=$(mktemp -d "$ROOT_DIR/case.XXXXXX") || exit 1
@@ -53,6 +54,9 @@ setup() {
   commit "$w" feature; git -C "$w" push -q origin feat/x
   git -C "$w" checkout -q develop
   echo c >"$w/c.txt"; manifests "$w" "${2:-1.0.6}"
+  if [ -n "${3:-}" ]; then
+    sed "s/\"description\": \"d\"/\"description\": \"$3\"/" "$w/.claude-plugin/plugin.json" >"$w/p.tmp" && mv "$w/p.tmp" "$w/.claude-plugin/plugin.json"
+  fi
   [ "${1:-none}" = conflict ] && echo a-develop >"$w/a.txt"
   commit "$w" "develop moves"; git -C "$w" push -q origin develop
   git clone -q "$O" "$L"
@@ -107,14 +111,18 @@ else bad "behind: added commits: $a"; fi
 if worktrees_clean && [ "$(git -C "$L" status --porcelain | wc -l)" -eq 0 ]; then ok "behind: no worktree left, caller's tree untouched"; else bad "behind: worktrees: $(git -C "$L" worktree list)"; fi
 
 # 2. the branch bumped too (the old convention) and develop moved past it: the manifest conflict (1.0.6
-# against 1.0.8) takes develop's side, then bumps.
-setup bump:1.0.6 1.0.8
+# against 1.0.8) takes develop's side, then bumps. develop also edited the line next to "version" (the
+# description), so taking the branch's side instead would undo develop's edit on the merged tree.
+setup bump:1.0.6 1.0.8 d-develop
 if git -C "$L" merge-tree --write-tree origin/develop "$HEAD_SHA" >/dev/null 2>&1; then bad "case 2 setup does not conflict"; fi
 run_sync feat/x "$HEAD_SHA"
 if [ "$rc" -eq 0 ] && [ "$(remote_head)" = "$out" ] && [ "$(git -C "$L" show "$out:.claude-plugin/plugin.json" | ver /dev/stdin)" = 1.0.9 ] \
   && [ "$(git -C "$L" show "$out:.claude-plugin/marketplace.json" | ver /dev/stdin)" = 1.0.9 ]; then
   ok "manifest-only conflict: resolved and bumped to 1.0.9"
 else bad "manifest conflict: rc=$rc out='$out' err=$err"; fi
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q '"description": "d-develop"' <<<"$(git -C "$L" show "$out:.claude-plugin/plugin.json")"; then
+  ok "manifest-only conflict: develop's own edit next to the version survives (develop's side was taken)"
+else bad "manifest conflict lost develop's description: $(git -C "$L" show "$out:.claude-plugin/plugin.json" 2>&1)"; fi
 
 # 2b. the branch edited the line next to "version" (the description): develop's bump conflicts with it,
 # and taking develop's side would drop the edit. Refuse, name the manifest, push nothing.
