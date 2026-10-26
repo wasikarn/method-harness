@@ -6,13 +6,16 @@
 #
 # When the head already contains origin/develop and ships a version above it, it prints the head and
 # changes nothing. Otherwise, in a temporary worktree at the head:
-#   1. merge origin/develop (if the head lacks it). Conflicts in the two manifests take develop's side;
-#      any other conflict aborts: the branch's own change needs a person, so merge develop yourself.
+#   1. merge origin/develop (if the head lacks it). A manifest conflict takes develop's side only when
+#      the branch changed nothing in that manifest but its version line (the conflict is the version
+#      bump next to another line); a manifest the branch edited otherwise, or any other conflict,
+#      aborts: the branch's own change needs a person, so merge develop yourself. Taking develop's
+#      whole file would silently drop the branch's edit (PR #644 review).
 #   2. set both manifests to the head's own version when it is above develop's (a deliberate bump,
 #      say a minor one), else develop's + 1 (MERGE_PR_ALLOW_SAME_VERSION=1: develop's own), in one
 #      manifest-only commit.
-#   3. push to origin/<branch>. The pre-push gauntlet runs on the exact tree that merges; a push that
-#      is not a fast-forward of <head> (someone pushed meanwhile) is refused.
+#   3. push to origin/<branch>, leased on <head>. The pre-push gauntlet runs on the exact tree that
+#      merges; a branch that is no longer exactly <head> (someone pushed or rewound it) is refused.
 # Prints the new head sha on stdout; everything else goes to stderr. The caller fetches origin first.
 # A merge commit and a manifest-only commit both keep a PR's review verdict (merge-pr.sh check_review).
 # Bash 3.2.
@@ -66,22 +69,38 @@ if [ "$behind" -eq 0 ] && [ "$head_ver" = "$target" ] && [ "$(version_of "$head"
 fi
 
 wt=$(mktemp -d "${TMPDIR:-/tmp}/sync-pr-head.XXXXXX") || { echo "sync-pr-head: mktemp -d failed." >&2; exit 1; }
-cleanup() { git worktree remove --force "$wt" >/dev/null 2>&1 || true; git worktree prune >/dev/null 2>&1 || true; }
+cleanup() {
+  git worktree remove --force "$wt" >/dev/null 2>&1 || true
+  git worktree prune >/dev/null 2>&1 || true
+  rmdir "$wt" 2>/dev/null || true  # left empty when `git worktree add` failed
+}
 trap cleanup EXIT
 git worktree add -q --detach "$wt" "$head" >&2
 
 if [ "$behind" -eq 1 ]; then
   if ! git -C "$wt" merge -q --no-edit -m "Merge origin/develop into $branch" origin/develop >&2; then
-    others=$(git -C "$wt" diff --name-only --diff-filter=U | awk -v p="$PJ" -v m="$MJ" '$0 != p && $0 != m')
+    conflicted=$(git -C "$wt" diff --name-only --diff-filter=U)
+    others=$(printf '%s\n' "$conflicted" | awk -v p="$PJ" -v m="$MJ" '$0 != "" && $0 != p && $0 != m')
+    # A conflicted manifest the branch changed beyond its version line: develop's side would drop that.
+    base=$(git merge-base origin/develop "$head")
+    for f in "$PJ" "$MJ"; do
+      printf '%s\n' "$conflicted" | /usr/bin/grep -qxF "$f" || continue
+      if [ -n "$(git diff "$base" "$head" -- "$f" | awk '/^[-+]/ && !/^(---|\+\+\+)/ && !/"version"[[:space:]]*:/')" ]; then
+        others=$(printf '%s\n%s (the branch changed more than its version line)' "$others" "$f" | awk 'NF')
+      fi
+    done
     if [ -n "$others" ]; then
       git -C "$wt" merge --abort >/dev/null 2>&1 || true
-      echo "sync-pr-head: merging origin/develop into $branch conflicts outside the manifests:" >&2
-      printf '  %s\n' $others >&2
+      echo "sync-pr-head: merging origin/develop into $branch conflicts in files it cannot resolve:" >&2
+      printf '%s\n' "$others" | sed 's/^/  /' >&2
       echo "Merge origin/develop into the branch yourself, resolve, and push; then run merge-pr.sh again." >&2
       exit 1
     fi
-    git -C "$wt" checkout -q --theirs -- "$PJ" "$MJ"
-    git -C "$wt" add -- "$PJ" "$MJ"
+    for f in "$PJ" "$MJ"; do
+      printf '%s\n' "$conflicted" | /usr/bin/grep -qxF "$f" || continue
+      git -C "$wt" checkout -q --theirs -- "$f"
+      git -C "$wt" add -- "$f"
+    done
     git -C "$wt" commit -q --no-edit >&2
   fi
 fi
@@ -98,6 +117,6 @@ if ! git -C "$wt" diff --quiet -- "$PJ" "$MJ"; then
   git -C "$wt" commit -q -m "chore: bump mh to $target (merge-pr.sh; origin/develop at $dev_ver)" >&2
 fi
 
-git -C "$wt" push origin "HEAD:refs/heads/$branch" >&2 ||
-  { echo "sync-pr-head: push to origin/$branch failed (moved since $head, or the pre-push gauntlet failed)." >&2; exit 1; }
+git -C "$wt" push --force-with-lease="refs/heads/$branch:$head" origin "HEAD:refs/heads/$branch" >&2 ||
+  { echo "sync-pr-head: push to origin/$branch failed (no longer at $head, or the pre-push gauntlet failed)." >&2; exit 1; }
 git -C "$wt" rev-parse HEAD

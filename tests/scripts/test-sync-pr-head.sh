@@ -3,7 +3,8 @@
 # bump the version: it merges origin/develop into a PR head (manifest conflicts take develop's side,
 # any other conflict refuses), sets both manifests to develop's version + 1 (or the head's own when it
 # is higher), pushes to the PR branch and prints the new head. Real git: a bare origin, a develop that
-# moved on, and a feature branch per case. No hooks are wired in the sandbox.
+# moved on, and a feature branch per case. Case 1 wires hooks that print to stdout (the real pre-push
+# does), which must not reach the sha the script prints.
 set -uo pipefail
 # A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
@@ -31,7 +32,7 @@ manifests() {
 commit() { git -C "$1" ls-files -z -mo --exclude-standard | git -C "$1" add --pathspec-from-file=- --pathspec-file-nul && git -C "$1" commit -q -m "$2"; }
 ver() { awk -F'"' '/"version"/ && !s { print $4; s = 1 }' "$1"; }
 
-# setup [feature edit: none|bump:<v>|conflict] [develop's new version, default 1.0.6]: origin with
+# setup [feature edit: none|bump:<v>|conflict|desc] [develop's new version, default 1.0.6]: origin with
 # develop at 1.0.5, feat/x branched from it (b.txt, plus the edit), then develop moves on (c.txt and the
 # new version). Sets O (bare origin), L (the clone the script runs in, fetched), HEAD_SHA (feat/x).
 setup() {
@@ -47,6 +48,7 @@ setup() {
   case "${1:-none}" in
     bump:*) manifests "$w" "${1#bump:}" ;;
     conflict) echo a-feature >"$w/a.txt" ;;
+    desc) sed 's/"description": "d"/"description": "d2"/' "$w/.claude-plugin/plugin.json" >"$w/p.tmp" && mv "$w/p.tmp" "$w/.claude-plugin/plugin.json" ;;
   esac
   commit "$w" feature; git -C "$w" push -q origin feat/x
   git -C "$w" checkout -q develop
@@ -69,8 +71,18 @@ added() { git -C "$L" fetch -q origin && git -C "$L" rev-list --no-merges "$1" "
 
 echo "=== sync-pr-head: merge develop, bump both manifests, push ==="
 
-# 1. behind develop, the branch never bumped: merge, bump to develop + 1, push, print the new head.
-setup none; run_sync feat/x "$HEAD_SHA"
+# 1. behind develop, the branch never bumped: merge, bump to develop + 1, push, print the new head. Every
+# hook the sync can trigger (worktree checkout, merge, commit, push) prints to stdout here.
+setup none
+hk=$(mktemp -d "$ROOT_DIR/hooks.XXXXXX")
+for h in post-checkout pre-merge-commit post-merge pre-commit commit-msg post-commit pre-push; do
+  printf '#!/bin/sh\necho "%s hook says hi"\n' "$h" >"$hk/$h"; chmod +x "$hk/$h"
+done
+git -C "$L" config core.hooksPath "$hk"
+run_sync feat/x "$HEAD_SHA"
+if /usr/bin/grep -q 'pre-push hook says hi' <<<"$err" && ! /usr/bin/grep -q 'hook says hi' <<<"$out"; then
+  ok "behind: the hooks ran, and their output went to stderr, not stdout"
+else bad "behind: hook output: out='$out' err='$err'"; fi
 new=$out
 if [ "$rc" -eq 0 ] && [ -n "$new" ] && [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] && [ "$(remote_head)" = "$new" ]; then
   ok "behind: exit 0, one line on stdout, and it is the pushed head"
@@ -103,6 +115,16 @@ if [ "$rc" -eq 0 ] && [ "$(remote_head)" = "$out" ] && [ "$(git -C "$L" show "$o
   && [ "$(git -C "$L" show "$out:.claude-plugin/marketplace.json" | ver /dev/stdin)" = 1.0.9 ]; then
   ok "manifest-only conflict: resolved and bumped to 1.0.9"
 else bad "manifest conflict: rc=$rc out='$out' err=$err"; fi
+
+# 2b. the branch edited the line next to "version" (the description): develop's bump conflicts with it,
+# and taking develop's side would drop the edit. Refuse, name the manifest, push nothing.
+setup desc
+if git -C "$L" merge-tree --write-tree origin/develop "$HEAD_SHA" >/dev/null 2>&1; then bad "case 2b setup does not conflict"; fi
+run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'plugin.json (the branch changed more than its version line)' <<<"$err" \
+  && [ "$(remote_head)" = "$HEAD_SHA" ] && worktrees_clean; then
+  ok "a manifest conflict over a non-version edit: refused, branch untouched (the edit is not dropped)"
+else bad "desc conflict: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
 # 3. a deliberate bump above develop's (a minor release) is kept, not replaced by develop + 1.
 setup bump:1.1.0; run_sync feat/x "$HEAD_SHA"
@@ -146,6 +168,19 @@ if [ "$rc" -eq 0 ] && [ "$out" = "$HEAD_SHA" ] && [ "$(remote_head)" = "$HEAD_SH
   ok "same version with the opt-out: head unchanged, no push"
 else bad "opt-out: rc=$rc out='$out' err=$(cat "$ROOT_DIR/err")"; fi
 
+# 7b. contains develop, plugin.json bumped but marketplace.json not: the early return must not take it;
+# a bump commit brings marketplace.json to plugin.json's 1.0.7.
+setup none
+w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b develop "$O" "$w/c"; git -C "$w/c" checkout -q -b feat/x
+sed 's/"version": "1.0.6"/"version": "1.0.7"/' "$w/c/.claude-plugin/plugin.json" >"$w/c/p.tmp" && mv "$w/c/p.tmp" "$w/c/.claude-plugin/plugin.json"
+commit "$w/c" "half bump"; git -C "$w/c" push -q -f origin feat/x
+git -C "$L" fetch -q origin; HEAD_SHA=$(git -C "$L" rev-parse origin/feat/x)
+run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -eq 0 ] && [ "$out" != "$HEAD_SHA" ] && [ "$(git -C "$L" show "$out:.claude-plugin/marketplace.json" | ver /dev/stdin)" = 1.0.7 ] \
+  && [ "$(git -C "$L" show "$out:.claude-plugin/plugin.json" | ver /dev/stdin)" = 1.0.7 ]; then
+  ok "manifests disagree on an up-to-date head: bumped so both say 1.0.7"
+else bad "half bump: rc=$rc out='$out' err=$err"; fi
+
 # 8. someone pushed to the branch after the head was read: the push is not a fast-forward, refuse.
 setup none
 w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b feat/x "$O" "$w/c"
@@ -155,6 +190,16 @@ run_sync feat/x "$HEAD_SHA"
 if [ "$rc" -ne 0 ] && [ -z "$out" ] && [ "$(remote_head)" = "$late" ] && /usr/bin/grep -q 'push to origin/feat/x failed' <<<"$err" && worktrees_clean; then
   ok "branch moved after the head was read: refused, the late push stays"
 else bad "moved branch: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
+
+# 8b. the branch was rewound to an ancestor of the head after it was read: a plain fast-forward push
+# would re-push the dropped commits; the lease on the head refuses.
+setup none
+base=$(git -C "$L" rev-parse "$HEAD_SHA^")
+w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b feat/x "$O" "$w/c"; git -C "$w/c" push -q -f origin "$base:refs/heads/feat/x"
+run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && [ "$(remote_head)" = "$base" ] && worktrees_clean; then
+  ok "branch rewound after the head was read: refused by the lease, the rewind stays"
+else bad "rewound branch: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
 # 9. usage: both arguments are required.
 out=$(bash "$SCRIPT" feat/x 2>&1); rc=$?

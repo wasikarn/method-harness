@@ -260,8 +260,9 @@ merged_unsynced "1.1.100 against 1.1.99"
 MERGE_PR_ALLOW_SAME_VERSION=1 STUB_HEAD_VER=1.1.4 STUB_DEV_VER=1.1.5 run 0 syncsha1 1.50
 synced_and_merged "opt-out with a version below develop's"
 
-# 4f6. a version that is not plain X.Y.Z is handed to the sync; a synced head that still ships one is
-# refused once the rounds run out.
+# 4f6. a version that is not plain X.Y.Z is handed to the sync (the stub syncs it; the real
+# sync-pr-head.sh refuses one, which 4e3 covers); a synced head that still ships one is refused once the
+# rounds run out.
 STUB_HEAD_VER=1.1.196-rc1 STUB_HEAD_MKT_VER=1.1.196-rc1 run 0 syncsha1 1.50
 synced_and_merged "non-numeric version"
 STUB_HEAD_VER=1.1.196-rc1 STUB_HEAD_MKT_VER=1.1.196-rc1 STUB_SYNC_VER=1.1.196-rc1 MERGE_PR_SYNC_TRIES=1 run 0 syncsha1 1.50

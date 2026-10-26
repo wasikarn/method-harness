@@ -48,11 +48,12 @@ wrong-base refusal, retarget the PR with `gh pr edit <PR> --base develop`.
 develop's version moved 48 times in six hours (2026-10-25) and each open PR re-merged and re-bumped
 after every one (#618 took five rounds). Now, after the load wait, a head that lacks `origin/develop`
 or does not ship a version above it goes to `scripts/sync-pr-head.sh <branch> <head>`: in a temporary
-worktree it merges `origin/develop` (conflicts in the two manifests take develop's side; any other
-conflict refuses, so merge develop into the branch yourself and push), sets both manifests to
+worktree it merges `origin/develop` (a manifest conflict takes develop's side only when the branch
+changed nothing in that manifest but its version line; any other conflict, including a manifest edit
+next to the version line, refuses, so merge develop into the branch yourself and push), sets both manifests to
 develop's version + 1 (or the branch's own when it is higher: a deliberate minor bump survives) in
-one manifest-only commit, and pushes to the PR branch. That push runs the pre-push gauntlet on the
-exact tree that will merge, and fails if the branch moved since the head was read. The gauntlet
+one manifest-only commit, and pushes to the PR branch, leased on the head. That push runs the pre-push
+gauntlet on the exact tree that will merge, and fails if the branch moved since the head was read. The gauntlet
 takes minutes and develop can move meanwhile, so `merge-pr.sh` fetches and syncs again, up to
 `MERGE_PR_SYNC_TRIES` rounds (default 3), then merges pinned to the synced head; a PR from a fork
 cannot be pushed to and is refused instead. A rebase rewrites every commit, so it also throws away
@@ -111,7 +112,7 @@ discipline:
   still applies to anyone touching a file another live session might also touch — worktree
   isolation removes the *working-tree* collision, not a collision in a file both sessions read
   from or write to outside git (e.g. the shared memory store above; the manifests are per
-  checkout, which is why the next bullet reads `origin/develop`).
+  checkout, which is why `merge-pr.sh` reads the version from `origin/develop`).
 - **Do not bump the manifests on a branch.** `scripts/merge-pr.sh` gives the PR the next version
   at merge time (Merging above), so the number is read from `origin/develop` seconds before the
   merge instead of hours before it. Merge only through the script (never bare `gh pr merge`): two
