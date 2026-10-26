@@ -12,7 +12,8 @@
 # It never kills anything (a process may belong to a peer session's live run; killing it is the
 # operator's call) and never returns non-zero, so a `set -e` caller is never aborted; when ps fails it
 # says so in one line and skips. Detection is by behaviour, not by name: a long build at full CPU is
-# named too, which is the point of a warning. The 30 min default skips a busy headless `claude` run
+# named too, which is the point of a warning, except an app bundle's own executables (the Claude
+# desktop app's helpers summed 341% CPU over 40 h on 2026-10-26). The 30 min default skips a busy headless `claude` run
 # (named at 13 min on the first live run); the strays this targets ran for hours. Bash 3.2.
 
 # A numeric env setting, or its default when unset or not a whole number: a typo such as "1h" must
@@ -41,6 +42,9 @@ stray_procs_report() {
       for (i = 1; i <= n; i++) s = s * 60 + t[i]
       s += d * 86400
       if (s < ms) next
+      # A desktop app (the Claude app hosting this session among them) runs all day; its own
+      # executables are not a stray run. A tool shipped in an app (Xcode.app/Contents/Developer) is.
+      if ($4 ~ /\.app\/Contents\/(MacOS|Frameworks)\//) next
       k = $4; sub(".*/", "", k)
       if (!(k in cnt)) { keys[++nk] = k; cmd[k] = $4; for (i = 5; i <= NF; i++) cmd[k] = cmd[k] " " $i }
       cnt[k]++; sum[k] += $3

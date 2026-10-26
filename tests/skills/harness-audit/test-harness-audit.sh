@@ -153,7 +153,8 @@ if [ "$CRIT_FOUND" -eq 0 ] && [ "$WARN_FOUND" -eq 0 ] && [ "$INFO_FOUND" -eq 0 ]
 else bad "check-29 good not silent (crit=$CRIT_FOUND warn=$WARN_FOUND info=$INFO_FOUND)"; fi
 
 # Check 70: stray top-level entries (gitignored working-tree clutter). WARN on a
-# leftover `*-workspace/` dir; silent when the root holds only keep-list entries.
+# leftover `*-workspace/` dir; silent when the root holds only keep-list entries (the committed
+# .graphifyignore among them, PR #658).
 expect_warn   70 check-70-bad-stray-entry
 expect_silent 70 check-70-good-clean-root
 
