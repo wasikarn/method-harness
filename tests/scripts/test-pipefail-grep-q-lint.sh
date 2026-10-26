@@ -52,8 +52,11 @@ trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
 hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }
 
-# One real race per statement (line numbers in want_lines), each a shape a past check missed or
-# measured at exit 141; known over-reports live in over.sh below, not here.
+# One planted hit per statement (line numbers in want_lines), each a shape a past check missed.
+# Most are real races (measured at exit 141). The grep -q rows inside while/until/for loops pin
+# the documented loop heuristic: there a later `read` or the next grep can drain the rest, so bash
+# may exit 0, but the scanner reports them on purpose. The `>(...)` over-reports whose fds are
+# all redirected later live in over.sh below.
 cat > "$probe/bad.sh" <<'EOF'
 echo "$OUT" | grep -q x
 printf "%s\n" "$r" | /usr/bin/grep -qxF "$f"
@@ -148,17 +151,17 @@ n_want=$(wc -w <<<"$want_lines" | tr -d ' ')
 out=$(scan "$probe/bad.sh"); rc=$?
 got_lines=$(hit_lines <<<"$out")
 [ "$rc" -eq 1 ] && [ "$got_lines" = "$want_lines" ] \
-  && ok "probe: all $n_want planted races found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
+  && ok "probe: all $n_want planted hits (races, plus loop-heuristic rows) found on their own lines (wrappers, groups, if/while/case/for/time, redirects, backticks, heredoc code, >(...) anywhere)" \
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
 
-# Known over-reports: bash exits 0 for each, yet the scanner reports it, by design. Every fd holding
+# Known `>(...)` over-reports: bash exits 0 for each, yet the scanner reports it, by design. Every fd holding
 # the `>(...)` is redirected elsewhere later on the same command, so nothing is written into it;
 # telling that apart needs a model of fd copies, moves and `{var}` fds, and two attempts at one hid
 # real races (#650). Pinned so a skip rule cannot come back unreviewed: one that clears these rows
 # must also keep every race above reported, and then move them to good.sh.
 cat > "$probe/over.sh" <<'EOF'
 cat < "$f" > >(grep -q y) >/dev/null
-cat < "$f" 2> >(grep -q y) 2>/dev/null
+{ seq 2000000 >&2; } 2> >(grep -q 1) 2>/dev/null
 cat < "$f" &> >(grep -q y) >/dev/null 2>/dev/null
 EOF
 out=$(scan "$probe/over.sh"); rc=$?
