@@ -1950,6 +1950,59 @@ test_deny  "$IRRECOVERABLE" "GH #559 review 4: a backtick is no quote to psql be
   "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 1 \`; DROP TABLE t; -- \`\nSQL")")"
 test_deny  "$IRRECOVERABLE" "GH #559 review 4: a [bracket] identifier with an apostrophe before DROP TABLE into sqlite3" \
   "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT [it's]; DROP TABLE t; -- '\nSQL")")"
+# GH #621: a { } or ( ) group piped into a client feeds it every inner command's output; a block comment
+# may hold a *, and MySQL's # comment separates words too. Once the stripper meets a construct it does not
+# model, a plain '...' literal before it is still one word, so a literal that only mentions a drop reads nothing.
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed in a { } group piped into psql" \
+  "$(bash_payload "{ echo 'DROP TABLE t'; } | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE printf'd in a { } group piped into mysql" \
+  "$(bash_payload "{ printf 'DROP TABLE t'; } | mysql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed second in a ( ) group piped into psql" \
+  "$(bash_payload "( echo a; echo 'DROP TABLE t' ) | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed after cat in a { } group piped into psql" \
+  "$(bash_payload "{ cat x.sql; echo 'DROP TABLE t'; } | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621: DROP TABLE echoed in a nested group piped into psql" \
+  "$(bash_payload "{ ( echo 'DROP TABLE t' ); } | sudo -u postgres psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: DROP TABLE echoed in a one-command ( ) group piped into psql" \
+  "$(bash_payload "( echo 'DROP TABLE t' ) | psql db")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: a here-string psql reads inside a { } group" \
+  "$(bash_payload "{ cd /x; psql db <<< 'DROP TABLE t'; }")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: DROP TABLE echoed into psql inside a { } group" \
+  "$(bash_payload "{ echo 'DROP TABLE t' | psql db; }")"
+test_allow "$IRRECOVERABLE" "GH #621 control: a SELECT echoed in a { } group piped into psql" \
+  "$(bash_payload "{ echo 'SELECT 1'; echo 'SELECT 2'; } | psql db")"
+test_allow "$IRRECOVERABLE" "GH #621 control: a { } group echoing DROP TABLE piped into grep, then psql" \
+  "$(bash_payload "{ echo 'DROP TABLE t'; } | grep -c DROP; psql db -c 'SELECT 1'")"
+test_deny  "$IRRECOVERABLE" "GH #621: a block comment holding a * between DROP and TABLE on psql -c" \
+  "$(bash_payload "psql -c 'DROP /* has * star */ TABLE t'")"
+test_deny  "$IRRECOVERABLE" "GH #621: a MySQL # comment between DROP and TABLE on mysql -e" \
+  "$(bash_payload "mysql -e \$'DROP # c\\nTABLE t'")"
+test_deny  "$IRRECOVERABLE" "GH #621 guard: a -- comment between DROP and TABLE on mysql -e" \
+  "$(bash_payload "mysql -e \$'DROP -- c\\nTABLE t'")"
+test_deny  "$IRRECOVERABLE" "GH #621: a MySQL # comment between DROP and TABLE in a heredoc into mysql" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nDROP # c\nTABLE t;\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621: a backtick column and a literal mentioning truncate table into mysql" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621: a [1] subscript and a literal mentioning drop table into sqlite3" \
+  "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT a[1] FROM t WHERE x = 'drop table x';\nSQL")")"
+test_allow "$IRRECOVERABLE" "GH #621: a LIKE literal mentioning drop table before a -- #42 comment into sqlite3" \
+  "$(bash_payload "$(printf "sqlite3 db <<'SQL'\nSELECT a FROM t WHERE x LIKE '%%drop table x%%' -- #42\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #621 control: DROP TABLE after a stripped literal next to a backtick column into mysql" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT \`id\` FROM t WHERE note='x'; DROP TABLE t;\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #621 control: a backslash literal stops the stripping before a later quote pair" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT 'a\\\\' , '; DROP TABLE t; SELECT ';\nSQL")")"
+test_deny  "$IRRECOVERABLE" "GH #621 control: a # comment apostrophe does not open a literal over DROP TABLE" \
+  "$(bash_payload "$(printf "mysql db <<'SQL'\nSELECT \`a\` # don't\nDROP TABLE t; SELECT 'x';\nSQL")")"
+_sql_groups_cmd="$(python3 -c 'print("{ echo x; } | psql; " * 7000)')"
+_timed_case 'GH #621: 7000 { } groups piped into psql finish in bounded time' 0 "$_sql_groups_cmd"
+_sql_nested_cmd="$(python3 -c 'print("( " * 9000 + "echo \"" + "x " * 20000 + "\" | psql" + " ) | psql" * 9000 + " # DROP TABLE t")')"
+_timed_case 'GH #621: 9000 nested groups around 40 KB of echo piped into psql finish in bounded time' 0 "$_sql_nested_cmd"
+_sql_nested_cmd="$(python3 -c 'print("( " * 5000 + "echo \"" + "x " * 10000 + "\" | psql" + " ; echo y ) | psql" * 5000 + " # DROP TABLE t")')"
+_timed_case 'GH #621: 5000 nested groups each adding a line to 20 KB of SQL deny on the read budget' 2 "$_sql_nested_cmd"
+_sql_gap_cmd="$(python3 -c 'print("psql -c \"DROP " + "/* a * b */ " * 6000 + "x\"; mysql db <<SQL\nDROP " + "# c\n" * 12000 + "x\n" + "/*" + "*" * 40000 + "\nSQL")')"
+_timed_case 'GH #621: 140 KB of comment runs between DROP and a non-object finish in bounded time' 0 "$_sql_gap_cmd"
+_sql_lits_cmd="$(python3 -c 'print("mysql db <<SQL\nSELECT \`a\`" + " ,'"'"'drop table x'"'"'" * 7000 + ";\nSQL")')"
+_timed_case 'GH #621: 7000 literals after a backtick in a heredoc into mysql finish in bounded time' 0 "$_sql_lits_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
