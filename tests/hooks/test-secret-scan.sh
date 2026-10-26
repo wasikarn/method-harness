@@ -283,6 +283,8 @@ check "ask reason names the vendor label" "$ok"
 # Linear now: well under 1 s. The 4 s limit leaves room for a CI runner about 1.5x slower.
 # GH #378: the "suppressed" shape is 199,999 suppressed lines plus one real token (7.8 MB). One
 # journal row per suppressed match took 10.3 s, so the write went through without the ask.
+# Its 7.8 MB took 4.2-5.1 s on an idle 4-core cloud container (develop, 2026-10-26), so it gets 6 s,
+# still under the 8 s hook timeout the row guards.
 timed_scan() { # timed_scan <lines|oneline|suppressed> -- prints "<seconds> <stdout>" for a big Write
   python3 - "$GATE" "$1" "$UPPER36" <<'PY'
 import json, os, random, signal, subprocess, sys, time
@@ -320,8 +322,8 @@ ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && /usr/bin/grep -q 'AWS access
 check "40,000 matches on one 2 MB line: asks, line 1, in ${secs}s (< 4 s)" "$ok"
 : > "$MH_GATE_JOURNAL_PATH"
 res=$(timed_scan suppressed); secs=${res%% *}
-ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 4) }' && /usr/bin/grep -q 'AWS access/session key (line 200000)\.' <<<"$res" && ok=0
-check "199,999 suppressed lines + 1 real token (7.8 MB): asks, line 200000, in ${secs}s (< 4 s)" "$ok"
+ok=1; awk -v s="$secs" 'BEGIN { exit !(s < 6) }' && /usr/bin/grep -q 'AWS access/session key (line 200000)\.' <<<"$res" && ok=0
+check "199,999 suppressed lines + 1 real token (7.8 MB): asks, line 200000, in ${secs}s (< 6 s)" "$ok"
 ok=1; [ "$(jrows)" = "allow-suppressed:199999 ask:-" ] && ok=0
 check "199,999 suppressed matches journal one counted row, then the ask row" "$ok"
 
