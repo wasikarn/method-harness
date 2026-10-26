@@ -2752,6 +2752,10 @@ test_deny  "$IRRECOVERABLE" "GH #594 control: rm --x -rf build (not a bare --)" 
 # the tokenizer splits at a carriage return and bash does not: `a<CR>--` is one operand, and -rf after it a flag
 test_deny  "$IRRECOVERABLE" "GH #594 control: rm a<CR>-- -rf build (not a bare --)" "$(bash_payload $'rm a\r-- -rf build')"
 test_deny  "$IRRECOVERABLE" "GH #594 control: rm a<CR>-- -r build (rm-recursive)" "$(bash_payload $'rm a\r-- -r build')"
+# ...nor one the gate decodes from `$'\r'` into a bash -c or eval body
+test_deny  "$IRRECOVERABLE" "GH #594 control: bash -c \$'rm a\\r-- -rf b'" "$(bash_payload "bash -c \$'rm a\\r-- -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #594 control: eval \$'rm a\\r-- -rf b'" "$(bash_payload "eval \$'rm a\\r-- -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #594 control: eval rm a\$'\\r'-- -rf b" "$(bash_payload "eval rm a\$'\\r'-- -rf b")"
 test_allow "$IRRECOVERABLE" "GH #594: rm -r -i -- -f prompts for every file" "$(bash_payload 'rm -r -i -- -f')"
 
 gates_summary
