@@ -84,7 +84,7 @@ if [ "$behind" -eq 1 ]; then
     # A conflicted manifest the branch changed beyond its version line: develop's side would drop that.
     base=$(git merge-base origin/develop "$head")
     for f in "$PJ" "$MJ"; do
-      printf '%s\n' "$conflicted" | /usr/bin/grep -qxF "$f" || continue
+      /usr/bin/grep -qxF "$f" <<<"$conflicted" || continue
       if [ -n "$(git diff "$base" "$head" -- "$f" | awk '/^[-+]/ && !/^(---|\+\+\+)/ && !/"version"[[:space:]]*:/')" ]; then
         others=$(printf '%s\n%s (the branch changed more than its version line)' "$others" "$f" | awk 'NF')
       fi
@@ -97,7 +97,7 @@ if [ "$behind" -eq 1 ]; then
       exit 1
     fi
     for f in "$PJ" "$MJ"; do
-      printf '%s\n' "$conflicted" | /usr/bin/grep -qxF "$f" || continue
+      /usr/bin/grep -qxF "$f" <<<"$conflicted" || continue
       git -C "$wt" checkout -q --theirs -- "$f"
       git -C "$wt" add -- "$f"
     done
