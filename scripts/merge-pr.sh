@@ -11,35 +11,64 @@
 # Bash 3.2. Env: MERGE_PR_LOAD_MAX (default 4), MERGE_PR_LOAD_WAIT_SECS (900),
 # MERGE_PR_ALLOW_SAME_VERSION (1: a version equal to develop's needs no bump), MERGE_PR_SYNC_TRIES (3),
 # MERGE_PR_SYNC (the sync script; tests only).
+#
+# merge-pr.sh --verify <PR> <head sha> <base branch> <comments.json> — the same checks without gh, for a
+# session that has no gh (a Claude Code cloud session) and merges through the GitHub MCP tools instead.
+# The caller passes what those tools return: the PR's head sha and base branch, and its issue comments
+# as a JSON array of objects with a "body" (read through the same verdict parser as the gh path). It
+# runs the base, review, ancestry and version checks and never syncs, pushes or merges: a head that
+# lacks origin/develop or a version above it is refused with the sync-pr-head.sh command to run first.
+# On a pass it prints the head sha; merge it pinned to that sha (expectedHeadSha) right away. Before
+# this mode, cloud sessions retyped these checks by hand for every merge (#633, #644, #648).
 set -euo pipefail
 
-pr="${1:-}"
-if [ -z "$pr" ]; then
+usage() {
   echo "usage: merge-pr.sh <PR number>" >&2
+  echo "       merge-pr.sh --verify <PR number> <head sha> <base branch> <comments.json>" >&2
   exit 2
+}
+verify=0
+if [ "${1:-}" = "--verify" ]; then
+  verify=1
+  pr="${2:-}" head="${3:-}" base="${4:-}" comments_file="${5:-}"
+  if [ -z "$pr" ] || [ -z "$head" ] || [ -z "$base" ] || [ -z "$comments_file" ] || [ $# -gt 5 ]; then usage; fi
+  if ! [[ "$head" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "merge-pr: --verify needs the full 40-character head sha, not '$head'." >&2
+    exit 2
+  fi
+else
+  pr="${1:-}"
+  [ -n "$pr" ] || usage
 fi
 
 git fetch origin
 
-info=$(gh pr view "$pr" --json headRefOid,baseRefName -q '.headRefOid + " " + .baseRefName')
-head=${info% *}
-base=${info#* }
-if [ -z "$head" ] || [ "$head" = "$info" ]; then
-  echo "merge-pr: could not read the head sha and base branch of PR $pr" >&2
-  exit 1
+if [ "$verify" = 0 ]; then
+  info=$(gh pr view "$pr" --json headRefOid,baseRefName -q '.headRefOid + " " + .baseRefName')
+  head=${info% *}
+  base=${info#* }
+  if [ -z "$head" ] || [ "$head" = "$info" ]; then
+    echo "merge-pr: could not read the head sha and base branch of PR $pr" >&2
+    exit 1
+  fi
 fi
 if [ "$base" != "develop" ]; then
   echo "merge-pr: PR $pr targets '$base', not develop; the origin/develop check would prove nothing." >&2
-  echo "Retarget it (gh pr edit $pr --base develop) or ask the operator; do not fall back to a bare gh pr merge." >&2
+  if [ "$verify" = 1 ]; then
+    echo "Retarget it to develop (the MCP update_pull_request tool, base: develop) or ask the operator; do not merge it anyway." >&2
+  else
+    echo "Retarget it (gh pr edit $pr --base develop) or ask the operator; do not fall back to a bare gh pr merge." >&2
+  fi
   exit 1
 fi
 
 sync_script="${MERGE_PR_SYNC:-$(cd -P "$(dirname "$0")" && pwd)/sync-pr-head.sh}"
 tries="${MERGE_PR_SYNC_TRIES:-3}"
-# A non-number would make the round cap's `[ -ge ]` fail as false, so the cap would never stop the loop.
+# A non-number, or one too big for bash's integers, would make the round cap's `[ -ge ]` fail as false,
+# so the cap would never stop the loop. Five digits or more is refused well below that.
 case "$tries" in
-  '' | *[!0-9]*)
-    echo "merge-pr: MERGE_PR_SYNC_TRIES must be a whole number of sync rounds, not '$tries'." >&2
+  '' | *[!0-9]* | ?????*)
+    echo "merge-pr: MERGE_PR_SYNC_TRIES must be a whole number of sync rounds below 10000, not '$tries'." >&2
     exit 2 ;;
 esac
 
@@ -127,8 +156,13 @@ REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: false, m: null};
   | "\($m.v | ascii_upcase | gsub(" "; "_")) \(($m.r | capture("^[*\\s]*@\\s*`?(?<s>[0-9a-fA-F]{7,40})\\b") | .s) // "-")"'
 check_review() {
   local verdicts last word sha revs c files
-  verdicts=$(gh api --paginate "repos/{owner}/{repo}/issues/$pr/comments" --jq "$REVIEW_JQ") ||
-    { echo "merge-pr: could not read the comments of PR $pr to find its review verdict; not merging." >&2; exit 1; }
+  if [ "$verify" = 1 ]; then
+    verdicts=$(jq -r "$REVIEW_JQ" <"$comments_file") ||
+      { echo "merge-pr: could not read PR $pr's comments from '$comments_file' (a JSON array of comments with a \"body\") to find its review verdict." >&2; exit 1; }
+  else
+    verdicts=$(gh api --paginate "repos/{owner}/{repo}/issues/$pr/comments" --jq "$REVIEW_JQ") ||
+      { echo "merge-pr: could not read the comments of PR $pr to find its review verdict; not merging." >&2; exit 1; }
+  fi
   last=$(printf '%s\n' "$verdicts" | awk 'NF == 2 { l = $0 } END { print l }')
   word=${last%% *}; sha=${last#* }
   if [ -z "$last" ]; then
@@ -159,6 +193,20 @@ check_review() {
 }
 # The review is checked first: an unreviewed PR is refused before the load wait and before any push.
 check_review
+
+if [ "$verify" = 1 ]; then
+  if ! git merge-base --is-ancestor origin/develop "$head" 2>/dev/null || [ -n "$(version_problem)" ]; then
+    why=$(version_problem)
+    echo "merge-pr: PR $pr head $head is not synced with origin/develop (${why:-it lacks the origin/develop tip})." >&2
+    echo "Run scripts/sync-pr-head.sh <head branch> $head, then --verify the sha it prints." >&2
+    exit 1
+  fi
+  check_ancestry
+  check_version
+  echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE); merge it pinned to that sha now, and verify again if develop moves first." >&2
+  echo "$head"
+  exit 0
+fi
 
 load_max="${MERGE_PR_LOAD_MAX:-4}"
 wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}"
