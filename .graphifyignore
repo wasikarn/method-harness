@@ -1,0 +1,5 @@
+# /graphify scope: eval fixtures and test data are ~890 files of noise, and CHANGELOG.md is ~174k words
+# of release notes; leaving them out keeps the graph on docs, skills, hooks, scripts and agents.
+evals/
+tests/
+CHANGELOG.md
