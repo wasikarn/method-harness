@@ -962,7 +962,54 @@ def _deny_nested_spawn():
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"))
     sys.exit(2)
 
-if ("agent_id" in d) and _nested_spawn(cmd, False):
+# GH #588: a command name that is a substitution printing claude (`$(echo claude) -p x`, `` `which
+# claude` ``, `${C:-claude}`), at a command position (past assignments and wrappers) outside quotes and
+# comments. Its statement is read as claude's words, as an anchored `claude` is: a spawn flag, a prompt
+# word, piped or `<` input. `$(echo cla)ude` (a name split across text and a substitution) is a gap.
+_SUBST_CLAUDE = (r"\$\([^()]*?(?<![\w.-])claude(?![\w.-])[^()]*\)|`[^`]*?(?<![\w.-])claude(?![\w.-])[^`]*`"
+                 r"|\$\{\w+:?[-=+][\"']?(?:[^\s}]*/)?claude[\"']?\}")
+# A command position: a statement start (also after `)`, as in `case x in x) ...` or `x=$(..) cmd`) or a
+# find action's command; then keywords, assignments, `eval` and wrappers. The substitution must end the
+# word (`$(echo claude)x` runs claudex). A double-quoted shell `-c` / eval body, where the outer shell runs
+# the substitution, is read again as its own text (_DQ_BODY_RE).
+_SUBST_SPAWN_RE = re.compile(r"(?:^|(?<=[;&|()\n{])|(?<=-exec )|(?<=-execdir )|(?<=-ok )|(?<=-okdir ))"
+                             r"[ \t]*" + _KEYWORD_PREFIX + r"(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:eval[ \t]+)?(?:" + _WRAPPER_ALT
+                             + r"[ \t]+(?:-\S*[ \t]+)*)*\"?\\?(" + _SUBST_CLAUDE + r")\"?(?=[\s;&|)<>\"]|$)", re.MULTILINE)
+
+# A shell (its name starting a word, `\bash` too, so a long word is not rescanned from every position) with
+# up to 32 options before its `-c` cluster, each with at most one value word (`-o pipefail`, `--rcfile f`,
+# `--norc`, `+e`, `-lc`; bounded and option-led, so a statement of many `bash` words stays linear: a 33rd
+# option before `-c` is a known gap; an unbounded scan took 23-60 s at 140 KB, past the hook timeout) and an optional `--`, or `eval`; then a double-
+# quoted body, which may hold a `$(...)` with quotes of its own.
+_DQ_BODY_RE = re.compile(r"(?:(?<![^\s;&|(){])\\?(?:[^\s;&|()\"'/]*/)*(?:bash|sh|zsh|dash|ksh)"
+                         r"(?:[ \t]+[-+]{1,2}[A-Za-z][^\s\"';&|]*(?:[ \t]+(?![-+])[^\s\"';&|]+)?){0,32}?"
+                         r"[ \t]+-[A-Za-z]*c(?:[ \t]+--)?|(?<![\w./-])eval)[ \t]+\""
+                         r"((?:\$\((?:[^()]|\([^()]*\))*\)|[^\"\\]|\\.)*)\"")
+
+def _subst_spawn(c, depth=0):
+    if "claude" not in c:
+        return False
+    if depth < 3:
+        for b in _DQ_BODY_RE.finditer(c):
+            if _subst_spawn(re.sub(r"\\([$`\"\\])", r"\1", b.group(1)), depth + 1):
+                return True
+    mask, work = None, 0
+    for m in _SUBST_SPAWN_RE.finditer(c):
+        if mask is None:
+            mask = _quote_mask(c)
+        # A substitution quoted only by its own word (`"$(echo claude)" -p x`) is still the command; one that
+        # opens a longer quoted string (an eval / -c body, read by _DQ_BODY_RE above) is not.
+        q = m.start(1) - 1
+        if mask[m.start(1)] and not (c[q:q + 1] == '"' and (q == 0 or not mask[q - 1]) and m.group(0).endswith('"')):
+            continue
+        stmt, work = _spawn_statement(c[m.end():], work)
+        pre = c[:m.start()].rstrip(" \t")
+        piped = pre.endswith("|") and not pre.endswith("||")
+        if stmt is None or _SPAWN_FLAG_RE.search(stmt) or _claude_starts_session(stmt, piped):
+            return True
+    return False
+
+if ("agent_id" in d) and (_nested_spawn(cmd, False) or _subst_spawn(cmd)):
     _deny_nested_spawn()
 
 # GH #337 shadow mode: a rule whose id is listed here only journals "would_deny"/"would_ask" (with
@@ -2215,7 +2262,8 @@ def _scan_body(body):
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
-    if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)):
+    if ("agent_id" in d) and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
+                              or _subst_spawn(body)):
         deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
@@ -3184,6 +3232,18 @@ def _find_actions(rest, *names):
         value = 2 if u == "-fprintf" else 1 if u in _FIND_VALUE_TESTS or _FIND_NEWER_XY_RE.fullmatch(u) else 0
     return False
 
+def _claude_words_spawn(words):
+    # GH #588: True when claude given these words starts a session: a spawn flag, or (#583) a prompt word.
+    return any(t.replace(PH, "").split("=", 1)[0] in _SPAWN_WINDOW_FLAGS + ("-w", "--background") for t in words) \
+        or _claude_starts_session(" ".join(shlex.quote(t) for t in words), False)
+
+def _find_action_spawns(sub):
+    # GH #588: a find action running claude (past its wrappers) that starts a session; find hands it
+    # each path as a word, so `-exec claude {} \;` gives claude a prompt.
+    a0 = basename(sub[0]).replace(PH, "")
+    i = _past_wrapper_words(a0, sub, 1) if a0 in PREFIX_WRAPPERS else 0
+    return i < len(sub) and basename(sub[i]).replace(PH, "") == "claude" and _claude_words_spawn(sub[i + 1:])
+
 def _find_action_chmod_world(sub):
     # GH #587: a find action running chmod (past its wrappers) with a world-writable mode applies it to
     # every file find yields, as `chmod -R` does.
@@ -3482,6 +3542,9 @@ def _check_window(_wi, w):
             if sub:
                 _WDEPTH[len(windows)] = _cur_depth
                 windows.append(sub)
+                if ("agent_id" in d) and rest[j].replace(PH, "") in ("-exec", "-execdir", "-ok", "-okdir") \
+                        and _find_action_spawns(sub):
+                    _deny_nested_spawn()
                 if rest[j].replace(PH, "") in ("-exec", "-execdir") and _find_action_chmod_world(sub):
                     deny("chmod 777 / a+rwx on every file find yields makes them world-writable — confirm with user first",
                          rule="chmod-world")
@@ -3520,6 +3583,16 @@ def _check_window(_wi, w):
         _xr = _xc
         while _xr < len(rest) and basename(rest[_xr]).replace(PH, "") in PREFIX_WRAPPERS:
             _xr = _past_wrapper_words(basename(rest[_xr]).replace(PH, ""), rest, _xr + 1)
+        # GH #591: xargs hands mkfs its device as a word, so the mkfs rule's operand test never sees one.
+        _xm = basename(rest[_xr]).replace(PH, "") if _xr < len(rest) else ""
+        # Only --help / --version alone run nothing: the short letters differ per tool (mkfs's -V is
+        # --verbose, mkfs.vfat's -h takes a hidden-sector count), and every word must be one of them
+        # (`-L --version`: --version is the label).
+        _xinfo = ("--help", "--version")
+        _xargs_m = [t.replace(PH, "") for t in rest[_xr + 1:]]
+        if (_xm in ("mkfs", "mke2fs") or _xm.startswith("mkfs.")) and not (
+                _xargs_m and all(t in _xinfo for t in _xargs_m)):
+            deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")
         if _xr < len(rest) and basename(rest[_xr]).replace(PH, "") == "rm":
             deny("xargs rm deletes every path it is fed — destructive delete; " + delete_hint(), rule="xargs-rm")
         for j, t in enumerate(rest):
@@ -4049,6 +4122,54 @@ _PLAIN_ASSIGN_RE = re.compile(
     r"(?<![\w$])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
 _VIEW_LEN_CAP = 20_000
 
+# GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
+# `command echo`, `/bin/echo`) and the backtick forms (WORDS with no further substitution in them) print WORDS; `${X:-W}`, `${X-W}`, `${X:=W}`,
+# `${X=W}`, `${X:+W}` and `${X+W}` may expand to W. `$(cat list)` prints nothing the text shows.
+_ECHO_WORD = r"[ \t]*(?:command[ \t]+)?(?:[^\s()$`/]*/)*(?:echo|printf)"
+_LITERAL_SUBST_RE = re.compile(r"\$\(" + _ECHO_WORD + r"((?:[ \t]+[^\s()$`]+)*)[ \t]*\)|`" + _ECHO_WORD
+                               + r"((?:[ \t]+[^\s`$]+)*)[ \t]*`")
+_DEFAULT_SUBST_RE = re.compile(r"\$\{\w+:?[-=+]([^{}$`]*)\}")
+
+def _default_subst(v, quoted=True):
+    # A default goes in as written (`${F:-"-rf"}` -> `"-rf"`, whose quotes the tokenizer then removes, as the
+    # shell does), except inside "...": there its unescaped double quotes are dropped (`\"` stays), so it
+    # stays part of the outer string (`"${M:-"a && b"}"` is one string to the shell; its `&&` stays quoted).
+    # quoted=False leaves a default holding a quote as written (the second, safe copy of the view).
+    mask = _quote_mask(v)
+    # A quote is escaped only after an odd run of backslashes (`\\"` is a backslash, then a real quote).
+    unq = lambda w: re.sub(r'(\\*)"', lambda q: q.group(1) if len(q.group(1)) % 2 == 0 else q.group(0), w)
+    def put(e):
+        w = e.group(1)
+        if not quoted and ('"' in w or "'" in w):
+            return e.group(0)
+        return unq(w) if mask[e.start()] else w
+    return _DEFAULT_SUBST_RE.sub(put, v)
+
+# GH #590: a shell, or source / `.`, whose script is a process substitution printing literal text runs
+# that text: `bash <(echo rm -rf build)` and `bash < <(echo ...)` read in the view as `eval rm -rf build`,
+# which the eval unwrap scans. The shell name must start a word (`\bash` too), so a long word is not
+# rescanned from every position; up to 32 options may come before the script, only a cluster ending in o/O
+# (`-o`, `-eo`), --rcfile and --init-file taking a value (`bash -x script.sh <(...)` runs script.sh, so its psub is only an argument).
+_PSUB_SCRIPT_RE = re.compile(r"(?<![^\s;&|(){])\\?(?:[^\s;&|()<>]*/)?(?:bash|sh|zsh|dash|ksh|source|\.)"
+                             r"(?:[ \t]+(?:[-+][A-Za-z]*[oO][ \t]+[^\s;&|()<>]+|--(?:rcfile|init-file)[ \t]+[^\s;&|()<>]+"
+                             r"|[-+][^\s;&|()<>]*)){0,32}?"
+                             r"[ \t]+(?:<[ \t]*)?<\(" + _ECHO_WORD + r"((?:[ \t]+[^\s()$`]+)*)[ \t]*\)")
+
+def _psub_eval(e):
+    try:
+        words = shlex.split(e.group(1))
+    except ValueError:
+        words = e.group(1).split()
+    if words[:1] == ["--"]:
+        words = words[1:]
+    if words and "%" in words[0]:  # printf's format (`'%s\n'`, `'%s %s\n'`): the text is its arguments
+        words = words[1:]
+    return "eval " + " ".join(words)
+
+def _literal_subst_words(e):
+    words = (e.group(1) or e.group(2) or "").split()
+    return " ".join(words[1:] if words[:1] == ["--"] else words)
+
 def _views():
     out = []
     # GH #309: the command with every brace group expanded as the shell does. Shadow first (GH #337):
@@ -4061,6 +4182,20 @@ def _views():
         v = _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", cmd))
         if v != cmd:
             out.append(("ifs-split", v))
+    # GH #589: the command with each literal substitution replaced by what it prints. Enforced, and read as
+    # far as the parser does, like ifs-split (a substitution in rm's flags hid `-rf` from every rule).
+    # A second copy leaves every quoted default as written: a view whose quotes do not balance is dropped
+    # unread, so a misread quoted default must not hide an unquoted one (`${G:--rf}`) in the same command.
+    if "$" in cmd or "`" in cmd or "<(" in cmd:
+        for quoted in (True, False):
+            v = cmd
+            for _ in range(3):  # inside out: `${X:-${Y:--rf}}`, `$(echo $(echo -rf))`
+                w = _default_subst(_LITERAL_SUBST_RE.sub(_literal_subst_words, _PSUB_SCRIPT_RE.sub(_psub_eval, v)), quoted)
+                if w == v:
+                    break
+                v = w
+            if v != cmd and ("subst-literal", v) not in out:
+                out.append(("subst-literal", v))
     if len(cmd) > _VIEW_LEN_CAP:
         return out
     vals = {}
