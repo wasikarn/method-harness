@@ -367,6 +367,15 @@ big="$(python3 -c 'print("x = 1\n" * 7000)')"$'\n'"AKIA$(rnd 16 "$UPPER36" 8)"
 out=$(asks "$big"); ok=1; /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
 check "secret at the end of a 42 KB Write -> ask" "$ok"
 
+# bash 5.3 can drop what a command substitution writes after an `LC_ALL=C cmd` in it, so the fast path's
+# sentinel x can go missing (GH #610), and stripping a suffix that is not there scanned every position:
+# minutes on a large Write, past the 8 s hook timeout, which allows. This printf drops the x every time.
+key="AKIA$(rnd 16 "$UPPER36" 9)"
+out=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":"x = 1\n" * 100000 + sys.argv[2]}}))' "$FIXTURE/scratch.txt" "$key" \
+  | timeout 8 bash -c 'printf() { [ "$1" = x ] || builtin printf "$@"; }; . "$0"' "$GATE" 2>/dev/null); rc=$?
+ok=1; [ "$rc" -eq 0 ] && /usr/bin/grep -q '"permissionDecision": "ask"' <<<"$out" && ok=0
+check "fast-path sentinel lost, 600 KB Write with a key at the end -> ask inside the hook timeout (rc $rc)" "$ok"
+
 # --- JSON depth: an extra key nested past the decoder's limit raises RecursionError ---
 # The Write carries no token-shaped text, so only the depth branch can ask on it.
 # depth 500, not 1000: Python <=3.11 overflows near 986.
