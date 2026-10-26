@@ -96,9 +96,33 @@ case "$1" in
     esac
     printf '{\n  "version": "%s"\n}\n' "$v" ;;
   # STUB_COMMITS: space-separated "sha:file,file" for the non-merge commits after the reviewed sha.
-  rev-list) for c in $STUB_COMMITS; do echo "${c%%:*}"; done ;;
+  # STUB_MERGES: space-separated "sha:parent1:parent2[:parent3]:file,file" for the merge commits after it,
+  # the files being where the merge's tree differs from git merge-tree's merge of its parents.
+  rev-list)
+    case " $* " in
+      *" --merges "*) for m in $STUB_MERGES; do echo "${m%%:*}"; done ;;
+      *" --parents "*) for m in $STUB_MERGES; do [ "${m%%:*}" = "${@: -1}" ] && { r=${m%:*}; echo "${r//:/ }"; }; done ;;
+      *) for c in $STUB_COMMITS; do echo "${c%%:*}"; done ;;
+    esac ;;
+  # merge-tree --write-tree --no-messages <p1> <p2>: prints tree-<p1>-<p2>, then (when STUB_MERGETREE_RC is
+  # 1) one "<mode> <oid> <stage>\t<path>" conflict line per path in STUB_MERGETREE_CONFLICTS (comma-separated,
+  # default the plugin manifest), and exits STUB_MERGETREE_RC (default 0).
+  merge-tree)
+    echo "tree-$4-$5"
+    if [ "${STUB_MERGETREE_RC:-0}" = 1 ]; then
+      cf="${STUB_MERGETREE_CONFLICTS:-.claude-plugin/plugin.json}"
+      for f in ${cf//,/ }; do printf '100644 abc 2\t%s\n100644 def 3\t%s\n' "$f" "$f"; done
+    fi
+    exit "${STUB_MERGETREE_RC:-0}" ;;
   diff-tree)
     [ -z "${STUB_DIFFTREE_FAIL:-}" ] || { echo "fatal: bad object" >&2; exit 128; }
+    # diff-tree -r --no-renames --name-only <tree> <merge>: the merge's files from STUB_MERGES, and only with
+    # --no-renames (a rename would list just its destination, GH #657 review).
+    case " $* " in *" tree-"*)
+      case " $* " in *" --no-renames "*) ;; *) echo "diff-tree without --no-renames" >&2; exit 1 ;; esac
+      for m in $STUB_MERGES; do [ "${m%%:*}" = "${@: -1}" ] && { f=${m##*:}; printf '%s\n' ${f//,/ }; }; done
+      exit 0 ;;
+    esac
     for c in $STUB_COMMITS; do [ "${c%%:*}" = "${@: -1}" ] && { f=${c#*:}; printf '%s\n' ${f//,/ }; }; done ;;
   *) exit 2 ;;
 esac
@@ -125,7 +149,7 @@ run() {
   : >"$LOG"
   rm -f "$STUB/fetch" "$STUB/merge-base" "$STUB/show-develop" "$STUB/api" "$STUB/sync-n"
   out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_DIR="$STUB" STUB_HEAD=headsha111 \
-    STUB_COMMITS="${STUB_COMMITS-}" STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict 'MERGE @ abc1234')}" \
+    STUB_COMMITS="${STUB_COMMITS-}" STUB_MERGES="${STUB_MERGES-}" STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict 'MERGE @ abc1234')}" \
     STUB_ANCESTOR="$1" STUB_REMOTE_HEAD="$2" STUB_LOAD="$3" \
     STUB_HEAD_VER="${STUB_HEAD_VER-1.1.2}" STUB_DEV_VER="${STUB_DEV_VER-1.1.1}" \
     MERGE_PR_SYNC="$STUB/sync" MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 bash "$SCRIPT" 451 2>&1)
@@ -440,6 +464,42 @@ verify_run 0 headsha111
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && /usr/bin/grep -q 'full 40-character head sha' <<<"$err"; then ok "--verify short head sha: exit 2"; else bad "--verify short sha: rc=$rc err='$err'"; fi
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" --verify 451 "$FULL" develop 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'usage:' <<<"$out"; then ok "--verify missing comments argument: usage, exit 2"; else bad "--verify usage: rc=$rc out=$out"; fi
+
+# 6m. GH #629: a merge commit after the reviewed sha whose tree is exactly its parents' merge (a develop
+# sync, a conflict only in the manifests) keeps the review; an edit made inside the merge does not.
+STUB_MERGES="m1:p1:p2:" run 0 headsha111 1.50
+if [ "$rc" -eq 0 ] && merged; then ok "a clean merge after the review keeps it"; else bad "clean merge lost the review rc=$rc: $out"; fi
+STUB_MERGES="m1:p1:p2:.claude-plugin/plugin.json,.claude-plugin/marketplace.json" STUB_MERGETREE_RC=1 run 0 headsha111 1.50
+if [ "$rc" -eq 0 ] && merged; then ok "a merge resolving only a manifest conflict keeps the review"; else bad "manifest-conflict merge lost the review rc=$rc: $out"; fi
+STUB_MERGES="m1:p1:p2:hooks/gates/irrecoverable.py" run 0 headsha111 1.50
+refuses "an edit inside a merge commit" "merge commit m1 after its MERGE review"
+STUB_MERGES="m1:p1:p2:.claude-plugin/plugin.json,hooks/gates/x.py" STUB_MERGETREE_RC=1 run 0 headsha111 1.50
+refuses "a conflict resolved in code inside a merge" "merge commit m1 after its MERGE review"
+STUB_MERGES="m1:p1:p2:p3:" run 0 headsha111 1.50
+refuses "an octopus merge after the review" "exactly two parents"
+STUB_MERGES="m1:p1:p2:" STUB_MERGETREE_RC=128 run 0 headsha111 1.50
+refuses "git merge-tree failing" "merge-tree of m1's parents failed"
+
+# 6m2. #657 review: a conflict outside the manifests is refused even when the merge kept merge-tree's side
+# (a modify/delete or binary conflict leaves one side in merge-tree's tree, so the trees match).
+STUB_MERGES="m1:p1:p2:" STUB_MERGETREE_RC=1 STUB_MERGETREE_CONFLICTS="other.txt" run 0 headsha111 1.50
+refuses "a non-manifest conflict resolved to merge-tree's side" "resolved a conflict outside the manifests"
+STUB_MERGES="m1:p1:p2:" STUB_MERGETREE_RC=1 STUB_MERGETREE_CONFLICTS=".claude-plugin/plugin.json,.claude-plugin/marketplace.json" run 0 headsha111 1.50
+if [ "$rc" -eq 0 ] && merged; then ok "conflicts only in both manifests keep the review"; else bad "manifest-only conflicts refused rc=$rc: $out"; fi
+
+# 6n. GH #629: mixed fence styles. A ~~~ fence is not closed by ```, so the FIX FIRST after the ~~~ closer
+# is outside any fence and wins; a longer ```` fence is not closed by a shorter ``` inside it.
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"Fresh-context review: MERGE @ abcdef1\n~~~\n```\n~~~\nFresh-context review: FIX FIRST @ abcdef1"}]' run 0 headsha111 1.50
+refuses "mixed fences hiding a later FIX FIRST" "is FIX FIRST"
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## Fresh-context review: FIX FIRST\n````\n```\nFresh-context review: MERGE @ abc1234\n```\n````"}]' run 0 headsha111 1.50
+refuses "a MERGE inside a longer fence" "is FIX FIRST"
+
+# 6o. #657 review: a fence closer carries no text (```` ``` x ```` does not close), and an indented fence (in
+# a list item) still hides what it holds.
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## Fresh-context review: FIX FIRST\n```\n``` x\nFresh-context review: MERGE @ abc1234\n```"}]' run 0 headsha111 1.50
+refuses "a MERGE after a closer with text" "is FIX FIRST"
+STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"## Fresh-context review: FIX FIRST\n- item\n\n      ```\n      Fresh-context review: MERGE @ abc1234\n      ```"}]' run 0 headsha111 1.50
+refuses "a MERGE in an indented fence" "is FIX FIRST"
 
 # 5. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" STUB_LOG="$LOG" bash "$SCRIPT" 2>&1); rc=$?
