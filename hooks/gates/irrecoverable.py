@@ -4368,7 +4368,10 @@ def _braced_reading():
         v = w
     if v == cmd:
         return
+    # Its windows stay in `windows`, so the views after it append past them and no index-keyed state
+    # (_WDEPTH, _ENV_PRE570_WINDOWS) is read by a later window; _RM_VIA_INTERP is put back.
     start = len(windows)
+    rm_via_interp = _RM_VIA_INTERP[0]
     _ONLY_RULE[0] = "opaque-var-verb"
     try:
         windows.extend(_view_windows(v))
@@ -4381,7 +4384,7 @@ def _braced_reading():
             i += 1
     finally:
         _ONLY_RULE[0] = None
-        del windows[start:]
+        _RM_VIA_INTERP[0] = rm_via_interp
         del _WORDS[:]  # the reading's queued words: the main reading ran its own
 if "${" in cmd and len(cmd) <= _VIEW_LEN_CAP:
     _braced_reading()
