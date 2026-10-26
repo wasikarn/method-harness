@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # test-session-start-hook.sh — .claude/hooks/session-start.sh (PR #581) installs the gauntlet's
-# tools, trash-cli and a shfmt the pipe-into-grep-q scanner can read, only in cloud sessions and
-# never blocks one: every case exits 0 with empty stdout (SessionStart stdout is injected into the
-# model's context). PATH holds only stubs (plus the real python3 the hook runs the scanner's canary
-# with), so no real apt-get, sudo, pip or shfmt ever runs.
+# tools, trash-cli and a shfmt the pipe-into-grep-q scanner can read, and wires an unset
+# core.hooksPath to git-hooks, only in cloud sessions and never blocks one: every case exits 0 with
+# empty stdout (SessionStart stdout is injected into the model's context). PATH holds only stubs
+# (plus the real python3 the hook runs the scanner's canary with), so no real apt-get, sudo, pip or
+# shfmt ever runs; the hooksPath cases link the real git and point CLAUDE_PROJECT_DIR at a
+# throwaway repo.
 set -uo pipefail
+# A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+# The operator's own git config (a global core.hooksPath from husky and the like, or `git -c` pairs a
+# hook inherits) must not leak into the sandbox repos; one case sets GIT_CONFIG_GLOBAL on purpose.
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 HOOK="${SESSION_START_HOOK:-$HERE/../../.claude/hooks/session-start.sh}"
 BASH_BIN="$(command -v bash)"
@@ -49,6 +57,8 @@ mk_shfmt() {
 #   pip-fail pip whose install logs its call and fails
 #   trash    an already-installed trash
 #   shfmt    an already-installed good shfmt; shfmt-numeric, shfmt-old: apt's 3.8.0 and 3.4.3
+#   git      the real git
+#   git-fail the real git, except that a core.hooksPath write fails
 stub_dir() {
   local d uid=$1; shift
   d=$(mktemp -d "$ROOT_DIR/s.XXXXXX") || return 1
@@ -70,6 +80,8 @@ stub_dir() {
       shfmt-old) mk_shfmt "$d/shfmt" old ;;
       apt-fail) printf '#!/bin/sh\necho "Reading package lists..."\necho "FE=$DEBIAN_FRONTEND $*" >> "$LOG"\nexit 1\n' > "$d/apt-get" ;;
       trash) printf '#!/bin/sh\n' > "$d/trash" ;;
+      git) ln -s "$(command -v git)" "$d/git" ;;
+      git-fail) printf '#!/bin/sh\ncase "$*" in *"core.hooksPath git-hooks"*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v git)" > "$d/git" ;;
     esac
   done
   chmod +x "$d"/*
@@ -78,16 +90,17 @@ stub_dir() {
 mk_shfmt "$ROOT_DIR/good.shfmt" good
 mk_shfmt "$ROOT_DIR/numeric.shfmt" numeric
 
-# run <stub dir> <remote value or "unset"> [PATH]: sets rc, out, err, log, envf (what the hook
-# wrote to CLAUDE_ENV_FILE). PATH defaults to <dir>/pipbin before <dir>, the way Ubuntu puts
-# /usr/local/bin (pip's) before /usr/bin (apt's).
+# run <stub dir> <remote value or "unset"> [project dir]: sets rc, out, err, log, envf (what the
+# hook wrote to CLAUDE_ENV_FILE). CLAUDE_PROJECT_DIR is the project dir, else empty, so a session's
+# own value never points the hook at this repo. PATH is $RUN_PATH when set, else <dir>/pipbin
+# before <dir>, the way Ubuntu puts /usr/local/bin (pip's) before /usr/bin (apt's).
 run() {
-  local d=$1 remote=$2 p=${3:-$1/pipbin:$1} e="$ROOT_DIR/err"
+  local d=$1 remote=$2 proj=${3:-} p=${RUN_PATH:-$1/pipbin:$1} e="$ROOT_DIR/err"
   : > "$d.log"; : > "$d.env"
   if [ "$remote" = unset ]; then
-    out=$(env -u CLAUDE_CODE_REMOTE PATH="$p" LOG="$d.log" CLAUDE_ENV_FILE="$d.env" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
+    out=$(env -u CLAUDE_CODE_REMOTE CLAUDE_PROJECT_DIR="$proj" PATH="$p" LOG="$d.log" CLAUDE_ENV_FILE="$d.env" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
   else
-    out=$(CLAUDE_CODE_REMOTE="$remote" PATH="$p" LOG="$d.log" CLAUDE_ENV_FILE="$d.env" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
+    out=$(CLAUDE_CODE_REMOTE="$remote" CLAUDE_PROJECT_DIR="$proj" PATH="$p" LOG="$d.log" CLAUDE_ENV_FILE="$d.env" "$BASH_BIN" "$HOOK" 2>"$e" </dev/null); rc=$?
   fi
   err=$(cat "$e"); log=$(cat "$d.log"); envf=$(cat "$d.env")
 }
@@ -168,19 +181,19 @@ else bad "old shfmt: rc=$rc out='$out' err='$err' log='$log'"; fi
 
 # pip's directory after apt's on PATH: the hook puts it first through CLAUDE_ENV_FILE, and a later
 # session (whose PATH is reset) does not reinstall, it only writes the PATH line again.
-d=$(stub_dir 0 env trash shfmt-numeric pip); run "$d" true "$d:$d/pipbin"
+d=$(stub_dir 0 env trash shfmt-numeric pip); RUN_PATH="$d:$d/pipbin" run "$d" true
 want="export PATH=$d/pipbin:\"\$PATH\""
 if clean_exit && [ "$log" = "$PIP_LOG" ] && [ "$envf" = "$want" ] && /usr/bin/grep -q "PATH finds $d/shfmt first" <<<"$err" \
   && [ "$(PATH="$d:$d/pipbin"; eval "$envf"; command -v shfmt)" = "$d/pipbin/shfmt" ]; then
   ok "remote, pip's shfmt shadowed by apt's: CLAUDE_ENV_FILE puts pip's first, one stderr note"
 else bad "shadowed: rc=$rc out='$out' err='$err' log='$log' envf='$envf'"; fi
-run "$d" true "$d:$d/pipbin"
+RUN_PATH="$d:$d/pipbin" run "$d" true
 if clean_exit && [ -z "$log" ] && [ "$envf" = "$want" ]; then
   ok "remote, shadowed, second run: no pip install, the PATH line is written again"
 else bad "shadowed, second run: rc=$rc out='$out' err='$err' log='$log' envf='$envf'"; fi
 # A resumed session that keeps its CLAUDE_ENV_FILE: the line is not appended twice.
 printf '%s\n' "$want" > "$d.env"
-CLAUDE_CODE_REMOTE=true PATH="$d:$d/pipbin" LOG="$d.log" CLAUDE_ENV_FILE="$d.env" "$BASH_BIN" "$HOOK" </dev/null 2>/dev/null
+CLAUDE_CODE_REMOTE=true CLAUDE_PROJECT_DIR="" PATH="$d:$d/pipbin" LOG="$d.log" CLAUDE_ENV_FILE="$d.env" "$BASH_BIN" "$HOOK" </dev/null 2>/dev/null
 if [ "$(cat "$d.env")" = "$want" ]; then
   ok "remote, shadowed, CLAUDE_ENV_FILE already holds the PATH line: not written twice"
 else bad "shadowed, reused env file: '$(cat "$d.env")'"; fi
@@ -190,14 +203,14 @@ if clean_exit && [ "$log" = "$PIP_LOG" ] && [ -z "$err" ]; then
   ok "remote, only pip3 (no pip): pip3 installs shfmt-py"
 else bad "pip3 only: rc=$rc out='$out' err='$err' log='$log'"; fi
 
-d=$(stub_dir 0 env trash shfmt-numeric pip); run "$d" true "$d"
+d=$(stub_dir 0 env trash shfmt-numeric pip); RUN_PATH="$d" run "$d" true
 if clean_exit && [ "$envf" = "export PATH=$d/pipbin:\"\$PATH\"" ]; then
   ok "remote, pip's directory not on PATH at all (a --user install): CLAUDE_ENV_FILE adds it"
 else bad "pip dir off PATH: rc=$rc out='$out' err='$err' log='$log' envf='$envf'"; fi
 
-d=$(stub_dir 0 env trash shfmt-numeric pip); run "$d" true "$d:$d/pipbin"
+d=$(stub_dir 0 env trash shfmt-numeric pip); RUN_PATH="$d:$d/pipbin" run "$d" true
 : > "$d.log"
-out=$(CLAUDE_CODE_REMOTE=true PATH="$d:$d/pipbin" LOG="$d.log" "$BASH_BIN" "$HOOK" 2>"$ROOT_DIR/err" </dev/null); rc=$?
+out=$(env -u CLAUDE_ENV_FILE CLAUDE_CODE_REMOTE=true CLAUDE_PROJECT_DIR="" PATH="$d:$d/pipbin" LOG="$d.log" "$BASH_BIN" "$HOOK" 2>"$ROOT_DIR/err" </dev/null); rc=$?
 err=$(cat "$ROOT_DIR/err")
 if clean_exit && /usr/bin/grep -q "put $d/pipbin first on PATH or the gauntlet refuses" <<<"$err"; then
   ok "remote, shadowed and no CLAUDE_ENV_FILE: one note naming the directory to put first"
@@ -213,6 +226,66 @@ if clean_exit && [ "$log" = "PIP install -q -U shfmt-py" ] && /usr/bin/grep -q '
   && /usr/bin/grep -q 'no usable shfmt' <<<"$err"; then
   ok "remote, pip install fails: a note for pip and one for shfmt, exit 0"
 else bad "pip fails: rc=$rc out='$out' err='$err' log='$log'"; fi
+
+echo "=== session-start hook: core.hooksPath wiring ==="
+
+# mk_repo [hooks dir: yes|no] [preset core.hooksPath]: a throwaway repo; prints its path.
+mk_repo() {
+  local r
+  r=$(mktemp -d "$ROOT_DIR/r.XXXXXX") || return 1
+  git init -q "$r" || return 1
+  [ "${1:-yes}" = yes ] && mkdir "$r/git-hooks"
+  [ -n "${2:-}" ] && git -C "$r" config core.hooksPath "$2"
+  printf '%s' "$r"
+}
+hooks_path() { git -C "$1" config --local --get core.hooksPath; }
+
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r"
+if clean_exit && [ "$(hooks_path "$r")" = git-hooks ] && /usr/bin/grep -q 'set core.hooksPath to git-hooks' <<<"$err"; then
+  ok "remote, core.hooksPath unset: set to the relative git-hooks, one stderr note"
+else bad "unset hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); run "$d" unset "$r"
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "CLAUDE_CODE_REMOTE unset: core.hooksPath left unset (local clones are never touched)"
+else bad "local hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo yes /no/such/dir); d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r"
+if clean_exit && [ -z "$err" ] && [ "$(hooks_path "$r")" = /no/such/dir ]; then
+  ok "remote, core.hooksPath already set (even to a missing dir): left as is, silent"
+else bad "preset hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo no); d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r"
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, no git-hooks dir in the project: core.hooksPath left unset, silent"
+else bad "no git-hooks dir: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+# Run from inside the repo, so a fallback to $PWD or the cwd's top level would wire it.
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); pushd "$r" >/dev/null || exit 1; run "$d" true; popd >/dev/null || exit 1
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, CLAUDE_PROJECT_DIR empty, cwd inside a repo: that repo is not touched, silent"
+else bad "no project dir: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+g="$ROOT_DIR/global.gitconfig"; printf '[core]\n\thooksPath = /shared/hooks\n' > "$g"
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git); GIT_CONFIG_GLOBAL="$g" run "$d" true "$r"
+if clean_exit && [ "$(hooks_path "$r")" = git-hooks ]; then
+  ok "remote, core.hooksPath set only globally: the repo's own value is still wired to git-hooks"
+else bad "global hooksPath: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo); mkdir "$r/sub"; d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r/sub"
+if clean_exit && [ "$(hooks_path "$r")" = git-hooks ]; then
+  ok "remote, project dir is a subdir: git-hooks found at the work tree's top, wired"
+else bad "subdir project: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo no); mkdir -p "$r/sub/git-hooks"; d=$(stub_dir 0 env trash shfmt git); run "$d" true "$r/sub"
+if clean_exit && [ -z "$err" ] && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, git-hooks only under the project subdir, not at the top: left unset (git would not find it)"
+else bad "subdir git-hooks: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
+
+r=$(mk_repo); d=$(stub_dir 0 env trash shfmt git-fail); run "$d" true "$r"
+if clean_exit && /usr/bin/grep -q 'git config core.hooksPath git-hooks failed' <<<"$err" && [ -z "$(hooks_path "$r")" ]; then
+  ok "remote, the config write fails: one stderr note, exit 0"
+else bad "write fails: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
 
 safe_trash "$ROOT_DIR"
 echo "session-start hook: $pass passed, $fail failed"
