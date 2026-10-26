@@ -1041,6 +1041,9 @@ _SPAWN_DENY_REASON = ("a subagent may not spawn a nested Claude Code session via
 # GH #593 / #661: the rules a reading may decide with, or None for all: a deny by any other rule (or a
 # structural one) ends the window unreported, and any other ask is dropped.
 _ONLY_RULE = [None]
+# GH #661: in the enforced view pass, a deny by another rule that has an id returns instead of ending the window,
+# so the enforced rule further on in the same window is still reached (a structural deny still ends it).
+_ONLY_RULE_PASS_ON = [False]
 def _deny_nested_spawn():
     if _ONLY_RULE[0]:
         raise _ViewStop
@@ -1139,6 +1142,8 @@ def _shadowed(rule, decision):
 
 def deny(reason, rule=None):
     if _ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]:
+        if rule is not None and _ONLY_RULE_PASS_ON[0]:
+            return
         raise _ViewStop
     if _VIEW[0] and rule is None:
         raise _ViewStop
@@ -4471,15 +4476,19 @@ def _enforced_pass(text):
     # GH #661: a shadowed view stops at its first hit, so a rule it enforces (_VIEW_ENFORCED) may not have read
     # the windows after that hit (`fi{nd,nd} x -delete; rm --{r,f} b`). This pass reads every window once more
     # with only those rules live; any other rule's deny ends that window alone.
-    _ONLY_RULE[0] = _VIEW_ENFORCED[_VIEW[0]]
+    # Another rule's deny passes on (_ONLY_RULE_PASS_ON) so the enforced rule later in the same window still
+    # runs; code written to stop at a deny may then fail, which only skips that window. The first pass marked
+    # the view's word windows seen, so they are cleared to be queued again.
+    _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0] = _VIEW_ENFORCED[_VIEW[0]], True
     try:
+        _WORDS_SEEN.clear()
         i = len(windows)
         windows.extend(_view_windows(text))
         while True:
             while i < len(windows):  # a window's checks may append more (bash -c bodies, xargs, find)
                 try:
                     _check_window(i, windows[i])
-                except _ViewStop:
+                except (_ViewStop, Exception):  # never SystemExit: an enforced deny exits as it should
                     pass
                 i += 1
             if not _WORDS:
@@ -4491,7 +4500,7 @@ def _enforced_pass(text):
                     windows.append(x)
             del _WORDS[:]
     finally:
-        _ONLY_RULE[0] = None
+        _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0] = None, False
         del _WORDS[:]
 
 for _VIEW[0], _text in _views():
