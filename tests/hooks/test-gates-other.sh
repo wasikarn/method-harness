@@ -653,5 +653,10 @@ test_allow "$IRRECOVERABLE" "GH #608 control: subprocess git status" \
 test_allow "$IRRECOVERABLE" "GH #608 control: perl -ne matching rm -rf" "$(bash_payload "perl -ne 'print if /rm -rf/' f.txt")"
 _timed_case 'GH #608: 16000 distinct literals in a process-API body are read in bounded time' 0 \
   "python3 -c 'import os; os.system($(python3 -c "print(''.join('\"l%d\", ' % i for i in range(16000)))")\"x\")'"
+# GH #593: the assignment scan is one non-overlapping pass; a chain-matching regex over these took 40 s
+_timed_case "GH #593: rm -rf before 10000 prefix assignments, denied in bounded time" 2 \
+  "rm -rf build; $(printf 'a=b %.0s' $(seq 10000))x"
+_timed_case "GH #593: rm -rf before 10000 escaped-blank assignments, denied in bounded time" 2 \
+  "rm -rf build; $(printf 'x=\\ %.0s' $(seq 10000))"
 
 gates_summary

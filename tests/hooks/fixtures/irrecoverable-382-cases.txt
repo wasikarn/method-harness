@@ -84,7 +84,7 @@ DENY git "" reset --hard
 # in argv0 as every dangerous name, which stays; only a word window matches the literal text around it.
 DENY '$(x)' -rf build
 # 8. controls: a split value or an empty word in a command that runs nothing destructive
-# (`X=$Y make` allows too, but the token reading still journals a shadow opaque-var-verb ask, as on develop.)
+# (`X=$Y make` allows too; a `$Y` inside an assignment's value is never read as the program, GH #593.)
 ALLOW sudo -u $USER git status
 ALLOW sudo -u $U ls -la
 ALLOW sudo -u $U rm -f build.log
