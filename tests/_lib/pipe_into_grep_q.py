@@ -12,15 +12,22 @@ A pipe's readers are the commands that can read the stdin it hands its right sid
 - directly: the command there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a
   `time`d command, and any `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies
   redirections left to right; a simple command expands its words before its redirections, a
-  compound command (`for` list, `case` subject, `for ((...))`) after them. So the words of
+  compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them;
+  `>(...)` reads the command's output, not the pipe. So the words of
   `echo "$(...)" < f` read the pipe, those of `for x in $(...); do :; done < f` read f, and a
   substitution in a redirection after `< f` reads f;
 - inside the conditions and bodies of if/while/until/for/case: a grep counts only when it reads
-  stdin: no file operand and no -r, or a `-` or `/dev/stdin` operand, or `-f -`
+  stdin: no file operand and no -r, or a `-`, `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0`
+  operand or `-f` value
   (`while read -r f; do grep -q p "$f"; done` reads files, not the pipe). This part is a
   heuristic: a grep with a file operand after `cat` drained nothing is not flagged there.
 A statement whose stdin is redirected (`<`, `<<<`, `<<`, `<&N` with a literal N other than 0) is no
 reader; `<&0` and `<&"$fd"` may still be the pipe, so they are.
+
+A `>(...)` is checked the same way, wherever it sits (either side of a pipe, or no pipe at all):
+its readers are what the command writes into it, and a quiet grep there kills that command with
+SIGPIPE. Its status can still be discarded (inside `$(...)`/`<(...)`, behind `|| true`, a function
+defined but never run) or the grep followed by a reader of the rest; those are over-reported.
 
 A reader is a quiet grep when, after any command/builtin/exec/env/timeout/nice/stdbuf/sudo/nohup
 wrapper (with its options and, for env and sudo, NAME=VALUE words; `env -S STRING` is split and
@@ -89,7 +96,11 @@ STDIN_REDIRS = {'<', '<<<', '<<', '<<-', '<&', '<>'}
 # Keys under which shfmt nests statements; a statement's own words are everything else.
 NESTED = {'Stmts', 'Cond', 'Then', 'Else', 'Do', 'Stmt', 'Body'}
 # Commands that expand their words before their redirections apply.
-SIMPLE = {'CallExpr', 'DeclClause', 'TestClause', 'ArithmCmd', 'LetClause'}
+# `[[ ]]` and `(( ))` are compound commands: bash applies their redirections first
+# (`echo P | { [[ $(cat) == P ]] < f; }` reads f), so they are not here.
+SIMPLE = {'CallExpr', 'DeclClause', 'LetClause'}
+# Operands that name the stdin a grep inherits.
+STDIN_FILES = ('-', '/dev/stdin', '/dev/fd/0', '/proc/self/fd/0')
 DELIBERATE = re.compile(r'#\s*pipe-into-grep-q: deliberate\s*$')
 CANARY = b'x | grep -q y\n'
 
@@ -224,7 +235,7 @@ def grep_args(args):
                 value = w.split('=', 1)[1] if inline else next(it, None)
                 if name in ('regexp', 'file'):
                     pattern_given = True
-                    patterns_from_stdin |= name == 'file' and value in ('-', '/dev/stdin')
+                    patterns_from_stdin |= name == 'file' and value in STDIN_FILES
             continue
         if w.startswith('-') and len(w) > 1:
             for n, ch in enumerate(w[1:], 1):
@@ -236,14 +247,14 @@ def grep_args(args):
                     value = w[n + 1:] or next(it, None)
                     if ch in 'ef':
                         pattern_given = True
-                        patterns_from_stdin |= ch == 'f' and value in ('-', '/dev/stdin')
+                        patterns_from_stdin |= ch == 'f' and value in STDIN_FILES
                     break
                 if not ch.isalpha():
                     break
             continue
         operands.append(w)
     files = operands if pattern_given else operands[1:]
-    if patterns_from_stdin or '-' in files or '/dev/stdin' in files:
+    if patterns_from_stdin or any(f in STDIN_FILES for f in files):
         return quiet, True
     return quiet, not files and not recursive  # -r with no file searches `.`, not stdin
 
@@ -295,7 +306,10 @@ def readers(stmt, direct=True):
         return [r for s in stmts or [] for r in readers(s, d)]
 
     def subst_readers(node):
-        return [r for sub in substs(node) for r in each(sub.get('Stmts'), direct)]
+        # An output substitution `>(...)` reads what the command writes, not the pipe: hits() checks
+        # every `>(...)` on its own, wherever it sits.
+        return [r for sub in substs(node) if sub.get('Op') != '>('
+                for r in each(sub.get('Stmts'), direct)]
 
     # Redirections apply left to right: a substitution in one expands with whatever stdin the
     # earlier ones left, so only those up to the first that replaces stdin can see the pipe.
@@ -341,17 +355,26 @@ def readers(stmt, direct=True):
 def hits(tree):
     out = []
 
+    def check(rs):
+        for c, direct in rs:
+            a = c.get('Args') or []
+            args = grep_call([literal(w) for w in a], a)
+            if args is None:
+                continue
+            quiet, reads_stdin = grep_args(args)
+            if quiet and (direct or reads_stdin):
+                out.append(c['Pos']['Line'])
+
     def walk(n):
         if isinstance(n, dict):
             if n.get('Type') == 'BinaryCmd' and n.get('Op') in PIPES:
-                for c, direct in readers(n.get('Y')):
-                    a = c.get('Args') or []
-                    args = grep_call([literal(w) for w in a], a)
-                    if args is None:
-                        continue
-                    quiet, reads_stdin = grep_args(args)
-                    if quiet and (direct or reads_stdin):
-                        out.append(c['Pos']['Line'])
+                check(readers(n.get('Y')))
+            # A `>(...)` is a pipe too: what the command writes is its stdin. A grep -q reading it
+            # exits early and that command dies of SIGPIPE (bash: `tee >(grep -q 1) < big | cat`
+            # gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
+            # fails a pipefail pipeline or a `set -e` script, so it counts wherever it sits.
+            if n.get('Type') == 'ProcSubst' and n.get('Op') == '>(':
+                check([r for s in n.get('Stmts') or [] for r in readers(s)])
             for v in n.values():
                 walk(v)
         elif isinstance(n, list):

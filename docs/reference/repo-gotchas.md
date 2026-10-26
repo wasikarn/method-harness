@@ -39,20 +39,27 @@ the other files are still listed.
 A pipe's readers are the commands that can read the stdin it hands its right side: the command
 there, each statement of a `{ }`/`( )` group, both sides of `&&`/`||`, a `time`d command, and any
 `$(...)`/`<(...)` that expands with the pipe as stdin. Bash applies redirections left to right, a
-simple command expands its words before its redirections, and a compound command (`for` list,
-`case` subject, `for ((...))`) after them: so `x | echo "$(grep -q y)" < f` and
-`x | cat < <(grep -q y)` race, while `x | for f in $(grep -q y); do ...; done < f` and
-`x | cat < f <<<"$(grep -q y)"` do not (bash: `echo P | for x in $(cat); do echo $x; done < f`
-prints f's contents). In the conditions and bodies of `if`/`while`/`until`/`for`/`case`, only a
-grep that reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `-f -`), so
-`while read -r f; do grep -q p "$f"; done` is clean (a heuristic). A statement whose stdin is
-redirected (`<`, `<<<`, `<&N` with a literal N other than 0) is no reader. Wrappers (`command`,
-`builtin`, `exec`, `env` incl. `env -S`, `timeout`, `nice`, `stdbuf`, `sudo`, `nohup`, with
-`NAME=VALUE` for env and sudo) are looked through; long options, grep's and the wrappers', resolve
-as getopt_long does (`--qui` is `--quiet`, `--reg` is `--regexp`, `--sig` is timeout's `--signal`),
-and the value of `-e`/`--regexp`-style options is not an option. It does not catch a grep reached
-through a function or alias, nor other early-exit readers (`head`, `grep -m`, a command that skips
-stdin): there, apply the rule by hand.
+simple command (incl. `local`/`declare`/`let`) expands its words before its redirections, and a
+compound command (`for` list, `case` subject, `for ((...))`, `[[ ]]`, `(( ))`) after them. A
+`>(...)` reads the command's output, not the pipe; it is checked on its own, below. So `x | echo
+"$(grep -q y)" < f` and `x | cat < <(grep -q y)` race, while `x | for f in $(grep -q y); do ...;
+done < f` and `x | cat < f <<<"$(grep -q y)"` do not (bash: `echo P | for x in $(cat); do echo $x;
+done < f` prints f's contents). In the conditions and bodies of `if`/`while`/`until`/`for`/`case`,
+only a grep that reads stdin counts (no file operand and no `-r`, or `-`, `/dev/stdin`, `/dev/fd/0`,
+`/proc/self/fd/0`, or one of those after `-f`), so `while read -r f; do grep -q p "$f"; done` is
+clean (a heuristic). A statement whose stdin is redirected (`<`, `<<<`, `<&N` with a literal N other
+than 0) is no reader. Wrappers (`command`, `builtin`, `exec`, `env` incl. `env -S`, `timeout`,
+`nice`, `stdbuf`, `sudo`, `nohup`, with `NAME=VALUE` for env and sudo) are looked through; long
+options, grep's and the wrappers', resolve as getopt_long does (`--qui` is `--quiet`, `--reg` is
+`--regexp`, `--sig` is timeout's `--signal`), and the value of `-e`/`--regexp`-style options is not
+an option. It does not catch a grep reached through a function or alias, nor other early-exit
+readers (`head`, `grep -m`, a command that skips stdin): there, apply the rule by hand. A `>(...)`
+is a pipe too, so a quiet grep reading it is checked wherever it sits, on either side of a pipe or
+in no pipe at all: its early exit kills the command writing into it with SIGPIPE (`tee >(grep -q 1)
+< big | cat` gives PIPESTATUS 141 0, `seq 2000000 | tee >(grep -q 1) >/dev/null` 141 141), which
+fails a pipefail pipeline or a `set -e` script. That is over-reported when the writer's status is
+discarded (inside `$(...)`/`<(...)`, behind `|| true`, a function never called) or a later reader
+drains the rest.
 (GNU grep 3.11 writing to `>/dev/null` reads all of its input, so that form is safe.) A hit whose
 line ends in the comment `# pipe-into-grep-q: deliberate` is exempt but reported, and the lint
 allows one: its own race probe.
