@@ -48,7 +48,7 @@ vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-l
 - **Keep `core.hooksPath` relative** (`git config core.hooksPath git-hooks`): an absolute path silently runs zero hooks after a rename; verify `test -d "$(git config core.hooksPath)"`.
 - **Home paths:** `$HOME` or `~` in every committed file, never `/Users/<name>` or the bare account name; frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`, `CHANGELOG.md`) skip style sweeps, never this.
 - **Use `trash` and stage by name;** `gate:bash:irrecoverable` denies `rm -rf`, `--no-verify`, and `git add -A`/`.` outside a merge.
-- **Same-version edits are no-ops:** bump both manifests before `claude plugin update`; re-verify a same-session edit by `Read`ing the repo path, never `Skill(<name>)`.
+- **Same-version edits are no-ops:** bump both manifests locally (uncommitted) before `claude plugin update`; re-verify a same-session edit by `Read`ing the repo path, never `Skill(<name>)`.
 - **Bare `grep` is Claude Code's shell-snapshot shim** (it reformats output): use `/usr/bin/grep` or `awk` for counts.
 
 ## Repeated mistake -> doctrine
