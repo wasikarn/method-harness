@@ -5,8 +5,12 @@
 # pins the merge to the checked sha: a push after the check makes GitHub refuse.
 # Checks are local-only; this narrows the race, it does not close it. It also refuses a PR with no
 # fresh review verdict (see check_review).
+# Branches do not bump the version: after the load wait, a head that lacks origin/develop or does not
+# ship a version above it is synced by scripts/sync-pr-head.sh (merge develop, bump both manifests,
+# push), up to MERGE_PR_SYNC_TRIES times while develop keeps moving, then checked and merged.
 # Bash 3.2. Env: MERGE_PR_LOAD_MAX (default 4), MERGE_PR_LOAD_WAIT_SECS (900),
-# MERGE_PR_ALLOW_SAME_VERSION (1 skips the same-manifest-version refusal).
+# MERGE_PR_ALLOW_SAME_VERSION (1: a version equal to develop's needs no bump), MERGE_PR_SYNC_TRIES (3),
+# MERGE_PR_SYNC (the sync script; tests only).
 set -euo pipefail
 
 pr="${1:-}"
@@ -30,12 +34,14 @@ if [ "$base" != "develop" ]; then
   exit 1
 fi
 
+sync_script="${MERGE_PR_SYNC:-$(cd -P "$(dirname "$0")" && pwd)/sync-pr-head.sh}"
+
 check_ancestry() {
   local rc=0
   git merge-base --is-ancestor origin/develop "$head" || rc=$?
   if [ "$rc" -eq 1 ]; then
     echo "merge-pr: PR $pr head $head does not contain origin/develop." >&2
-    echo "Rebase on origin/develop and push; the pre-push gauntlet then runs on the exact tree that will merge." >&2
+    echo "Merge origin/develop into the branch and push (a rebase loses the review); the pre-push gauntlet then runs on the exact tree that will merge." >&2
     exit 1
   elif [ "$rc" -ne 0 ]; then
     echo "merge-pr: ancestry check failed (rc=$rc); is $head fetched locally?" >&2
@@ -61,31 +67,36 @@ version_lt() {
     for (i = 1; i <= 3; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }
     exit 1 }'
 }
-check_version() {
+# version_problem: why the head's version cannot merge over origin/develop's, or nothing when it can.
+# Prints, never exits: the sync loop asks it whether to sync, check_version turns it into a refusal.
+version_problem() {
   local head_ver mkt_ver dev_ver v
-  head_ver=$(manifest_version "$head" .claude-plugin/plugin.json)
-  mkt_ver=$(manifest_version "$head" .claude-plugin/marketplace.json)
-  dev_ver=$(manifest_version origin/develop .claude-plugin/plugin.json)
+  head_ver=$(manifest_version "$head" .claude-plugin/plugin.json) || { echo "cannot read .claude-plugin/plugin.json at $head."; return; }
+  mkt_ver=$(manifest_version "$head" .claude-plugin/marketplace.json) || { echo "cannot read .claude-plugin/marketplace.json at $head."; return; }
+  dev_ver=$(manifest_version origin/develop .claude-plugin/plugin.json) || { echo "cannot read .claude-plugin/plugin.json at origin/develop."; return; }
   if [ -z "$head_ver" ] || [ -z "$mkt_ver" ] || [ -z "$dev_ver" ]; then
-    echo "merge-pr: could not read the manifest version of the PR head or origin/develop." >&2
-    exit 1
+    echo "could not read the manifest version of the PR head or origin/develop."
+    return
   fi
   for v in "$head_ver" "$mkt_ver" "$dev_ver"; do
     if ! [[ "$v" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-      echo "merge-pr: manifest version '$v' is not X.Y.Z; cannot order it against origin/develop." >&2
-      exit 1
+      echo "manifest version '$v' is not X.Y.Z; cannot order it against origin/develop."
+      return
     fi
   done
   if [ "$head_ver" != "$mkt_ver" ]; then
-    echo "merge-pr: PR $pr head has plugin.json $head_ver but marketplace.json $mkt_ver; bump both manifests to the same number." >&2
-    exit 1
+    echo "PR $pr head has plugin.json $head_ver but marketplace.json $mkt_ver."
+  elif version_lt "$head_ver" "$dev_ver"; then
+    echo "PR $pr head ships version $head_ver, below origin/develop's $dev_ver."
+  elif [ "$head_ver" = "$dev_ver" ] && [ "${MERGE_PR_ALLOW_SAME_VERSION:-}" != "1" ]; then
+    echo "PR $pr head ships version $head_ver, the same as origin/develop."
   fi
-  if version_lt "$head_ver" "$dev_ver"; then
-    echo "merge-pr: PR $pr head ships version $head_ver, below origin/develop's $dev_ver; the branch is stale or a conflict was resolved to the older number. Bump both manifests above $dev_ver." >&2
-    exit 1
-  fi
-  if [ "$head_ver" = "$dev_ver" ] && [ "${MERGE_PR_ALLOW_SAME_VERSION:-}" != "1" ]; then
-    echo "merge-pr: PR $pr head ships version $head_ver, the same as origin/develop; bump both manifests to the next number first (or MERGE_PR_ALLOW_SAME_VERSION=1)." >&2
+}
+check_version() {
+  local why
+  why=$(version_problem)
+  if [ -n "$why" ]; then
+    echo "merge-pr: $why Not merging." >&2
     exit 1
   fi
 }
@@ -139,8 +150,7 @@ check_review() {
     fi
   done
 }
-check_ancestry
-check_version
+# The review is checked first: an unreviewed PR is refused before the load wait and before any push.
 check_review
 
 load_max="${MERGE_PR_LOAD_MAX:-4}"
@@ -159,8 +169,30 @@ while :; do
   waited=$((waited + 30))
 done
 
-# develop can move during the load wait: fetch and check both again.
-git fetch origin || { echo "merge-pr: git fetch failed after the load wait; not merging." >&2; exit 1; }
+# Sync: develop can move during the load wait and during each sync's push (the pre-push gauntlet takes
+# minutes), so fetch and re-check after every round. Branches do not bump; this does.
+branch_info=$(gh pr view "$pr" --json headRefName,isCrossRepository -q '.headRefName + " " + (.isCrossRepository | tostring)')
+branch=${branch_info% *}
+cross=${branch_info#* }
+tries="${MERGE_PR_SYNC_TRIES:-3}"
+round=0
+while :; do
+  git fetch origin || { echo "merge-pr: git fetch failed after the load wait; not merging." >&2; exit 1; }
+  if git merge-base --is-ancestor origin/develop "$head" 2>/dev/null && [ -z "$(version_problem)" ]; then
+    break
+  fi
+  if [ "$round" -ge "$tries" ]; then
+    echo "merge-pr: PR $pr is still not synced with origin/develop after $tries sync rounds (develop keeps moving); run merge-pr.sh again." >&2
+    exit 1
+  fi
+  if [ -z "$branch" ] || [ "$branch" = "$branch_info" ] || [ "$cross" != "false" ]; then
+    echo "merge-pr: PR $pr needs a sync with origin/develop, but its head branch is not a branch of this repo ('$branch_info'); merge develop and bump the manifests on it yourself." >&2
+    exit 1
+  fi
+  round=$((round + 1))
+  echo "merge-pr: syncing PR $pr ($branch) with origin/develop, round $round of $tries" >&2
+  head=$(bash "$sync_script" "$branch" "$head") || { echo "merge-pr: syncing PR $pr failed (see above); not merging." >&2; exit 1; }
+done
 check_ancestry
 check_version
 check_review
