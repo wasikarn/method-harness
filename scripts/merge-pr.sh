@@ -270,11 +270,11 @@ check_version() {
 # still said FIX FIRST, and #570 opened a hole (`env -S -i rm -rf build` allowed) that took #602 to close.
 # The verdict is a line "Fresh-context review: MERGE @ <sha>" (or FIX FIRST / CLOSE) in a PR comment,
 # <sha> being the head the reviewer read. The last verdict on the PR must be MERGE, and every commit after
-# <sha> must be a merge of develop or touch only the two manifests (a version bump): a sync before the merge
-# keeps the review, any other change needs a new one. Binding to the sha, not to times, means a commit made
-# before the review but pushed after it, or a backdated one, is still caught. A merge commit counts only
-# when its tree is what `git merge-tree` makes of its two parents, the manifests aside (GH #629: an edit
-# made inside a merge, or a conflict resolved in code, needs a new review). A line inside a ``` or ~~~
+# <sha> must be a merge of develop or change only the two manifests' version value (a bump): a sync before
+# the merge keeps the review, any other change needs a new one. Binding to the sha, not to times, means a
+# commit made before the review but pushed after it, or a backdated one, is still caught. A merge commit
+# counts only when its tree is what `git merge-tree` makes of its two parents, the manifests' version aside
+# (GH #629: an edit made inside a merge, or a conflict resolved in code, needs a new review). A line inside a ``` or ~~~
 # fence does not count (a fence closes only on the same character, at least as long, as CommonMark has
 # it), and the last verdict line in a comment wins. Only issue comments are read (not PR reviews or the
 # body). This proves a verdict was posted, not who wrote it or that the reviewer had fresh context
@@ -288,8 +288,30 @@ REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: null, m: null};
     end) | .m) as $m
   | select($m != null)
   | "\($m.v | ascii_upcase | gsub(" "; "_")) \(($m.r | capture("^[*\\s]*@\\s*`?(?<s>[0-9a-fA-F]{7,40})\\b") | .s) // "-")"'
+# plugin.json can carry inline hooks and mcpServers, so after the review a manifest may change only in its
+# version value. same_but_version <a> <b>: the two blobs (git show specs) differ at most there.
+same_but_version() {
+  local a b
+  a=$(git show "$1" | with_version 0.0.0-merge) || return 1
+  b=$(git show "$2" | with_version 0.0.0-merge) || return 1
+  [ "$a" = "$b" ]
+}
+# merged_but_version <conflict lines> <manifest> <merge commit>: the commit's manifest is what merging the
+# three stages gives with the version set aside, the way resolve_manifest_conflicts makes it.
+merged_but_version() {
+  local stages b o t m rc=0
+  stages=$(printf '%s\n' "$1" | awk -F '\t' -v p="$2" '$2 == p { split($1, x, " "); s[x[3]] = x[2] } END { print s[1] " " s[2] " " s[3] }')
+  set -- $stages "$2" "$3"
+  [ "$#" -eq 5 ] || return 1  # a side is missing (add/add or delete): not a version-only conflict
+  b=$(git show "$1" | with_version 0.0.0-merge | git hash-object -w --stdin) || return 1
+  o=$(git show "$2" | with_version 0.0.0-merge | git hash-object -w --stdin) || return 1
+  t=$(git show "$3" | with_version 0.0.0-merge | git hash-object -w --stdin) || return 1
+  m=$(git merge-file -p --object-id "$o" "$b" "$t") || rc=$?
+  [ "$rc" -eq 0 ] || return 1
+  [ "$m" = "$(git show "$5:$4" | with_version 0.0.0-merge)" ]
+}
 check_review() {
-  local verdicts last word sha revs c files merges parents p1 p2 tree rc
+  local verdicts last word sha revs c f files merges parents p1 p2 tree conflicts rc
   if [ "$verify" = 1 ]; then
     verdicts=$(jq -r "$REVIEW_JQ" <"$comments_file") ||
       { echo "merge-pr: could not read PR $pr's comments from '$comments_file' (a JSON array of comments with a \"body\") to find its review verdict." >&2; exit 1; }
@@ -323,6 +345,12 @@ check_review() {
       echo "merge-pr: PR $pr changed after its MERGE review of $sha: commit $c touches more than the manifests; get a review of $head." >&2
       exit 1
     fi
+    for f in "$PLUGIN" "$MARKET"; do
+      if /usr/bin/grep -qxF "$f" <<<"$files" && ! same_but_version "$c^:$f" "$c:$f"; then
+        echo "merge-pr: PR $pr changed after its MERGE review of $sha: commit $c changes $f beyond its version line; get a review of $head." >&2
+        exit 1
+      fi
+    done
   done
   # A merge after the review must be the plain merge of its two parents (GH #629); git merge-tree --write-tree
   # (git >= 2.38) prints that tree first, exiting 1 when it holds conflicts (a conflicted manifest is fine).
@@ -342,6 +370,7 @@ check_review() {
       echo "merge-pr: PR $pr's merge commit $c after its MERGE review of $sha resolved a conflict outside the manifests; get a review of $head." >&2
       exit 1
     fi
+    conflicts=""; [ "$rc" -eq 0 ] || conflicts=${tree#*$'\n'}
     tree=${tree%%$'\n'*}
     # --no-renames: a rename onto a manifest must still show the deleted source path.
     files=$(git diff-tree -r --no-renames --name-only "$tree" "$c") || { echo "merge-pr: git diff-tree of merge commit $c failed; not merging." >&2; exit 1; }
@@ -350,6 +379,15 @@ check_review() {
       echo "merge-pr: PR $pr's merge commit $c after its MERGE review of $sha changes more than merging its parents does (beyond the manifests); get a review of $head." >&2
       exit 1
     fi
+    for f in "$PLUGIN" "$MARKET"; do
+      if printf '%s\n' "$conflicts" | awk -F '\t' -v p="$f" '$2 == p { f = 1 } END { exit !f }'; then
+        merged_but_version "$conflicts" "$f" "$c" && continue
+      elif same_but_version "$tree:$f" "$c:$f"; then
+        continue
+      fi
+      echo "merge-pr: PR $pr's merge commit $c after its MERGE review of $sha changes $f beyond the version line; get a review of $head." >&2
+      exit 1
+    done
   done
 }
 

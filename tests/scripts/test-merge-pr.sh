@@ -165,6 +165,9 @@ on() {
 set_ver() { write_manifests . "$1" "${2:-$1}" "$(desc_of "$MARKET")"; }
 set_desc() { write_manifests . "$(ver_of "$PLUGIN")" "$(ver_of "$MARKET")" "$1"; }
 append() { printf '%s\n' "$2" >>"$1"; }
+# add_hooks: give plugin.json an inline "hooks" entry, an edit to what runs that only a version-only
+# exemption would wave through.
+add_hooks() { printf '{\n  "name": "mh",\n  "version": "%s",\n  "hooks": "./evil.json"\n}\n' "$(ver_of "$PLUGIN")" >"$PLUGIN"; }
 # work: the PR's own checkout, on feat/x, with the recording pre-push hook.
 work() {
   git clone -q -b feat/x "$F/origin.git" "$F/work"
@@ -495,6 +498,48 @@ git -C "$F/seed" push -q origin feat/x
 git -C "$F/seed" checkout -q develop
 STUB_COMMENTS_JSON=$(verdict "MERGE @ $reviewed") run
 refuses "a code conflict resolved in a merge after the review" "resolved a conflict outside the manifests"
+
+# 16m. Only the "version" value may change in a manifest after the review: plugin.json can carry inline
+#      hooks and mcpServers, so an edit beyond the version line needs a new review, in a plain commit, in a
+#      develop merge, or inside the resolution of a manifest conflict.
+setup; on feat/x "hooks" add_hooks
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $FEATURE") run
+refuses "a manifest edit beyond the version after the review" "beyond its version line"
+untouched "a manifest edit beyond the version after the review"
+setup; on develop "peer" append c.txt peer
+git -C "$F/seed" checkout -q feat/x
+git -C "$F/seed" merge -q --no-commit origin/develop >/dev/null
+(cd "$F/seed" && add_hooks)
+git -C "$F/seed" add -- "$PLUGIN"
+git -C "$F/seed" commit -qm "Merge develop (with a hooks entry)"
+git -C "$F/seed" push -q origin feat/x
+git -C "$F/seed" checkout -q develop
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $FEATURE") run
+refuses "a manifest edit inside a merge after the review" "beyond the version line"
+setup; on feat/x "self-bump" set_ver 1.1.2; on develop "peers" set_ver 1.1.3
+reviewed=$(remote_tip feat/x)
+git -C "$F/seed" checkout -q feat/x
+git -C "$F/seed" merge -q origin/develop >/dev/null 2>&1
+(cd "$F/seed" && set_ver 1.1.4 && add_hooks)
+git -C "$F/seed" add -- "$PLUGIN" "$MARKET"
+git -C "$F/seed" commit -qm "Merge develop (version conflict resolved, hooks added)"
+git -C "$F/seed" push -q origin feat/x
+git -C "$F/seed" checkout -q develop
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $reviewed") run
+refuses "a manifest edit inside a version-conflict resolution" "beyond the version line"
+# ...while the same merge resolved to the version alone keeps the review (1.1.4 is above develop's 1.1.3,
+# so it merges as is).
+setup; on feat/x "self-bump" set_ver 1.1.2; on develop "peers" set_ver 1.1.3
+reviewed=$(remote_tip feat/x)
+git -C "$F/seed" checkout -q feat/x
+git -C "$F/seed" merge -q origin/develop >/dev/null 2>&1
+(cd "$F/seed" && set_ver 1.1.4)
+git -C "$F/seed" add -- "$PLUGIN" "$MARKET"
+git -C "$F/seed" commit -qm "Merge develop (version conflict resolved)"
+git -C "$F/seed" push -q origin feat/x
+git -C "$F/seed" checkout -q develop
+STUB_COMMENTS_JSON=$(verdict "MERGE @ $reviewed") run
+merges "a version-only conflict resolution after the review"
 
 # 16l. GH #629 fences: a ~~~ fence is not closed by ```, a longer fence not by a shorter one, a closer
 # carries no text, and an indented fence (a list item) still hides what it holds.
