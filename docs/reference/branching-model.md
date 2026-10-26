@@ -35,18 +35,29 @@ Enforcement layers, weakest to strongest:
 
 #445 and #446 were each green alone and red together on `develop`. Agents merge through
 `scripts/merge-pr.sh <PR>`, not bare `gh pr merge`. It runs `git fetch origin`, refuses unless the
-PR's base is `develop` (re-read just before the merge) and its head contains the `origin/develop`
-tip (`git merge-base --is-ancestor`), waits for load below 4
-(default 900s, then fails with the load figure), fetches and re-checks ancestry after that wait,
-refuses a head whose versions are not plain `X.Y.Z`, whose two manifests disagree, or whose version is equal to or below
-`origin/develop`'s (checked before the wait and again after it; `MERGE_PR_ALLOW_SAME_VERSION=1`
-skips only the equal-version refusal, for a PR that needs no bump; an unreadable manifest or a
-failed fetch after the wait also refuses, with a message naming it), merges with
+PR's base is `develop` (re-read just before the merge) and its review verdict (below) says MERGE,
+waits for load below 4 (default 900s, then fails with the load figure), fetches again and syncs the
+head when it lacks the `origin/develop` tip or a version above it (below), then checks ancestry
+(`git merge-base --is-ancestor`), the review again, and versions (plain `X.Y.Z`, both manifests equal,
+above `origin/develop`'s; `MERGE_PR_ALLOW_SAME_VERSION=1` accepts an equal version, for a PR that needs
+no bump; an unreadable manifest or a failed fetch also refuses, with a message naming it), merges with
 `gh pr merge --merge --match-head-commit <checked sha>`, and prints the merge commit sha. On a
-behind-develop refusal, merge `origin/develop` into the branch and push (a rebase rewrites every commit, so
-it also throws away the review verdict below; on a wrong-base refusal, retarget the PR
-with `gh pr edit <PR> --base develop`): the pre-push gauntlet then runs on the exact tree that
-will merge, and the pinned sha makes GitHub refuse a head that moved after the check.
+wrong-base refusal, retarget the PR with `gh pr edit <PR> --base develop`.
+
+**Branches do not bump the version; the merge does.** While every branch bumped its own manifests,
+develop's version moved 48 times in six hours (2026-10-25) and each open PR re-merged and re-bumped
+after every one (#618 took five rounds). Now, after the load wait, a head that lacks `origin/develop`
+or does not ship a version above it goes to `scripts/sync-pr-head.sh <branch> <head>`: in a temporary
+worktree it merges `origin/develop` (a manifest conflict takes develop's side only when the branch
+changed nothing in that manifest but its version line; any other conflict, including a manifest edit
+next to the version line, refuses, so merge develop into the branch yourself and push), sets both manifests to
+develop's version + 1 (or the branch's own when it is higher: a deliberate minor bump survives) in
+one manifest-only commit, and pushes to the PR branch, leased on the head. That push runs the pre-push
+gauntlet on the exact tree that will merge, and fails if the branch moved since the head was read. The gauntlet
+takes minutes and develop can move meanwhile, so `merge-pr.sh` fetches and syncs again, up to
+`MERGE_PR_SYNC_TRIES` rounds (default 3), then merges pinned to the synced head; a PR from a fork
+cannot be pushed to and is refused instead. A rebase rewrites every commit, so it also throws away
+the review verdict below; the sync never rebases.
 
 It also refuses a PR without a current review verdict (2026-10-25: #569–#576 and #611 merged while
 their reviews still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
@@ -101,18 +112,14 @@ discipline:
   still applies to anyone touching a file another live session might also touch — worktree
   isolation removes the *working-tree* collision, not a collision in a file both sessions read
   from or write to outside git (e.g. the shared memory store above; the manifests are per
-  checkout, which is why the next bullet reads `origin/develop`).
-- **Re-read both manifests right before writing a version into a commit message.** A peer session
-  in a different worktree can still push a bump first; a `Read` in your own worktree shows that
-  checkout, not the peer's push, so `git fetch` and read `origin/develop`'s manifests.
-- **Bump the manifests last, then re-check at the PR and again right before merging.** Run
-  `git fetch` and read `origin/develop`'s version immediately before the bump commit and once the
-  PR exists. Merge only through `scripts/merge-pr.sh` (never bare `gh pr merge`); it refuses a
-  head whose version is not above `origin/develop`'s, before and after its load wait (see
-  Merging above for what it checks and the race that remains). If it refuses, move to the next
-  number first. Two PRs that cut the same version leave the installed cache with whichever tree
-  built first, and the other change does not load until the next bump (#492 and #493 both took
-  1.1.189, #496 and #497 both took 1.1.191, 2026-10-05).
+  checkout, which is why `merge-pr.sh` reads the version from `origin/develop`).
+- **Do not bump the manifests on a branch.** `scripts/merge-pr.sh` gives the PR the next version
+  at merge time (Merging above), so the number is read from `origin/develop` seconds before the
+  merge instead of hours before it. Merge only through the script (never bare `gh pr merge`): two
+  PRs that cut the same version leave the installed cache with whichever tree built first, and the
+  other change does not load until the next bump (#492 and #493 both took 1.1.189, #496 and #497
+  both took 1.1.191, 2026-10-05). A branch that does bump (a deliberate minor release) keeps its
+  number when it is above develop's.
 - **`/rewind` only reverts this session's own worktree.** It can no longer touch a peer's tree at
   all, since each session now has its own — this constraint from the old shared-tree model is
   gone, not merely mitigated.
