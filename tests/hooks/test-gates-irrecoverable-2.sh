@@ -2131,6 +2131,9 @@ test_allow "$IRRECOVERABLE" "GH #697 control: a SELECT heredoc ps\"\"ql reads" \
   "$(bash_payload "$(printf "ps\"\"ql db <<'SQL'\nSELECT 1;\nSQL")")"
 test_allow "$IRRECOVERABLE" "GH #697 control: psql \"\$DATABASE_URL\" keeps the literal relief" \
   "$(bash_payload "$(printf "psql \"\$DATABASE_URL\" <<'SQL'\nSELECT \`id\` FROM t WHERE note='truncate table later';\nSQL")")"
+# GH #697 review: the per-line checks run once per line, not once per heredoc on it (3000 openers took 15 s).
+_sql_opaque_heredocs_cmd="$(python3 -c 'print("psql db $X " + "<<a " * 3000 + "\n" + "SELECT 1\na\n" * 2999 + "DROP TABLE t\na")')"
+_timed_case 'GH #697 review: 3000 heredocs on a psql line with a $X word, the last a DROP, deny in bounded time' 2 "$_sql_opaque_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
 _timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
 _sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"

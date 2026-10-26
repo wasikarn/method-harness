@@ -458,7 +458,7 @@ def _strip_heredocs(cmd):
         ms = list(_HEREDOC_OPEN_RE.finditer(line))
         if not ms:
             continue
-        ctx, views, has_client = _HeredocLine(line), {}, _may_name_client(line)
+        ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
         for n_m, m in enumerate(ms):
@@ -483,10 +483,11 @@ def _strip_heredocs(cmd):
                 break
             if code:
                 out.extend(lines[body_start:i])
-            if feeds and not _SQL_HEREDOC_DROP[0] and _sql_drops(
-                    "\n".join(lines[body_start:i - 1]), not _NON_SQL_CLIENT_RE.search(_dequoted(line))
-                    and not _has_opaque_argv0(line)):
-                _SQL_HEREDOC_DROP[0] = True
+            if feeds and not _SQL_HEREDOC_DROP[0]:
+                if line_sql is None:  # GH #697 review: read once per line, not once per heredoc on it
+                    line_sql = not _NON_SQL_CLIENT_RE.search(_dequoted(line)) and not _has_opaque_argv0(line)
+                if _sql_drops("\n".join(lines[body_start:i - 1]), line_sql):
+                    _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
 def _normalize_ansi_c_quotes(cmd):
