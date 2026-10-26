@@ -26,7 +26,7 @@ for a in code-architect backend-architect requirement-analyst performance-optimi
   fi
   [ -f "$out/kept/agents/$a.md" ] && [ ! -e "$out/folded/agents/$a.md" ] \
     && ok "$a: agent kept in kept, removed in folded" || bad "$a: agent file presence wrong"
-  head -3 "$out/folded/skills/fold/$a/SKILL.md" | /usr/bin/grep -qx "name: $a" \
+  /usr/bin/grep -qx "name: $a" <<<"$(head -3 "$out/folded/skills/fold/$a/SKILL.md")" \
     && ok "$a: folded SKILL.md carries the agent's name" || bad "$a: folded SKILL.md missing or misnamed"
   python3 - "$out" <<'PY' && ok "$a: manifests enable the plugin, only folded lists ./skills/fold/" || bad "$a: manifest wrong"
 import json, sys
@@ -182,7 +182,7 @@ if python3 "$LIB" compare "$TMP/kept.json" "$TMP/folded.json" >"$TMP/cmp.out" 2>
   /usr/bin/grep -q 'folded Agent calls per run: ?, 0 ' "$TMP/cmp.out" && ok "an unreadable counter prints ?, not 0" || bad "compare: unreadable counter not shown as ?"
   /usr/bin/grep -q 'folded Agent calls per run: 2, ? .*DELEGATED' "$TMP/cmp.out" && ok "compare flags a folded run that delegated, and an unknown count" || bad "compare: delegation not flagged: $(cat "$TMP/cmp.out")"
   [ "$(/usr/bin/grep -c '<- DELEGATED' "$TMP/cmp.out")" -eq 1 ] && ok "compare flags only the delegating case" || bad "compare: wrong DELEGATED count"
-  head -6 "$TMP/cmp.out" | /usr/bin/grep -q 'model' && head -6 "$TMP/cmp.out" | /usr/bin/grep -q 'tool limits' \
+  /usr/bin/grep -q 'model' <<<"$(head -6 "$TMP/cmp.out")" && /usr/bin/grep -q 'tool limits' <<<"$(head -6 "$TMP/cmp.out")" \
     && ok "compare header names the model and tool-limit confounds" || bad "compare: header lacks confounds"
 else
   bad "compare failed: $(cat "$TMP/cmp.out")"
