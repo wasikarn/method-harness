@@ -156,9 +156,10 @@ got_lines=$(hit_lines <<<"$out")
   || bad "probe: rc $rc, lines [$got_lines], want rc 1 and [$want_lines]; stderr: $(cat "$probe/err")"
 
 # Known over-reports (docs/reference/repo-gotchas.md lists them and says why they stay; the
-# `$(...)` and never-called-function ones are among bad.sh's rows above): no writer here can die of
-# SIGPIPE (exit 141; rows 5 and 6 exit 1 only because grep sees no input), yet the scanner reports
-# each, by design. Rows 1-3 and 5: every fd holding the `>(...)` or pipe is redirected later on the
+# `$(...)` and never-called-function ones are among bad.sh's rows above): no statement here fails
+# of SIGPIPE (rows 1-6 and 9 have no writer that can die of it, rows 7 and 8 discard their writer's
+# 141, and rows 5 and 6 exit 1 only because grep sees no input), yet the scanner reports each, by
+# design. Rows 1-3 and 5: every fd holding the `>(...)` or pipe is redirected later on the
 # same command; rows 4 and 6: the writer never writes to that fd; rows 7 and 8: the writer's status
 # is discarded (`|| true`, `<(...)`); row 9: a later reader drains the rest (grep's status kept, so
 # only the drain makes it safe).

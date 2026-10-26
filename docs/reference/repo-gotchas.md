@@ -62,8 +62,8 @@ fails a pipefail pipeline or a `set -e` script. The lint over-reports, for a pip
 when the writer's status is discarded (`echo "$(...)"`, `<(...)`, behind `|| true`, a function never
 called) or a later reader drains the rest (the scan follows neither where a status goes nor what
 reads after the grep), when every fd holding the pipe or `>(...)` is redirected elsewhere later on
-the same command (`seq 9 >/dev/null | grep -q 1`, `cat > >(grep -q y) >/dev/null`: telling that
-apart needs a model of fd copies, moves and `{var}` fds, and two attempts at one hid real
+the same command (`seq 2000000 >/dev/null | grep -q 1`, `cat > >(grep -q y) >/dev/null`: telling
+that apart needs a model of fd copies, moves and `{var}` fds, and two attempts at one hid real
 races, #650), and when the writer never writes to the fd holding it (`true | grep -q 1`, `cat
 2> >(grep -q y)`: whether it writes there is the program's run-time behaviour, and even `cat` writes
 its errors to stderr, so the scan does not model each program); a bare `v=$(...)` keeps the writer's
