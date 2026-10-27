@@ -3357,6 +3357,8 @@ done
 # the funsub body's odd quote comes from the inner word's wrong close, so that reason is the one shown
 test_deny_says "$IRRECOVERABLE" "GH #702: a funsub holding \${x:-'a}'} names the \${...} word, not the depth budget" \
   "$(bash_payload "echo \${ echo \${x:-'a}'}; }")" "ends at a different place" "depth-scan budget"
+test_deny_says "$IRRECOVERABLE" "GH #702: a bash -c body keeps the \${...} word reason" \
+  "$(bash_payload "bash -c 'echo \${x:-\\{}${_N}rm -rf ~/x${_N}echo }'")" "ends at a different place" "depth-scan budget"
 _timed_case 'GH #702: a ${x:-\{} target before 9000 padding words denies in bounded time' 2 \
   "echo \${x:-\\{}$_N$(printf '${x:-a} %.0s' $(seq 9000))"
 _timed_case 'GH #702: a ${x:-\{} target after 9000 padding words denies in bounded time' 2 \

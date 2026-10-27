@@ -3289,7 +3289,7 @@ def _scan_body(body):
             _WDEPTH[len(windows)] = _cur_depth + 1
             windows.append(curc)
     if blown:
-        _DEPTH_BUDGET_BLOWN[0] = True
+        _DEPTH_BUDGET_BLOWN[0] = _DEPTH_BUDGET_BLOWN[0] or blown  # GH #702: a body's reason string survives
     if bad:
         deny("could not safely tokenize the body of a bash -c / eval string - confirm with user first")
     _deny_if_depth_blown()
