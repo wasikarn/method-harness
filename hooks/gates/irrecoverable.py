@@ -4042,7 +4042,7 @@ def _root_or_home_word(rest):
 # trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
 # path. Any other variable stays allowed (trash is recoverable; the docs advise "${X:?}"). A ${HOME} or $(pwd)
 # word is blanked to a placeholder, so it is matched on trash's own raw arguments, as chmod's ${HOME} is.
-_TRASH_TREE_WORDS = ("/", "~", "~/", ".", "./", "..", "../..", "*", "", "$HOME", "$PWD")
+_TRASH_TREE_WORDS = ("/", "~", ".", "..", "../..", "*", ".*", "", "$HOME", "$PWD")
 _TRASH_ARGS_RAW_RE = re.compile(r"(?<![\w.-])(?:trash(?:-put)?|gio\s+trash)(?![\w.-])([^;&|\n]*)")
 _PWD_SUBST_RAW_RE = re.compile(r"(?<![\w$/])[\"']?(?:\$\(\s*pwd\s*\)|`\s*pwd\s*`)[\"']?(?=[\s;&|)<>]|$)")
 def _trash_whole_tree(rest):
@@ -4059,6 +4059,10 @@ def _trash_whole_tree(rest):
         if opts and w.startswith("-"):
             opts = w != "--"
             continue
+        # The tree itself or everything in it: quotes removed, then each trailing /, /. or /* (~/*, "$HOME"/, ../).
+        w = w.replace('"', "").replace("'", "")
+        while w.endswith(("/", "/.", "/*")) and w != "/":
+            w = w[:-1] if w.endswith("/") else w[:-2]
         if w in _TRASH_TREE_WORDS or (w.startswith("/") and PH not in w and os.path.normpath(w) in ("/", home)):
             return True
         if PH in w and w.strip(PH) == "" and any(_PWD_SUBST_RAW_RE.search(m.group(1)) or _HOME_BRACED_RAW_RE.search(

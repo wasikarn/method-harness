@@ -128,7 +128,7 @@ already set alone.
   empty variable, so a test hands such a path to `tmp_delete.py` or `track_trash`, never to
   `trash` (`tests/scripts/test-trash-empty-guard-lint.sh`).
   The gate denies a `trash`/`trash-put`/`gio trash` operand that is literally a whole tree (`/`, `~`,
-  `.`, `..`, `*`, `""`, `$HOME`, `$PWD`, `$(pwd)`, the home path) but allows any other variable, so
+  `.`, `..`, `*`, `""`, `$HOME`, `$PWD`, `$(pwd)`, the home path, each with any trailing `/`, `/.` or `/*`, and `.*`) but allows any other variable, so
   guard one yourself: `trash "${X:?}"`.
 - **Never `--no-verify`.** Enforced by `gate:bash:irrecoverable`.
 - **Stage by name.** Never `git add -A` or `git add .` outside a mid-merge state. Enforced by
