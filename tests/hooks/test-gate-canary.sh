@@ -11,7 +11,7 @@ pass=0; fail=0
 check() { if [ "$2" -eq 0 ]; then pass=$((pass+1)); echo "  ok   $1"; else fail=$((fail+1)); echo "  FAIL $1"; fi; }
 
 tmp=$(mktemp -d)
-trap '[ -n "$tmp" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp" || true' EXIT
+trap '[ -n "$tmp" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp"' EXIT
 fresh() { cp "$ROOT"/hooks/gates/*.sh "$ROOT"/hooks/gates/*.py "$tmp"/; }
 
 bash "$CANARY" "$ROOT/hooks/gates" >/dev/null 2>&1

@@ -57,7 +57,7 @@ LOG="$(mktemp -d)" && [ -d "$LOG" ] || { echo "gauntlet: mktemp -d failed, refus
 # -n "$LOG" is defense in depth behind the mktemp abort above: trash ""
 # resolves to the cwd and deletes it, a documented repo incident
 # (CHANGELOG.md), so a bare $LOG must never reach trash unchecked.
-trap '[ -n "$LOG" ] && [ "${fail:-0}" -eq 0 ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$LOG"; true' EXIT
+trap '[ -n "$LOG" ] && [ "${fail:-0}" -eq 0 ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$LOG"' EXIT
 
 # Claude Code 2.1.289 warns "CLAUDE.md at the plugin root is not loaded as project context" and
 # --strict makes it an error. It is intentional here (docs/METHODOLOGY.md ships via hooks), so a
@@ -150,7 +150,7 @@ run_hook_tests() {
   # HOME wholesale has far more blast radius than this one write path needs.
   local JOURNAL_TMP
   JOURNAL_TMP="$(mktemp -d)"
-  trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$JOURNAL_TMP" || true' RETURN
+  trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$JOURNAL_TMP"' RETURN
   export MH_GATE_JOURNAL_PATH="$JOURNAL_TMP/gate-decisions.jsonl"
   # Test files run in parallel (GAUNTLET_JOBS, default 4 locally, 1 when CI is
   # set), each with its own journal file and output file, then print in glob
