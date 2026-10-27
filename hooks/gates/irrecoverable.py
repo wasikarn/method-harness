@@ -242,8 +242,8 @@ def _pieces(text, pipe=False):
 # GH #559 review: the client is the command a pipe stage runs, not the word anywhere in it: "grep -v psql"
 # and a gh title naming psql read no SQL. A stage's argv0 is its first word past shell keywords, VAR=x
 # assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
-# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
-# are defined. A wrapper missing here hides the client, as it does in the rule loop.
+# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`, kept separate because it carries
+# sudo's full value-option list. A wrapper missing here hides the client, as it does in the rule loop.
 _SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb", "mongosh", "mongo", "redis-cli")  # mongo, redis: GH #607
 _SQL_STAGE_WRAPPERS = {
     "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
@@ -445,22 +445,45 @@ def _split_words(seg):
     except ValueError:
         return None
 
+# GH #674 review: an output redirection anywhere in the stage (`| sh 2>/dev/null`, `| 2>&1 sh`, `| sh > log`)
+# leaves the shell's stdin the pipe, so it is no script operand. Its target is the next word when the
+# operator stands alone. An input redirection (`sh < f`) gives the shell other commands and is left as it was.
+_OUT_REDIR_RE = re.compile(r"(?:\d*|&)>>?(?:\||&\d*-?)?(.*)")
+
+def _without_out_redirects(w):
+    out, i = [], 0
+    while i < len(w):
+        m = _OUT_REDIR_RE.fullmatch(w[i])
+        if m:
+            i += 1 if m.group(1) or w[i].endswith(("&1", "&2", "&-")) else 2
+            continue
+        out.append(w[i])
+        i += 1
+    return out
+
 def _reads_stdin_shell(seg):
     w = _split_words(seg.split("<<<", 1)[0].split("<<", 1)[0])
     if not w:
         return False
-    i = 0
-    while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i].rsplit("/", 1)[-1] in ("sudo", "env", "command", "exec", "nohup", "time",
-                                                             "busybox", "busybox.static", "busybox-static", "toybox",
-                                                             "--")):
-        i += 1
-    if i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+    w = _without_out_redirects(w)
+    if not w:
         return False
-    for t in w[i + 1:]:
+    i = _past_run_prefix(w)  # GH #674: every wrapper the rule loop unwraps, with its options
+    if i is None or i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+        return False
+    k = i + 1
+    while k < len(w):
+        t = w[k]
+        k += 1
         if t == "-s" or (t.startswith("-") and not t.startswith("--") and "s" in t[1:] and "c" not in t[1:]):
             return True  # -s: the rest are positional parameters, commands come from stdin
         if not t.startswith(("-", "+")) or (t.startswith("-") and not t.startswith("--") and "c" in t[1:]):
             return False  # a script operand, or -c
+        if t in ("--rcfile", "--init-file"):
+            k += 1
+        elif t[:1] in "-+" and t[1:2] != "-":
+            k += t[1:].count("o") + t[1:].count("O")  # GH #674: each o or O (shopt) takes the next word,
+            # as _shell_body's "oO" reads them (-o pipefail, +o histexpand, -eo x, -O extglob)
     return True
 
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
@@ -897,11 +920,6 @@ def _rm_prompts_each(rest):
 # shlex cost is superlinear in the longest SINGLE token (700k chars blows a 2s
 # timeout), so an oversized command denies on length ALONE before shlex runs.
 _CMD_LEN_CAP = 150_000
-# GH #668: the heredoc scan runs before the _CMD_LEN_CAP deny and a timeout allows, so a command over the
-# cap skips it and is denied by that cap unchanged.
-_SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
-cmd = d["tool_input"].get("command", "")
-cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= _CMD_LEN_CAP else cmd
 
 def _mid_merge():
     # `git add -A|--all|.` is allowed only mid-merge (staging a manual conflict
@@ -1050,6 +1068,54 @@ _RUN_WRAPPERS = {
 # GH #662: the walks with their own wrapper list (xargs, find -exec, a shell reading stdin) read past these too.
 _BUSYBOX_NAMES = ("busybox", "busybox.static", "busybox-static", "toybox")
 _STEP_WRAPPERS = PREFIX_WRAPPERS + _BUSYBOX_NAMES
+def _past_run_prefix(w, i=0):
+    # GH #674: the index of the program word in w[i:] past assignments and every wrapper the rule loop
+    # unwraps: PREFIX_WRAPPERS with their value options (sudo's, env's, FLAG_VALUE_WRAPPERS), timeout's
+    # DURATION, builtin, busybox, and _RUN_WRAPPERS with their value options and positionals. None when a
+    # wrapper runs a body of its own instead (flock -c, su -c, script -c, env -S) or no program follows.
+    # Self-contained: the heredoc strip calls it (via _reads_stdin_shell) before the rule loop's helpers exist.
+    while i < len(w):
+        t = w[i]
+        b = t.rsplit("/", 1)[-1]
+        if re.fullmatch(r"[A-Za-z_]\w*=.*", t):
+            i += 1
+            continue
+        if b in PREFIX_WRAPPERS or b in _UNWRAP_ONLY or b in _BUSYBOX_NAMES:
+            # the value options of _SQL_STAGE_WRAPPERS (sudo's full list) and FLAG_VALUE_WRAPPERS, not a third copy
+            vals = set(FLAG_VALUE_WRAPPERS.get(b, ())) | set(_SQL_STAGE_WRAPPERS.get(b, ()))
+            i += 1
+            while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
+                if b == "env" and w[i].split("=", 1)[0] in ("-S", "--split-string") or b == "env" and w[i].startswith("-S"):
+                    return None
+                done = w[i] == "--"
+                i += 2 if w[i] in vals else 1
+                if done:
+                    break
+            if b in ("timeout", "gtimeout") and i < len(w):
+                i += 1  # the DURATION positional
+        elif b in _RUN_WRAPPERS:
+            vals, npos, bodies, join = _RUN_WRAPPERS[b]
+            i += 1
+            while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
+                if w[i].split("=", 1)[0] in bodies:
+                    return None
+                done = w[i] == "--"
+                i += 2 if w[i] in vals else 1
+                if done:
+                    break
+            if join is None:
+                return None  # su: a user, not a command
+            i += npos  # watch (join) runs `sh -c "<words>"`, whose first word is still the program
+        else:
+            return i
+    return None
+
+# GH #668: the heredoc scan runs before the _CMD_LEN_CAP deny and a timeout allows, so a command over the
+# cap skips it and is denied by that cap unchanged. GH #674: it runs here, past the wrapper tables, because
+# its stdin-shell check (_reads_stdin_shell) walks them.
+_SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
+cmd = d["tool_input"].get("command", "")
+cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= _CMD_LEN_CAP else cmd
 # A package runner's package names map to the program they install (`npx @anthropic-ai/claude-code -p x`).
 _PKG_PROGRAMS = {"claude-code": "claude"}
 _SPAWN_WINDOW_FLAGS = ("-p", "--print", "--agent", "--bg", "--worktree")
@@ -2616,12 +2682,9 @@ def _shell_stdin_bodies(c):
             up = _split_words(_decode_quotes(segs[k - 1])) if k else None
             # GH #662: the echo as written past a path, `command [-p] [--]`, `builtin` or busybox [--]
             # (`busybox echo ... | sh`). An index, not slicing: a flood of wrapper words must stay linear.
-            j = 0
-            while up and j < len(up) and (up[j].rsplit("/", 1)[-1] in (
-                    "command", "builtin", "busybox", "busybox.static", "busybox-static", "toybox")
-                    or (j and up[j] in ("--", "-p"))):
-                j += 1
-            up = up[j:] if up else up
+            # GH #674: and past every other wrapper the rule loop unwraps, assignments too (sudo echo, FOO=1 echo).
+            j = _past_run_prefix(up) if up else None
+            up = up[j:] if j is not None else None
             name = up[0].rsplit("/", 1)[-1] if up else ""
             if name in ("echo", "printf"):
                 args = up[1:]
