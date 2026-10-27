@@ -70,19 +70,19 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 
 ## What it ships
 
-- **Skills (14):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
+- **Skills (15):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
   `mh:gate-report`, `mh:learn`, `mh:model-bench`, `mh:compliance-audit`, `mh:deep-audit`,
-  `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:tech-humanize`, `mh:code-architect`, `mh:backend-architect`. `ste-lint` exists in the repo
+  `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:tech-humanize`, `mh:code-architect`, `mh:backend-architect`, `mh:requirement-analyst`. `ste-lint` exists in the repo
   and is tested, but `.claude-plugin/plugin.json`'s skills list deliberately excludes it.
-- **Agents (8):** blind-spot-hunter, ideate-critic,
-  performance-optimizer, plan-reviewer, requirement-analyst, silent-failure-hunter,
+- **Agents (7):** blind-spot-hunter, ideate-critic,
+  performance-optimizer, plan-reviewer, silent-failure-hunter,
   test-gap-analyzer, type-design-analyzer (the last two adapted from Anthropic's
   `pr-review-toolkit`, Apache-2.0; three of its other agents duplicate native `/code-review`,
   `/simplify`, and `mh:silent-failure-hunter`, and `comment-analyzer` was skipped as low value here). Generic TS review and security review go to
   `mattpocock-skills:code-review` and native `/security-review` instead — reviewers here are
   read-only and never grant `Agent`.
 - **Evals:** `evals/` holds cases in `claude plugin eval`'s native layout: a planted case and a
-  clean control for each of the six review agents and for `harness-audit`, `memory-lint`, `deep-audit`,
+  clean control for each of the five review agents and for `requirement-analyst`, `harness-audit`, `memory-lint`, `deep-audit`,
   `post-mortem`, and `cost-report`; five for `tech-humanize`; a run and an abort case for `ideate`.
   Recompute the count with `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`
   rather than trust a stale literal here. `tests/evals/test-eval-cases.sh` keeps them loadable

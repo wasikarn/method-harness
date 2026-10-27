@@ -3,15 +3,15 @@
 77 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
-Round 3). Twelve cover the six review
-agents, one planted-defect case and one clean control per agent, the same fires/silent pairing
+Round 3). Twelve cover the five review
+agents and the `requirement-analyst` skill (an agent until 2026-10-27), one planted-defect case and one clean control per agent or skill, the same fires/silent pairing
 `tests/skills/harness-audit/known-bad/` uses for audit checks. Each case is
 `prompt.md` (the ask: an agent case dispatches by `subagent_type`, a skill case invokes by `skill:`), `case.yaml` (a
 `scaffold_script` that writes the fixture into the throwaway workspace), and `graders/`:
 
 | grader | type | what it proves |
 |---|---|---|
-| `agent-fired.md` | `tool_used: Agent` | the session dispatched the agent instead of reviewing inline |
+| `agent-fired.md` | `tool_used: Agent` (`Skill` for `requirement-analyst`) | the session dispatched the agent (or loaded the skill) instead of reviewing inline |
 | `contract.md` | `regex` | the report ends in the agent's documented Output Format |
 | `finding.md` / `clean.md` | `regex` | the planted defect was found at its file, or the clean control got the clean verdict |
 | `criteria.md` | `llm` | the finding is the right one, sized right, with no manufactured extras |

@@ -1,7 +1,7 @@
 ---
 type: tool_used
-tool: Agent
-input_match: '"subagent_type"\s*:\s*"(?:mh:)?requirement-analyst"'
+tool: Skill
+input_match: '"skill"\s*:\s*"(?:[\w-]+:)?requirement-analyst"'
 min: 1
 ---
-The session must dispatch the `mh:requirement-analyst` subagent rather than review inline.
+The session must load the `mh:requirement-analyst` skill rather than review without it.
