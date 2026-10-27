@@ -62,6 +62,39 @@ test_deny  "$IRRECOVERABLE" "env GIT_CONFIG_PARAMETERS=core.hooksPath=... git co
   "$(bash_payload 'env GIT_CONFIG_PARAMETERS="'"'"'core.hooksPath=/dev/null'"'"'" git commit -m x')"
 test_allow "$IRRECOVERABLE" "FOO=bar ls (assignment prefix on a benign command)" \
   "$(bash_payload 'FOO=bar ls')"
+# --- actionable refusals: a "confirm with user first" deny names a next step a headless run can take ---
+_NODECIDE='if nobody can confirm, skip this step, keep going on the rest'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard keeps the confirm text" "$(bash_payload 'git reset --hard')" "confirm with user first"
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard has the no-one-to-confirm tail" "$(bash_payload 'git reset --hard')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tail says list it for the user" "$(bash_payload 'git clean -fd')" "list it for the user in your final report"
+test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload 'dropdb prod')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
+# hints name steps every mh/dotfiles guard allows: no git stash (subagent-git-guard denies it; the stash is shared)
+_SAVE='or commit first, or save a patch with `git diff HEAD > x.patch`'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git reset --keep <ref>`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard names commit/patch" "$(bash_payload 'git reset --hard')" "$_SAVE"
+test_deny_says "$IRRECOVERABLE" "refusal: restore hint" "$(bash_payload 'git restore f')" "$_SAVE" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: checkout -- hint" "$(bash_payload 'git checkout -- f')" "$_SAVE" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: switch --force hint" "$(bash_payload 'git switch -f main')" 'or commit first, then a plain `git switch`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: commit --amend hint" "$(bash_payload 'git commit --amend -m x')" "make a new commit"
+test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'preview with `git clean -n`, then move the files aside with `mv`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: push --mirror hint" "$(bash_payload 'git push --mirror origin')" "push named refs"
+test_deny_says "$IRRECOVERABLE" "refusal: stash drop hint" "$(bash_payload 'git stash drop')" "leave the stash in place" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: worktree remove --force hint" "$(bash_payload 'git worktree remove --force ../wt')" "then a plain \`git worktree remove" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: rm -f hint" "$(bash_payload 'git rm -f f.txt')" "then plain \`git rm"
+test_deny_says "$IRRECOVERABLE" "refusal: chmod 777 hint" "$(bash_payload 'chmod -R 777 /')" "narrowest mode"
+test_deny_says "$IRRECOVERABLE" "refusal: find -exec chmod 777 hint" "$(bash_payload 'find . -exec chmod 777 {} +')" "narrowest mode"
+# a git -c / git config deny names the override, not the verb's hint: tail only
+test_deny_says "$IRRECOVERABLE" "refusal: alias definition gets the tail only" "$(bash_payload "git config alias.x 'reset --hard'")" "$_NODECIDE" 'reset --keep'
+test_deny_says "$IRRECOVERABLE" "refusal: -c alias run gets the tail only" "$(bash_payload "git -c alias.x='!git reset --hard' x")" "$_NODECIDE" 'reset --keep'
+test_deny_says "$IRRECOVERABLE" "refusal: -c risk key gets the tail only" "$(bash_payload 'git -c clean.requireForce=false clean')" "$_NODECIDE" 'git clean -n'
+# each alternative a hint names must itself pass the gate
+for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff HEAD > x.patch' 'git clean -n' \
+  'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
+  'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
+  test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"
+done
 # --- git branch force-delete: discards unmerged commits ---
 test_deny  "$IRRECOVERABLE" "git branch -D (force-delete short flag)" \
   "$(bash_payload 'git branch -D main')"
@@ -3126,6 +3159,138 @@ test_deny  "$IRRECOVERABLE" "GH #661: subagent: budget-spending expansion, then 
 test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm {a,b}.log')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
+# GH #663: `sh -c BODY ARG0 ARGS...` sets $0 to ARG0 and $1.. / "$@" to ARGS, so the body runs with them.
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\$@\"' -- -rf b" "$(bash_payload "bash -c 'rm \"\$@\"' -- -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: sh -c 'rm \$@' _ -rf b" "$(bash_payload "sh -c 'rm \$@' _ -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: sh -c 'rm \"\$1\" \"\$2\"' _ -rf b" "$(bash_payload "sh -c 'rm \"\$1\" \"\$2\"' _ -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \$*' _ -r b" "$(bash_payload "bash -c 'rm \$*' _ -r b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\${@}\"' x -rf b" "$(bash_payload "bash -c 'rm \"\${@}\"' x -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c '\$1 -rf b' _ rm (the verb as a parameter)" "$(bash_payload "bash -c '\$1 -rf b' _ rm")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'git \"\$@\"' _ push --force origin main" "$(bash_payload "bash -c 'git \"\$@\"' _ push --force origin main")"
+test_deny  "$IRRECOVERABLE" "GH #663: sudo sh -c 'rm \"\$@\"' sh -rf b" "$(bash_payload "sudo sh -c 'rm \"\$@\"' sh -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c \"rm \\\"\\\$@\\\"\" -- -rf b (double-quoted body)" "$(bash_payload 'bash -c "rm \"\$@\"" -- -rf b')"
+# slices, multi-digit and operator forms, and a leading shift
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \${@:1}' _ -rf b" "$(bash_payload "bash -c 'rm \${@:1}' _ -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\${@:2}\"' _ x -rf b" "$(bash_payload "bash -c 'rm \"\${@:2}\"' _ x -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \${10} \${11}' _ 1..9 -rf b" "$(bash_payload "bash -c 'rm \${10} \${11}' _ 1 2 3 4 5 6 7 8 9 -rf b")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'rm \"\${1:-}\" b' _ -rf" "$(bash_payload "bash -c 'rm \"\${1:-}\" b' _ -rf")"
+test_deny  "$IRRECOVERABLE" "GH #663: bash -c 'shift; git \$1 \$2' _ x push --force" "$(bash_payload "bash -c 'shift; git \$1 \$2 origin main' _ x push --force")"
+# a parameter inside a larger quoted string is text (a message), and one in single quotes never expands
+test_allow "$IRRECOVERABLE" "GH #663 control: git commit -m \"fix: \$1\" with it's" "$(bash_payload "bash -c 'git commit -m \"fix: \$1\"' _ \"it's done\"")"
+test_allow "$IRRECOVERABLE" "GH #663 control: echo \"x \$1 y\" with an arg that holds ; rm -rf" "$(bash_payload "bash -c 'echo \"x \$1 y\"' _ 'a\" ; rm -rf b ; \"'")"
+test_allow "$IRRECOVERABLE" "GH #663 control: echo \"args: \$@\" with it's" "$(bash_payload "bash -c 'echo \"args: \$@\"' _ \"it's\" b")"
+# the filled body is capped: 1500 "\$@" times 1500 words would be millions of words
+_timed_case "GH #663: 1500 \"\$@\" x 1500 args then rm -rf b, denied in bounded time" 2 \
+  "sh -c 'echo $(printf '"\$@" %.0s' $(seq 1500))' _ $(printf 'a %.0s' $(seq 1500)); rm -rf b"
+# GH #663 review 2: escapes, word splitting, glued parameters, redirects, slices and operators
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'echo a\\; rm "$@"'"'"' _ -rf b (an escaped backslash ends the word)' "$(bash_payload 'sh -c '"'"'echo a\\; rm "$@"'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'echo "a\\" ; rm "$@"'"'"' _ -rf b' "$(bash_payload 'sh -c '"'"'echo "a\\" ; rm "$@"'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'x=\"; rm "$@"'"'"' _ -rf b' "$(bash_payload 'sh -c '"'"'x=\"; rm "$@"'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'$1'"'"' _ '"'"'rm -rf b'"'"' (an unquoted value is word-split)' "$(bash_payload 'sh -c '"'"'$1'"'"' _ '"'"'rm -rf b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'git $1 origin main'"'"' _ '"'"'push --force'"'"'' "$(bash_payload 'sh -c '"'"'git $1 origin main'"'"' _ '"'"'push --force'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "$@">/dev/null'"'"' _ -rf b' "$(bash_payload 'sh -c '"'"'rm "$@">/dev/null'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'rm ${@: -2}'"'"' _ x -rf b' "$(bash_payload 'bash -c '"'"'rm ${@: -2}'"'"' _ x -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "${1#x}" b'"'"' _ x-rf' "$(bash_payload 'sh -c '"'"'rm "${1#x}" b'"'"' _ x-rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "${1,,}" b'"'"' _ -RF' "$(bash_payload 'sh -c '"'"'rm "${1,,}" b'"'"' _ -RF')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "${1/x/r}" b'"'"' _ -xf' "$(bash_payload 'sh -c '"'"'rm "${1/x/r}" b'"'"' _ -xf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm -$1 b'"'"' _ rf (glued to text)' "$(bash_payload 'sh -c '"'"'rm -$1 b'"'"' _ rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'r$1 -rf b'"'"' _ m' "$(bash_payload 'sh -c '"'"'r$1 -rf b'"'"' _ m')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm $1$2 b'"'"' _ -r f' "$(bash_payload 'sh -c '"'"'rm $1$2 b'"'"' _ -r f')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "-$1" b'"'"' _ rf' "$(bash_payload 'sh -c '"'"'rm "-$1" b'"'"' _ rf')"
+test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'echo $1'"'"' _ '"'"'a; rm -rf b'"'"' (a value'"'"'s ; is not a separator)' "$(bash_payload 'sh -c '"'"'echo $1'"'"' _ '"'"'a; rm -rf b'"'"'')"
+test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'echo '"'"'"'"'"'"'"'"'$1'"'"'"'"'"'"'"'"''"'"' _ rm -rf (single quotes never expand)' "$(bash_payload 'sh -c '"'"'echo '"'"'"'"'"'"'"'"'$1'"'"'"'"'"'"'"'"''"'"' _ rm -rf')"
+# the filled text is capped across the whole command: 20 bodies of 300 "$@" x 245 words each fill ~3 MB
+_f663="$(printf '"$@" %.0s' $(seq 300))"; _a663="$(printf 'a %.0s' $(seq 245))"
+_s663=""; for _i in $(seq 20); do _s663+="sh -c 'echo $_f663' _ $_a663; "; done
+_t0=$(date +%s); bash_agent_payload "${_s663}rm -rf b" fork | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; _rc=$?; _t1=$(( $(date +%s) - _t0 ))
+if [[ "$_rc" == 2 ]] && [ "$_t1" -le 4 ]; then echo "  ✅ GH #663: subagent flood of filled bodies denied in bounded time (rc=2 in ${_t1}s)"; pass=$((pass + 1))
+else echo "  ❌ GH #663: subagent flood of filled bodies: expected rc=2 within 4s, got rc=$_rc in ${_t1}s" >&2; fail=$((fail + 1)); fi
+# GH #663 review 3: default words, shift past $#, ${!#}, pattern quoting, anchors, comments, $'...'
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${1+"$@"}'"'"' _ -rf b' "$(bash_payload 'sh -c '"'"'rm ${1+"$@"}'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${3:-$2} b'"'"' _ x -rf' "$(bash_payload 'sh -c '"'"'rm ${3:-$2} b'"'"' _ x -rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${3:-${2}} b'"'"' _ x -rf' "$(bash_payload 'sh -c '"'"'rm ${3:-${2}} b'"'"' _ x -rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'shift 3; rm $1 $2'"'"' _ -rf b (a failed shift keeps the args)' "$(bash_payload 'bash -c '"'"'shift 3; rm $1 $2'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'rm ${!#} b'"'"' _ -rf' "$(bash_payload 'bash -c '"'"'rm ${!#} b'"'"' _ -rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "${1#"x"}" b'"'"' _ x-rf' "$(bash_payload 'sh -c '"'"'rm "${1#"x"}" b'"'"' _ x-rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'rm "${1#[^x]}" b'"'"' _ a-rf' "$(bash_payload 'bash -c '"'"'rm "${1#[^x]}" b'"'"' _ a-rf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'rm "${1/#x/-}" b'"'"' _ xrf' "$(bash_payload 'bash -c '"'"'rm "${1/#x/-}" b'"'"' _ xrf')"
+_c663=$'bash -c \'echo hi # it\'"\'"\'s\nrm "$@"\' _ -rf b'
+test_deny  "$IRRECOVERABLE" 'GH #663: a comment with an apostrophe before rm "$@"' "$(bash_payload "$_c663")"
+test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'sh -c "echo \"\$@\"" _ "$@"'"'"' _ a b (nested forwarding)' "$(bash_payload 'sh -c '"'"'sh -c "echo \"\$@\"" _ "$@"'"'"' _ a b')"
+_timed_case "GH #663: a \${1##*/} cut on a 100 KB value is read in bounded time" 2 \
+  "sh -c 'echo \"\${1##*/}\"; rm -rf b' _ $(printf 'a/%.0s' $(seq 45000))"
+# GH #663 review 4: comments after an expansion, backticks in quotes, glob replacements, shift forms, assignments
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'echo $9#; rm "$@"'"'"' _ -rf b ($9# is a word, not a comment)' "$(bash_payload 'sh -c '"'"'echo $9#; rm "$@"'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: a backtick in double quotes holding an apostrophe' "$(bash_payload 'sh -c '"'"'x="`echo "it'"'"'"'"'"'"'"'"'s"`"; rm "$@"'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "${1/#*x/-}" b'"'"' _ zzxrf' "$(bash_payload 'sh -c '"'"'rm "${1/#*x/-}" b'"'"' _ zzxrf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'git push "${1/%/-force}" origin main'"'"' _ -' "$(bash_payload 'bash -c '"'"'git push "${1/%/-force}" origin main'"'"' _ -')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'shift || exit; rm $1 b'"'"' _ x -rf' "$(bash_payload 'bash -c '"'"'shift || exit; rm $1 b'"'"' _ x -rf')"
+test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'msg=$1; git commit -m "$msg"'"'"' _ '"'"'docs: rm -rf is replaced'"'"' (no split in an assignment)' "$(bash_payload 'sh -c '"'"'msg=$1; git commit -m "$msg"'"'"' _ '"'"'docs: rm -rf is replaced'"'"'')"
+test_allow "$IRRECOVERABLE" 'GH #663 control: bash -c '"'"'f=$1; cp "$f" "$f.bak"'"'"' _ '"'"'notes rm -rf b.txt'"'"'' "$(bash_payload 'bash -c '"'"'f=$1; cp "$f" "$f.bak"'"'"' _ '"'"'notes rm -rf b.txt'"'"'')"
+_timed_case "GH #663: 9000 unclosed \${ in a body are read in bounded time" 2 \
+  "sh -c 'echo $(printf '\${%.0s' $(seq 9000))' _ a; rm -rf b"
+_timed_case "GH #663: a \${1//a/<30000 b>} on 30000 a's is charged before it is built" 2 \
+  "sh -c 'echo \"\${1//a/$(printf 'b%.0s' $(seq 30000))}\"' _ $(printf 'a%.0s' $(seq 30000)); rm -rf b"
+# GH #663 review 5: a shift's glued redirects and a / replacement on a long value are read in bounded time
+_timed_case "GH #663: shift with 30 glued <a redirects, then a force push outside the body" 2 \
+  "bash -c 'shift$(printf '<a%.0s' $(seq 30)) x y; echo \$1' _ a; git push --force origin main"
+_timed_case "GH #663: a \${1//*z/x} on a 120000-character value is bounded" 2 \
+  "sh -c 'echo \"\${1//*z/x}\"' _ $(printf 'a%.0s' $(seq 120000)); git push --force origin main"
+_timed_case "GH #663: a \${1/%*z/x} on a 60000-character value is bounded" 2 \
+  "sh -c 'echo \"\${1/%*z/x}\"' _ $(printf 'a%.0s' $(seq 60000)); git push --force origin main"
+test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'shift 2>/dev/null; ls \$1' _ a -la" "$(bash_payload "bash -c 'shift 2>/dev/null; ls \$1' _ a -la")"
+test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'rm \"\$@\"' _ a.log b.log" "$(bash_payload "bash -c 'rm \"\$@\"' _ a.log b.log")"
+test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'echo \"\$@\"' _ rm -rf b" "$(bash_payload "bash -c 'echo \"\$@\"' _ rm -rf b")"
+test_allow "$IRRECOVERABLE" "GH #663 control: sh -c 'ls \$1' _ -la" "$(bash_payload "sh -c 'ls \$1' _ -la")"
+# GH #664: a here-string or echo argument written with ANSI-C quoting is decoded before the stdin shell's body is read.
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'rm -rf b'" "$(bash_payload "bash <<< \$'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: sh <<< \$'rm\\x20-rf b'" "$(bash_payload "sh <<< \$'rm\\x20-rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'ls\\nrm -rf b'" "$(bash_payload "bash <<< \$'ls\\nrm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: zsh <<< \$\"rm -rf b\"" "$(bash_payload 'zsh <<< $"rm -rf b"')"
+test_deny  "$IRRECOVERABLE" "GH #664: echo \$'rm -rf b' | sh" "$(bash_payload "echo \$'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #664: dash <<< \$'git push --force origin main'" "$(bash_payload "dash <<< \$'git push --force origin main'")"
+# an even backslash run escapes nothing, and \u, \U and \cX are decoded too (also at the top level)
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \\\\\$\"rm -rf b\"" "$(bash_payload 'bash <<< \\$"rm -rf b"')"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'\\u0072m -rf b'" "$(bash_payload "bash <<< \$'\\u0072m -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'\\U00000072m -rf b'" "$(bash_payload "bash <<< \$'\\U00000072m -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'echo hi\\cJrm -rf b'" "$(bash_payload "bash <<< \$'echo hi\\cJrm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: \$'\\u0072m' -rf b (top level)" "$(bash_payload "\$'\\u0072m' -rf b")"
+# \cX is X & 0x1f as bash computes it, a NUL ends the $'...' value, and a \U past U+10FFFF is empty
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< $'"'"'echo hi\c*rm -rf b'"'"' (\c* is a newline)' "$(bash_payload 'bash <<< $'"'"'echo hi\c*rm -rf b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< $'"'"'rm\c)-rf\c)b'"'"' (\c) is a tab)' "$(bash_payload 'bash <<< $'"'"'rm\c)-rf\c)b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #664: r$'"'"'\u0000'"'"'m -rf b (a NUL ends the value)' "$(bash_payload 'r$'"'"'\u0000'"'"'m -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664: r$'"'"'\0'"'"'m -rf b' "$(bash_payload 'r$'"'"'\0'"'"'m -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664: r$'"'"'\UFFFFFFFF'"'"'m -rf b' "$(bash_payload 'r$'"'"'\UFFFFFFFF'"'"'m -rf b')"
+test_allow "$IRRECOVERABLE" 'GH #664 control: echo $'"'"'\cß'"'"' (no crash)' "$(bash_payload 'echo $'"'"'\cß'"'"'')"
+test_allow "$IRRECOVERABLE" 'GH #664 control: bash <<< $'"'"'echo hi\c{rm -rf b'"'"' (\c{ is ESC, not ;)' "$(bash_payload 'bash <<< $'"'"'echo hi\c{rm -rf b'"'"'')"
+test_allow "$IRRECOVERABLE" "GH #664 control: echo \"\\\$\" | sh" "$(bash_payload 'echo "\$" | sh')"
+# a $'...' inside double quotes is literal to that shell (the stdin shell decodes it later), and \x{HH} decodes
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< "$'"'"'\x22'"'"'; rm -rf b; #"' "$(bash_payload 'bash <<< "$'"'"'\x22'"'"'; rm -rf b; #"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: echo "x$'"'"'\x22'"'"'; rm -rf b; : $'"'"'\x22'"'"'" | bash' "$(bash_payload 'echo "x$'"'"'\x22'"'"'; rm -rf b; : $'"'"'\x22'"'"'" | bash')"
+test_deny  "$IRRECOVERABLE" 'GH #664: echo "$'"'"'\x22'"'"'"; rm -rf b; echo "$'"'"'\x22'"'"'" (top level)' "$(bash_payload 'echo "$'"'"'\x22'"'"'"; rm -rf b; echo "$'"'"'\x22'"'"'"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< $'"'"'\x{72}m -rf b'"'"'' "$(bash_payload 'bash <<< $'"'"'\x{72}m -rf b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #664: $'"'"'\x{172}m'"'"' -rf b (top level, & 0xFF)' "$(bash_payload '$'"'"'\x{172}m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash -c "$'"'"'\x72m'"'"' -rf b" (decoded when the body is read)' "$(bash_payload 'bash -c "$'"'"'\x72m'"'"' -rf b"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: a literal $'"'"' in "..." does not swallow a live one after it' "$(bash_payload '"$'"'"'" ; $'"'"'\x72m'"'"' -rf b')"
+test_allow "$IRRECOVERABLE" 'GH #664 control: echo "$'"'"'say hi'"'"'"' "$(bash_payload 'echo "$'"'"'say hi'"'"'"')"
+test_allow "$IRRECOVERABLE" "GH #664 control: bash <<< \$'echo hi'" "$(bash_payload "bash <<< \$'echo hi'")"
+test_allow "$IRRECOVERABLE" "GH #664 control: grep x <<< \$'rm -rf b'" "$(bash_payload "grep x <<< \$'rm -rf b'")"
+# GH #664 review 4: a $'...' the line's own shell reads is decoded wherever it sits, as develop did.
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: $(true)# is no comment' "$(bash_payload 'echo $(true)#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: $((1))# is no comment' "$(bash_payload 'echo $((1))#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: an escaped blank before # is no comment' "$(bash_payload 'echo a\ #; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: an escaped ; before # is no comment' "$(bash_payload 'echo x\;#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: a line continuation before # is no comment' "$(bash_payload 'echo a\
+#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: octal after $(true)#' "$(bash_payload 'echo $(true)#; $'"'"'\162m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: git verb after $(true)#' "$(bash_payload 'echo $(true)#; git $'"'"'\x70ush'"'"' --force origin main')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: case ) inside $(...) inside "..."' "$(bash_payload 'echo "$(case x in x) $'"'"'\x72m'"'"' -rf b;; esac)"')"
+test_allow "$IRRECOVERABLE" 'GH #664 review 4 control: \x{} is a NUL that ends the value' "$(bash_payload 'bash <<< $'"'"'\x{}\nrm -rf b'"'"'')"
+test_allow "$IRRECOVERABLE" 'GH #664 review 4 control: \U past U+10FFFF spells no verb' "$(bash_payload '$'"'"'\U110000a'"'"'rm -rf b')"
+# GH #664 review 5: a decoded " \ $ or backtick in "..." is escaped there, not left undecoded.
+test_deny  "$IRRECOVERABLE" 'GH #664 review 5: a nested shell'"'"'s eval of \$'"'"'...'"'"' whose text holds a $' "$(bash_payload 'sh -c "eval \$'"'"'\x72m -rf b \x24x'"'"'"')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 5: a nested shell'"'"'s eval of \$'"'"'...'"'"' whose text holds a "' "$(bash_payload 'sh -c "eval \$'"'"'\x72m -rf b \x22'"'"'"')"
+test_allow "$IRRECOVERABLE" 'GH #664 review 5 control: a decoded " inside $(case) in "..."' "$(bash_payload 'echo "$(case x in x) echo $'"'"'a\x22b'"'"';; esac)"')"
 
 # GH #693: a $(...)/backtick in the word of a ${...} (default, pattern, subscript, offset) runs, and a bash 5.3
 # funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command; the ${...} body was never read.
