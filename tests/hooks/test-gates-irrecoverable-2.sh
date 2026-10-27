@@ -70,17 +70,18 @@ test_deny_says "$IRRECOVERABLE" "refusal: tail says list it for the user" "$(bas
 test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload 'dropdb prod')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
-# hints name steps every mh/dotfiles guard allows: no git stash (subagent-git-guard denies it; the stash is shared)
+# hints name steps this gate allows, and never git stash (subagent-git-guard denies it; the stash is shared).
+# A step the subagent guard denies is marked "in the main session" in the hint (checked below).
 # --binary: a plain diff writes only "Binary files differ" for a binary file; --no-textconv/--no-ext-diff/--no-color:
 # a diff driver or forced color would write text git apply cannot use
 _SAVE='or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`'
-test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git reset --keep <ref>`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" 'in the main session, move HEAD with `git reset --keep <ref>`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: reset --hard names commit/patch" "$(bash_payload 'git reset --hard')" "$_SAVE"
 test_deny_says "$IRRECOVERABLE" "refusal: restore hint" "$(bash_payload 'git restore f')" "$_SAVE" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: checkout -- hint" "$(bash_payload 'git checkout -- f')" "$_SAVE" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: switch --force hint" "$(bash_payload 'git switch -f main')" 'or commit first, then a plain `git switch`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: commit --amend hint" "$(bash_payload 'git commit --amend -m x')" "make a new commit"
-test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'preview with `git clean -n`, then move the files aside with `mv`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'in the main session, preview with `git clean -n`; then move the files aside with `mv`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: push --mirror hint" "$(bash_payload 'git push --mirror origin')" "push named refs"
 test_deny_says "$IRRECOVERABLE" "refusal: stash drop hint" "$(bash_payload 'git stash drop')" "leave the stash in place" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: worktree remove --force hint" "$(bash_payload 'git worktree remove --force ../wt')" "then a plain \`git worktree remove" '`git stash'
@@ -96,6 +97,16 @@ for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git dif
   'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
   'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
   test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"
+done
+# a subagent reads the same hints: every alternative not marked "in the main session" must pass its guard too
+for _alt in 'git commit -m x' 'git add f.txt' 'git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch' \
+  'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
+  'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
+  test_allow "$SUBAGENT_GIT_GUARD" "refusal hint alternative, subagent: $_alt" "$(bash_agent_payload "$_alt" fork)"
+done
+# the two marked main-session-only really are denied to a subagent (drop the mark if the guard ever allows them)
+for _alt in 'git reset --keep HEAD~1' 'git clean -n'; do
+  test_deny "$SUBAGENT_GIT_GUARD" "refusal hint alternative, subagent denied: $_alt" "$(bash_agent_payload "$_alt" fork)"
 done
 # --- git branch force-delete: discards unmerged commits ---
 test_deny  "$IRRECOVERABLE" "git branch -D (force-delete short flag)" \
