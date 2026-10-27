@@ -219,16 +219,23 @@ for c, gdir in cases:
             items.append((f, "  %s: no column-0 frontmatter with a known type" % f, None)); continue
         if "type: regex" not in m.group(1):
             continue
-        p = re.search(r"^pattern: '(.*)'$", m.group(1), re.M) or re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
-        if not p:
+        sq = re.search(r"^pattern: '(.*)'$", m.group(1), re.M)
+        dq = None if sq else re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
+        if not (sq or dq):
             items.append((f, "  no pattern in %s" % f, None)); continue
+        # Check the regex the eval runtime gets, i.e. the YAML-decoded scalar, not its raw text: "x\\" is the
+        # invalid regex x\ once decoded. JSON's string escapes cover the \\ and \" these graders use.
         try:
-            re.compile(p.group(1))
+            pat = sq.group(1).replace("''", "'") if sq else json.loads('"%s"' % dq.group(1))
+        except ValueError as e:
+            items.append((f, "  bad double-quoted pattern escape in %s: %s" % (f, e), None)); continue
+        try:
+            re.compile(pat)
         except re.error as e:
             items.append((f, "  bad regex in %s: %s" % (f, e), None)); continue
         fl = re.search(r"^flags: (\w+)$", m.group(1), re.M)
-        items.append((f, None, (m.group(1), p.group(1), fl.group(1) if fl else "", len(js_in))))
-        js_in.append([p.group(1), fl.group(1) if fl else ""])
+        items.append((f, None, (m.group(1), pat, fl.group(1) if fl else "", len(js_in))))
+        js_in.append([pat, fl.group(1) if fl else ""])
     parsed.append((c, gdir, items))
 # Same call the eval runtime makes, `new RegExp(pattern, flags)`, once per pattern, one process.
 js = subprocess.run(["node", "-e", """

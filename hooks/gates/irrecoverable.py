@@ -1552,7 +1552,9 @@ def _shadowed(rule, decision):
                 rule=rule, command=cmd[:300])
     return True
 
-# Safe next steps a deny names (hint=). Each must pass this gate and the subagent guard, so no git stash.
+# Safe next steps a deny names (hint=). Each passes this gate and never names git stash. A step subagent-git-guard
+# denies (reset --keep, clean -n) says "in the main session" (tests/hooks/test-gates-irrecoverable-2.sh checks both).
+# The patch restores content with `git apply`, not the staged/unstaged split: re-stage after applying it.
 # --binary: a plain diff writes only "Binary files differ" for a binary file. --no-textconv, --no-ext-diff, --no-color:
 # a diff driver (git-crypt, a textconv) or forced color writes text that git apply cannot restore.
 _SAVE_HINT = "or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`"
@@ -5140,7 +5142,7 @@ def _check_window(_wi, w):
                              or _drops_core_section(args)):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
-                    deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard", hint=_SAVE_HINT + ", or move HEAD with `git reset --keep <ref>`, which refuses to lose local changes")
+                    deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard", hint=_SAVE_HINT + ", or, in the main session, move HEAD with `git reset --keep <ref>`, which refuses to lose local changes")
                 # SHORT bundled cluster counts per-character, LONG option via
                 # _is_flag's prefix match (bare containment false-positived on
                 # "--find-renames" / "--format=fuller" under candidate duplication --
@@ -5149,7 +5151,7 @@ def _check_window(_wi, w):
                     _is_flag(t, "--force") or (t.startswith("-") and not t.startswith("--") and "f" in t)
                     for t in scan
                 ):
-                    deny("git clean -f deletes untracked files — confirm with user first", rule="git-clean-force", hint="or preview with `git clean -n`, then move the files aside with `mv` or commit them")
+                    deny("git clean -f deletes untracked files — confirm with user first", rule="git-clean-force", hint="or, in the main session, preview with `git clean -n`; then move the files aside with `mv` or commit them")
                 # git restore: default mode and --worktree target the WORKTREE
                 # (unrecoverable); --staged alone targets the INDEX (recoverable,
                 # allowed). Unlike checkout, a restore pathspec is never a branch
