@@ -16,7 +16,7 @@ ok()  { pass=$((pass + 1)); echo "PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL: $1" >&2; }
 
 FAKE_HOME=$(mktemp -d)
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FAKE_HOME" || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FAKE_HOME"' EXIT
 CWD="/fake/project"
 SLUG="${CWD//\//-}"
 DIR="$FAKE_HOME/.claude/projects/$SLUG"

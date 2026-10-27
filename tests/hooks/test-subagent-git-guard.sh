@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # would otherwise silently append rows to the operator's real
 # ~/.local/share/kbg/metrics/gate-decisions.jsonl.
 _JOURNAL_TMP="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$_JOURNAL_TMP" || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$_JOURNAL_TMP"' EXIT
 export MH_GATE_JOURNAL_PATH="$_JOURNAL_TMP/gate-decisions.jsonl"
 GATE="$ROOT/hooks/gates/subagent-git-guard.sh"
 # The length cap (GH #469) would decide every over-16000-character stress row below before its scan ran; lift it
@@ -1501,7 +1501,7 @@ printf '#!/bin/sh\n: >> "$PYSTUB_MARK"\nexec "%s" "$@"\n' "$_PYREAL" > "$_STUB/p
 chmod +x "$_STUB/python3"
 export PYSTUB_MARK="$_JOURNAL_TMP/python-ran"
 fp_run() { # fp_run <payload> -> sets fp_rc, fp_err, fp_py (yes|no)
-  python3 "$ROOT/tests/_lib/tmp_delete.py" "$PYSTUB_MARK" || true
+  python3 "$ROOT/tests/_lib/tmp_delete.py" "$PYSTUB_MARK"
   fp_err=$(printf '%s' "$1" | PATH="$_STUB:$PATH" bash "$GATE" 2>&1 >/dev/null); fp_rc=$?
   if [ -e "$PYSTUB_MARK" ]; then fp_py=yes; else fp_py=no; fi
 }

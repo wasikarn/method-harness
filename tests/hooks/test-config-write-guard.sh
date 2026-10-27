@@ -33,7 +33,7 @@ check() { # check <desc> <ok:0|1>
 echo "=== config-write-guard gate ==="
 
 FIXTURE=$(mktemp -d)
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FIXTURE" || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FIXTURE"' EXIT
 # Isolate the gate-verdict journal (hooks/gates/_journal.py) from this file's
 # ask-case assertions -- run standalone (this file's own header invites it),
 # it would otherwise silently append rows to the operator's real

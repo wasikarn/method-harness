@@ -33,7 +33,7 @@ LOCKDIR="$FAKE_HOME/.claude/state/memory-audit-commit-lock-$ENC"
 MARKER_GLOB="$FAKE_HOME/.claude/state/memory-audit-commit-fail-$ENC-"
 
 init_memdir() {
-  tmp_delete "$MEMDIR" || true
+  tmp_delete "$MEMDIR"
   mkdir -p "$MEMDIR"
   ( cd "$MEMDIR" && git init -q && git config user.email "t@example.com" && git config user.name "t" )
 }
@@ -123,7 +123,7 @@ check "the previously-stuck file is now committed" "$ok"
 
 echo ""
 echo "--- untouched behavior: not opted in / clean tree still no-op silently ---"
-tmp_delete "$MEMDIR" || true
+tmp_delete "$MEMDIR"
 clear_state
 OUT=$(run_hook)
 ok=1; [ -z "$OUT" ] && ok=0
@@ -152,7 +152,7 @@ run_hook_stub() {
   : > "$RESOLVER_LOG"
   ( cd "$PROJECT_DIR" && HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT="$STUB_ROOT" bash "$HOOK" )
 }
-tmp_delete "$MEMDIR/.git" || true
+tmp_delete "$MEMDIR/.git"
 clear_state
 run_hook_stub
 ok=1; [ "$(cat "$RESOLVER_LOG")" = "call" ] && ok=0
@@ -300,7 +300,7 @@ OUT=$( cd "$PROJECT_DIR" && HOME=rel CLAUDE_PLUGIN_ROOT="$ROOT" bash "$HOOK" </d
 ok=1; [ "$rc" -eq 0 ] && [ -z "$OUT" ] && [ ! -d "$PROJECT_DIR/rel/.claude/state" ] \
   && [ -n "$(git -C "$REL_MEMDIR" status --porcelain)" ] && ok=0
 check "relative HOME -> rc 0, silent, no rel/.claude/state in cwd, planted store left uncommitted (rc=$rc out=<$OUT>)" "$ok"
-tmp_delete "$PROJECT_DIR/rel" || true
+tmp_delete "$PROJECT_DIR/rel"
 
 echo ""
 echo "--- linked worktree resolves to the SAME memory store as the main tree ---"
@@ -323,7 +323,7 @@ echo "from-worktree" > "$MAIN_MEMDIR/from-worktree.md"
 ok=1; [ -z "$(git -C "$MAIN_MEMDIR" status --porcelain)" ] && ok=0
 check "a Stop hook run from inside a linked worktree commits to the MAIN tree's memory store" "$ok"
 git -C "$GITREPO" worktree remove -f "$WT" 2>/dev/null || true
-tmp_delete "$GITREPO" "$MAIN_MEMDIR" || true
+tmp_delete "$GITREPO" "$MAIN_MEMDIR"
 
 # One python launch per Stop for an opted-in store: memory dir, enc and the
 # acquisition timestamp come from one call (was 3 launches, 2026-10-22).
