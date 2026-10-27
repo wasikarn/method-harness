@@ -11,10 +11,14 @@
 
 gauntlet_pass_dir() { printf '%s' "${GAUNTLET_PASS_DIR:-$HOME/.cache/mh/gauntlet-pass}"; }
 
-# gauntlet_pass_start: HEAD's tree when the checkout in the cwd is clean, else nothing.
+# gauntlet_pass_start: HEAD's tree when the cwd is the top of a clean checkout, else nothing. A copy that
+# is not a repo (a git-archive extract in an ignored dir) would otherwise key on the enclosing checkout.
+# --untracked-files=normal: status.showUntrackedFiles=no must not hide an untracked file.
 gauntlet_pass_start() {
-  local dirty
-  dirty=$(git status --porcelain 2>/dev/null) || return 0  # not a git checkout: nothing to key on
+  local dirty top
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0  # not a git checkout: nothing to key on
+  [ "$(cd "$top" && pwd -P)" = "$(pwd -P)" ] || return 0
+  dirty=$(git status --porcelain --untracked-files=normal) || return 0
   [ -z "$dirty" ] || return 0
   git rev-parse -q --verify 'HEAD^{tree}' || true
   return 0
@@ -51,7 +55,8 @@ gauntlet_full() {
   fi
   echo "$who: running the full gauntlet on $(git rev-parse HEAD)..." >&2
   (
-    unset MH_GAUNTLET_LOCK_OWNER
+    # Unsharded: a leftover GAUNTLET_SHARD=i/N would make a partial run pass for the whole tree.
+    unset MH_GAUNTLET_LOCK_OWNER GAUNTLET_SHARD
     # shellcheck disable=SC2034 # read by gauntlet_lock_release
     GAUNTLET_LOCK_HELD=0
     gauntlet_lock_acquire

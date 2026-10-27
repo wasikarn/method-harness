@@ -94,7 +94,7 @@ EOF
 # The fixture's committed scripts/run-gauntlet.sh stands in for the full gauntlet, which merge-pr.sh runs
 # from the checkout it merges: it records the tree it ran on, what origin's feat/x held then (the push
 # must come after it), and the locks it ran under; fails when STUB_GAUNTLET_FAIL is set; edits the tree
-# with STUB_GAUNTLET_DIRTY; and on its first call with STUB_GAUNTLET_PEER set lands a peer merge on
+# with STUB_GAUNTLET_DIRTY; commits during the run with STUB_GAUNTLET_COMMIT; and on its first call with STUB_GAUNTLET_PEER set lands a peer merge on
 # origin's develop (develop moving while the gauntlet runs).
 cat >"$STUB/run-gauntlet.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -105,9 +105,11 @@ n=0; [ ! -f "$STUB_DIR/gauntlet.n" ] || n=$(cat "$STUB_DIR/gauntlet.n"); n=$((n 
   echo "origin=$(git ls-remote origin refs/heads/feat/x | cut -f1)"
   echo "lockdir=${GAUNTLET_LOCK_DIR-} lockpid=$(cat "${GAUNTLET_LOCK_DIR-}/pid" 2>/dev/null)"
   if [ -d "$MERGE_PR_LOCK_DIR" ]; then echo "mergelock=held"; else echo "mergelock=free"; fi
+  echo "shard=${GAUNTLET_SHARD-}"
 } >>"$STUB_DIR/gauntlet.log"
 [ -z "${STUB_GAUNTLET_FAIL:-}" ] || { echo "gauntlet: red" >&2; exit 1; }
 [ -z "${STUB_GAUNTLET_DIRTY:-}" ] || echo edit >>b.txt
+[ -z "${STUB_GAUNTLET_COMMIT:-}" ] || git commit -q --allow-empty -m "made during the gauntlet"
 if [ -n "${STUB_GAUNTLET_PEER:-}" ] && [ "$n" -eq 1 ]; then
   (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; bash "$STUB_PEER")
 fi
@@ -204,7 +206,7 @@ run() {
     STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict "MERGE @ $(remote_tip feat/x)")}" \
     MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX="${LOAD_MAX-4}" MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
     GAUNTLET_LOCK_DIR="$F/gauntlet.lock" GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
-    bash "$SCRIPT" 451 2>&1)
+    GAUNTLET_SHARD="${SHARD-}" bash "$SCRIPT" 451 2>&1)
   rc=$?
 }
 merged() { /usr/bin/grep -q '^gh pr merge' "$F/calls.log"; }
@@ -403,6 +405,17 @@ w restore b.txt
 run
 merges "rerun after an edit during the gauntlet"
 if [ "$(gauntlets)" = 2 ]; then ok "the rerun runs the gauntlet again"; else bad "rerun gauntlets: $(gauntlets)"; fi
+# 10c2. a commit made during the gauntlet leaves the status clean but moves HEAD off the tested tree.
+setup
+STUB_GAUNTLET_COMMIT=1 run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "HEAD moved off" <<<"$out" && ! merged && [ ! -d "$F/merge.lock" ] && [ "$(pushes)" = 0 ]; then
+  ok "a commit during the gauntlet refuses the push and the merge"
+else bad "commit during the gauntlet rc=$rc pushes=$(pushes): $out"; fi
+# 10c3. a leftover GAUNTLET_SHARD in the caller's env must not make the merge-time run a partial one.
+setup
+SHARD=1/2 run
+merges "GAUNTLET_SHARD set by the caller"
+if /usr/bin/grep -qx "shard=" "$F/gauntlet.log"; then ok "the merge-time gauntlet runs unsharded"; else bad "gauntlet saw: $(cat "$F/gauntlet.log")"; fi
 
 # 10d. a red pre-commit hook on the sync or the bump commit: refuse, abort the merge, restore the manifests.
 setup; on develop "peer" set_ver 1.1.2

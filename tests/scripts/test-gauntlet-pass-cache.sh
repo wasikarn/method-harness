@@ -64,6 +64,20 @@ reset_cache; echo x >"$R/ignored.log"; record 0 ""
 reset_cache; GAUNTLET_PASS_CACHE=0 record 0 ""
 [ "$(entries)" = 0 ] && ok "GAUNTLET_PASS_CACHE=0 writes nothing" || bad "the opt-out still wrote an entry"
 
+# status.showUntrackedFiles=no must not hide an untracked file.
+reset_cache; g config status.showUntrackedFiles no; echo new >"$R/untracked.txt"; record 0 ""
+tmp_delete "$R/untracked.txt"; g config --unset status.showUntrackedFiles
+[ "$(entries)" = 0 ] && ok "an untracked file counts even with status.showUntrackedFiles=no" || bad "showUntrackedFiles=no hid an untracked file"
+
+# A copy that is not a repo (a git-archive extract) inside an ignored dir of a clean checkout: git walks
+# up to the enclosing checkout, whose tree that run never tested. Nothing is recorded.
+reset_cache; mkdir -p "$R/sandbox/copy"; echo a >"$R/sandbox/copy/a.txt"; echo 'sandbox/' >>"$R/.gitignore"
+g add .gitignore && g commit -q -m ignore-sandbox
+start=$(cd "$R/sandbox/copy" && gauntlet_pass_start)
+(cd "$R/sandbox/copy" && gauntlet_pass_record 0 "" "$(cd "$R" && gauntlet_pass_start)") >/dev/null
+[ -z "$start" ] && [ "$(entries)" = 0 ] && ok "a non-repo copy nested in an ignored dir records nothing for the enclosing checkout" \
+  || bad "nested copy: start='$start', $(entries) entries"
+
 # Wiring: the record call sits in the all-passed branch with the run's own fail/shard/start values, the
 # start tree is read before the first layer launches, and a test-layer child gauntlet never records.
 NL=$'\n'

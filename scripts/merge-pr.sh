@@ -129,7 +129,7 @@ fi
 # lock and load waits leave the caller time to edit this checkout.
 require_clean() {
   local dirty
-  dirty=$(git status --porcelain) || die "git status failed."
+  dirty=$(git status --porcelain --untracked-files=normal) || die "git status failed."
   if [ -n "$dirty" ]; then
     die "the checkout has uncommitted or untracked files $1; the gauntlet runs on this tree, so it must match the commit that merges. Commit or move them, and do not edit this checkout while merge-pr.sh runs."
   fi
@@ -425,10 +425,13 @@ remote_head() {
 
 require_unchanged_after_gauntlet() {
   local dirty
-  dirty=$(git status --porcelain) || die "git status failed."
+  dirty=$(git status --porcelain --untracked-files=normal) || die "git status failed."
   if [ -n "$dirty" ]; then
     die "the checkout changed while the gauntlet ran, so its result does not cover $head. Clean the checkout and run merge-pr.sh again; it runs the gauntlet again first."
   fi
+  # A commit or checkout during the run leaves the status clean but moves HEAD off the tree it tested.
+  [ "$(git rev-parse HEAD)" = "$head" ] ||
+    die "HEAD moved off $head while the gauntlet ran, so its result does not cover the checkout. Put the branch back on $head (or let a new review cover the new commit) and run merge-pr.sh again."
 }
 
 # run_gauntlet_here: run the full gauntlet on this clean checkout, which is $head, before it is pushed or

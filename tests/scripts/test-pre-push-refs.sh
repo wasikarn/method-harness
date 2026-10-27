@@ -151,6 +151,14 @@ out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -eq 0 ]] && o=1 || o=0
 assert_pass "$o" "the lint reads the pushed commit, not the dirty working tree"
 g checkout -q -- good2.sh
+# Only *.sh (and git-hooks/*) get the shell checks: a file named "brush" (ends in "sh", no dot) is not
+# shell, so its unbalanced quote passes. Catches a regex whose dot matches any character.
+printf 'echo "not shell\n' > "$FIXTURE/brush"
+g add brush && g commit -q -m brush
+ref_line refs/heads/feat/x "$(g rev-parse HEAD)" refs/heads/feat/x "$(g rev-parse HEAD^)"
+out=$(run_hook "$in" 2>&1); rc=$?
+[[ "$rc" -eq 0 && "$out" == *"linting 1 changed file(s)"* ]] && o=1 || o=0
+assert_pass "$o" "a file ending in 'sh' without a dot is not shell-linted"
 
 # --- MH_PREPUSH_FULL=1: the full gauntlet runs while the hook holds the machine-wide lock (GH #158),
 # and the lock is released afterwards, on success and on a failing gauntlet ---

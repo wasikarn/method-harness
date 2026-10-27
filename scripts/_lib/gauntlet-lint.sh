@@ -12,6 +12,7 @@ _GAUNTLET_LINT_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 existing() { local f; while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done; return 0; }
 
 # _lint_pick <awk regex> <paths>: the paths matching the regex, outside the known-bad fixtures, NUL-separated.
+# Write a literal dot as [.]: awk -v processes escapes, so '\.sh$' arrives as '.sh$' (any char).
 _lint_pick() {
   printf '%s\n' "$2" | awk -v re="$1" 'NF && $0 ~ re && $0 !~ /^tests\/skills\/harness-audit\/known-bad\//' | tr '\n' '\0'
 }
@@ -23,12 +24,12 @@ run_lint() {
   # Without -x or a .shellcheckrc, shellcheck checks each file alone, so batching keeps its verdicts.
   # bash -n stays one file per call: `bash -n a b` checks only a (b is its $1).
   # -r: GNU xargs would otherwise run each command once on an empty list (shellcheck then fails).
-  _lint_pick '\.sh$|^git-hooks/' "$all" | xargs -0 -r -n 1 -P 2 bash -n || rc=1
+  _lint_pick '[.]sh$|^git-hooks/' "$all" | xargs -0 -r -n 1 -P 2 bash -n || rc=1
   if command -v shellcheck >/dev/null; then
-    _lint_pick '\.sh$|^git-hooks/' "$all" | xargs -0 -r -n 60 -P 2 shellcheck -S warning || rc=1
+    _lint_pick '[.]sh$|^git-hooks/' "$all" | xargs -0 -r -n 60 -P 2 shellcheck -S warning || rc=1
   fi
   # One python process for every .py and .json, instead of one per file.
-  _lint_pick '\.py$|\.json$' "$all" | xargs -0 -r python3 "$_GAUNTLET_LINT_LIB/lint-files.py" || rc=1
+  _lint_pick '[.]py$|[.]json$' "$all" | xargs -0 -r python3 "$_GAUNTLET_LINT_LIB/lint-files.py" || rc=1
   # Home-path ban on every listed file (pre-commit only sees staged blobs).
   # Env goes on xargs, not after it: BSD xargs treats `LC_ALL=C` as the command (exit 127,
   # once swallowed by 2>/dev/null). Hits are captured because xargs exits 123 on any batch

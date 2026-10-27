@@ -9,7 +9,7 @@
 # than GAUNTLET_LOCK_MAX_AGE (pid reuse), is reclaimed by one waiter at a time: it takes a claim dir
 # (<lock>.reclaim, atomic mkdir), re-checks that the lock is still stale under the claim, then
 # removes it, so no waiter can remove a lock another waiter has just taken. A child of the holder (a
-# test that runs the pre-push hook) sees MH_GAUNTLET_LOCK_OWNER and skips the queue, so it cannot
+# test that runs the pre-push hook with MH_PREPUSH_FULL=1, or a gauntlet started under it) sees MH_GAUNTLET_LOCK_OWNER and skips the queue, so it cannot
 # deadlock the gauntlet that runs it.
 # Fail open, and never fail the caller: a wait past GAUNTLET_LOCK_WAIT_SECS, or a lock dir that
 # cannot be created, prints a message and runs without the lock. Every command here is guarded, so
