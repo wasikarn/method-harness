@@ -118,6 +118,16 @@ n=$(wc -l < "$JOURNAL" | tr -d ' ')
 if [ "$n" -eq 3 ]; then ok "real journal still 3 lines after the deny runs"
 else bad "real journal grew to $n lines: $out"; fi
 
+echo "=== waits in the gauntlet queue ==="
+# A live gauntlet (this test's pid) holds the lock under the fake HOME: the run must wait for it, then
+# run without it after GAUNTLET_LOCK_WAIT_SECS, and leave the holder's lock in place.
+lock="$HOME/.cache/mh/gauntlet.lock"
+mkdir -p "$lock" && echo "$$" > "$lock/pid"
+out=$(env -u MH_GAUNTLET_LOCK_OWNER GAUNTLET_LOCK_WAIT_SECS=0 bash "$SCRIPT" --cases "$T/deny.txt" "$T/old" "$T/same" irrecoverable 2>&1)
+if /usr/bin/grep -q 'gauntlet-lock: waited' <<<"$out" && [ "$(cat "$lock/pid")" = "$$" ]; then
+  ok "a held gauntlet lock is waited on and left to its holder"
+else bad "gauntlet lock not waited on, or taken from its holder: $out"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"
 exit "$fail"
