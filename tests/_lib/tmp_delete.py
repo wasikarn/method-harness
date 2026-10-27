@@ -40,7 +40,6 @@ def main(args):
         d = subprocess.run(["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True).stdout.strip()
         if d:
             system.add(os.path.realpath(d))
-    roots = system
 
     if not args:
         print("tmp_delete: no path given", file=sys.stderr)
@@ -57,8 +56,8 @@ def main(args):
             refused.append(f"{a!r} (/, the home, or an ancestor of it)")
         elif any(loc == r or under(r, loc) for r in system):
             refused.append(f"{a!r} (the system temp dir or an ancestor of it)")
-        elif not any(under(loc, r) for r in roots):
-            refused.append(f"{a!r} (not strictly under a temp root: {sorted(roots)})")
+        elif not any(under(loc, r) for r in system):
+            refused.append(f"{a!r} (not strictly under a temp root: {sorted(system)})")
         else:
             targets.append(loc)
     if refused:

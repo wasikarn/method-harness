@@ -107,8 +107,8 @@ already set alone.
      or an ancestor, the system temp dir itself, and any path not strictly under a temp root, and
      it removes a symlink, never its target (`tests/scripts/test-tmp-delete.sh`). Routing these
      through `trash` put ~20k items a day into `~/.Trash` and kept Finder busy (GH #724).
-  2. *Real files Claude deletes in a session* (repo files, anything under the repo or a path a
-     test did not make): `trash`, so a mistake can be undone.
+  2. *Real files under the repo* that Claude deletes in a session: `trash`, so a mistake can be
+     undone.
   3. *Anything outside the repo that is not tier 1*: `trash`, and ask the user first.
 
   `trash` is `trash-put` on Linux; neither installed means ask the user.

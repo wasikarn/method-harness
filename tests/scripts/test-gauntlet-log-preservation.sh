@@ -13,7 +13,7 @@ ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 # trash "" resolves to the cwd and deletes it (documented repo incident) — a
 # test that mktemp's off its own output must never pass an unchecked result.
-safe_trash() { [ -n "${1:-}" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$1"; return 0; }
 
 echo "=== gauntlet log preservation on failure (GH #158) ==="
 
@@ -27,7 +27,7 @@ else
   ( LOG="$PASS_LOG"; fail=0; : "$LOG"; eval "trap '$TRAP_CMD' EXIT" )
   if [ -d "$PASS_LOG" ]; then
     bad "log dir survived a passing run (should be trashed): $PASS_LOG"
-    safe_trash "$PASS_LOG"
+    safe_tmp_delete "$PASS_LOG"
   else
     ok "log dir is cleaned up after a passing run (fail=0)"
   fi
@@ -39,7 +39,7 @@ else
   else
     bad "log dir was trashed even though fail=1 (original #158 gap)"
   fi
-  safe_trash "$FAIL_LOG"
+  safe_tmp_delete "$FAIL_LOG"
 fi
 
 # report() must print the whole failing layer's log, not tail -n 40 — a
@@ -59,7 +59,7 @@ else
     report tests 0
     false
   " 2>&1 || true)
-  safe_trash "$LOGDIR"
+  safe_tmp_delete "$LOGDIR"
   # Count every fixture line, not just one marker: a partial print (e.g. only
   # the first or last line) would pass a single-marker check while still
   # dropping most of the failing layer.
@@ -88,7 +88,7 @@ else
   chmod +x "$SHIM/mktemp"
   out=$(PATH="$SHIM:$PATH" bash -c "set -uo pipefail; $LOG_LINE; echo \"fell-through LOG=<\$LOG>\"" 2>&1)
   rc=$?
-  safe_trash "$SHIM"
+  safe_tmp_delete "$SHIM"
   if [ "$rc" -ne 0 ] && /usr/bin/grep -q 'mktemp' <<<"$out" \
      && ! /usr/bin/grep -q 'fell-through' <<<"$out"; then
     ok "a failed mktemp -d aborts before any layer can use an empty LOG (rc=$rc)"

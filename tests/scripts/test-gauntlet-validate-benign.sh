@@ -11,7 +11,7 @@ GAUNTLET="$HERE/../../scripts/run-gauntlet.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_trash() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
 
 echo "=== run_validate tolerates only the plugin-root CLAUDE.md warning ==="
 BODY=$(sed -n '/^validate_strict_tolerant()/,/^}/p;/^run_validate()/,/^}/p' "$GAUNTLET")
@@ -48,7 +48,7 @@ run_validate" >/dev/null 2>&1; }
   run other && bad "a different warning was accepted" || ok "a different warning fails"
   run hard-error && bad "a hard error was accepted" || ok "a hard error fails"
 fi
-safe_trash "$BIN"
+safe_tmp_delete "$BIN"
 
 echo "  ($pass passed, $fail failed)"
 [ "$fail" -eq 0 ]

@@ -16,7 +16,7 @@ SCRIPT="$HERE/../../scripts/sync-pr-head.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_trash() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
 
 ROOT_DIR="$(mktemp -d)"
 [ -n "$ROOT_DIR" ] && [ -d "$ROOT_DIR" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -231,6 +231,6 @@ else bad "landed push rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 out=$(bash "$SCRIPT" feat/x 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q usage <<<"$out"; then ok "missing head argument: usage, exit 2"; else bad "usage: rc=$rc out=$out"; fi
 
-safe_trash "$ROOT_DIR"
+safe_tmp_delete "$ROOT_DIR"
 echo "sync-pr-head: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

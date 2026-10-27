@@ -11,7 +11,7 @@ GAUNTLET="$ROOT/scripts/run-gauntlet.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_trash() { [ -n "${1:-}" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$1"; return 0; }
 
 echo "=== gauntlet names failing test files (GH #387) ==="
 
@@ -59,7 +59,7 @@ else
     ok "the 'failed-at:' line leaves out passing rows"
   fi
 fi
-safe_trash "$FIX"
+safe_tmp_delete "$FIX"
 
 # The final FAILED message is the tail of a CI log, so it must repeat the list
 # from the tests layer's log. Run the script's closing if-block on a fixture LOG.
@@ -105,8 +105,8 @@ if /usr/bin/grep -q '^failed-at:.*real regression row' <<<"$out2"; then
 else
   bad "failed-at hid the failing row behind passing rows: <$out2>"
 fi
-safe_trash "$FIX"
-safe_trash "$LOGDIR"
+safe_tmp_delete "$FIX"
+safe_tmp_delete "$LOGDIR"
 
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
