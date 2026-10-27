@@ -3396,13 +3396,19 @@ for _c674 in "echo 'rm -rf b' | command -p sh" "echo 'rm -rf b' | time -p sh" "e
   "echo 'rm -rf b' | unshare sh" "echo 'rm -rf b' | taskset 1 bash" "echo 'rm -rf b' | chpst -u x sh" \
   "echo 'rm -rf b' | setuidgid x sh" "echo 'rm -rf b' | flock f sh" "echo 'rm -rf b' | strace -o log sh" \
   "sudo echo 'rm -rf b' | sh" "env echo 'rm -rf b' | sh" "FOO=1 echo 'rm -rf b' | sh" \
-  "timeout 5 echo 'rm -rf b' | sh" "nice -n 5 printf 'rm -rf b' | sh" "echo 'rm -rf b' | watch sh"; do
+  "timeout 5 echo 'rm -rf b' | sh" "nice -n 5 printf 'rm -rf b' | sh" "echo 'rm -rf b' | watch sh" \
+  "echo 'rm -rf b' | bash -O extglob" "bash +O extglob <<< 'rm -rf b'" "echo 'rm -rf b' | timeout 5 bash -o nounset -O extglob" \
+  "echo 'rm -rf b' | sudo --prompt x sh" "echo 'rm -rf b' | sudo -T 5 sh" \
+  "echo 'rm -rf b' | sh 2>/dev/null" "echo 'rm -rf b' | sh 2>&1" "echo 'rm -rf b' | sh >log" "echo 'rm -rf b' | sh > log" \
+  "echo 'rm -rf b' | 2>/dev/null sh" "echo 'rm -rf b' | timeout 5 sh 2>/dev/null" "echo 'rm -rf b' | sh &>log" \
+  "sh 2>/dev/null <<< 'rm -rf b'"; do
   test_deny "$IRRECOVERABLE" "GH #674: $_c674" "$(bash_payload "$_c674")"
 done
 test_deny  "$IRRECOVERABLE" "GH #674: cat <<EOF | timeout 5 sh" "$(bash_payload $'cat <<EOF | timeout 5 sh\nrm -rf b\nEOF')"
 test_deny  "$IRRECOVERABLE" "GH #674: cat <<EOF | nsenter -t 1 sh" "$(bash_payload $'cat <<EOF | nsenter -t 1 sh\nrm -rf b\nEOF')"
 for _c674 in "echo 'ls' | timeout 5 sh" "echo 'rm -rf b' | bash -o pipefail x.sh" "echo 'rm -rf b' | timeout 5 sh x.sh" \
-  "echo 'rm -rf b' | flock -c 'ls' f" "echo 'rm -rf b' | sudo -u bob cat" "echo 'rm -rf b' | nice grep rm" \
+  "echo 'rm -rf b' | flock f -c ls" "echo 'rm -rf b' | sh < in.sh" "echo 'rm -rf b' | bash -O extglob x.sh" \
+  "echo 'rm -rf b' | sh x.sh 2>/dev/null" "echo 'rm -rf b' | sudo -u bob cat" "echo 'rm -rf b' | nice grep rm" \
   "echo 'rm -rf b' | env -i bash -c ls" "printf 'ls\n' | nice sh"; do
   test_allow "$IRRECOVERABLE" "GH #674 control: $_c674" "$(bash_payload "$_c674")"
 done

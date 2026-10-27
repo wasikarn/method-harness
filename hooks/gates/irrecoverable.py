@@ -242,8 +242,8 @@ def _pieces(text, pipe=False):
 # GH #559 review: the client is the command a pipe stage runs, not the word anywhere in it: "grep -v psql"
 # and a gh title naming psql read no SQL. A stage's argv0 is its first word past shell keywords, VAR=x
 # assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
-# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
-# are defined. A wrapper missing here hides the client, as it does in the rule loop.
+# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`, kept separate because it carries
+# sudo's full value-option list. A wrapper missing here hides the client, as it does in the rule loop.
 _SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb", "mongosh", "mongo", "redis-cli")  # mongo, redis: GH #607
 _SQL_STAGE_WRAPPERS = {
     "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
@@ -445,8 +445,27 @@ def _split_words(seg):
     except ValueError:
         return None
 
+# GH #674 review: an output redirection anywhere in the stage (`| sh 2>/dev/null`, `| 2>&1 sh`, `| sh > log`)
+# leaves the shell's stdin the pipe, so it is no script operand. Its target is the next word when the
+# operator stands alone. An input redirection (`sh < f`) gives the shell other commands and is left as it was.
+_OUT_REDIR_RE = re.compile(r"(?:\d*|&)>>?(?:\||&\d*-?)?(.*)")
+
+def _without_out_redirects(w):
+    out, i = [], 0
+    while i < len(w):
+        m = _OUT_REDIR_RE.fullmatch(w[i])
+        if m:
+            i += 1 if m.group(1) or w[i].endswith(("&1", "&2", "&-")) else 2
+            continue
+        out.append(w[i])
+        i += 1
+    return out
+
 def _reads_stdin_shell(seg):
     w = _split_words(seg.split("<<<", 1)[0].split("<<", 1)[0])
+    if not w:
+        return False
+    w = _without_out_redirects(w)
     if not w:
         return False
     i = _past_run_prefix(w)  # GH #674: every wrapper the rule loop unwraps, with its options
@@ -463,7 +482,8 @@ def _reads_stdin_shell(seg):
         if t in ("--rcfile", "--init-file"):
             k += 1
         elif t[:1] in "-+" and t[1:2] != "-":
-            k += t[1:].count("o")  # GH #674: each o takes the next word (-o pipefail, +o histexpand, -eo x)
+            k += t[1:].count("o") + t[1:].count("O")  # GH #674: each o or O (shopt) takes the next word,
+            # as _shell_body's "oO" reads them (-o pipefail, +o histexpand, -eo x, -O extglob)
     return True
 
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
@@ -1048,9 +1068,6 @@ _RUN_WRAPPERS = {
 # GH #662: the walks with their own wrapper list (xargs, find -exec, a shell reading stdin) read past these too.
 _BUSYBOX_NAMES = ("busybox", "busybox.static", "busybox-static", "toybox")
 _STEP_WRAPPERS = PREFIX_WRAPPERS + _BUSYBOX_NAMES
-_SUDO_VALUES = {"-u", "-g", "-C", "-p", "-D", "-h", "-r", "-t", "-U", "--user", "--group"}
-_ENV_VALUES = {"-u", "-C", "--unset", "--chdir"}
-
 def _past_run_prefix(w, i=0):
     # GH #674: the index of the program word in w[i:] past assignments and every wrapper the rule loop
     # unwraps: PREFIX_WRAPPERS with their value options (sudo's, env's, FLAG_VALUE_WRAPPERS), timeout's
@@ -1064,8 +1081,8 @@ def _past_run_prefix(w, i=0):
             i += 1
             continue
         if b in PREFIX_WRAPPERS or b in _UNWRAP_ONLY or b in _BUSYBOX_NAMES:
-            vals = set(FLAG_VALUE_WRAPPERS.get(b, ()))
-            vals |= _SUDO_VALUES if b in ("sudo", "doas") else _ENV_VALUES if b == "env" else set()
+            # the value options of _SQL_STAGE_WRAPPERS (sudo's full list) and FLAG_VALUE_WRAPPERS, not a third copy
+            vals = set(FLAG_VALUE_WRAPPERS.get(b, ())) | set(_SQL_STAGE_WRAPPERS.get(b, ()))
             i += 1
             while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
                 if b == "env" and w[i].split("=", 1)[0] in ("-S", "--split-string") or b == "env" and w[i].startswith("-S"):
