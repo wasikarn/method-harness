@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$ROOT/git-hooks/pre-commit"
 d="$(mktemp -d)"
 [ -n "$d" ] && [ -d "$d" ] || { echo "FAIL: mktemp -d failed"; exit 1; }
-trap 'trash "$d" 2>/dev/null' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$d"' EXIT
 helper=$(/usr/bin/grep -E '^staged_z\(\) ' "$HOOK")
 body=$(sed -n '/^# 4\. hardcoded home paths/,/^done < <(/p' "$HOOK")
 [ -n "$helper" ] && [ -n "$body" ] || { echo "FAIL: step 4 or staged_z not found in git-hooks/pre-commit"; exit 1; }

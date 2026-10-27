@@ -34,7 +34,7 @@ fi
 # skipping a ~0.7 s `claude plugin validate` whose result these rows never read.
 static() ( claude() { return 1; }; export -f claude; bash "$CHECK" "$1" 2>&1 )
 T=$(mktemp -d) || exit 1
-trap 'trash "$T"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$T"' EXIT
 mkdir -p "$T/multi/hooks/mod" "$T/var/hooks/mod"
 cat > "$T/multi/hooks/mod/cost-ledger.ts" <<'EOF'
 export default (on) => {

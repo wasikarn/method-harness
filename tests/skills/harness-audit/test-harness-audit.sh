@@ -169,7 +169,7 @@ expect_silent 70 check-70-good-clean-root
 # the same helper the check itself uses, under a throwaway MH_CODEX_DATA_DIR
 # so this never touches the real, shared ~/.claude/plugins/data/.
 CODEX_TMP=$(mktemp -d)
-trap 'trash "$CODEX_TMP" 2>/dev/null || true' EXIT
+trap 'python3 "$HERE/../../_lib/tmp_delete.py" "$CODEX_TMP" || true' EXIT
 setup_codex_state() {
   local fixture="$1" gate="$2" path
   export MH_CODEX_DATA_DIR="$CODEX_TMP/$fixture"

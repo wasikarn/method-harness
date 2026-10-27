@@ -13,7 +13,7 @@ ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 TMP="$(mktemp -d)" || exit 1
 [ -n "$TMP" ] || { echo "test-eval-fold: mktemp gave an empty path" >&2; exit 1; }
-trap 'trash "$TMP"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP"' EXIT
 
 echo "=== eval-fold self-test ==="
 
@@ -222,7 +222,7 @@ if bash "$ROOT/scripts/eval-fold.sh" blind-spot-hunter --keep >"$TMP/dry.out" 2>
   /usr/bin/grep -q 'example' "$TMP/dry.out" && ok "dry run labels the printed commands as examples" || bad "dry run: no example label"
   kept_dir=$(sed -n 's/^eval-fold: kept temp dir: //p' "$TMP/dry.out")
   if [ -n "$kept_dir" ] && [ -d "$kept_dir/folded/skills/fold/blind-spot-hunter" ]; then
-    ok "--keep leaves the temp dir"; trash "$kept_dir"
+    ok "--keep leaves the temp dir"; python3 "$ROOT/tests/_lib/tmp_delete.py" "$kept_dir"
   else
     bad "--keep: no kept temp dir reported: $(cat "$TMP/dry.out")"
   fi

@@ -99,7 +99,7 @@ tmp="$(mktemp -d)"; cp "$HOOK" "$tmp/bash-output-redact.sh"
 payload Bash "$GH" "" >"$tmp/in.json"
 err="$(bash "$tmp/bash-output-redact.sh" <"$tmp/in.json" 2>&1)"; rc=$?
 { [ "$rc" -eq 0 ] && [[ "$err" == *"missing or unreadable"* && "$err" != *"$GH"* ]]; } || _r=1; check "missing sibling script: exit 0 with a diagnostic" "$_r"; _r=0
-trash "$tmp"
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp"
 
 # 6c. multi-line private key: every body line goes, up to and including the END line
 body="$(for i in 1 2 3 4 5; do rnd 64 "$ALNUM" "1$i"; done)"

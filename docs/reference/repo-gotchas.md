@@ -100,8 +100,19 @@ already set alone.
   the whole tree. The frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`,
   `CHANGELOG.md`) are exempt from wording passes, never from hygiene: on 2026-08-26 a purge
   reported clean while 29 hits sat in exactly those dirs.
-- **Never `rm -rf`.** Use `trash` (`trash-put` on Linux; neither installed means ask the user).
-  `run-gauntlet.sh` needs the `trash` command itself, since the tests call it by that name, and
+- **Never `rm -rf`; delete by tier.** `gate:bash:irrecoverable` denies `rm -rf` in every tier.
+  1. *Temp paths a test or script made itself* (a `mktemp` dir, or a file inside one): delete
+     for good with `tests/_lib/tmp_delete.py` (`tmp_delete` once `tests/_lib/harness.sh` is
+     sourced; `track_trash`/`_cleanup_trash` use it). It refuses an empty argument, `/`, the home
+     or an ancestor, the system temp dir itself, and any path not strictly under a temp root, and
+     it removes a symlink, never its target (`tests/scripts/test-tmp-delete.sh`). Routing these
+     through `trash` put ~20k items a day into `~/.Trash` and kept Finder busy (GH #724).
+  2. *Real files under the repo* that Claude deletes in a session: `trash`, so a mistake can be
+     undone.
+  3. *Anything outside the repo that is not tier 1*: `trash`, and ask the user first.
+
+  `trash` is `trash-put` on Linux; neither installed means ask the user.
+  `run-gauntlet.sh` needs the `trash` command itself, since some tests call it by that name, and
   stops without it: on Linux, `pip install trash-cli` provides `trash` alongside `trash-put`.
   Single-repo Claude Code cloud sessions (not Project threads or multi-repo sessions, which skip
   repo hooks) get it from the project SessionStart hook in `.claude/settings.json`
@@ -109,11 +120,11 @@ already set alone.
   `CLAUDE_ENV_FILE` when another shfmt shadows it, only when `CLAUDE_CODE_REMOTE=true`); it is
   for developing this repo and is not part of the shipped plugin's `hooks/` (which sessions read
   repo settings: code.claude.com/docs/en/settings, "Settings in cloud sessions").
-  Enforced by `gate:bash:irrecoverable`. Validate the argument is non-empty before any `trash`
-  call: an empty glob result once trashed the whole repo. A template `mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX"`
-  prints "" when TMPDIR names a missing directory (a plain `mktemp -d` falls back on macOS), and `set -u`
-  does not catch an empty variable, so a test hands such a path to `track_trash` from
-  `tests/_lib/harness.sh`, never to `trash` (`tests/scripts/test-trash-empty-guard-lint.sh`).
+  Validate the argument is non-empty before any `trash` call: an empty glob result once trashed
+  the whole repo. A template `mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX"` prints "" when TMPDIR names a
+  missing directory (a plain `mktemp -d` falls back on macOS), and `set -u` does not catch an
+  empty variable, so a test hands such a path to `tmp_delete.py` or `track_trash`, never to
+  `trash` (`tests/scripts/test-trash-empty-guard-lint.sh`).
 - **Never `--no-verify`.** Enforced by `gate:bash:irrecoverable`.
 - **Stage by name.** Never `git add -A` or `git add .` outside a mid-merge state. Enforced by
   `gate:bash:irrecoverable`.

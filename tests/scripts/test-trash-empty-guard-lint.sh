@@ -4,8 +4,9 @@
 # directory that mktemp prints "mkdtemp failed" and returns "", `set -u` does not catch an empty
 # variable, and `trash ""` moves the CURRENT DIRECTORY (the repo root under the gauntlet) to the
 # Trash: the incident tests/_lib/harness.sh records. Plain `mktemp -d` falls back on macOS, so only
-# the template form is linted. The fix: source tests/_lib/harness.sh, `track_trash "$VAR"`, and
-# `trap _cleanup_trash EXIT` (its cleanup drops empty entries before trash sees them).
+# the template form is linted. The fix: delete the temp dir with tests/_lib/tmp_delete.py (it refuses
+# an empty argument and anything outside a temp root itself, so it is never flagged), or source
+# tests/_lib/harness.sh, `track_trash "$VAR"`, and `trap _cleanup_trash EXIT` (GH #724).
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
@@ -15,7 +16,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 
 # Owned by other work in flight; each still holds the pattern and is tracked for a follow-up.
 # The lint fails once a listed file is clean, so the entry gets dropped.
-PENDING=" tests/hooks/test-gates-irrecoverable-2.sh "
+PENDING=" "
 
 # Prints "line: var" for each trash call that names a template-mktemp variable as a whole argument.
 # A trash call is `trash` in command position (line start, after ; & | ( { or a quote opening a trap
@@ -58,7 +59,7 @@ EOF
   || bad "probe: the lint missed an unguarded trash in a cleanup function"
 [ -z "$(hits "$probe/good.sh")" ] && ok "probe: track_trash, a compound path and a quoted 'trash' word are not flagged" \
   || bad "probe: the lint flagged a guarded file"
-[ -n "$probe" ] && trash "$probe"
+[ -n "$probe" ] && python3 "$HERE/../_lib/tmp_delete.py" "$probe"
 
 checked=0
 while IFS= read -r f; do
@@ -73,7 +74,7 @@ while IFS= read -r f; do
         || bad "$rel is clean now: drop it from PENDING" ;;
     *)
       [ -z "$h" ] && ok "$rel: no template-mktemp var reaches a bare trash" \
-        || bad "$rel hands trash a template-mktemp var (empty when mktemp fails): $(printf '%s' "$h" | tr '\n' ',') -- use track_trash + _cleanup_trash from tests/_lib/harness.sh" ;;
+        || bad "$rel hands trash a template-mktemp var (empty when mktemp fails): $(printf '%s' "$h" | tr '\n' ',') -- use tests/_lib/tmp_delete.py, or track_trash + _cleanup_trash from tests/_lib/harness.sh" ;;
   esac
 done < <(find "$ROOT/tests" -type f -name '*.sh' | sort)
 

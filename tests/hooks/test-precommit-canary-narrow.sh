@@ -4,7 +4,7 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 idx="$(mktemp -d)"
-trap 'trash "$idx" 2>/dev/null' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$idx"' EXIT
 mkdir -p "$idx/hooks/gates"
 touch "$idx/hooks/gates/irrecoverable.sh" "$idx/hooks/gates/secret-scan.sh" "$idx/hooks/gates/_silent_fastpath.sh" "$idx/hooks/gates/new-gate.sh"
 body=$(sed -n '/^  only=()/,/^  done <<</p' "$ROOT/git-hooks/pre-commit")

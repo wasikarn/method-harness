@@ -47,7 +47,7 @@ fi
 
 probe=$(mktemp -d)
 [ -n "$probe" ] && [ -d "$probe" ] || { echo "  FAIL: mktemp -d failed, probe rows cannot run" >&2; exit 1; }
-trap '[ -n "$probe" ] && trash "$probe" 2>/dev/null; true' EXIT
+trap '[ -n "$probe" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$probe"; true' EXIT
 # scan FILE: the scanner's stdout; its rc lands in the caller's $?.
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
 hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }

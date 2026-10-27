@@ -21,7 +21,7 @@ PY_BIN="$(python3 -c 'import sys; print(sys.executable)')"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_trash() { [ -n "${1:-}" ] && trash "$1" 2>/dev/null; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
 
 ROOT_DIR="$(mktemp -d)"
 [ -n "$ROOT_DIR" ] && [ -d "$ROOT_DIR" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -287,6 +287,6 @@ if clean_exit && /usr/bin/grep -q 'git config core.hooksPath git-hooks failed' <
   ok "remote, the config write fails: one stderr note, exit 0"
 else bad "write fails: rc=$rc out='$out' err='$err' value='$(hooks_path "$r")'"; fi
 
-safe_trash "$ROOT_DIR"
+safe_tmp_delete "$ROOT_DIR"
 echo "session-start hook: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
