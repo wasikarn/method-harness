@@ -134,8 +134,9 @@ a failure, never a fallback trigger.
 
 **On any other outcome** — non-zero exit, empty or malformed output, a schema mismatch, timeout,
 auth failure, or a semantic refusal — fall back to a Claude `Explore`/review agent (same brief)
-and note "independence reduced for this pass" in the final report. `references/codex-fallback.md`
-— its 6-key return contract and `check-verdict.py` validation. **Load before dispatching the
+and note "independence reduced for this pass" in the final report. Its return contract is the 6-key
+`{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}`, validated by
+`check-verdict.py` on its raw final message. `references/codex-fallback.md` — that contract and `check-verdict.py` validation. **Load before dispatching the
 fallback.**
 
 **Re-fingerprint after the checker returns:**

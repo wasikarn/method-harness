@@ -1,7 +1,7 @@
 # deep-audit: step 3 Claude fallback path
 
 Load when step 3's Codex result fails its acceptance check and the checker falls back to a Claude
-`Explore`/review agent (same brief). Moved from `SKILL.md` step 3 unchanged.
+`Explore`/review agent (same brief).
 
 ## Return contract
 

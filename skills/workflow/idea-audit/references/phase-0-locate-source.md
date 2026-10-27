@@ -1,7 +1,7 @@
 # idea-audit: Phase 0, locate the source
 
 Load when check 3 has nothing to point at (a topic/tool/practice named with no URL, local file,
-or pasted text attached). Moved from `SKILL.md` Phase 0 unchanged.
+or pasted text attached).
 
 1. **`qmd` MCP `query` with `collections: ["llm-wiki"]`, first.**
 2. **If nothing usable there:** `firecrawl_developer_search` for a repo/library/tool name (or

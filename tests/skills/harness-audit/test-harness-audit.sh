@@ -324,13 +324,19 @@ expect_warn_match 81 check-81-edge-101 'fx/ref.md is over 100 lines'
 expect_silent     81 check-81-edge-100
 
 # Check 82: unknown top-level frontmatter key (Claude Code ignores one silently).
-expect_warn_match 82 check-82-bad-skill-typo "frontmatter key 'disable-model-invocaton'"
-expect_warn_match 82 check-82-bad-agent-key "agents/fx.md: frontmatter key 'tool'"
+# A near-miss of a permission/invocation field is CRIT; any other unknown key is WARN.
+expect_crit       82 check-82-bad-skill-typo
+expect_crit       82 check-82-bad-agent-key
+expect_crit       82 check-82-bad-crlf-typo
+expect_warn_match 82 check-82-bad-unknown-warn "frontmatter key 'colour'"
 expect_silent     82 check-82-good
+expect_silent     82 check-82-good-trailing-closer
+expect_silent     82 check-82-good-unterminated
 
 # Check 83: SKILL.md over 16,000 bytes (headroom below the ~5,000 tokens re-attached after compaction).
 expect_warn_match 83 check-83-bad 'fx/SKILL.md is 16001 bytes'
 expect_silent     83 check-83-good-edge
+expect_silent     83 check-83-good-scaffold
 
 # Check 76: measurement coverage status freshness (harness gap-audit M14,
 # 2026-09-20). Shallow on purpose -- WARN, not CRIT -- for the retired

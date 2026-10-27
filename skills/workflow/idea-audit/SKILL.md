@@ -50,8 +50,9 @@ adversarial check, run `mh:idea-audit <source>`."*
 ## Phase 0: Locate source (only when check 3 has nothing to point at)
 
 Triggers only when the invocation names a topic/tool/practice with no URL, local file, or pasted
-text attached: **load `references/phase-0-locate-source.md` before searching.** Never
-auto-fetch the top hit without an explicit user pick.
+text attached: **load `references/phase-0-locate-source.md` before searching.** Search qmd
+`llm-wiki` first, then the web; show the top 1-3 candidates and act only on an explicit user pick,
+never auto-fetching the top hit. Nothing plausible: abort and ask the user for the source.
 
 ## Untrusted-source rule
 
@@ -145,8 +146,9 @@ with a real citation **regardless of `pass`/`findings`**.
 schema mismatch, timeout, auth failure, a missing/empty `checked[]` (`check-verdict.py` exit 1),
 or any other semantic refusal. On any of these: fall back to `general-purpose`, carrying
 `references/attacker-brief.md` as its full prompt — **not** `mh:plan-reviewer`. Note
-"independence reduced for this pass". Validate it and guard the unsandboxed run per
-`references/codex-fallback.md`; **load it before dispatching the fallback.**
+"independence reduced for this pass". The fallback has no sandbox: capture `git status --porcelain`
+before and after, and any diff is a violation. Validation steps: `references/codex-fallback.md`;
+**load it before dispatching the fallback.**
 
 **If the fallback also fails, or every finding fails the citation-shape check**, Phase 3 marks the
 adversarial criterion `insufficient evidence` (never scores it as a passed check silently).
@@ -246,4 +248,4 @@ a non-empty-path check, or Python `os.remove`).
 - `references/codex-fallback.md` — Phase 2 fallback validation and no-sandbox guard. **Load
   before dispatching the fallback.**
 - `references/rationale.md` — why each rule exists, plus the agent count and failure modes.
-  Not needed to run; **load its Failure modes before reporting.**
+  **Load its Failure modes section before reporting**; the rest is background.

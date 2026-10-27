@@ -48,8 +48,8 @@ enforces re-verification; it is a human-cadence pointer.
 user-only, next to `disable-model-invocation: true`. Claude Code ignores both mh-native keys.
 Check 82 allows only them and Claude Code's documented fields, because Claude Code drops an
 unknown key without an error, so a typo such as `disable-model-invocaton` would silently make a
-user-only skill model-invocable. A new Claude Code field reads as a WARN until check 82's list
-learns it.
+user-only skill model-invocable. A near-miss of a permission or invocation field is CRIT; any other
+unknown key, such as a new Claude Code field, is a WARN until check 82's list learns it.
 
 **Explicit `model:` + `effort:` on every entrypoint** (check 54): skills use `model: inherit`
 (a concrete pin on a main-thread skill switches the session model for the rest of the turn).
