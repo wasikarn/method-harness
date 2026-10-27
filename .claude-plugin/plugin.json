@@ -17,6 +17,7 @@
     "./skills/workflow/ideate/",
     "./skills/workflow/idea-audit/",
     "./skills/workflow/post-mortem/",
+    "./skills/workflow/performance-optimizer/",
     "./skills/design/tech-humanize/",
     "./skills/design/code-architect/"
   ],

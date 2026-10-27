@@ -1,9 +1,7 @@
 ---
 name: performance-optimizer
-description: Fixes measured bottlenecks, bundle size, memory leaks, render churn. Use with a profile or repro, or an audit; not for speculative tuning or cyclomatic complexity.
-bucket: build
-tools: Read, Write, Edit, Bash, Grep, Glob
-model: sonnet
+description: "Fixes measured bottlenecks, bundle size, memory leaks, render churn. Use when a profile, repro or audit exists; not for speculative tuning or cyclomatic complexity."
+model: inherit
 effort: high
 ---
 
@@ -114,8 +112,8 @@ LCP, FCP, TTFB).
 
 ## Guardrails
 
-Stop when any of these holds: report what you found, then end with `NEEDS-DECISION <question>`
-(a dispatched agent cannot ask the user mid-run):
+Stop when any of these holds: report what you found, then ask the user the open question (end
+with `NEEDS-DECISION <question>` when running inside a dispatched agent, which cannot ask mid-run):
 - A change **regresses another metric** while improving the target one (e.g. a memoization that grows bundle size, a cache that adds a memory leak)
 - The **same bottleneck persists after 3 optimization attempts** (likely an architectural issue, not a local fix)
 - The fix requires **architectural changes** (data-layer redesign, framework swap) — not a local optimization; hand off to `backend-architect` for the redesign
@@ -138,9 +136,9 @@ Reporting rules:
 
 A reported performance *regression* ("this got slow", with a before/after) is
 `mattpocock-skills:diagnosing-bugs`' literal trigger — its loop owns root-causing a specific
-slowdown, and it diagnoses without patching. This agent owns the proactive half —
+slowdown, and it diagnoses without patching. This skill owns the proactive half —
 bundle/Lighthouse/Web-Vitals audits, bottleneck hunting with no regression reported — and
-applies the fixes (holds Write/Edit). "Audit performance" / "optimize this" → here.
+applies the fixes. "Audit performance" / "optimize this" → here.
 
 ## Red flags
 

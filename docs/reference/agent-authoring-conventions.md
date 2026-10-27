@@ -1,6 +1,6 @@
 # Agent authoring conventions
 
-What the 9-agent fleet actually does, made explicit so a new agent has something accurate to
+What the 8-agent fleet actually does, made explicit so a new agent has something accurate to
 pattern-match against. Prose guidance, not a gate; the mechanical checks are named per item.
 
 ## 1. Tool scoping: explicit allowlist, least privilege
@@ -9,8 +9,8 @@ Every agent declares `tools:` as an explicit allowlist (`harness-audit` check 09
 missing). Read-only reviewers and analysts (`backend-architect`, `blind-spot-hunter`,
 `silent-failure-hunter`, `requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) get `Read`, `Grep`, `Glob`, and
 usually `Bash` for `git log`/`git diff` inspection (read-only by discipline, not by tool grant);
-never `Write`/`Edit` (check 32). Mutating implementers
-(`performance-optimizer`) add `Write`/`Edit`. **`Agent` is never granted** (check 41): a
+never `Write`/`Edit` (check 32). No agent mutates files today (the one mutating implementer,
+`performance-optimizer`, became a skill on 2026-10-27); a mutating agent would add `Write`/`Edit`. **`Agent` is never granted** (check 41): a
 dispatched subagent returns scoped output, it does not spawn its own.
 
 Why: least privilege by construction (OWASP LLM06). The read/mutate split is where the blast
