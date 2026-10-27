@@ -123,7 +123,7 @@ echo "=== no rewrapped Markdown line opens a block mid-paragraph ==="
 
 probe=$(mktemp -d)
 [ -n "$probe" ] && [ -d "$probe" ] || { echo "  FAIL: mktemp -d failed, probe rows cannot run" >&2; exit 1; }
-trap '[ -n "$probe" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$probe"; true' EXIT
+trap '[ -n "$probe" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$probe"' EXIT
 cat > "$probe/bad.md" <<'EOF'
 when the writer never writes to the fd holding it (`true | grep -q 1`, `cat 2>
 >(grep -q y)`: whether it writes there is the program's run-time behaviour
