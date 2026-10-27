@@ -9,7 +9,7 @@ the `mattpocock-skills` cache version changes. No check parses this table.
 |---|---|---|
 | ask-matt | user | the routing layer for "which matt skill" questions; mh ships no router of its own |
 | code-review | model | the review surface. Main session only: its internal Standards/Spec fan-out spawns subagents, which native `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` denies from inside a dispatched subagent. Shares its bare name with Claude Code's built-in `/code-review`; the namespaced form is unambiguous |
-| codebase-design | model | `agents/code-architect.md`, `agents/backend-architect.md` boundary lines (deep-module vocabulary mid-blueprint) |
+| codebase-design | model | `skills/design/code-architect/SKILL.md`, `agents/backend-architect.md` boundary lines (deep-module vocabulary mid-blueprint) |
 | diagnosing-bugs | model | METHODOLOGY Rule 4; `skills/workflow/post-mortem/SKILL.md` input contract (Phases 2, 5 and 6 outputs; Phase 6 is the Cleanup checklist) |
 | tdd | model | METHODOLOGY Rule 4 |
 | domain-modeling | model | `CLAUDE.md` Authoring section (root `GLOSSARY.md` + `docs/adr/`, created lazily) |

@@ -182,7 +182,7 @@ def _verdict_reasons(msg):
 
     if len(verdicts) == 0:
         # Not a Rule 13 verdict-shaped response at all (most subagents: Explore,
-        # research, code-architect building something) -- nothing to check.
+        # research, a builder reporting its edits) -- nothing to check.
         return []
 
     if len(verdicts) > 1:

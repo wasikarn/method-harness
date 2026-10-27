@@ -2,8 +2,8 @@
 type: llm
 focus: trace
 ---
-Find the code-architect agent's blueprint (or, if the agent wasn't dispatched, whatever
-architecture the session produced inline). Today there is exactly one notification channel
+Find the code-architect blueprint (or, if the skill wasn't loaded, whatever architecture the
+session produced inline). Today there is exactly one notification channel
 (email) and the user explicitly said no other channel is needed right now. Score 1 only if the
 blueprint keeps the design simple for today — no new interface, abstract base class, or "provider"
 plugin mechanism with only one real implementer — and, if it discusses future extensibility at

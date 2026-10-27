@@ -29,8 +29,11 @@ it never skips check 3, a hard precondition. Otherwise ask and abort on any NO:
    source or aborts with the same message check 3 always gave.
 
 Not a check, so never an abort: before Phase 1, grep `docs/research/` (names do not always say `audit`) and the memory index
-for the source's URL or title. On a hit, name the earlier audit in the report and say what changed
-since, instead of re-deriving its verdict as if it were new.
+for the source's URL or title. Then run one `qmd` MCP `query` with no `collections` filter: an
+audit of the same source done from another repo is invisible to this repo's grep. Also grep
+`scripts/` and `evals/` for the topic, since an earlier audit may already have shipped a tool or
+run. On a hit, name the earlier audit in the report and say what changed since, instead of
+re-deriving its verdict as if it were new.
 
 On abort, answer directly; optionally note: *"For a scored adoption audit with an independent
 adversarial check, run `mh:idea-audit <source>`."*

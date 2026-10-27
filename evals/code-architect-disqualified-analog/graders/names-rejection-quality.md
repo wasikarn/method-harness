@@ -2,8 +2,8 @@
 type: llm
 focus: trace
 ---
-Find the code-architect agent's blueprint (or, if the agent wasn't dispatched, whatever
-architecture the session produced inline). The user explicitly asked to model the new feature on
+Find the code-architect blueprint (or, if the skill wasn't loaded, whatever architecture the
+session produced inline). The user explicitly asked to model the new feature on
 `LegacyReportGenerator`, which sends email (infra) directly from inside its own report-building
 class instead of composing at a higher layer — the same violation `invoice_routes.py` avoids by
 keeping `InvoiceExporter` pure and calling `send_email` only at the composition point. Score 1
