@@ -71,7 +71,9 @@ test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload '
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
 # hints name steps every mh/dotfiles guard allows: no git stash (subagent-git-guard denies it; the stash is shared)
-_SAVE='or commit first, or save a patch with `git diff HEAD > x.patch`'
+# --binary: a plain diff writes only "Binary files differ" for a binary file; --no-textconv/--no-ext-diff/--no-color:
+# a diff driver or forced color would write text git apply cannot use
+_SAVE='or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`'
 test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git reset --keep <ref>`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: reset --hard names commit/patch" "$(bash_payload 'git reset --hard')" "$_SAVE"
 test_deny_says "$IRRECOVERABLE" "refusal: restore hint" "$(bash_payload 'git restore f')" "$_SAVE" '`git stash'
@@ -90,7 +92,7 @@ test_deny_says "$IRRECOVERABLE" "refusal: alias definition gets the tail only" "
 test_deny_says "$IRRECOVERABLE" "refusal: -c alias run gets the tail only" "$(bash_payload "git -c alias.x='!git reset --hard' x")" "$_NODECIDE" 'reset --keep'
 test_deny_says "$IRRECOVERABLE" "refusal: -c risk key gets the tail only" "$(bash_payload 'git -c clean.requireForce=false clean')" "$_NODECIDE" 'git clean -n'
 # each alternative a hint names must itself pass the gate
-for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff HEAD > x.patch' 'git clean -n' \
+for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch' 'git clean -n' \
   'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
   'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
   test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"

@@ -1553,7 +1553,9 @@ def _shadowed(rule, decision):
     return True
 
 # Safe next steps a deny names (hint=). Each must pass this gate and the subagent guard, so no git stash.
-_SAVE_HINT = "or commit first, or save a patch with `git diff HEAD > x.patch`"
+# --binary: a plain diff writes only "Binary files differ" for a binary file. --no-textconv, --no-ext-diff, --no-color:
+# a diff driver (git-crypt, a textconv) or forced color writes text that git apply cannot restore.
+_SAVE_HINT = "or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`"
 _CHMOD_HINT = "or grant the narrowest mode needed (`chmod 755`, `chmod u+x`)"
 # Set once a git -c / git config alias body is queued: its windows are checked later, outside the alias call.
 # shortcut: it drops the hints of every later deny in the run too (the tail stays); tag windows if that matters.

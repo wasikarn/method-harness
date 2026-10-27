@@ -284,7 +284,7 @@ _n_files=${#_checks[@]}
 _n_total=$(printf '%s\n' "$_all_ids" | grep -c .)
 _n_uniq=$(printf '%s\n' "$_all_ids" | sort -u | grep -c .)
 _uniq_ids=$(printf '%s\n' "$_all_ids" | uniq | tr '\n' ' ')
-_exp_ids="2 3 4 5 7 8 9 10 11 17 18 19 20 21 22 23 24 28 29 32 33 35 41 42 43 54 70 71 72 73 74 75 76 77 78 79 80 81 "
+_exp_ids="2 3 4 5 7 8 9 10 11 17 18 19 20 21 22 23 24 28 29 32 33 35 41 42 43 54 70 71 72 73 74 75 76 77 78 79 80 81 82 83 "
 [ "$_n_files" = "$_n_total" ] || err_die "audit: check-fragment header mismatch: $_n_files files sourced but $_n_total '# N.' headers (fail-closed)"
 [ "$_n_total" = "$_n_uniq" ] || err_die "audit: duplicate check-fragment number (total=$_n_total unique=$_n_uniq) (fail-closed)"
 [ "$_uniq_ids" = "$_exp_ids" ] || err_die "audit: check-fragment set [$_uniq_ids] != expected [$_exp_ids]; a fragment was lost or a gap appeared (fail-closed)"

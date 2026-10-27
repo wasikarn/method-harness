@@ -20,13 +20,13 @@ bash "${CLAUDE_SKILL_DIR}/scripts/audit.sh" --only 22  # one check by number
 | Area | Checks |
 |---|---|
 | Loadability | 02 skills, 03 agents (plugin cache or symlink) |
-| Frontmatter | 04 agents (name, description, bucket enum), 05 skills (name, description, bucket dir, trigger clause), 21 `model:` is a documented alias, 28 strict YAML, 54 model + effort present |
+| Frontmatter | 04 agents (name, description, bucket enum), 05 skills (name, description, bucket dir, trigger clause), 21 `model:` is a documented alias, 28 strict YAML, 54 model + effort present, 82 no unknown top-level key (Claude Code ignores one silently; CRIT for a near-miss of a permission/invocation field) |
 | Names | 07/08 name matches filename, 23 lowercase-hyphen format |
 | Agent tool grants | 09 explicit `tools:`, 10 no duplicates, 24 real tool tokens, 41 never `Agent`, 32 reviewers stay read-only |
 | Hooks | 11 no orphaned hook files, 22 hooks.json event / type / matcher validity, 33 `${CLAUDE_PLUGIN_ROOT}` not `CLAUDE_PLUGIN_DIR`, 73 hooks.json / hook-registry.json id-registry drift |
 | Bundled files | 17 python compiles, 18 shell parses, 19 JSON parses |
 | Descriptions | 20 <= 1536 chars each, 29 no imperative injection words, 43 cumulative listing budget, 77 <= 25 words + third-person voice |
-| Doc rot | 35 script pointers in prose resolve, 42 reference files carry no leaking frontmatter, 79 pinned prose facts (gate/skill/agent counts, README gate table, this check table, manifest versions) match the tree, 80 `mh:`/`mattpocock-skills:`/`codex:` skill references in prose resolve, 81 reference files over 100 lines carry a Contents heading |
+| Doc rot | 35 script pointers in prose resolve, 42 reference files carry no leaking frontmatter, 79 pinned prose facts (gate/skill/agent counts, README gate table, this check table, manifest versions) match the tree, 80 `mh:`/`mattpocock-skills:`/`codex:` skill references in prose resolve, 81 reference files over 100 lines carry a Contents heading, 83 `SKILL.md` is at most 16,000 bytes, headroom below the ~5,000 tokens re-attached after compaction |
 | Working tree | 70 stray top-level entries (gitignored clutter), 71 paired Codex plugin's review-gate state, 72 spawn-brief's Codex `--effort` set vs the installed plugin |
 | Gates and manifests | 74 subagent-scoped gates keep their `agent_id` presence check, 75 `mh:<skill>` references match `plugin.json`'s shipped skills, 76 measurement-coverage status freshness, 78 every nested skill is covered by a `plugin.json` skills entry and no `marketplace.json` entry declares `skills` |
 
