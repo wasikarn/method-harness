@@ -4,7 +4,7 @@
 # audit.sh's fragment integrity guard catches LOST checks, not SILENT ones. Each
 # known-bad fixture below is paired with a clean one; the matching check must
 # FIRE on bad and stay SILENT on good. Per-check fixtures cover 04, 05, 20, 22, 28, 29, 54,
-# 70, 71, 72, 73, 74 (five fixtures, two added 2026-09-21), 75, 76, 77, 78, 79, 80, 81; the fleet-bad / fleet-good pair covers every other check with at
+# 70, 71, 72, 73, 74 (five fixtures, two added 2026-09-21), 75, 76, 77, 78, 79, 80, 81, 82, 83; the fleet-bad / fleet-good pair covers every other check with at
 # least one defect per check (43 is driven by the env ceiling, not a planted defect).
 # check-73-bad-missing-command-field and check-73-bad-args-fingerprint-mismatch (below) are
 # deep-audit fixes, 2026-09-10: a Codex-primary fresh-context checker found the original check
@@ -86,6 +86,11 @@ expect_warn_match() {
   run_check "$1" "$FIX/$2"
   if [ "$WARN_FOUND" -ge 1 ] && [ "$CRIT_FOUND" -eq 0 ] && /usr/bin/grep -E '^ *WARN ' <<<"$OUT" | /usr/bin/grep -E "$3" >/dev/null; then ok "check-$1 $2 fires WARN and reports '$3'"
   else bad "check-$1 $2 did not fire WARN or missing '$3' (crit=$CRIT_FOUND warn=$WARN_FOUND)"; fi
+}
+expect_crit_match() {
+  run_check "$1" "$FIX/$2"
+  if [ "$CRIT_FOUND" -ge 1 ] && /usr/bin/grep -E '^ *CRIT ' <<<"$OUT" | /usr/bin/grep -E "$3" >/dev/null; then ok "check-$1 $2 fires CRIT and reports '$3'"
+  else bad "check-$1 $2 did not fire CRIT or missing '$3' (crit=$CRIT_FOUND warn=$WARN_FOUND)"; fi
 }
 expect_crit() {
   run_check "$1" "$FIX/$2" "${@:3}"
@@ -322,6 +327,26 @@ expect_warn_match 81 check-81-bad-fenced 'fx/ref.md is over 100 lines'
 expect_silent     81 check-81-good
 expect_warn_match 81 check-81-edge-101 'fx/ref.md is over 100 lines'
 expect_silent     81 check-81-edge-100
+
+# Check 82: unknown top-level frontmatter key (Claude Code ignores one silently).
+# A near-miss of a permission/invocation field is CRIT; any other unknown key is WARN.
+expect_crit_match 82 check-82-bad-skill-typo "frontmatter key 'disable-model-invocaton'"
+expect_crit_match 82 check-82-bad-agent-key "frontmatter key 'tool'"
+expect_crit_match 82 check-82-bad-crlf-typo "frontmatter key 'disable-model-invocaton'"
+# A failing python3 fails closed: an unknown key is CRIT, not a silent WARN.
+mkdir -p "$CODEX_TMP/py-stub"
+printf '#!/bin/sh\nexit 2\n' >"$CODEX_TMP/py-stub/python3"
+chmod +x "$CODEX_TMP/py-stub/python3"
+PATH="$CODEX_TMP/py-stub:$PATH" expect_crit_match 82 check-82-bad-unknown-warn 'near-miss check failed \(python3 exit 2\)'
+expect_warn_match 82 check-82-bad-unknown-warn "frontmatter key 'colour'"
+expect_silent     82 check-82-good
+expect_silent     82 check-82-good-trailing-closer
+expect_silent     82 check-82-good-unterminated
+
+# Check 83: SKILL.md over 16,000 bytes (headroom below the ~5,000 tokens re-attached after compaction).
+expect_warn_match 83 check-83-bad 'fx/SKILL.md is 16001 bytes'
+expect_silent     83 check-83-good-edge
+expect_silent     83 check-83-good-scaffold
 
 # Check 76: measurement coverage status freshness (harness gap-audit M14,
 # 2026-09-20). Shallow on purpose -- WARN, not CRIT -- for the retired
