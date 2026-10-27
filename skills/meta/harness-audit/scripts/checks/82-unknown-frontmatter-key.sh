@@ -31,12 +31,14 @@ for _f in "$CLAUDE_DIR/agents"/*.md "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR
   case "$_rel" in agents/*) _known=$_agent_keys ;; *) _known=$_skill_keys ;; esac
   while IFS= read -r _k; do
     case "$_known" in *" $_k "*) continue ;; esac
-    if _near_safety "$_k"; then
-      crit "$_rel: frontmatter key '$_k' looks like a misspelled permission/invocation field; Claude Code ignores it silently"
-    else
-      warn "$_rel: frontmatter key '$_k' is not a documented Claude Code field or an mh-native key (Claude Code ignores it silently; a typo?)"
-    fi
+    _near_safety "$_k" && _rc=0 || _rc=$?
+    case $_rc in
+      0) crit "$_rel: frontmatter key '$_k' is a near-miss of a permission/invocation field (misspelled, or valid only on the other file type); Claude Code ignores it silently" ;;
+      1) warn "$_rel: frontmatter key '$_k' is not a documented Claude Code field or an mh-native key (Claude Code ignores it silently; a typo?)" ;;
+      # Fail closed: a broken python3 must not downgrade a real near-miss to WARN.
+      *) crit "$_rel: frontmatter key '$_k' is unknown and the near-miss check failed (python3 exit $_rc), so a misspelled permission field can't be ruled out" ;;
+    esac
   done < <(_fm_keys "$_f")
 done
-unset _f _k _rel _d _known _skill_keys _agent_keys
+unset _f _k _rc _rel _d _known _skill_keys _agent_keys
 unset -f _fm_keys _near_safety

@@ -87,6 +87,11 @@ expect_warn_match() {
   if [ "$WARN_FOUND" -ge 1 ] && [ "$CRIT_FOUND" -eq 0 ] && /usr/bin/grep -E '^ *WARN ' <<<"$OUT" | /usr/bin/grep -E "$3" >/dev/null; then ok "check-$1 $2 fires WARN and reports '$3'"
   else bad "check-$1 $2 did not fire WARN or missing '$3' (crit=$CRIT_FOUND warn=$WARN_FOUND)"; fi
 }
+expect_crit_match() {
+  run_check "$1" "$FIX/$2"
+  if [ "$CRIT_FOUND" -ge 1 ] && /usr/bin/grep -E '^ *CRIT ' <<<"$OUT" | /usr/bin/grep -E "$3" >/dev/null; then ok "check-$1 $2 fires CRIT and reports '$3'"
+  else bad "check-$1 $2 did not fire CRIT or missing '$3' (crit=$CRIT_FOUND warn=$WARN_FOUND)"; fi
+}
 expect_crit() {
   run_check "$1" "$FIX/$2" "${@:3}"
   if [ "$CRIT_FOUND" -ge 1 ]; then ok "check-$1 $2 fires CRIT (crit=$CRIT_FOUND)"
@@ -325,9 +330,14 @@ expect_silent     81 check-81-edge-100
 
 # Check 82: unknown top-level frontmatter key (Claude Code ignores one silently).
 # A near-miss of a permission/invocation field is CRIT; any other unknown key is WARN.
-expect_crit       82 check-82-bad-skill-typo
-expect_crit       82 check-82-bad-agent-key
-expect_crit       82 check-82-bad-crlf-typo
+expect_crit_match 82 check-82-bad-skill-typo "frontmatter key 'disable-model-invocaton'"
+expect_crit_match 82 check-82-bad-agent-key "frontmatter key 'tool'"
+expect_crit_match 82 check-82-bad-crlf-typo "frontmatter key 'disable-model-invocaton'"
+# A failing python3 fails closed: an unknown key is CRIT, not a silent WARN.
+mkdir -p "$CODEX_TMP/py-stub"
+printf '#!/bin/sh\nexit 2\n' >"$CODEX_TMP/py-stub/python3"
+chmod +x "$CODEX_TMP/py-stub/python3"
+PATH="$CODEX_TMP/py-stub:$PATH" expect_crit_match 82 check-82-bad-unknown-warn 'near-miss check failed \(python3 exit 2\)'
 expect_warn_match 82 check-82-bad-unknown-warn "frontmatter key 'colour'"
 expect_silent     82 check-82-good
 expect_silent     82 check-82-good-trailing-closer
