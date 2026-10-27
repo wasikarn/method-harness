@@ -3328,6 +3328,44 @@ _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
 _timed_case 'GH #693: 12 nested funsubs around 124 KB of words are read in bounded time' 0 \
   "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 15500))$(printf '; }%.0s' $(seq 12))"
 
+# GH #702: the ${...} closer counted every "{" and ignored quotes, escapes and nested $(...)/backtick, so it
+# ended the word before bash (a "}" in a nested substitution) or after it (a "\{", a bare "{"), and a "#"
+# comment in a funsub or <(...) held a closer bash skips. bash 5.3 runs @V@ in each.
+_N=$'\n'
+_p702=('echo ${x:-$(@V@; echo })}' 'echo ${x:-`@V@; echo }`}' 'echo "${x:-$(@V@; echo })}"'
+  'echo ${x:-"$(@V@; echo })"}' "echo \${x:-\${ echo 'a}'; @V@; }}" "echo \"\${x:-\${ echo 'a}'; @V@; }}\""
+  "echo \${ : # }'$_N@V@$_N: # '$_N}" "cat <( : # )'$_N@V@$_N: # '$_N)"
+  "echo \${x:-\\{}$_N@V@${_N}echo }" "echo \"\${x:-\\{}\"$_N@V@${_N}echo }" "echo \${x:-{}$_N@V@${_N}echo }"
+  "echo \${x:-\`echo {\`}$_N@V@${_N}echo }" "echo \${x:-\$'\\{'}$_N@V@${_N}echo }"
+  "echo \"\${x:-'{'}\"$_N@V@${_N}echo }" "echo \${x:-\${y:-\\{}}$_N@V@${_N}echo }"
+  # a plain "..." is let through only when it ends the gate's word early; a "{" in one still denies
+  "echo \${x:-\"a{\"}$_N@V@${_N}echo }" 'echo ${x:-"a}"}; @V@'
+  # already denied before #702; kept so the new closer cannot lose them
+  'echo ${x:-$(case a in a) @V@; echo };; esac)}' 'echo ${x:-$(case a in a) echo };; esac; @V@)}'
+  "echo \${x:-\$(cat <<E$_N})${_N}E$_N@V@)}" "echo \${x:-'a}'}$_N@V@" "echo \"\${x:-'a}'}\"$_N@V@")
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p702[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #702: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in 'echo ${x//\"/}' 'echo ${x:-"a b"}' "echo \${x:-'a b'}" 'echo ${x:-$(echo "a b")}' 'echo ${x:-`date`}' \
+  'echo ${x:-${y:-z}}' 'echo ${x:-$((1+2))}' 'echo ${arr[$i]}' 'echo "${x:-$(date +%s)}"' 'echo ${x/#\//}' \
+  "echo \${ echo x # note$_N}" "cat <(echo a # note$_N)" 'echo ${x:-$(echo "}")}' "echo \${x:-\$(echo '}')}" 'echo ${y:-"a}b"}'; do
+  test_allow "$IRRECOVERABLE" "GH #702 control: $_c" "$(bash_payload "$_c")"
+done
+# the funsub body's odd quote comes from the inner word's wrong close, so that reason is the one shown
+test_deny_says "$IRRECOVERABLE" "GH #702: a funsub holding \${x:-'a}'} names the \${...} word, not the depth budget" \
+  "$(bash_payload "echo \${ echo \${x:-'a}'}; }")" "ends at a different place" "depth-scan budget"
+test_deny_says "$IRRECOVERABLE" "GH #702: a bash -c body keeps the \${...} word reason" \
+  "$(bash_payload "bash -c 'echo \${x:-\\{}${_N}rm -rf ~/x${_N}echo }'")" "ends at a different place" "depth-scan budget"
+_timed_case 'GH #702: a ${x:-\{} target before 9000 padding words denies in bounded time' 2 \
+  "echo \${x:-\\{}$_N$(printf '${x:-a} %.0s' $(seq 9000))"
+_timed_case 'GH #702: a ${x:-\{} target after 9000 padding words denies in bounded time' 2 \
+  "echo $(printf '${x:-a} %.0s' $(seq 9000))\${x:-\\{}"
+_timed_case 'GH #702: 10000 ${y:-"a}b"} words (the plain-quote exemption) are read in bounded time' 0 \
+  "echo $(printf '${y:-"a}b"} %.0s' $(seq 10000))"
+
 # GH #676: chroot, taskset, unshare, nsenter, chpst and setuidgid run the command after their own options
 # and positionals (chroot NEWROOT, taskset's mask, setuidgid's account). Option syntax checked on util-linux
 # 2.39 / coreutils 9.4 (live), runit 2.1.2's chpst getopt string and daemontools 0.76's setuidgid (man pages).
