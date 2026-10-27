@@ -3435,6 +3435,23 @@ test_allow "$IRRECOVERABLE" "GH #676 control: chpst -u www ls" "$(bash_payload '
 test_allow "$IRRECOVERABLE" "GH #676 control: setuidgid www ls -la" "$(bash_payload 'setuidgid www ls -la')"
 test_allow "$IRRECOVERABLE" "GH #676 control: echo chroot / rm -rf b" "$(bash_payload 'echo chroot / rm -rf b')"
 
+# GH #690: brace-view's expanded text is also read with the ifs-split and subst-literal rewrites applied.
+test_deny  "$IRRECOVERABLE" 'GH #690: r{m,m}${IFS}-rf b' "$(bash_payload 'r{m,m}${IFS}-rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #690: rm${IFS}--{r,f} b' "$(bash_payload 'rm${IFS}--{r,f} b')"
+test_deny  "$IRRECOVERABLE" 'GH #690: rm --{r,f}${IFS}b' "$(bash_payload 'rm --{r,f}${IFS}b')"
+test_deny  "$IRRECOVERABLE" 'GH #690: rm $(echo --{r,f}) b' "$(bash_payload 'rm $(echo --{r,f}) b')"
+test_deny  "$IRRECOVERABLE" 'GH #690: rm `echo --{r,f}` b' "$(bash_payload 'rm `echo --{r,f}` b')"
+test_deny  "$IRRECOVERABLE" 'GH #690: r{m,m}${IFS}$(echo -{r,f}) b' "$(bash_payload 'r{m,m}${IFS}$(echo -{r,f}) b')"
+test_deny  "$IRRECOVERABLE" 'GH #690: rm $(printf -- --{recursive,force}) b' "$(bash_payload 'rm $(printf -- --{recursive,force}) b')"
+test_allow "$IRRECOVERABLE" 'GH #690 control: echo {a,b}${IFS}x; ls' "$(bash_payload 'echo {a,b}${IFS}x; ls')"
+test_allow "$IRRECOVERABLE" 'GH #690 control: mkdir -p {a,b}/c && echo $(echo hi)' "$(bash_payload 'mkdir -p {a,b}/c && echo $(echo hi)')"
+test_allow "$IRRECOVERABLE" 'GH #690 control: rm -f {a,b}.log $(echo c.log)' "$(bash_payload 'rm -f {a,b}.log $(echo c.log)')"
+# The composed copies run on ~63 KB of brace text here; develop allows the second row, so it proves they ran.
+_timed_case 'GH #690: 3000 {a,b}${IFS}$(echo c) words are read in bounded time' 0 \
+  "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 3000))"
+_timed_case 'GH #690: r{m,m}${IFS}-rf after 3000 brace words denies in bounded time' 2 \
+  "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 3000)); r{m,m}\${IFS}-rf b"
+
 # GH #713: the $(...) closer had no comment state, so a commented ")" ended it before bash and the "'" in the
 # comment hid the rest; and a funsub ended at any "}", where bash ends it only at a "}" in command position,
 # so a "}" argument inside "..." left the rest in the gate's quotes. bash 5.3 runs @V@ in each.

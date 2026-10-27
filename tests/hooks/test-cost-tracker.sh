@@ -118,7 +118,7 @@ run_row() {
   payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "t162"}))' "$transcript")
   printf '%s' "$payload" | HOME="$fake_home" MH_COST_TRACKER_SETTLE_S=0 bash "$SCRIPT" >/dev/null 2>/dev/null
   row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
-  python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
+  python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript"
   printf '%s' "$row"
 }
 
@@ -326,7 +326,7 @@ print(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5-5", "
   printf '%s' "$payload" | HOME="$fake_home" MH_COST_TRACKER_SETTLE_S=3 bash "$SCRIPT" >/dev/null 2>/dev/null
   wait
   turns=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null | jq -r .turns 2>/dev/null)
-  python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
+  python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript"
   printf '%s' "$turns"
 }
 turns="$(late_flush_turns)"
@@ -388,7 +388,7 @@ run_rows() {
   payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "t324"}))' "$dir/s.jsonl")
   printf '%s' "$payload" | HOME="$fake_home" MH_COST_TRACKER_SETTLE_S=0 bash "$SCRIPT" >/dev/null 2>/dev/null
   cat "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null
-  python3 "$ROOT/tests/_lib/tmp_delete.py" "$dir" "$fake_home" || true
+  python3 "$ROOT/tests/_lib/tmp_delete.py" "$dir" "$fake_home"
 }
 fx=$(mktemp -d)
 
@@ -450,7 +450,7 @@ if [[ -z "$rows" ]]; then
 else
   bad4 "zeroed duplicate copy wrote rows: $rows"
 fi
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fx" || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fx"
 echo "$pass4 passed, $fail4 failed (phase 4)"
 
 # Phase 5 -- build_type_map (GH #379). Failure class: per-file data misattributed

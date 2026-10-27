@@ -5540,32 +5540,49 @@ def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
 
-def _views():
+def _ifs_split(text):
+    return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
+
+def _subst_literals(text):
+    # The text with each literal substitution replaced by what it prints: one copy per quoted mode (see below).
     out = []
-    # GH #309: the command with every brace group expanded as the shell does. Shadow first (GH #337):
-    # drop "brace-view" from SHADOW_RULES once /mh:gate-report shows no false positive.
-    if _BRACEX_TEXT is not None:
-        out.append(("brace-view", _BRACEX_TEXT))
-    # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
-    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the shadow var-verb view keeps the lower cap.
-    if "IFS" in cmd:
-        v = _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", cmd))
-        if v != cmd:
-            out.append(("ifs-split", v))
-    # GH #589: the command with each literal substitution replaced by what it prints. Enforced, and read as
-    # far as the parser does, like ifs-split (a substitution in rm's flags hid `-rf` from every rule).
-    # A second copy leaves every quoted default as written: a view whose quotes do not balance is dropped
-    # unread, so a misread quoted default must not hide an unquoted one (`${G:--rf}`) in the same command.
-    if "$" in cmd or "`" in cmd or "<(" in cmd:
+    if "$" in text or "`" in text or "<(" in text:
         for quoted in (True, False):
-            v = cmd
+            v = text
             for _ in range(3):  # inside out: `${X:-${Y:--rf}}`, `$(echo $(echo -rf))`
                 w = _default_subst(_LITERAL_SUBST_RE.sub(_literal_subst_words, _PSUB_SCRIPT_RE.sub(_psub_eval, v)), quoted)
                 if w == v:
                     break
                 v = w
-            if v != cmd and ("subst-literal", v) not in out:
-                out.append(("subst-literal", v))
+            if v != text and v not in out:
+                out.append(v)
+    return out
+
+def _views():
+    out = []
+    # GH #309: the command with every brace group expanded as the shell does. Shadow first (GH #337):
+    # drop "brace-view" from SHADOW_RULES once /mh:gate-report shows no false positive.
+    # GH #690: bash expands braces before $IFS splitting and command substitution, so a verb or flag that
+    # needs both (`r{m,m}${IFS}-rf b`, `rm $(echo --{r,f}) b`) is read by brace-view copies of the expanded
+    # text with both rewrites applied (each only turns text into the words it stands for, so one copy per
+    # quoted mode reads all that either rewrite alone would); they enforce what brace-view enforces.
+    if _BRACEX_TEXT is not None:
+        out.append(("brace-view", _BRACEX_TEXT))
+        ifs = _ifs_split(_BRACEX_TEXT)
+        for v in _subst_literals(ifs) or [ifs]:
+            if v != _BRACEX_TEXT and ("brace-view", v) not in out:
+                out.append(("brace-view", v))
+    # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
+    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the shadow var-verb view keeps the lower cap.
+    v = _ifs_split(cmd)
+    if v != cmd:
+        out.append(("ifs-split", v))
+    # GH #589: the command with each literal substitution replaced by what it prints. Enforced, and read as
+    # far as the parser does, like ifs-split (a substitution in rm's flags hid `-rf` from every rule).
+    # A second copy leaves every quoted default as written: a view whose quotes do not balance is dropped
+    # unread, so a misread quoted default must not hide an unquoted one (`${G:--rf}`) in the same command.
+    for v in _subst_literals(cmd):
+        out.append(("subst-literal", v))
     if len(cmd) > _VIEW_LEN_CAP:
         return out
     vals = {}
