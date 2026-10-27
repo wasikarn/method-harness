@@ -30,7 +30,7 @@ ENC=$(printf '%s' "$PHYSPWD" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')
 MEMDIR="$FAKE_HOME/.claude/projects/$ENC/memory"
 
 init_memdir() {
-  tmp_delete "$MEMDIR" || true
+  tmp_delete "$MEMDIR"
   mkdir -p "$MEMDIR"
 }
 
@@ -120,7 +120,7 @@ printf '%s\n' \
 OUT=$(run_hook)
 assert_not_contains "clean store stays fully silent" "[memory-lint]" "$OUT"
 
-tmp_delete "$FAKE_HOME/.claude/projects" || true
+tmp_delete "$FAKE_HOME/.claude/projects"
 OUT=$(run_hook)
 assert_not_contains "no memory dir at all stays silent" "[memory-lint]" "$OUT"
 
@@ -358,7 +358,7 @@ if [ "$rc" -eq 0 ] && [ -z "$OUT" ] && [ ! -d "$PROJECT_DIR/rel/.claude/state" ]
 else
   echo "  ❌ relative HOME should exit 0 silently without touching cwd (rc=$rc out=<$OUT>)" >&2; fail=$((fail + 1))
 fi
-tmp_delete "$PROJECT_DIR/rel" || true
+tmp_delete "$PROJECT_DIR/rel"
 
 echo ""
 total=$((pass + fail))

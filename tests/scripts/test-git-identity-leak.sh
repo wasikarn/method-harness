@@ -17,7 +17,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 echo "=== test git-identity leak under a poisoned GIT_DIR ==="
 
 DECOY="$(mktemp -d)" || { echo "FAIL: mktemp -d failed" >&2; exit 1; }
-cleanup() { [ -n "${DECOY:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$DECOY" || true; }
+cleanup() { [ -n "${DECOY:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$DECOY"; }
 trap cleanup EXIT
 
 ( cd "$DECOY" && git init -q -b decoy . ) >/dev/null 2>&1
