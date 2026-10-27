@@ -1,6 +1,7 @@
 # idea-audit: design rationale
 
-Why each rule in `SKILL.md` exists. Not needed to run the skill; read it before changing a rule.
+Why each rule in `SKILL.md` exists; read it before changing a rule. Not needed to run the skill,
+except its Failure modes section, which `SKILL.md` loads before reporting.
 
 ## Contents
 
@@ -10,6 +11,8 @@ Why each rule in `SKILL.md` exists. Not needed to run the skill; read it before 
 - Phase 2: attacker dispatch
 - Phase 3: scoring
 - Phase 4: artifact
+- Agent count
+- Failure modes
 
 ## Phase 0 and pre-flight
 
@@ -107,3 +110,26 @@ Why each rule in `SKILL.md` exists. Not needed to run the skill; read it before 
   cwd names a store that does not exist.
 - No `docs/reference/mattpocock-integration-map.md` row: that table tracks 1:1 routing to a named
   matt skill; this composes on `mattpocock-skills:research`'s principle but is not a routing of it.
+
+## Agent count
+
+Moved from `SKILL.md` § Bundled resources unchanged.
+
+No new agent `.md` files. `general-purpose` ×2 (Phase 1), `codex exec`/`general-purpose` ×1
+(Phase 2) — 3 agents per wave, well under Rule 13's cap of 10.
+
+## Failure modes
+
+Moved from `SKILL.md` unchanged.
+
+- **Decoration, not divergence.** Two analysts producing the same angle — vary framing.
+- **Judge as ground truth.** The attacker is advisory evidence, not a verdict the user can't
+  question.
+- **Silent parse failure.** An attacker output that doesn't validate, reported as if it passed.
+- **A WebFetch-derived save graded as verbatim.** Never skip the banner-and-downgrade path.
+- **Attacker restates instead of independently checking.** A citation that quotes Agent A's own
+  claim back is not verification.
+- **A blended percentage instead of per-claim verdicts.** Report `MATCH/PARTIAL/GAP/N-A` per claim
+  and a scored decision.
+- **Phase 0 auto-fetching the top search hit without confirmation.**
+- **`pass: true` with an empty `checked[]` accepted as-is.** That is a fallback trigger, not a result.
