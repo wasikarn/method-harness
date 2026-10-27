@@ -147,6 +147,7 @@ applies the fixes. "Audit performance" / "optimize this" → here.
 
 ## Done-when
 
+- When a dispatched builder made the edits, a fresh-context validator checked them (METHODOLOGY Rule 13).
 - The targeted metric moved, measured before and after (see Guardrails), and no other metric regressed.
 - Test suite still passing — when there's no test suite to run, this depends on what kind of
   change was made, not a blanket pass or block. A pure algorithmic/structural optimization

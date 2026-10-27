@@ -97,17 +97,18 @@ predated this and used) is mis-parsed as a literal path under the installed CLI 
 this file has since been converted to the file-path form.
 
 `code-architect` and `performance-optimizer` were agents until 2026-10-27, when they were folded
-into skills after the fold-vs-keep eval below scored the folded form worse on no case. Their
+into skills after the fold-vs-keep eval below (folded worse on no code-architect case and on
+one performance-optimizer case at `--runs 3`, which the operator judged noise). Their
 cases were written for the agent form; every fire-case prompt now loads the skill via the Skill
 tool (`skill: "mh:<name>"`), `dispatch-confirmed.md` checks that Skill call, and `agent-fired.md`
 checks the trace has no `Unknown skill: <name>` error.
 
 Eight for `code-architect` (tag `code-architect`).
-Natural routing into this agent never fires on its own for a well-worded architecture request —
+Natural routing into this skill never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
-prompt explicitly instructs dispatch; that shifts what's measured from "does routing pick this
-agent" to "does its process beat a generic fallback," which is what these cases actually test.
-Five fire cases, each targeting one of the agent's own specific, checkable claims against a small
+prompt explicitly names the skill; that shifts what's measured from "does routing pick this
+skill" to "does its process beat a generic fallback," which is what these cases actually test.
+Five fire cases, each targeting one of the skill's own specific, checkable claims against a small
 scaffolded fixture repo (comments that would spoon-feed the answer are deliberately absent from
 the fixtures): a layered repo where the blueprint must not have the domain layer import infra
 (`layer-direction`); a closest-shaped existing analog that itself violates layer direction, which
@@ -338,8 +339,10 @@ Without `--run` the temp dir is removed on exit, so the printed commands are exa
 Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
 (`plan-reviewer`, `blind-spot-hunter`, `silent-failure-hunter`, `test-gap-analyzer`,
 `type-design-analyzer`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
-don't, so its build stops). The 2026-10-27 runs folded worse on 0 cases for each of
-`code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; the
+don't, so its build stops). The 2026-10-27 `--runs 2` pass folded worse on 0 cases for each of
+`code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; at
+`--runs 3` `performance-optimizer` folded worse on one case (`perf-shallow-copy-trap`, 4/5 in both
+arms across all runs). The
 operator shipped `code-architect` and `performance-optimizer` as skills and kept the other two as
 agents (a scored reviewer, maker≠checker; a read-only boundary for untrusted tickets, with no
 injection case in the eval).
