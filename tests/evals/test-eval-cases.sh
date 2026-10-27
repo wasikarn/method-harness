@@ -225,10 +225,12 @@ for c, gdir in cases:
             items.append((f, "  no pattern in %s" % f, None)); continue
         # Check the regex the eval runtime gets, i.e. the YAML-decoded scalar, not its raw text: "x\\" is the
         # invalid regex x\ once decoded. JSON's string escapes cover the \\ and \" these graders use.
+        # shortcut: a YAML-only escape (\x41, \e) fails here although the runtime (Bun.YAML.parse) accepts it;
+        # write a real YAML decoder if a grader ever needs one.
         try:
             pat = sq.group(1).replace("''", "'") if sq else json.loads('"%s"' % dq.group(1))
         except ValueError as e:
-            items.append((f, "  bad double-quoted pattern escape in %s: %s" % (f, e), None)); continue
+            items.append((f, "  %s: this check decodes only JSON escapes in a double-quoted pattern (%s); write the pattern single-quoted" % (f, e), None)); continue
         try:
             re.compile(pat)
         except re.error as e:
