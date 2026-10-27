@@ -14,7 +14,7 @@ SCRIPT="$HERE/../../scripts/merge-pr.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_trash() { [ -n "${1:-}" ] && trash "$1" 2>/dev/null; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
 
 # The fixture's git must not read the operator's config (hooks, signing) or a caller's lock state.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -410,7 +410,7 @@ run
 if [ "$rc" -ne 0 ] && /usr/bin/grep -q "could not take the merge lock" <<<"$out" && ! merged && [ "$(cat "$F/merge.lock/pid")" = "$$" ]; then
   ok "a held merge lock refuses and stays with its owner"
 else bad "held lock rc=$rc: $out"; fi
-safe_trash "$F/merge.lock"
+safe_tmp_delete "$F/merge.lock"
 
 # 14. develop's version cannot be ordered, or its manifest is missing: refuse, nothing left behind.
 setup 1.1.196-rc1; on develop "peer" append c.txt peer
@@ -637,6 +637,6 @@ if [ "$rc" -eq 2 ] && /usr/bin/grep -q -- "--verify <PR number>" <<<"$out"; then
 out=$(PATH="$STUB:$PATH" bash "$SCRIPT" 2>&1); rc=$?
 if [ "$rc" -eq 2 ]; then ok "missing PR argument exits 2"; else bad "missing PR argument rc=$rc"; fi
 
-safe_trash "$T"
+safe_tmp_delete "$T"
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

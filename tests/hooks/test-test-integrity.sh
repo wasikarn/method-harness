@@ -16,7 +16,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/hooks/gates/test-integrity.sh"
 WORK=$(mktemp -d)
-trap 'trash "$WORK" 2>/dev/null || rm -rf "$WORK"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$WORK"' EXIT
 # Isolate the gate-verdict journal (hooks/gates/_journal.py) from this file's
 # ask-case assertions -- run standalone (this file's own header invites it),
 # it would otherwise silently append rows to the operator's real

@@ -19,7 +19,7 @@ unset MH_GATE_JOURNAL_PATH
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK=$(mktemp -d)
-trap 'trash "$WORK" 2>/dev/null || rm -rf "$WORK"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$WORK"' EXIT
 
 pass=0
 fail=0

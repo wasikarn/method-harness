@@ -247,7 +247,7 @@ if os.path.isdir(root):
             print(os.path.join(root, d))
 " | while IFS= read -r stray; do trash "$stray" 2>/dev/null; done
 
-trash "$STUB_DIR" "$CLAUDE_STUB_LOG" 2>/dev/null
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$STUB_DIR" "$CLAUDE_STUB_LOG"
 
 echo "model-bench.sh self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

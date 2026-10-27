@@ -14,7 +14,7 @@ python3 "$SCRIPT" --selftest || { echo "FAIL: ste-lint.py selftest"; FAIL=1; }
 
 TMP="$(mktemp -d)"
 OUTSIDE="$TMP-outside.md"
-trap 'trash "$TMP" "$OUTSIDE" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" || true' EXIT
 (
   cd "$TMP" || exit 1
   git init -q
@@ -108,7 +108,7 @@ assert lines == [1], lines
 ) || FAIL=1
 
 TMP2="$(mktemp -d)"
-trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" || true' EXIT
 (
   cd "$TMP2" || exit 1
 
@@ -159,7 +159,7 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" 2>/dev/null || true' EXIT
 ) || FAIL=1
 
 TMP3="$(mktemp -d)"
-trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" || true' EXIT
 (
   # Running outside a git repository entirely is a tool error (exit 2),
   # never an uncaught traceback (deep-audit finding: repo_root() propagated
@@ -171,7 +171,7 @@ trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" 2>/dev/null || true
 ) || FAIL=1
 
 TMP4="$(mktemp -d)"
-trap 'trash "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" "$TMP4" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" "$TMP4" || true' EXIT
 (
   # --no-advisory hides advisory lines but keeps confirmed ones and the exit code;
   # a long sentence's echoed excerpt is capped so a directory scan stays readable.
