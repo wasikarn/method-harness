@@ -123,7 +123,8 @@ echo "=== never queues behind a gauntlet ==="
 # it nor touch it (a 28-min replay in the queue kept every push waiting, 2026-10-27).
 lock="$HOME/.cache/mh/gauntlet.lock"
 mkdir -p "$lock" && echo "$$" > "$lock/pid"
-out=$(env -u MH_GAUNTLET_LOCK_OWNER bash "$SCRIPT" --cases "$T/deny.txt" "$T/old" "$T/same" irrecoverable 2>&1)
+# WAIT_SECS=0: a reintroduced lock then fails this row at once instead of waiting 1800 s.
+out=$(env -u MH_GAUNTLET_LOCK_OWNER GAUNTLET_LOCK_WAIT_SECS=0 bash "$SCRIPT" --cases "$T/deny.txt" "$T/old" "$T/same" irrecoverable 2>&1)
 if ! /usr/bin/grep -q 'gauntlet-lock' <<<"$out" && /usr/bin/grep -q 'diffs=0' <<<"$out" && [ "$(cat "$lock/pid")" = "$$" ]; then
   ok "a held gauntlet lock is not waited on and is left to its holder"
 else bad "the run waited on or touched the gauntlet lock: $out"; fi
