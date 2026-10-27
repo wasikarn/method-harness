@@ -950,8 +950,8 @@ _RUN_WRAPPERS = {
     **{_bb: ((), 0, (), False) for _bb in ("busybox", "busybox.static", "busybox-static", "toybox")},
     # GH #676: each stops at its first non-option word (checked live on util-linux 2.39 and coreutils 9.4,
     # and on runit 2.1.2's chpst and daemontools 0.76's setuidgid). An optional value (nsenter's -m -r -w
-    # -W, i.e. "W::" in its option string) can only be attached, so it is no value flag here. taskset -p
-    # takes a pid, not a command. Short flags bundle as getopt reads them (_GETOPT_CLUSTERS).
+    # -W and its other "::" letters) can only be attached, so it is no value flag here. taskset -p takes a
+    # pid, not a command. Bundled short flags and abbreviated long options are GH #709 for every wrapper.
     "chroot": (("--userspec", "--groups"), 1, (), False),  # NEWROOT, then the command
     "taskset": ((), 1, (), False),  # the mask or cpu list (-c only changes how it is read)
     "unshare": (("-S", "--setuid", "-G", "--setgid", "-R", "--root", "-w", "--wd", "--map-user", "--map-group",
@@ -961,10 +961,6 @@ _RUN_WRAPPERS = {
     "chpst": (tuple("-" + c for c in "uUbemdopfcrt/nlL"), 0, (), False),  # runit's getopt string
     "setuidgid": ((), 1, (), False),  # the account, then the command
 }
-# GH #676: wrappers whose short flags bundle as getopt reads them: in a cluster, the first letter that takes a
-# value takes the rest of the cluster, or the next word when it is the last letter (`nsenter -at 1 cmd`,
-# `chpst -vu x cmd`). Not applied to the older wrappers, whose bundling was not checked.
-_GETOPT_CLUSTERS = {"chroot", "taskset", "unshare", "nsenter", "chpst", "setuidgid"}
 # GH #662: the walks with their own wrapper list (xargs, find -exec, a shell reading stdin) read past these too.
 _BUSYBOX_NAMES = ("busybox", "busybox.static", "busybox-static", "toybox")
 _STEP_WRAPPERS = PREFIX_WRAPPERS + _BUSYBOX_NAMES
@@ -4302,10 +4298,6 @@ def _check_window(_wi, w):
                 if t == "--":
                     i += 1
                     break
-                if t not in vals and argv0 in _GETOPT_CLUSTERS and not t.startswith("--") and len(t) > 2:
-                    v = next((k for k, ch in enumerate(t[1:], 1) if "-" + ch in vals), 0)
-                    i += 2 if v == len(t) - 1 else 1
-                    continue
                 i += 2 if t in vals else 1
             if body is None and join is None:
                 break  # su without -c runs a login shell, no command
