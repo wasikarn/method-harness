@@ -144,7 +144,9 @@ def is_no_dispatch_grader(path, agent):
 
 def fold_grader(path, agent):
     fm, body = split_fm(open(path).read())
-    pat = fm and re.search(r"^pattern:.*Agent type .*not found.*$", fm, re.M)
+    if not fm:
+        return False
+    pat = re.search(r"^pattern:.*Agent type .*not found.*$", fm, re.M)
     if pat and re.search(r"^type:\s*regex\s*$", fm, re.M):
         # the agent-era "Agent type '...' not found" check can never fire once no Agent call
         # happens; check the Skill tool's own error instead (Claude Code 2.1.310: "Unknown skill: <name>")
