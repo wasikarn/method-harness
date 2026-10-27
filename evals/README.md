@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-77 cases in Claude Code's native `claude plugin eval` layout (count:
+79 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -102,7 +102,7 @@ cases were written for the agent form; every fire-case prompt now loads the skil
 tool (`skill: "mh:<name>"`), `dispatch-confirmed.md` checks that Skill call, and `agent-fired.md`
 checks the trace has no `Unknown skill: <name>` error.
 
-Six for `code-architect` (tag `code-architect`).
+Eight for `code-architect` (tag `code-architect`).
 Natural routing into this agent never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
 prompt explicitly instructs dispatch; that shifts what's measured from "does routing pick this
@@ -117,7 +117,11 @@ concrete implementation with a request phrased to invite a speculative plugin in
 must match (`di-style-respect`); and a requirement with a genuine two-reading fork that must be
 named as a prominent callout, not silently resolved (`ambiguous-requirement`). Plus one
 should-NOT-fire case: a trivial one-line rename, which must be done directly without loading
-the skill or producing a full blueprint as a substitute (`trivial-no-dispatch`). In the
+the skill or producing a full blueprint as a substitute (`trivial-no-dispatch`). Plus two chain
+cases (second tag `chain`), where the blueprint is handed on to `mh:plan-reviewer`: one prompt names
+the reviewer and scores the handoff's quality (`chain-plan-reviewer`), and one only asks for the
+plan to be checked and scores whether a fresh-context reviewer is called unprompted
+(`chain-unprompted`). These catch a folded main loop skipping the next specialist. In the
 without-plugin arm, `mh:code-architect` doesn't exist — the Skill call fails with
 `Unknown skill: mh:code-architect` and the model answers without it. A `tool_used: Skill` check
 alone matches that failed call too, so `agent-fired.md` is a `regex`/`trace` `not_contains`
