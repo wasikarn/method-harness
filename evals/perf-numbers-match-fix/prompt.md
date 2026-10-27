@@ -8,4 +8,4 @@ allowed_tools: [Bash, Read, Write, Edit, Grep, Glob, Agent, Skill]
 ---
 `Leaderboard.currentMin()` in `src/leaderboard.js` re-sorts the whole array on every call —
 `bench.js` reproduces the slowdown. Optimize it. Use the `mh:performance-optimizer` skill for this (Skill tool, `skill: "mh:performance-optimizer"`). Run
-`node bench.js` before and after. Relay whatever it produces back to me in full, verbatim.
+`node bench.js` before and after. End with the full report as your final message.

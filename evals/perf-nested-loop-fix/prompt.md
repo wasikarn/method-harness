@@ -8,4 +8,4 @@ allowed_tools: [Bash, Read, Write, Edit, Grep, Glob, Agent, Skill]
 ---
 `findDuplicates` in `src/dedupe.js` is a bottleneck when processing large lists — `bench.js`
 reproduces it. Use the `mh:performance-optimizer` skill for this (Skill tool, `skill: "mh:performance-optimizer"`). Run `node bench.js` before and after the fix so
-the reported numbers are real. Relay whatever it produces back to me in full, verbatim.
+the reported numbers are real. End with the full report as your final message.

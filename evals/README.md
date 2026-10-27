@@ -96,10 +96,13 @@ predated this and used) is mis-parsed as a literal path under the installed CLI 
 — confirmed on `post-mortem`. See "A previously-invisible defect" below: every other suite in
 this file has since been converted to the file-path form.
 
-Six for `code-architect` (tag `code-architect`, a skill since 2026-10-27: folded from an agent
-after the fold-vs-keep eval below scored the folded form worse on no case; every fire-case prompt
-loads it via the Skill tool with `skill: "mh:code-architect"`, and `dispatch-confirmed.md` checks
-that Skill call). The history below describes the agent form these cases were written for.
+`code-architect` and `performance-optimizer` were agents until 2026-10-27, when they were folded
+into skills after the fold-vs-keep eval below scored the folded form worse on no case. Their
+cases were written for the agent form; every fire-case prompt now loads the skill via the Skill
+tool (`skill: "mh:<name>"`), `dispatch-confirmed.md` checks that Skill call, and `agent-fired.md`
+checks the trace has no `Unknown skill: <name>` error.
+
+Six for `code-architect` (tag `code-architect`).
 Natural routing into this agent never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
 prompt explicitly instructs dispatch; that shifts what's measured from "does routing pick this
@@ -113,31 +116,25 @@ concrete implementation with a request phrased to invite a speculative plugin in
 (`premature-abstraction`); a codebase with a consistent constructor-injection style the blueprint
 must match (`di-style-respect`); and a requirement with a genuine two-reading fork that must be
 named as a prominent callout, not silently resolved (`ambiguous-requirement`). Plus one
-should-NOT-fire case: a trivial one-line rename, which must be done directly without dispatching
-the agent or producing a full blueprint as a substitute (`trivial-no-dispatch`). In the
-without-plugin arm, `mh:code-architect` doesn't exist — the model's first dispatch attempt gets
-`Agent type 'mh:code-architect' not found. Available agents: ...` and it falls back to the
-built-in `Plan` agent. This makes `tool_used: Agent` with `input_match` on the requested
-subagent_type a false-positive trap (it matches the failed attempt too, not just a successful
-one): `agent-fired.md` is a `regex`/`trace` `not_contains` check on that exact tool-error string
-instead (as a skill, no Agent dispatch happens, so that check now always passes). Needs
+should-NOT-fire case: a trivial one-line rename, which must be done directly without loading
+the skill or producing a full blueprint as a substitute (`trivial-no-dispatch`). In the
+without-plugin arm, `mh:code-architect` doesn't exist — the Skill call fails with
+`Unknown skill: mh:code-architect` and the model answers without it. A `tool_used: Skill` check
+alone matches that failed call too, so `agent-fired.md` is a `regex`/`trace` `not_contains`
+check on that error string instead. Needs
 `--allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill`; the with-arm needs `defaultEnabled`
 flipped true to load the plugin's skills at all, handled automatically via
 `with_default_enabled_true` (see the runnable commands below).
 
-Six for `performance-optimizer` (tag `performance-optimizer`, a skill since 2026-10-27, folded from
-an agent after the fold-vs-keep eval scored the folded form worse on no case; same ablation
-mechanics as `code-architect` — every fire-case prompt loads it via the Skill tool with
-`skill: "mh:performance-optimizer"`, `dispatch-confirmed.md` checks that Skill call,
-`agent-fired.md` is the agent-era tool-error-string regex and now always passes, same automatic
-`defaultEnabled` flip as above). Five
+Six for `performance-optimizer` (tag `performance-optimizer`, same skill mechanics and automatic
+`defaultEnabled` flip as `code-architect`). Five
 fire cases against small runnable JS fixtures with a `bench.js`: a nested-loop O(n²) lookup the
 fix must convert to Map/Set and actually benchmark before/after via real `node bench.js` runs, not
 invented numbers (`nested-loop-fix`); a function with no measurable bottleneck and no
 benchmark/test infra at all, where the report must not assert a specific improvement number it
 never actually measured (`cant-measure-refusal`); a deep-clone hot path with a caller that mutates
 a nested field on the result, where the fix must stay a real deep clone and not regress to a
-`{...obj}` shallow copy — this agent's own reference table names the trap (`shallow-copy-trap`); a
+`{...obj}` shallow copy — this skill's own reference table names the trap (`shallow-copy-trap`); a
 repeated-re-sort-for-min pattern where the reported complexity/impact numbers must match whatever
 was actually shipped, not the reference table's heap-queue figure for a technique not built
 (`numbers-match-fix`); and a bottleneck ruled architectural in the prompt (parallelization already
@@ -151,9 +148,9 @@ per this skill's own Scope section, not this skill's — it must take a root-cau
 approach instead of jumping to speculative optimizations (`regression-routing`). Needs
 `--allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill`.
 
-Six for `backend-architect` (tag `backend-architect`, agent, same dispatch/ablation mechanics as
-`code-architect`/`performance-optimizer` — explicit dispatch instruction in every fire-case prompt,
-`agent-fired.md` is the tool-error-string regex, same automatic `defaultEnabled` flip as above). Five
+Six for `backend-architect` (tag `backend-architect`, agent — explicit dispatch instruction in
+every fire-case prompt, `agent-fired.md` is a `not_contains` regex on the
+`Agent type '...' not found` tool error, same automatic `defaultEnabled` flip as above). Five
 fire cases against small scaffolded fixtures: a payment-claim worker whose `UPDATE` guards on a
 different column (`charge_id IS NULL`) than the one it sets (`status`), letting two concurrent
 workers both pass the claim guard and double-charge (`guard-column-bug`); a checkout endpoint that
@@ -167,8 +164,8 @@ defer characterizing exploitability to `/security-review` per the agent's own do
 rule, and not itself construct an attack payload or CVE-style writeup, while a short illustrative
 before/after code snippet as part of its own architectural fix doesn't count against it
 (`security-handoff`). Plus one should-NOT-fire case: "give me the files/interfaces/build order" for
-one new endpoint is file-by-file blueprinting — `code-architect`'s territory per both agents' own
-cross-references, not a system-level review — so `backend-architect` must not be dispatched
+one new endpoint is file-by-file blueprinting — `code-architect`'s territory per the cross-references
+in both the `code-architect` skill and this agent, not a system-level review — so `backend-architect` must not be dispatched
 (`file-blueprint-misroute`). Needs `--allow-tools Bash,Read,Grep,Glob,Agent`.
 
 Six for `ideate-critic` (tag `ideate-critic`, agent — `mh:ideate`'s fresh-context Phase 2 critic,
@@ -336,9 +333,12 @@ Without `--run` the temp dir is removed on exit, so the printed commands are exa
 
 Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
 (`plan-reviewer`, `blind-spot-hunter`, `silent-failure-hunter`, `test-gap-analyzer`,
-`type-design-analyzer`; `ideate-critic`'s prompts don't, so its build stops). The 2026-10-27 runs
-folded `code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`
-(folded worse on 0 cases each), and those four now ship as skills.
+`type-design-analyzer`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
+don't, so its build stops). The 2026-10-27 runs folded worse on 0 cases for each of
+`code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; the
+operator shipped `code-architect` and `performance-optimizer` as skills and kept the other two as
+agents (a scored reviewer, maker≠checker; a read-only boundary for untrusted tickets, with no
+injection case in the eval).
 Results: `evals/results/fold-<agent>-<timestamp>/{kept,folded}/aggregate-result.json` and
 `compare.txt`. The copy holds tracked files only (working-tree bytes), so commit or `git add` a
 new case before running it.

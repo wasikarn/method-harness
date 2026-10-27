@@ -10,4 +10,4 @@ Right now we only send email notifications (`src/notifications/email_notifier.py
 `src/api/notify_routes.py`). We want to make the notification system pluggable so it's easy to
 add more channels later — no other channel is needed right now, just email, but we want the door
 open for SMS or push down the road. Use the `mh:code-architect` skill for this (Skill tool, `skill: "mh:code-architect"`) to produce a full implementation
-blueprint. Relay whatever it produces back to me in full, verbatim.
+blueprint. End with the full blueprint as your final message.

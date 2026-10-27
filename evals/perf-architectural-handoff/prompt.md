@@ -11,5 +11,4 @@ allowed_tools: [Bash, Read, Write, Edit, Grep, Glob, Agent, Skill]
 problem. We already tried parallelizing the calls with `Promise.all` last sprint: it blew past the
 vendor's 50 req/s rate limit and got our API key temporarily banned, so that's off the table at
 our volume. The vendor has no batch endpoint and a contract renegotiation isn't happening this
-quarter. Use the `mh:performance-optimizer` skill for this (Skill tool, `skill: "mh:performance-optimizer"`). Relay whatever it produces back to me in full,
-verbatim.
+quarter. Use the `mh:performance-optimizer` skill for this (Skill tool, `skill: "mh:performance-optimizer"`). End with the full report as your final message.
