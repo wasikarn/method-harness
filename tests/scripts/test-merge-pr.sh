@@ -187,7 +187,7 @@ run() {
   out=$(cd "$F/work" && PATH="$STUB:$PATH" STUB_LOG="$F/calls.log" STUB_DIR="$F" \
     STUB_ORIGIN="$F/origin.git" STUB_PEER="$STUB/peer.sh" STUB_SEED="$F/seed" STUB_LOAD="${STUB_LOAD:-1.50}" \
     STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict "MERGE @ $(remote_tip feat/x)")}" \
-    MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX=4 MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
+    MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX="${LOAD_MAX-4}" MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
     bash "$SCRIPT" 451 2>&1)
   rc=$?
 }
@@ -396,6 +396,13 @@ setup; on develop "peer" set_ver 1.1.2
 STUB_LOAD=7.25 run
 refuses "high load" "7.25"
 untouched "high load"
+# 12b. no MERGE_PR_LOAD_MAX: the cap is the online core count. A load at it refuses and names it;
+#     a load just under it merges, even when that is above the old fixed cap of 4.
+cores=$(getconf _NPROCESSORS_ONLN)
+setup; STUB_LOAD="$cores.00" LOAD_MAX='' run
+refuses "default cap is the core count" ">= $cores after"
+setup; STUB_LOAD="$((cores - 1)).50" LOAD_MAX='' run
+merges "load under the core count"
 
 # 13. another merge-pr.sh holds the lock past the wait: refuse, leave its lock alone.
 setup; mkdir "$F/merge.lock"; echo "$$" >"$F/merge.lock/pid"
