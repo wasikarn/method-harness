@@ -70,17 +70,18 @@ test_deny_says "$IRRECOVERABLE" "refusal: tail says list it for the user" "$(bas
 test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload 'dropdb prod')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
-# hints name steps every mh/dotfiles guard allows: no git stash (subagent-git-guard denies it; the stash is shared)
+# hints name steps this gate allows, and never git stash (subagent-git-guard denies it; the stash is shared).
+# A step the subagent guard denies is marked "in the main session" in the hint (checked below).
 # --binary: a plain diff writes only "Binary files differ" for a binary file; --no-textconv/--no-ext-diff/--no-color:
 # a diff driver or forced color would write text git apply cannot use
 _SAVE='or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`'
-test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git reset --keep <ref>`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" 'in the main session, move HEAD with `git reset --keep <ref>`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: reset --hard names commit/patch" "$(bash_payload 'git reset --hard')" "$_SAVE"
 test_deny_says "$IRRECOVERABLE" "refusal: restore hint" "$(bash_payload 'git restore f')" "$_SAVE" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: checkout -- hint" "$(bash_payload 'git checkout -- f')" "$_SAVE" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: switch --force hint" "$(bash_payload 'git switch -f main')" 'or commit first, then a plain `git switch`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: commit --amend hint" "$(bash_payload 'git commit --amend -m x')" "make a new commit"
-test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'preview with `git clean -n`, then move the files aside with `mv`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'in the main session, preview with `git clean -n`; then move the files aside with `mv`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: push --mirror hint" "$(bash_payload 'git push --mirror origin')" "push named refs"
 test_deny_says "$IRRECOVERABLE" "refusal: stash drop hint" "$(bash_payload 'git stash drop')" "leave the stash in place" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: worktree remove --force hint" "$(bash_payload 'git worktree remove --force ../wt')" "then a plain \`git worktree remove" '`git stash'
@@ -96,6 +97,16 @@ for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git dif
   'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
   'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
   test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"
+done
+# a subagent reads the same hints: every alternative not marked "in the main session" must pass its guard too
+for _alt in 'git commit -m x' 'git add f.txt' 'git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch' \
+  'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
+  'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
+  test_allow "$SUBAGENT_GIT_GUARD" "refusal hint alternative, subagent: $_alt" "$(bash_agent_payload "$_alt" fork)"
+done
+# the two marked main-session-only really are denied to a subagent (drop the mark if the guard ever allows them)
+for _alt in 'git reset --keep HEAD~1' 'git clean -n'; do
+  test_deny "$SUBAGENT_GIT_GUARD" "refusal hint alternative, subagent denied: $_alt" "$(bash_agent_payload "$_alt" fork)"
 done
 # --- git branch force-delete: discards unmerged commits ---
 test_deny  "$IRRECOVERABLE" "git branch -D (force-delete short flag)" \
@@ -1197,7 +1208,7 @@ else
   fail=$((fail + 1))
 fi
 
-trash "$MERGE_FIX" "$NOMERGE_FIX" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$MERGE_FIX" "$NOMERGE_FIX" || true
 test_deny "$IRRECOVERABLE" "subagent: claude -p hi via Bash denied" \
   "$(bash_agent_payload 'claude -p hi' fork)"
 test_deny "$IRRECOVERABLE" "subagent: claude --worktree x denied (new flag in the ported nested-spawn deny)" \
@@ -1358,7 +1369,7 @@ else
   fail=$((fail + 1))
 fi
 rm -f "$_errf"
-trash "$MISSPY_RTG_DIR" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSPY_RTG_DIR" || true
 
 echo "=== GNU tr stays quiet (cloud audit 2026-10-23: an unescaped trailing backslash in tr -d warned on every Bash call) ==="
 _trdir=$(mktemp -d "${TMPDIR:-/tmp}/kbg-gnutr.XXXXXX")
@@ -1371,7 +1382,7 @@ else
   echo "  ❌ the gate wrote to stderr on a plain command: $_trerr" >&2
   fail=$((fail + 1))
 fi
-trash "$_trdir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$_trdir" || true
 
 echo "=== same damage, other git verbs (2026-10-23 bypass sweep after the cloud audit) ==="
 for c in 'git push --mirror' 'git push origin --mirror' 'git push --prune origin' \
@@ -1558,7 +1569,7 @@ rm -f "$_errf"
 # irrecoverable fails closed (exit 2) and subagent-git-guard fails open (exit 0), each with its own message.
 MISSRUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/kbg-missrun.XXXXXX")
 cp "$ROOT"/hooks/gates/*.sh "$ROOT"/hooks/gates/*.py "$MISSRUN_DIR"/
-[ -e "$MISSRUN_DIR/_run.py" ] && trash "$MISSRUN_DIR/_run.py"
+[ -e "$MISSRUN_DIR/_run.py" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSRUN_DIR/_run.py"
 _errf="$MISSRUN_DIR/err"
 _out=$(bash_payload 'rm -rf /tmp/x' | bash "$MISSRUN_DIR/irrecoverable.sh" 2>"$_errf"); _rc=$?
 if [ "$_rc" -eq 2 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py missing' "$_errf"; then
@@ -1572,7 +1583,7 @@ if [ "$_rc" -eq 0 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py 
 else
   echo "  ❌ missing _run.py: subagent-git-guard expected exit 0 + [mh:gate] _run.py message, got rc=$_rc stdout='$_out' stderr: $(cat "$_errf")" >&2; fail=$((fail + 1))
 fi
-trash "$MISSRUN_DIR"
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSRUN_DIR"
 
 # GH #184/#185/#194/#195/#196: fail closed when the command is syntactically ambiguous (nested or
 # mixed substitutions, a quoted ")" inside "$(", a "case" inside "$(", brace tokens, eval of a

@@ -43,7 +43,7 @@ echo "=== secret-scan gate ==="
 
 FIXTURE=$(mktemp -d)
 NOSIBLING=$(mktemp -d)
-trap 'trash "$FIXTURE" "$NOSIBLING" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FIXTURE" "$NOSIBLING" || true' EXIT
 export MH_GATE_JOURNAL_PATH="$FIXTURE/gate-decisions.jsonl"
 
 asks() { # asks <content> -- the gate's stdout for a Write of <content>

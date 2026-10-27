@@ -13,7 +13,7 @@ BASH_BIN="$(command -v bash)"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_trash() { [ -n "${1:-}" ] && trash "$1" 2>/dev/null; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$1"; return 0; }
 
 echo "=== gauntlet refuses to run without trash (cloud audit F4) or a usable shfmt ==="
 
@@ -65,6 +65,6 @@ else
   bad "trash and a usable shfmt on PATH: expected the preflight to pass and mktemp to stop the run, got rc=$rc: $err"
 fi
 
-safe_trash "$STUB"
+safe_tmp_delete "$STUB"
 echo "trash preflight: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

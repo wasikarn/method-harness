@@ -36,6 +36,13 @@ EXTRA_TRASH=()
 # needed for the common case at all.
 _HARNESS_ROOT=$(mktemp -d)
 
+# tmp_delete <path>...: permanent delete of this test's own temp paths through
+# tests/_lib/tmp_delete.py (refuses anything outside a temp root; GH #724). The python3
+# is captured now, at source time, because some tests later put a python3 stub first on PATH.
+_HARNESS_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_HARNESS_PY="$(command -v python3)"
+tmp_delete() { "$_HARNESS_PY" "$_HARNESS_LIB/tmp_delete.py" "$@"; }
+
 # track_trash <path>: register <path> for cleanup at _cleanup_trash time.
 # Filters empty unconditionally. For a caller's own mktemp/mkdir calls that
 # don't go through fresh_tmpdir (a single mktemp file, a manually-named
@@ -65,10 +72,12 @@ fresh_repo() {
 
 # _cleanup_trash: the EXIT trap body. Every target -- _HARNESS_ROOT (every
 # fresh_tmpdir at once), $FAKE_HOME (if the caller set it), plus every
-# tracked EXTRA_TRASH entry -- is filtered to non-empty before trash ever
+# tracked EXTRA_TRASH entry -- is filtered to non-empty before the delete ever
 # sees it: `trash ""` deletes the process's current working directory,
 # confirmed live (this repo's working tree was moved to Trash mid-session
 # by exactly this bug, in a copy of this function that lacked the filter).
+# The delete is tmp_delete, one target per call, so a refused target (not
+# under a temp root) is reported on stderr without blocking the others.
 _cleanup_trash() {
   local t targets=()
   [ -n "${_HARNESS_ROOT:-}" ] && targets+=("$_HARNESS_ROOT")
@@ -76,6 +85,8 @@ _cleanup_trash() {
   for t in "${EXTRA_TRASH[@]:-}"; do
     [ -n "$t" ] && targets+=("$t")
   done
-  [ "${#targets[@]}" -eq 0 ] || trash "${targets[@]}" 2>/dev/null
+  for t in "${targets[@]:-}"; do
+    [ -n "$t" ] && tmp_delete "$t"
+  done
   return 0
 }

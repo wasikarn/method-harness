@@ -29,7 +29,7 @@ assert() {
 [[ -f "$SKILL_MD" ]] || { echo "FATAL: $SKILL_MD not found — the skill moved without updating this test" >&2; exit 1; }
 
 TMPDIR_TEST="$(mktemp -d)"
-trap 'trash "$TMPDIR_TEST" 2>/dev/null || rm -rf "$TMPDIR_TEST"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMPDIR_TEST"' EXIT
 
 echo "=== gate-report ==="
 

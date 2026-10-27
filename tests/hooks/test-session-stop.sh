@@ -58,7 +58,7 @@ row=$(tail -1 "$metrics_file" 2>/dev/null)
   && [[ "$(wc -l < "$metrics_file" | tr -d ' ')" == "1" ]] \
   && printf '%s' "$row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "echoes payload through + appends one compact JSONL cost row for a valid transcript" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Codex pairing (docs/plans/codex-pairing-2026-09-06.md item F): a Skill call
 # to a codex:* skill and an Agent dispatch to a codex:* subagent_type are
@@ -89,7 +89,7 @@ c = d.get("codex_invocations", {})
 sys.exit(0 if c.get("codex:review") == 1 and c.get("codex:codex-rescue") == 1 else 1)
 ' 2>/dev/null && ok=1 || ok=0
 assert "tallies codex:* Skill and Agent tool_use calls into one codex_invocations row" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Regression: one API response spans several JSONL lines sharing one message.id
 # (the usage extraction's 2026-09-04 finding, applies here too) -- 3 duplicate lines
@@ -117,7 +117,7 @@ d = json.load(sys.stdin)
 sys.exit(0 if d.get("codex_invocations", {}).get("codex:review") == 1 else 1)
 ' 2>/dev/null && ok=1 || ok=0
 assert "3 duplicate JSONL lines sharing one message.id count as 1 codex call, not 3" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 fake_home=$(mktemp -d)
 payload=$(python3 -c 'import json; print(json.dumps({"transcript_path": "/nonexistent/transcript.jsonl", "session_id": "test-session"}))')
@@ -126,7 +126,7 @@ rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 [[ "$rc" == "0" && "$out" == "$payload" && ! -f "$metrics_file" ]] && ok=1 || ok=0
 assert "fails safe (exit 0, echoes payload, no metrics row) for a missing transcript" "$ok"
-trash "$fake_home" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" || true
 
 # Portability (#93): with jq missing from PATH the tracker must echo the
 # payload through and write NOTHING — not garbage rows. Payload is built
@@ -146,7 +146,7 @@ rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 [[ "$rc" == "0" && "$out" == "$payload" && ! -f "$metrics_file" ]] && ok=1 || ok=0
 assert "no jq on PATH -> echoes payload, exit 0, zero metrics rows (#93)" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Adversarial: malformed (non-JSON) transcript content. The jq `try fromjson`
 # filter skips unparseable lines → usage is null → no row. Must fail safe.
@@ -159,7 +159,7 @@ rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 [[ "$rc" == "0" && "$out" == "$payload" && ! -f "$metrics_file" ]] && ok=1 || ok=0
 assert "fails safe (exit 0, no metrics row) for a malformed-JSON transcript" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Adversarial: assistant line carries usage: null. The jq
 # `select((.message // {}).usage != null)` filter drops it → usage is null → no row.
@@ -176,7 +176,7 @@ rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 [[ "$rc" == "0" && "$out" == "$payload" && ! -f "$metrics_file" ]] && ok=1 || ok=0
 assert "fails safe (exit 0, no metrics row) when usage is null" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Adversarial: multi-line transcript (two assistant lines) must aggregate into ONE
 # compact JSONL row with summed tokens, not one row per line.
@@ -196,7 +196,7 @@ row=$(tail -1 "$metrics_file" 2>/dev/null)
   && /usr/bin/grep -q '"output_tokens":130' <<<"$row" \
   && printf '%s' "$row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "aggregates a multi-line transcript into one summed JSONL cost row" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Adversarial (2026-09-04): Claude Code writes one JSONL line per content block of one
 # API response, each repeating the same message.id + usage. Three lines with id m1
@@ -217,7 +217,7 @@ row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
   && /usr/bin/grep -q '"input_tokens":107' <<<"$row" \
   && /usr/bin/grep -q '"output_tokens":53' <<<"$row" && ok=1 || ok=0
 assert "same message.id repeated on 3 lines counts once (turns 2, input 107, output 53), dedup_usage:true" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Last-line-wins (2026-09-04, measured over 119,013 message ids): the first JSONL line
 # of a response carries a streaming placeholder output_tokens, the last the final
@@ -238,7 +238,7 @@ row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
   && /usr/bin/grep -q '"input_tokens":100' <<<"$row" \
   && /usr/bin/grep -q '"output_tokens":1500' <<<"$row" && ok=1 || ok=0
 assert "same message.id with output 2 / 2 / 1500 across 3 lines → last line wins (output 1500, turns 1), usage_pick:\"last\"" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Adversarial: multi-MODEL transcript (two assistant lines, different `.message.model`)
 # must write ONE row PER MODEL, each model_scoped:true, each carrying only that
@@ -264,7 +264,7 @@ sonnet_row=$(/usr/bin/grep '"model":"claude-sonnet-5"' "$metrics_file" 2>/dev/nu
   && printf '%s' "$opus_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null \
   && printf '%s' "$sonnet_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "multi-model transcript writes one model_scoped row per model with that model's own tokens" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Change receipt: every row names the plugin version that wrote it and the HEAD commit of
 # the payload's cwd, so a regression is attributable to a policy version and a rollback
@@ -292,7 +292,7 @@ row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
   && /usr/bin/grep -q '"mh_version":null' <<<"$row" \
   && /usr/bin/grep -q '"head_commit":null' <<<"$row" && ok=1 || ok=0
 assert "no plugin root and non-git cwd → row still written with mh_version:null, head_commit:null" "$ok"
-trash "$fake_home" "$fake_root" "$fake_repo" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$fake_root" "$fake_repo" "$transcript" || true
 
 # Orchestrator-tax split. Claude Code writes the main session to
 # <project>/<session-id>.jsonl and each subagent to its own file under the sibling
@@ -329,7 +329,7 @@ sub_row=$(/usr/bin/grep '"stream":"subagent"' "$metrics_file" 2>/dev/null)
   && printf '%s' "$orch_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null \
   && printf '%s' "$sub_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "counts subagent transcripts and tags each row with stream + turns + cache_read_per_turn" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 # Fails safe when there is no subagents/ dir at all (the common single-agent session):
 # one orchestrator row, no empty subagent row, no crash from the empty glob.
@@ -346,7 +346,7 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
   && /usr/bin/grep -q '"stream":"orchestrator"' "$metrics_file" \
   && ! /usr/bin/grep -q '"stream":"subagent"' "$metrics_file" && ok=1 || ok=0
 assert "no subagents/ dir → one orchestrator row, no empty subagent row" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 # Per-agent-type breakdown. Claude Code writes an agent-<id>.meta.json sibling next to
 # every agent-<id>.jsonl carrying the real `agentType` (the Agent tool's subagent_type
@@ -378,7 +378,7 @@ orch_row=$(/usr/bin/grep '"stream":"orchestrator"' "$metrics_file" 2>/dev/null)
   && printf '%s' "$reviewer_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null \
   && printf '%s' "$explore_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "subagent rows split by agent_type (from meta.json sibling) even on the same model; orchestrator row carries agent_type:null" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 # Missing meta.json sibling (older sessions, or a subagent that never got one) must
 # fail safe to agent_type:"unknown" — never drop the row, never crash.
@@ -397,7 +397,7 @@ sub_row=$(/usr/bin/grep '"stream":"subagent"' "$metrics_file" 2>/dev/null)
   && /usr/bin/grep -q '"agent_type":"unknown"' <<<"$sub_row" \
   && printf '%s' "$sub_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "subagent transcript with no .meta.json sibling falls back to agent_type:\"unknown\" (fails safe, no crash)" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 # meta.json present but agentType empty/missing → fall back to the parent transcript's
 # Agent tool_use `.input.subagent_type`, joined on meta's toolUseId (the one other place
@@ -426,7 +426,7 @@ unk_row=$(/usr/bin/grep '"agent_type":"unknown"' "$metrics_file" 2>/dev/null)
   && /usr/bin/grep -q '"input_tokens":20' <<<"$unk_row" \
   && printf '%s' "$fb_row" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null && ok=1 || ok=0
 assert "meta.json without agentType falls back to parent transcript's Agent tool_use subagent_type via toolUseId; unmatched toolUseId stays \"unknown\"" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 # Claude-only tracking (2026-08-07, operator request): a session can run non-Claude
 # models (e.g. via a proxy that swaps ANTHROPIC_BASE_URL — confirmed real in
@@ -447,7 +447,7 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
   && /usr/bin/grep -q '"input_tokens":100' "$metrics_file" \
   && ! /usr/bin/grep -qi 'minimax' "$metrics_file" && ok=1 || ok=0
 assert "non-Claude model turns (minimax-m3) are silently dropped — only the claude-sonnet-5 row is written, with its own tokens, not inflated by the dropped turn" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # A transcript with ONLY non-Claude turns must write no row at all (not a crash, not
 # an empty/garbage row) — the existing "no usage → no row" fail-safe path.
@@ -460,7 +460,7 @@ rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 [[ "$rc" == "0" && "$out" == "$payload" && ! -f "$metrics_file" ]] && ok=1 || ok=0
 assert "an all-non-Claude transcript (glm-5.2 only) writes no metrics row at all" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Regression (H7): a real jq failure (a transcript line whose .message.usage is
 # a non-object, which the pipeline's own `try fromjson` can't catch since the
@@ -494,7 +494,7 @@ d = json.load(sys.stdin)
 sys.exit(0 if d.get("error") == "jq_failed" and d.get("stream") == "orchestrator" else 1)
 ' 2>/dev/null && ok=1 || ok=0
 assert "a real jq failure (non-object .message.usage) emits a jq_failed sentinel row + the actual jq error text on stderr (not just a generic log line)" "$ok"
-trash "$fake_home" "$transcript" "/tmp/mh-test-jqfail-stderr.$$" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" "/tmp/mh-test-jqfail-stderr.$$" || true
 
 # H8 (harness gap-audit, 2026-09-20): end-to-end proof that a real transcript
 # run through cost-tracker.sh itself actually populates verify_tokens/
@@ -531,7 +531,7 @@ orch_row=$(/usr/bin/grep '"stream":"orchestrator"' "$metrics_file" 2>/dev/null)
   && /usr/bin/grep -q '"returns":1,"verify_tokens":430,"verify_cache_read":10,"verify_per_return":\[430\]' <<<"$sub_row" \
   && /usr/bin/grep -q '"returns":1,"verify_tokens":430' <<<"$orch_row" && ok=1 || ok=0
 assert "H8: task-notification -> next Agent tool_use window summed into verify_tokens (430, cache_read 10) via a real cost-tracker.sh run, not a fabricated row; turn after the dispatch excluded; a background-command notification (no agent-<id>.jsonl) neither adds a return nor closes the window" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 # H8 negative case: a transcript with no <task-notification> at all must still
 # write a row, with verify_tokens/verify_cache_read null and returns:0 -- not
@@ -546,7 +546,7 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 row=$(tail -1 "$metrics_file" 2>/dev/null)
 [[ "$rc" == "0" ]] && /usr/bin/grep -q '"returns":0,"verify_tokens":null,"verify_cache_read":null,"verify_per_return":\[\]' <<<"$row" && ok=1 || ok=0
 assert "H8: a transcript with no task-notification writes returns:0, verify_tokens:null via a real cost-tracker.sh run" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Regression risk specific to the 2026-09-22 single-scan refactor: H7's
 # usage:"not-an-object" line now sits INSIDE an open verify-window (after a
@@ -578,7 +578,7 @@ sub_row=$(/usr/bin/grep '"stream":"subagent"' "$metrics_file" 2>/dev/null)
   && /usr/bin/grep -q '"error":"jq_failed"' <<<"$orch_row" \
   && /usr/bin/grep -q '"agent_type":"general-purpose"' <<<"$sub_row" && ok=1 || ok=0
 assert "a usage-type-error line inside an OPEN verify window still emits the orchestrator jq_failed sentinel (not silence), and the subagent row still writes correctly" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 # Regression (M8): unset/relative HOME must never resolve metrics writes into
 # the current working directory (this exact bug once wrote a metrics file
@@ -593,7 +593,7 @@ rc=$?
 after_count=$(find "$ROOT" -name costs.jsonl 2>/dev/null | wc -l | tr -d ' ')
 [[ "$rc" == "0" && "$out" == "$payload" && "$before_count" == "$after_count" ]] && ok=1 || ok=0
 assert "unset HOME skips metrics entirely instead of writing into the repo tree" "$ok"
-trash "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$transcript" || true
 
 # GH #117: cost-tracker is stateless by design, re-deriving cumulative totals
 # from the full transcript on every Stop -- so if the same Stop event ever
@@ -615,7 +615,7 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 [[ "$rc1" == "0" && "$rc2" == "0" && "$out1" == "$payload" && "$out2" == "$payload" ]] \
   && [[ "$(wc -l < "$metrics_file" | tr -d ' ')" == "1" ]] && ok=1 || ok=0
 assert "GH #117: the same Stop event firing twice for an unchanged transcript writes the cost row only once" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Control: a real second turn (transcript grew) must NOT be swallowed by the
 # dedup marker -- only an exact repeat of the prior state is skipped.
@@ -632,7 +632,7 @@ metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
 [[ "$rc1" == "0" && "$rc2" == "0" ]] \
   && [[ "$(wc -l < "$metrics_file" | tr -d ' ')" == "2" ]] && ok=1 || ok=0
 assert "a real second turn (transcript grew) after the first Stop still writes its own row" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Regression: the completion marker must not be set when the symlink guard
 # blocked a real (non-empty) append -- a lease set on a write that never
@@ -649,7 +649,7 @@ decoy=$(mktemp)
 ln -s "$decoy" "$metrics_dir/costs.jsonl"
 out1=$(printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" 2>/dev/null)
 rc1=$?
-trash "$metrics_dir/costs.jsonl" 2>/dev/null || rm -f "$metrics_dir/costs.jsonl"
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$metrics_dir/costs.jsonl"
 out2=$(printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" 2>/dev/null)
 rc2=$?
 metrics_file="$metrics_dir/costs.jsonl"
@@ -657,7 +657,7 @@ metrics_file="$metrics_dir/costs.jsonl"
   && [[ -f "$metrics_file" && ! -L "$metrics_file" ]] \
   && [[ "$(wc -l < "$metrics_file" | tr -d ' ')" == "1" ]] && ok=1 || ok=0
 assert "a symlink-blocked append doesn't set the completion marker, so a retry still persists the row" "$ok"
-trash "$fake_home" "$transcript" "$decoy" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" "$decoy" || true
 
 # Regression (deep-audit finding, MEDIUM): the symlink guard is only ONE way
 # the append can fail to persist a real row -- any other append failure must
@@ -682,7 +682,7 @@ metrics_file="$metrics_dir/costs.jsonl"
   && [[ -f "$metrics_file" ]] \
   && [[ "$(wc -l < "$metrics_file" | tr -d ' ')" == "1" ]] && ok=1 || ok=0
 assert "a non-symlink append failure (Is a directory) doesn't set the completion marker either, so a retry still persists the row" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Regression (deep-audit finding, path traversal): session_id is taken
 # verbatim from the Stop payload and interpolated into a filesystem path
@@ -703,7 +703,7 @@ escape_target="$fake_home/.local/share/evil-mh-test-marker"
   && [[ ! -e "$escape_target" ]] \
   && [[ -f "$metrics_dir/.markers/default" ]] && ok=1 || ok=0
 assert "a session_id containing .. doesn't let the completion marker write escape .markers/" "$ok"
-trash "$fake_home" "$transcript" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" || true
 
 # Regression (deep-audit finding, 2026-09-21): the marker write is `>` into
 # .markers/<session_id>; a pre-planted symlink there would be followed and the
@@ -725,7 +725,7 @@ rc=$?
   && [[ "$(cat "$decoy")" == "decoy-untouched" ]] \
   && [[ "$(wc -l < "$metrics_dir/costs.jsonl" | tr -d ' ')" == "1" ]] && ok=1 || ok=0
 assert "a symlinked .markers/<session_id> is not followed: decoy untouched, row still appended" "$ok"
-trash "$fake_home" "$transcript" "$decoy" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$transcript" "$decoy" || true
 
 # --- 2026-09-22 single-scan perf fix (TDD refactor loop) ---
 # Before the fix, cost-tracker.sh re-scanned the main transcript with a
@@ -785,7 +785,7 @@ assert "cost-tracker.sh scans the main transcript with jq exactly once per Stop 
 # 2026-10-22 lane-3 fold: usage rows and codex tallies come from one jq read of each subagent file (was 2).
 [[ "$rc" == "0" && "$sub_hits" == "1" ]] && ok=1 || ok=0
 assert "cost-tracker.sh reads each subagent transcript with jq exactly once per Stop call (got $sub_hits)" "$ok"
-trash "$fake_home" "$sess_dir" "$jq_shim_dir" "$jq_log" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" "$jq_shim_dir" "$jq_log" || true
 
 # Regression risk specific to the single-scan refactor: codex tool_use tallies
 # from the main transcript and from a subagent file must be SUMMED per key,
@@ -812,7 +812,7 @@ d = json.load(sys.stdin)
 sys.exit(0 if d.get("codex_invocations", {}).get("codex:review") == 2 else 1)
 ' 2>/dev/null && ok=1 || ok=0
 assert "codex:review called once in the main transcript and once in a subagent file sums to 2, not 1 (additive merge, not overwrite)" "$ok"
-trash "$fake_home" "$sess_dir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$sess_dir" || true
 
 echo ""
 echo "=== memory-audit-commit hook (Stop) ==="
@@ -867,7 +867,7 @@ porcelain2=$(cd "$mem_dir" && git status --porcelain)
 [[ "$rc" == "0" && "$log_count2" == "3" && -z "$porcelain2" ]] && ok=1 || ok=0
 assert "edit to an already-tracked file → auto-committed, working tree clean after" "$ok"
 
-trash "$fake_home" "$proj_noopt" "$proj" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home" "$proj_noopt" "$proj" || true
 
 echo ""
 total=$((pass + fail))

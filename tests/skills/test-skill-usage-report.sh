@@ -28,7 +28,7 @@ has() { grep -qF -- "$1" <<<"$2" && echo 1 || echo 0; }
 [[ -f "$REPORT_PY" ]] || { echo "FATAL: $REPORT_PY not found" >&2; exit 1; }
 
 TMPDIR_TEST="$(mktemp -d)"
-trap 'trash "$TMPDIR_TEST" 2>/dev/null || rm -rf "$TMPDIR_TEST"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMPDIR_TEST"' EXIT
 
 echo "=== skill-usage report ==="
 
