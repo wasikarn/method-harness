@@ -65,7 +65,7 @@ done
 [[ "$hardcoded" == "0" ]] && ok=1 || ok=0
 assert "no real gate name is hardcoded in the script's code (found $hardcoded)" "$ok"
 
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fixture" "$noop_bin" || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$fixture" "$noop_bin"
 
 echo
 echo "doctrine-bootstrap: $pass passed, $fail failed"
