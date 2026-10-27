@@ -11,7 +11,7 @@
 # refuses a PR with no fresh review verdict (see check_review).
 # Run it from the PR's own checkout, on its branch, with a clean tree: it commits there and pushes.
 # One run can span a gauntlet plus lock waits (> 10 min), so start it in the background.
-# Bash 3.2. Env: MERGE_PR_LOAD_MAX (default 4), MERGE_PR_LOAD_WAIT_SECS (900),
+# Bash 3.2. Env: MERGE_PR_LOAD_MAX (default: the online core count, 4 if getconf cannot tell), MERGE_PR_LOAD_WAIT_SECS (900),
 # MERGE_PR_LOCK_DIR ($HOME/.cache/mh/merge-pr.lock), MERGE_PR_LOCK_WAIT_SECS (3600).
 #
 # merge-pr.sh --verify <PR> <head sha> <base branch> <comments.json> — the same checks without gh, for a
@@ -394,7 +394,11 @@ check_review() {
 }
 
 wait_for_load() {
-  local load_max="${MERGE_PR_LOAD_MAX:-4}" wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}" waited=0 load
+  # A fixed 4 on a 12-core machine blocked every merge while peer sessions ran (load 8-12, 2026-10-27).
+  # Too high a cap only risks a timing row failing the gauntlet, which refuses the push: safe to retry.
+  local cores load_max wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}" waited=0 load
+  cores=$(getconf _NPROCESSORS_ONLN) || cores=4
+  load_max="${MERGE_PR_LOAD_MAX:-$cores}"
   while :; do
     load=$(uptime | sed 's/.*load average[s]*: *//' | awk -F'[ ,]+' '{print $1}')
     if awk -v l="$load" -v m="$load_max" 'BEGIN { exit !(l + 0 < m + 0) }'; then
