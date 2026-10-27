@@ -147,7 +147,10 @@ applies the fixes. "Audit performance" / "optimize this" → here.
 
 ## Done-when
 
-- When a dispatched builder made the edits, a fresh-context validator checked them (METHODOLOGY Rule 13).
+- A fresh-context validator checked the edits: whenever this skill changed a file, dispatch one
+  subagent that never saw the work, with the diff and the before/after numbers, and act on its
+  `{pass, findings[], checked[], scope_ok, unexpected_files[]}` (METHODOLOGY Rule 13). An empty
+  `checked[]` means not verified.
 - The targeted metric moved, measured before and after (see Guardrails), and no other metric regressed.
 - Test suite still passing — when there's no test suite to run, this depends on what kind of
   change was made, not a blanket pass or block. A pure algorithmic/structural optimization
