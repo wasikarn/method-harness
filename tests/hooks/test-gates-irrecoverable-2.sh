@@ -3354,5 +3354,14 @@ for _c in 'echo ${x//\"/}' 'echo ${x:-"a b"}' "echo \${x:-'a b'}" 'echo ${x:-$(e
   "echo \${ echo x # note$_N}" "cat <(echo a # note$_N)" 'echo ${x:-$(echo "}")}' "echo \${x:-\$(echo '}')}" 'echo ${y:-"a}b"}'; do
   test_allow "$IRRECOVERABLE" "GH #702 control: $_c" "$(bash_payload "$_c")"
 done
+# the funsub body's odd quote comes from the inner word's wrong close, so that reason is the one shown
+test_deny_says "$IRRECOVERABLE" "GH #702: a funsub holding \${x:-'a}'} names the \${...} word, not the depth budget" \
+  "$(bash_payload "echo \${ echo \${x:-'a}'}; }")" "ends at a different place" "depth-scan budget"
+_timed_case 'GH #702: a ${x:-\{} target before 9000 padding words denies in bounded time' 2 \
+  "echo \${x:-\\{}$_N$(printf '${x:-a} %.0s' $(seq 9000))"
+_timed_case 'GH #702: a ${x:-\{} target after 9000 padding words denies in bounded time' 2 \
+  "echo $(printf '${x:-a} %.0s' $(seq 9000))\${x:-\\{}"
+_timed_case 'GH #702: 10000 ${y:-"a}b"} words (the plain-quote exemption) are read in bounded time' 0 \
+  "echo $(printf '${y:-"a}b"} %.0s' $(seq 10000))"
 
 gates_summary

@@ -1720,7 +1720,9 @@ WORD_LIT = "\x04"
 # "$(" starts is O(n^2) (65s on a 100,000-char payload under the length cap).
 # Exhaustion leaves the span un-blanked -- exactly the bypass shape -- so it is
 # recorded here (mutated, not rebound) and denied once after tokenization,
-# never reset across the primary and fallback calls.
+# never reset across the primary and fallback calls. GH #702: it can hold the reason string
+# _PARAM_END_DIFFERS instead of True (truthy, so the save/restore and body cache carry it unchanged), and
+# _deny_if_depth_blown prints that reason.
 _DEPTH_BUDGET_BLOWN = [False]
 _DEPTH_SCAN_BUDGET = 2_000_000
 def _close_bracket(s, j, opener, closer, depth_work_used):
@@ -1808,13 +1810,13 @@ def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None if depth else j
 
-# GH #702: the end of a ${...} word as bash 5.3 finds it, kept apart from _close_bracket/_close_psub so a
-# wrong count in one does not repeat in the other: the first "}" outside quotes, escapes and nested
-# $(...)/backtick/${...}/$'...'; a bare "{" is not counted. A command body (closer ")" for $(...), "f" for a
-# funsub ending in "}") also skips a word-start "#" comment; ")" counts parens. Index past the closer, or
-# None (unclosed, budget, or nesting past 50).
 _PARAM_END_DIFFERS = "could not safely tokenize command (a ${...} word ends at a different place for bash than for the gate) - confirm with user first"
 def _close_param(s, j, depth_work_used, closer="}", _depth=0):
+    # GH #702: the end of a ${...} word as bash 5.3 finds it, kept apart from _close_bracket/_close_psub so
+    # a wrong count in one does not repeat in the other: the first "}" outside quotes, escapes and nested
+    # $(...)/backtick/${...}/$'...'; a bare "{" is not counted. A command body (closer ")" for $(...), "f"
+    # for a funsub ending in "}") also skips a word-start "#" comment; ")" counts parens. Index past the
+    # closer, or None (unclosed, budget, or nesting past 50).
     if _depth >= 50:
         return None
     n, parens, dq, start, esc_end = len(s), 1, False, j, -1
@@ -1906,7 +1908,8 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
             p = _close_param(s, i + 2, depth_work_used)
             # A "}" in a plain "..." ends _close_bracket early (`${y:-"a}b"}`); the quote-crossing fallback
             # after _tokens handles that, so only a body with no $, backtick, ' or \ is let through
-            if p != j and not (j is not None and p is not None and j < p and not re.search(r"[$`'\\]", s[i + 2:p])):
+            if not _DEPTH_BUDGET_BLOWN[0] and p != j and not (
+                    j is not None and p is not None and j < p and not re.search(r"[$`'\\]", s[i + 2:p])):
                 _DEPTH_BUDGET_BLOWN[0] = _PARAM_END_DIFFERS
         if j is None:
             # No closer: bash would refuse the text, but GH #233's "}"-masking can eat a real one
@@ -1935,8 +1938,9 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
             try:
                 shlex.split(body)
             except ValueError:
-                # an unbalanced quote here would pair with one left in the main text and hide its tail
-                _DEPTH_BUDGET_BLOWN[0] = True
+                # an unbalanced quote here would pair with one left in the main text and hide its tail; a
+                # reason already set (a nested ${...} word that closed in the wrong place) is the cause, kept
+                _DEPTH_BUDGET_BLOWN[0] = _DEPTH_BUDGET_BLOWN[0] or True
             bodies.append(body)
         return PH, j
     if c in ("<", ">") and not in_dquote and nxt == "(":
