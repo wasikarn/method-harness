@@ -60,9 +60,8 @@ python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/weighted-score.py" <<< '{"sco
 the output's `sensitivity.verdictStable` says whether `pass` can flip anywhere in that box. `false`
 means the total is closer to the threshold than the bare number reads — report it (see Final
 output below), don't silently drop it.
-An `insufficient`-flagged dimension is dropped from both the numerator and the denominator, so
-the total renormalizes over the dimensions that actually scored — it is never divided by the
-full weight sum, which would be arithmetically identical to scoring the dropped dimension 0.
+An `insufficient`-flagged dimension is dropped from both the numerator and the denominator
+(why: `references/rationale.md`).
 `pass` in the output is `total >= 7.0` with no scored dimension under 50% of its own max (`5`);
 report `belowFloor` and any insufficient-evidence dimensions to the operator either way. **The
 script fails closed:** malformed input (a missing field, a non-numeric score, or every dimension
@@ -125,36 +124,19 @@ text validates through the same `scripts/check-verdict.py` the fallback path use
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" < <output-last-message file>
 ```
 Exit 0 = accept; exit 1 = reject, a fallback trigger below; exit 2 = a `NEEDS-DECISION`
-escalation, surfaced to the operator as an open question (its meaning under the fallback path
-below). Schema validity alone is not enough: `--output-schema` cannot enforce citation shape.
+escalation, surfaced to the operator as an open question (its meaning:
+`references/codex-fallback.md`). Schema validity alone is not enough: `--output-schema` cannot enforce citation shape.
 The result also shows real review evidence — findings that each cite one checkable fact, or an explicit, legitimate
 zero-findings pass (see below) — and does not state or imply it couldn't or didn't complete the
-review. Schema-valid JSON that still refuses in prose is not review evidence. `checked[]` is required because
-`pass: true, findings: []` is schema-valid even when a checker addressed none of its primed
-items. A `pass:
+review. Schema-valid JSON that still refuses in prose is not review evidence. A `pass:
 false` result **with real, evidenced findings is a successful run that found problems** — never
 a failure, never a fallback trigger.
 
 **On any other outcome** — non-zero exit, empty or malformed output, a schema mismatch, timeout,
-auth failure, or a semantic refusal — fall back to a Claude `Explore`/review agent (same brief;
-its return contract is the full 6-key `{contract_version, pass, findings[], checked[], scope_ok,
-unexpected_files[]}`, **not** `docs/reference/spawn-brief.md`'s bare 4-field
-`Validator/re-validator:` line, which `check-verdict.py` rejects) and note "independence reduced
-for this pass" in the final report.
-
-On this fallback path there is no `--output-last-message` file and no `--output-schema`; pipe the
-agent's raw final message (never a fence-stripped copy) to the same script:
-```
-python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
-```
-The script checks a literal `NEEDS-DECISION` first, then requires exactly one candidate object
-that fully validates (exact keys, booleans, non-empty `checked[]`, citation-shaped `evidence`);
-its docstring has the parsing detail. Exit 0 with the validated JSON on stdout means accept;
-exit 1 with a reason on stderr means reject (a malformed or ambiguous verdict must never reach a
-fixer brief); **exit 2 means the agent correctly returned `NEEDS-DECISION` instead of guessing**
-(`spawn-brief.md:39`'s escalation return) — a valid non-guess, surfaced to the operator as an open
-question, not a broken checker. Regardless of exit code, schema-valid JSON that still refuses in
-prose is not review evidence.
+auth failure, or a semantic refusal — fall back to a Claude `Explore`/review agent (same brief)
+and note "independence reduced for this pass" in the final report. `references/codex-fallback.md`
+— its 6-key return contract and `check-verdict.py` validation. **Load before dispatching the
+fallback.**
 
 **Re-fingerprint after the checker returns:**
 ```
@@ -214,22 +196,17 @@ quality rationale; a change that only moves the score is left out.
 ## 6. Whole-picture adversarial challenge (when step 4's fixes can interact)
 
 Trigger: step 4 applied 2+ fixes, OR applied exactly 1 fix that touched a function, early-exit
-path, return value, or emitted string that other code, a test, or an out-of-scope consumer reads
-— a single fix can interact with code already sitting in the file exactly the way two fixes
-interact with each other, and a bare fix-count alone doesn't distinguish these. Skip only when
+path, return value, or emitted string that other code, a test, or an out-of-scope consumer reads.
+Skip only when
 step 4 applied 0 fixes, or its 1 fix was fully local (nothing else reads what it changed) — step
 3's checker already covers a fully-local single fix point-by-point. Why the trigger is not a bare
 fix count: `references/rationale.md`.
 
 Dispatch `mh:blind-spot-hunter` (`Agent` tool, reuse — do not write a new agent for this) against
 the **combined delta**: every file step 1 put in scope, unioned with every fix commit from step
-4. Frame the brief explicitly as a system-level challenge, not a repeat of step 3: name each
-individual fix and what it was supposed to close, then ask directly for what a fix-by-fix
-re-check structurally cannot see — interaction/emergent bugs between the fixes, whether each
-fix's underlying design decision is sound and not just correctly implemented, and whether step
-5's re-verification evidence actually exercises the fixes *together* or only individually. Tell
-it explicitly not to re-litigate a finding step 3's checker already confirmed or refuted unless
-new evidence surfaces.
+4, framed as a system-level challenge, not a repeat of step 3. `references/whole-picture-brief.md`
+— how to frame that brief, and what to report if the dispatch fails. **Load before dispatching
+step 6.**
 
 Findings from this pass go through the same **Confirm, then fix** gate as step 4 (a fresh
 `AskUserQuestion`, same three options) — never applied silently. Any fix made here re-enters step
@@ -239,14 +216,8 @@ seem to need another combined-fix check, stop and report the loop instead of con
 indefinitely).
 
 A clean result from this pass (`CLEAN`, per the agent's own output contract) is reported the same
-way step 3's zero-findings pass is: a legitimate outcome, not a skipped check.
-
-If the dispatch itself fails to return a usable result (the agent errors, returns empty, is
-denied by `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` when this skill is itself running inside an
-already-dispatched subagent, or otherwise doesn't produce the finding/CLEAN format it defines),
-this step did not run — say so plainly under Remaining risks in the Final output (item 6), the
-same way step 3's hard-fail path is distinguished from a real pass. Never let a failed dispatch
-read the same as "skipped by trigger" or "clean" in the final report.
+way step 3's zero-findings pass is: a legitimate outcome, not a skipped check. A failed dispatch
+is neither: it did not run, and the Final output says so (see the reference above).
 
 ## 7. Re-score on the same rubric
 
