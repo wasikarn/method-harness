@@ -294,8 +294,9 @@ repo's tracked files into a temp dir twice:
   `skills/fold/<agent>/SKILL.md`, with frontmatter `name`, `description` and the agent's own
   `model:`/`effort:` pin. In every case whose first tag is the agent, the prompt's dispatch
   sentence asks for the `mh:<agent>` skill (Skill tool) instead, `Skill` joins `allowed_tools`,
-  each Agent `tool_used` grader that names the agent checks the Skill tool instead (same file
-  name), and the case gains `fold-agent-calls.md`, a display-only count of Agent calls. The build
+  each Agent `tool_used` grader that names the agent checks the Skill tool instead, the
+  `Agent type '...' not found` regex grader checks the Skill tool's `Unknown skill: <agent>` error
+  instead (same file names), and the case gains `fold-agent-calls.md`, a display-only count of Agent calls. The build
   fails if a `subagent_type` is left, or if a fire case's dispatch sentence isn't found.
 
 What "folded" does and does not hold equal:

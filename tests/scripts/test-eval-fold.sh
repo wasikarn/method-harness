@@ -126,11 +126,35 @@ git -C "$fx" add -- .claude-plugin agents evals
 python3 "$LIB" build "$fx" x-agent "$TMP/fx-out-fire" >/dev/null 2>&1 \
   && bad "build accepted a fire case with no dispatch sentence to rewrite" || ok "build stops on a fire case with no rewritable dispatch sentence"
 printf -- '---\ntype: tool_used\ntool: Agent\ninput_match: x-agent\nmin: 0\nmax: 0\narm: both\n---\nShould not fire.\n' >"$fx/evals/x-case/graders/no-agent-dispatch.md"
+# the agent-era "Agent type ... not found" regex can never fire once no Agent call happens; the
+# fold must turn it into the Skill tool's own error (Claude Code 2.1.310: "Unknown skill: <name>")
+printf -- '---\ntype: regex\ntarget: trace\nmatch: not_contains\npattern: "Agent type '"'"'[^'"'"']*'"'"' not found\\\\. Available agents"\n---\nThe x-agent agent ran.\n' >"$fx/evals/x-case/graders/agent-fired.md"
 git -C "$fx" add -- evals
 python3 "$LIB" build "$fx" x-agent "$TMP/fx-out-nofire" >"$TMP/fx.allow" 2>"$TMP/fx.err" \
   && ok "build accepts a should-not-fire case with no dispatch sentence" || bad "build refused a should-not-fire case: $(cat "$TMP/fx.err")"
 /usr/bin/grep -qx 'Agent,Read,Skill' "$TMP/fx.allow" 2>/dev/null \
   && ok "allow-tools: union of case allowed_tools plus Skill" || bad "allow-tools: got '$(cat "$TMP/fx.allow")'"
+af_probs=$(python3 - "$TMP/fx-out-nofire/folded/evals/x-case/graders/agent-fired.md" <<'PY'
+import re, subprocess, sys
+t = open(sys.argv[1]).read()
+fm = t[4:t.index("\n---\n", 4)]
+m = re.search(r"^pattern:\s*'(.*)'\s*$", fm, re.M)
+if not m:
+    print("no single-quoted pattern"); sys.exit()
+if not re.search(r"^match:\s*not_contains\s*$", fm, re.M):
+    print("match is no longer not_contains")
+def js(p, s):
+    return subprocess.run(["node", "-e", "process.exit(new RegExp(process.argv[1]).test(process.argv[2]) ? 0 : 1)", p, s]).returncode == 0
+p = m.group(1)
+for s in ("Unknown skill: x-agent", "Unknown skill: mh:x-agent"):
+    if not js(p, s):
+        print(f"pattern misses {s!r}")
+for s in ("Unknown skill: mh:other", "Agent type 'mh:x-agent' not found. Available agents"):
+    if js(p, s):
+        print(f"pattern matches {s!r}")
+PY
+)
+[ -z "$af_probs" ] && ok "fold rewrites the Agent-not-found regex to the Unknown-skill error" || bad "agent-fired fold: $af_probs"
 
 guarded >"$TMP/after"
 cmp -s "$TMP/before" "$TMP/after" && ok "repo manifest, agents/ and skills/ unchanged" || bad "build touched the repo"
