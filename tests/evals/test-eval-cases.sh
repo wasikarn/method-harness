@@ -95,6 +95,7 @@ for d in "$EVALS"/*/; do
     deep-audit-*)    /usr/bin/grep -q 'skill: "mh:deep-audit"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     cost-report-*)   /usr/bin/grep -q 'skill: "mh:cost-report"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     ste-lint-*)      /usr/bin/grep -q 'skill: "mh:ste-lint"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
+    backend-architect-*) /usr/bin/grep -q 'skill: "mh:backend-architect"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     code-architect-*) /usr/bin/grep -q 'skill: "mh:code-architect"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     *) /usr/bin/grep -q 'subagent_type: "mh:' "$d/prompt.md" || { bad "$c: prompt.md does not name a subagent_type"; continue; } ;;
     esac ;;

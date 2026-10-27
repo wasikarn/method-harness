@@ -14,7 +14,7 @@
 # shipped -- exactly the "documented as shipped but excluded from the
 # manifest" class M12 exists for. Two things this deliberately does NOT
 # flag, both out of scope here:
-#   - `mh:<agent-name>` (backend-architect, plan-reviewer, ...) -- agents are
+#   - `mh:<agent-name>` (blind-spot-hunter, plan-reviewer, ...) -- agents are
 #     a different manifest section/namespace entirely, not a skills/ dir.
 #   - `mh:<retired-skill-name>` (handoff, orchestrate, recursive-improve,
 #     ...) -- no skills/ directory exists for these any more; a name with no

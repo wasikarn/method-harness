@@ -18,7 +18,8 @@
     "./skills/workflow/idea-audit/",
     "./skills/workflow/post-mortem/",
     "./skills/design/tech-humanize/",
-    "./skills/design/code-architect/"
+    "./skills/design/code-architect/",
+    "./skills/design/backend-architect/"
   ],
   "keywords": [
     "harness",

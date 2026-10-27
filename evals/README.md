@@ -148,9 +148,12 @@ per this agent's own Scope section, not this agent's — it must take a root-cau
 approach instead of jumping to speculative optimizations (`regression-routing`). Needs
 `--allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent`.
 
-Six for `backend-architect` (tag `backend-architect`, agent, same dispatch/ablation mechanics as
-`code-architect`/`performance-optimizer` — explicit dispatch instruction in every fire-case prompt,
-`agent-fired.md` is the tool-error-string regex, same automatic `defaultEnabled` flip as above). Five
+Six for `backend-architect` (tag `backend-architect`, a skill since 2026-10-27, folded from an agent
+after the fold-vs-keep eval scored the folded form worse on no case; same ablation mechanics as
+`code-architect` — every fire-case prompt loads it via the Skill tool with
+`skill: "mh:backend-architect"`, `dispatch-confirmed.md` checks that Skill call, `agent-fired.md`
+is the agent-era tool-error-string regex and now always passes, same automatic `defaultEnabled`
+flip as above). Five
 fire cases against small scaffolded fixtures: a payment-claim worker whose `UPDATE` guards on a
 different column (`charge_id IS NULL`) than the one it sets (`status`), letting two concurrent
 workers both pass the claim guard and double-charge (`guard-column-bug`); a checkout endpoint that
@@ -165,8 +168,8 @@ rule, and not itself construct an attack payload or CVE-style writeup, while a s
 before/after code snippet as part of its own architectural fix doesn't count against it
 (`security-handoff`). Plus one should-NOT-fire case: "give me the files/interfaces/build order" for
 one new endpoint is file-by-file blueprinting — `code-architect`'s territory per both agents' own
-cross-references, not a system-level review — so `backend-architect` must not be dispatched
-(`file-blueprint-misroute`). Needs `--allow-tools Bash,Read,Grep,Glob,Agent`.
+cross-references, not a system-level review — so the `backend-architect` skill must not load
+(`file-blueprint-misroute`). Needs `--allow-tools Bash,Read,Grep,Glob,Agent,Skill`.
 
 Six for `ideate-critic` (tag `ideate-critic`, agent — `mh:ideate`'s fresh-context Phase 2 critic,
 strict JSON-in/JSON-out contract with `tools: Bash` only, no Edit/Write). `evals/ideate-run/`
@@ -266,7 +269,7 @@ claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --
 # after, even on failure -- no manual edit, nothing to remember.
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent --ablation with-without --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate --allow-tools Agent,Bash,Read,Glob,Grep,Skill --runs 1 --no-publish'  # the run case spawns 6 agents (5 + mh:ideate-critic)
 ```

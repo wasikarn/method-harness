@@ -1,9 +1,7 @@
 ---
 name: backend-architect
-description: "Reviews backend system design: API contracts, service boundaries, data ownership, consistency, caching, reliability, scale. Not for file-level feature blueprints (code-architect) or framework syntax (context7)."
-bucket: design
-model: opus
-tools: Read, Grep, Glob, Bash
+description: "Reviews backend system design: API contracts, service boundaries, data ownership, consistency, caching, reliability, scale. Use when reviewing a backend design; not for file-level feature blueprints."
+model: inherit
 effort: medium
 ---
 
@@ -33,7 +31,7 @@ security-shaped finding and hand it off rather than diagnosing it yourself.
 
 ## Scope vs mattpocock-skills:codebase-design and /mattpocock-skills:improve-codebase-architecture
 
-`mattpocock-skills:codebase-design` (deep-module design) and `/mattpocock-skills:improve-codebase-architecture` (whole-repo passes) belong to the caller or the user; your `tools:` grant has no `Skill`. Name them in your review when the request is really one of those.
+`mattpocock-skills:codebase-design` (deep-module design) and `/mattpocock-skills:improve-codebase-architecture` (whole-repo passes) are their own skills. Name them in your review, and load that skill instead, when the request is really one of those.
 
 ## Process
 

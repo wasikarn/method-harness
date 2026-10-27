@@ -84,8 +84,8 @@ frontier models giving their own model family 75-84% win rates in self-judged co
 - The six review agents (`plan-reviewer`, `blind-spot-hunter`, `silent-failure-hunter`,
   `requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) have a planted-defect case and a clean control each
   under `evals/`, in `claude plugin eval`'s native layout, graded on their own Output Format
-  (`evals/README.md`). The other agents with cases are `backend-architect`,
-  `ideate-critic`, and `performance-optimizer`; the skills are `code-architect`, `tech-humanize`, `ste-lint`,
+  (`evals/README.md`). The other agents with cases are
+  `ideate-critic` and `performance-optimizer`; the skills are `backend-architect`, `code-architect`, `tech-humanize`, `ste-lint`,
   `harness-audit`, `memory-lint`, `deep-audit`, `compliance-audit`, `idea-audit`, `learn`,
   `post-mortem`, `cost-report`, and `ideate`. `tests/evals/test-eval-subjects-doc.sh` fails when
   this list and the subjects under `evals/` disagree. Count drifts as suites are added; recompute with
