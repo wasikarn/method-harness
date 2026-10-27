@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # test-tmp-delete.sh — tests/_lib/tmp_delete.py, the permanent delete for a test's own temp
 # paths (GH #724). Every refusal must exit nonzero, say why on stderr and delete nothing; a
-# path under the temp root is deleted. The "outside" probes are either missing paths or
-# system files the user cannot delete, so a broken helper still cannot remove anything real.
+# path under the temp root is deleted. Some refusal probes name real dirs (the home, /tmp,
+# the temp dir itself), so every refusal case runs the helper's main() with shutil.rmtree and
+# os.unlink replaced by an exit 99: a regression fails the test instead of deleting them. Only
+# the positive and symlink cases, which touch nothing outside $T, run the real helper.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 TD="$HERE/../_lib/tmp_delete.py"
@@ -16,6 +18,14 @@ trap 'python3 "$TD" "$T"' EXIT
 REALHOME=$(python3 -c 'import os,pwd; print(os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir))')
 MISSING_HOME_PROBE="$REALHOME/.mh-tmp-delete-probe-missing"
 
+# The helper with every delete call stubbed to exit 99 (argv: helper path, then its args).
+NODELETE='import importlib.util, os, shutil, sys
+spec = importlib.util.spec_from_file_location("td", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+shutil.rmtree = lambda *a, **k: sys.exit(99)
+os.unlink = lambda *a, **k: sys.exit(99)
+sys.exit(m.main(sys.argv[2:]))'
+
 # refused <title> <env-prefix...> -- <args...>: exit 2, "refused" on stderr, $T/keep intact.
 refused() {
   local title="$1"; shift
@@ -24,7 +34,7 @@ refused() {
   shift
   mkdir -p "$T/keep"
   local err rc
-  err=$(env ${envs[@]+"${envs[@]}"} python3 "$TD" "$@" "$T/keep" 2>&1); rc=$?
+  err=$(env ${envs[@]+"${envs[@]}"} python3 -c "$NODELETE" "$TD" "$@" "$T/keep" 2>&1); rc=$?
   if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'refused' <<<"$err" && [ -d "$T/keep" ]; then
     ok "$title"
   else
@@ -33,6 +43,11 @@ refused() {
 }
 
 echo "=== tests/_lib/tmp_delete.py ==="
+
+mkdir -p "$T/keep"
+python3 -c "$NODELETE" "$TD" "$T/keep"; rc=$?
+[ "$rc" -eq 99 ] && [ -d "$T/keep" ] && ok "the stubbed helper reaches its delete call (exit 99) and deletes nothing" \
+  || bad "the delete stub did not fire: rc=$rc"
 
 err=$(python3 "$TD" 2>&1); rc=$?
 [ "$rc" -eq 2 ] && [ -n "$err" ] && ok "no argument: exit 2 with a message" || bad "no argument: rc=$rc"
