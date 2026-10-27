@@ -17,7 +17,7 @@
 # Exit: 0 no diffs, 1 diffs, 2 usage error or refusal.
 # Both sides write their journal rows to a temp file (MH_GATE_JOURNAL_PATH) under a temp HOME, so
 # the operator's real gate journal is never touched; the temp dir is trashed at exit.
-# It waits in the pre-push gauntlet's queue (scripts/_lib/gauntlet-lock.sh) for up to
+# It waits in the gauntlet's queue (scripts/_lib/gauntlet-lock.sh) for up to
 # GAUNTLET_LOCK_WAIT_SECS (1800 s), then runs anyway.
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

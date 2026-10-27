@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # pre-push — refuse a direct push to refs/heads/develop (PR-only, branch
 # protection, docs/reference/branching-model.md, is the real enforcement; this is local defense-in-depth so a
-# rejection is instant instead of a round-trip to GitHub), then run the full
-# parallel gauntlet (scripts/run-gauntlet.sh).
+# rejection is instant instead of a round-trip to GitHub), refuse a new branch that overlaps develop, then
+# lint the files the push changes (GH #735: the gauntlet's lint layer, no tests, no gauntlet queue).
+# The full gauntlet runs where the merge is made: scripts/merge-pr.sh and scripts/sync-pr-head.sh run it
+# on the exact tree they push and merge. MH_PREPUSH_FULL=1 runs the full gauntlet here instead, queued.
 # Resolve via git: core.hooksPath is shared across linked worktrees.
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
@@ -16,7 +18,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 # protection is), so a rare false-closed here costs one manual retry, not a
 # security gap from silently letting an unparseable line through.
 _ZERO=0000000000000000000000000000000000000000
-_new_heads=() _new_refs=()
+_new_heads=() _new_refs=() _push_shas=() _push_olds=()
 while IFS= read -r _line; do
   # shellcheck disable=SC2206 # deliberate word-split on whitespace-separated ref-line fields
   _fields=($_line)
@@ -25,6 +27,8 @@ while IFS= read -r _line; do
     exit 1
   fi
   _remote_ref="${_fields[2]}"
+  # Every ref this push creates or moves (not deletes), with the remote's old sha, for the lint below.
+  [ "${_fields[1]}" = "$_ZERO" ] || { _push_shas+=("${_fields[1]}"); _push_olds+=("${_fields[3]}"); }
   if [ "$_remote_ref" = "refs/heads/develop" ]; then
     echo "pre-push: direct push to refs/heads/develop is refused — open a PR instead (docs/reference/branching-model.md)." >&2
     exit 1
@@ -41,7 +45,7 @@ done
 # fix. Refuse until develop is merged in, where the conflict or the identical change shows. Only a new
 # branch: sync-pr-head.sh pushes merges to existing ones while develop moves. The manifests are
 # skipped, every PR bumps them. No remote name (a direct run) skips the check.
-_remote="${1:-}"
+_remote="${1:-}" _dev=""
 if [ -n "$_remote" ] && [ "${#_new_heads[@]}" -gt 0 ]; then
   # FETCH_HEAD, not refs/remotes/<remote>/develop: a push to a URL passes the URL as $1.
   if git fetch -q "$_remote" develop && _dev=$(git rev-parse --verify -q FETCH_HEAD); then
@@ -64,13 +68,47 @@ if [ -n "$_remote" ] && [ "${#_new_heads[@]}" -gt 0 ]; then
       fi
     done
   else
+    _dev=""
     echo "pre-push: could not fetch $_remote develop; skipping the develop-overlap check." >&2
   fi
 fi
 
-# GH #158: queue behind any other gauntlet on this machine; its timing rows fail when several
-# run at once. The library lives beside this hook (not under $ROOT) so a fixture repo still works.
 HOOK_DIR="$(cd -P "$(dirname "$0")" && pwd)"
+if [ "${MH_PREPUSH_FULL:-}" != 1 ]; then
+  # Fast layer: lint each pushed commit's changed files, as they are in that commit (not the working
+  # tree). The libraries live beside this hook (not under $ROOT) so a fixture repo still works.
+  # shellcheck source=../scripts/_lib/gauntlet-lint.sh
+  . "$HOOK_DIR/../scripts/_lib/gauntlet-lint.sh"
+  # Changed since the branch left develop (a stale local develop only widens the list), else since the
+  # remote's old sha, else every file: a superset of what the push changes.
+  [ -n "$_dev" ] || _dev=$(git rev-parse --verify -q "refs/remotes/$_remote/develop^{commit}") || _dev=""
+  _lint_rc=0 _tmp=""
+  trap '[ -z "$_tmp" ] || python3 "$HOOK_DIR/../tests/_lib/tmp_delete.py" "$_tmp"' EXIT
+  for _i in "${!_push_shas[@]}"; do
+    git cat-file -e "${_push_shas[$_i]}" || { echo "pre-push: ${_push_shas[$_i]} is not an object here; refusing." >&2; exit 1; }
+    _sha=$(git rev-parse --verify -q "${_push_shas[$_i]}^{commit}") || continue  # a tag of a non-commit: nothing to lint
+    _old=${_push_olds[$_i]} _base=""
+    [ -z "$_dev" ] || _base=$(git merge-base "$_sha" "$_dev") || _base=""
+    # An old sha this clone never fetched is no base.
+    if [ -z "$_base" ] && [ "$_old" != "$_ZERO" ] && git cat-file -e "$_old^{commit}" 2>/dev/null; then _base=$_old; fi
+    if [ -n "$_base" ]; then
+      _files=$(git diff --no-renames --name-only --diff-filter=d "$_base" "$_sha")
+    else
+      _files=$(git ls-tree -r --name-only "$_sha")
+    fi
+    [ -n "$_files" ] || continue
+    _tmp=$(mktemp -d) && [ -d "$_tmp" ] || { echo "pre-push: mktemp -d failed" >&2; exit 1; }
+    git archive "$_sha" | tar -x -C "$_tmp"
+    echo "pre-push: linting $(printf '%s\n' "$_files" | wc -l | tr -d ' ') changed file(s) in ${_sha:0:12} (MH_PREPUSH_FULL=1 runs the full gauntlet)"
+    ( cd "$_tmp" && printf '%s\n' "$_files" | run_lint ) || _lint_rc=1
+    python3 "$HOOK_DIR/../tests/_lib/tmp_delete.py" "$_tmp"; _tmp=""
+  done
+  [ "$_lint_rc" -eq 0 ] || { echo "pre-push: lint failed on the files above; fix them and push again." >&2; exit 1; }
+  exit 0
+fi
+
+# MH_PREPUSH_FULL=1. GH #158: queue behind any other gauntlet on this machine; its timing rows fail when
+# several run at once.
 # shellcheck source=../scripts/_lib/gauntlet-lock.sh
 . "$HOOK_DIR/../scripts/_lib/gauntlet-lock.sh"
 gauntlet_lock_acquire

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gauntlet-lock.sh — a per-user queue so only one pre-push gauntlet runs at a time (GH #158).
+# gauntlet-lock.sh — a per-user queue so only one full gauntlet runs at a time (GH #158).
 # The gauntlet's timing rows (finishes inside 4 s / 8 s) fail when several gauntlets, or a gauntlet
 # and busy peer sessions, share the machine; waiting for your turn is deterministic where waiting
 # for the load to drop is a guess. Source it, then:
