@@ -5361,11 +5361,12 @@ def _views():
     # drop "brace-view" from SHADOW_RULES once /mh:gate-report shows no false positive.
     # GH #690: bash expands braces before $IFS splitting and command substitution, so a verb or flag that
     # needs both (`r{m,m}${IFS}-rf b`, `rm $(echo --{r,f}) b`) is read by brace-view copies of the expanded
-    # text with the ifs-split and subst-literal rewrites applied; they enforce what brace-view enforces.
+    # text with both rewrites applied (each only turns text into the words it stands for, so one copy per
+    # quoted mode reads all that either rewrite alone would); they enforce what brace-view enforces.
     if _BRACEX_TEXT is not None:
         out.append(("brace-view", _BRACEX_TEXT))
         ifs = _ifs_split(_BRACEX_TEXT)
-        for v in [ifs] + _subst_literals(_BRACEX_TEXT) + (_subst_literals(ifs) if ifs != _BRACEX_TEXT else []):
+        for v in _subst_literals(ifs) or [ifs]:
             if v != _BRACEX_TEXT and ("brace-view", v) not in out:
                 out.append(("brace-view", v))
     # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
