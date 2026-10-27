@@ -101,7 +101,8 @@ into skills after the fold-vs-keep eval below (folded worse on no code-architect
 one performance-optimizer case at `--runs 3`, which the operator judged noise). Their
 cases were written for the agent form; every fire-case prompt now loads the skill via the Skill
 tool (`skill: "mh:<name>"`), `dispatch-confirmed.md` checks that Skill call, and `agent-fired.md`
-checks the trace has no `Unknown skill: <name>` error.
+checks the trace has no `Unknown skill: <name>` error (in the two chain cases it also fails on an
+`Agent type '...' not found` error, the guard for their `reviewer-dispatched.md`).
 
 Eight for `code-architect` (tag `code-architect`).
 Natural routing into this skill never fires on its own for a well-worded architecture request —

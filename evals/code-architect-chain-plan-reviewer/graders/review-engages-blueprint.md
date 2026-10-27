@@ -2,7 +2,7 @@
 type: llm
 focus: trace
 ---
-Find the blueprint the session produced (from the code-architect agent or skill) and the
+Find the blueprint the session produced (from the code-architect skill) and the
 `mh:plan-reviewer` report on it. Score 1 only if all three hold: (1) the plan-reviewer dispatch
 prompt carries the blueprint's substance (its file-level changes and its stated reading of when
 the referrer is credited), not a one-line summary of it; (2) the review cites at least two concrete
