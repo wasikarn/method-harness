@@ -270,7 +270,7 @@ for kind in old numeric nonjson; do
     || bad "probe: $kind shfmt gave rc $rc, want 2 naming shfmt >= 3.5: $out $(cat "$probe/err")"
 done
 
-# The audit's known-bad fixtures are invalid shell on purpose (run-gauntlet.sh's lintable() and
+# The audit's known-bad fixtures are invalid shell on purpose (_lint_pick in scripts/_lib/gauntlet-lint.sh and
 # pre-commit's staged_lint() exclude the same path).
 files=()
 while IFS= read -r rel; do

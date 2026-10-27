@@ -9,7 +9,7 @@
 # dropped. Exit 1 when any check fails. Bash 3.2.
 _GAUNTLET_LINT_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-existing() { local f; while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done; return 0; }
+_lint_existing() { local f; while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done; return 0; }
 
 # _lint_pick <awk regex> <paths>: the paths matching the regex, outside the known-bad fixtures, NUL-separated.
 # Write a literal dot as [.]: awk -v processes escapes, so '\.sh$' arrives as '.sh$' (any char).
@@ -19,7 +19,7 @@ _lint_pick() {
 
 run_lint() {
   local rc=0 all home_hits
-  all=$(existing)
+  all=$(_lint_existing)
   # Lint runs beside 4 test jobs; P stays low because GH #158 timing rows flake under load.
   # Without -x or a .shellcheckrc, shellcheck checks each file alone, so batching keeps its verdicts.
   # bash -n stays one file per call: `bash -n a b` checks only a (b is its $1).

@@ -20,9 +20,11 @@ gauntlet_pass_start() {
   [ "$(cd "$top" && pwd -P)" = "$(pwd -P)" ] || return 0
   dirty=$(git status --porcelain --untracked-files=normal) || return 0
   [ -z "$dirty" ] || return 0
-  git rev-parse -q --verify 'HEAD^{tree}' || true
-  return 0
+  git rev-parse -q --verify 'HEAD^{tree}' || return 0  # no commit yet: nothing to key on
 }
+
+# gauntlet_pass_has <tree>: true when the cache is on and a pass is recorded for <tree>.
+gauntlet_pass_has() { [ "${GAUNTLET_PASS_CACHE:-1}" != 0 ] && [ -f "$(gauntlet_pass_dir)/$1" ]; }
 
 # gauntlet_pass_record <fail> <shard> <tree at start>: record a pass for the cwd's tree when the run
 # passed (fail 0), was not a shard, started clean (tree given) and is still clean on that same tree.
@@ -49,7 +51,7 @@ gauntlet_full() {
   local who=$1 tree d
   tree=$(git rev-parse --verify 'HEAD^{tree}') || return 1
   d=$(gauntlet_pass_dir)
-  if [ "${GAUNTLET_PASS_CACHE:-1}" != 0 ] && [ -f "$d/$tree" ]; then
+  if gauntlet_pass_has "$tree"; then
     echo "$who: the full gauntlet already passed on tree $tree ($d/$tree); skipping it (GAUNTLET_PASS_CACHE=0 runs it anyway)." >&2
     return 0
   fi

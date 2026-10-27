@@ -481,7 +481,7 @@ if [ "$verify" = 1 ]; then
   # A push only lints (GH #735), so the merged tree must have passed the full gauntlet here: a pass
   # cached for its tree, which sync-pr-head.sh or a clean run-gauntlet.sh writes. No cache, no merge.
   tree=$(git rev-parse --verify "$head^{tree}") || die "cannot read the tree of $head."
-  if [ "${GAUNTLET_PASS_CACHE:-1}" = 0 ] || [ ! -f "$(gauntlet_pass_dir)/$tree" ]; then
+  if ! gauntlet_pass_has "$tree"; then
     die "no full-gauntlet pass is cached for $head's tree $tree in $(gauntlet_pass_dir)${GAUNTLET_PASS_CACHE:+ (GAUNTLET_PASS_CACHE=$GAUNTLET_PASS_CACHE)}; run scripts/sync-pr-head.sh <head branch> $head (it runs the gauntlet), or bash scripts/run-gauntlet.sh on a clean checkout of $head, then --verify again."
   fi
   echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE, full gauntlet passed on its tree); merge it pinned to that sha now, and verify again if develop moves first." >&2
