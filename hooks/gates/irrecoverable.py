@@ -764,11 +764,12 @@ def _normalize_ansi_c_quotes(cmd, live_only=False):
     # a $'...' is literal (decoding a \x22 there early cut the text short). So a $'...' that opens outside
     # quotes, or in a $(...) / `...` inside "...", is decoded, matched at each such start so a literal one
     # cannot swallow a live one. Review 4: the command line's own reading (live_only false) also decodes the
-    # rest, as develop did, so a start the scanner misses (a case ) in "$(...)") is still read, unless the
-    # decoded text holds a character special in "..." that would reshape the quoting around it.
+    # rest, as develop did, so a start the scanner misses (a case ) in "$(...)") or one a nested shell reads
+    # (sh -c "eval \$'...'") is still read. Those sit in "...", so a decoded " \ $ or backtick is escaped
+    # there: it must not reshape the quoting around it (review 4), nor stop the decode (review 5).
     def _rest(m):
         dec = _decode_ansi_c(m)
-        return m.group(0) if any(ch in dec[1:-1] for ch in '"\\$`') else dec
+        return SQ + re.sub(r'(["\\$`])', r"\\\1", dec[1:-1]) + SQ
     out, last = [], 0
     for i in _ansi_c_live_starts(cmd):
         m = _ANSI_C_QUOTE_RE.match(cmd, i) if i >= last else None

@@ -3171,6 +3171,10 @@ test_deny  "$IRRECOVERABLE" 'GH #664 review 4: git verb after $(true)#' "$(bash_
 test_deny  "$IRRECOVERABLE" 'GH #664 review 4: case ) inside $(...) inside "..."' "$(bash_payload 'echo "$(case x in x) $'"'"'\x72m'"'"' -rf b;; esac)"')"
 test_allow "$IRRECOVERABLE" 'GH #664 review 4 control: \x{} is a NUL that ends the value' "$(bash_payload 'bash <<< $'"'"'\x{}\nrm -rf b'"'"'')"
 test_allow "$IRRECOVERABLE" 'GH #664 review 4 control: \U past U+10FFFF spells no verb' "$(bash_payload '$'"'"'\U110000a'"'"'rm -rf b')"
+# GH #664 review 5: a decoded " \ $ or backtick in "..." is escaped there, not left undecoded.
+test_deny  "$IRRECOVERABLE" 'GH #664 review 5: a nested shell'"'"'s eval of \$'"'"'...'"'"' whose text holds a $' "$(bash_payload 'sh -c "eval \$'"'"'\x72m -rf b \x24x'"'"'"')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 5: a nested shell'"'"'s eval of \$'"'"'...'"'"' whose text holds a "' "$(bash_payload 'sh -c "eval \$'"'"'\x72m -rf b \x22'"'"'"')"
+test_allow "$IRRECOVERABLE" 'GH #664 review 5 control: a decoded " inside $(case) in "..."' "$(bash_payload 'echo "$(case x in x) echo $'"'"'a\x22b'"'"';; esac)"')"
 
 # GH #693: a $(...)/backtick in the word of a ${...} (default, pattern, subscript, offset) runs, and a bash 5.3
 # funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command; the ${...} body was never read.
