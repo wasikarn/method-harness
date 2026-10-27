@@ -156,14 +156,14 @@ only 2 runs and 20 single-agent cases.
 
 <!-- Reserved: a later pass appends a dated correction here, never rewrites the sections above. -->
 
-**Result (2026-10-27, recommendation 1 run):** `scripts/eval-fold.sh` was run at `--runs 3` and
-`-j 4`, with a per-variant cost cap. It added two chain cases:
+**Result (2026-10-27, recommendation 1 run):** `scripts/eval-fold.sh` was run at `--runs 3`
+(`-j 4` for the two agent runs, `-j 3` for the unprompted case alone), with a per-variant cost cap. It added two chain cases:
 
 - `code-architect-chain-plan-reviewer`: the prompt names the reviewer.
 - `code-architect-chain-unprompted`: the prompt asks for a "checked" plan but does not name the
   reviewer.
 
-No run errored or hit its cap. Total cost was $34.35.
+No run errored or hit its cap. Total cost was $34.36.
 
 | Agent | folded worse | folded better | same | Cost kept / folded | Flipped grader |
 |---|---|---|---|---|---|
@@ -180,11 +180,29 @@ What the chain cases showed:
 
 What `performance-optimizer`'s "folded worse" means:
 
-- The one worse case is `perf-shallow-copy-trap`. The 2026-10-26 run had flipped the other way
+- The one worse case is `perf-shallow-copy-trap`, and it rests on a single failed run out of 3.
+  This morning's N=2 run (`fold-performance-optimizer-20261027T075749`) flipped the other way
   (kept FP, folded PP).
 - Across all 5 runs, both arms pass 4 of 5.
-- Read per case, the adopted rule says keep the agent. Read by mean score, folded is ahead (5.67
-  vs 5.00 over 6 cases).
+- Read per case, the adopted rule says keep the agent. Read by outcome score, folded is ahead
+  (summed over 6 cases: 5.67 vs 5.00; mean 0.94 vs 0.83).
 
-Results: `evals/results/fold-{code-architect,performance-optimizer}-20261027T{092413,122715,123727}/compare.txt`
-(gitignored, local only).
+Results (gitignored, local only):
+`evals/results/fold-code-architect-20261027T092413/compare.txt`,
+`evals/results/fold-code-architect-20261027T123727/compare.txt` (the unprompted case alone),
+`evals/results/fold-performance-optimizer-20261027T122715/compare.txt`.
+
+What this changes, against the sections above:
+
+- **Recommendation 1 is half done, on purpose.** The requirement-analyst → code-architect chain
+  case was dropped. requirement-analyst stays a subagent (see "Deliberately not shipped"), so
+  folding code-architect leaves that handoff's boundary in place.
+- **code-architect now has 8 eval cases, not 6** (the two chain cases).
+- **Re-score.** local-fold-evidence moves from 6 to 8, because its own 8-anchor ("chain cases
+  plus runs ≥ 3") is now met. `weighted-score.py`: 0.40×60 + 0.25×60 + 0.20×80 + 0.15×70 =
+  **65.5/100, PASS**, up from 61.5. Floor clear. Confidence stays medium: it is still N=3 on
+  single-agent cases, with one chain.
+- **performance-optimizer decision.** The operator approved folding it on 2026-10-27, against a
+  strict per-case reading of the rule. The reason: the single "folded worse" case rests on one
+  run and reversed the earlier run's direction, while `perf-nested-loop-fix` flipped FFF → PPP.
+  The Verdict's two-agent fold stands.

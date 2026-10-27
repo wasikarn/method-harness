@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-77 cases in Claude Code's native `claude plugin eval` layout (count:
+79 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -96,7 +96,8 @@ predated this and used) is mis-parsed as a literal path under the installed CLI 
 — confirmed on `post-mortem`. See "A previously-invisible defect" below: every other suite in
 this file has since been converted to the file-path form.
 
-Six for `code-architect` (tag `code-architect`, agent not a skill — dispatched via the `Agent`
+Eight for `code-architect` (tag `code-architect`; the two `code-architect-chain-*` cases also
+carry tag `chain`, agent not a skill — dispatched via the `Agent`
 tool with `subagent_type: "mh:code-architect"`, not a `disable-model-invocation` slash command).
 Natural routing into this agent never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
@@ -334,7 +335,7 @@ new case before running it.
 
 Cost, from the 2026-09-13 run above: about 272 agent runs (30 cases x 3 + 46 x 1, two arms) for
 $119.40 and 34,801 s, so roughly $0.44 and 128 s a run. At `--runs 2` a six-case agent
-(`code-architect`, `backend-architect`, `performance-optimizer`) is 6 x 2 x 2 = 24 runs: about
+(`backend-architect`, `performance-optimizer`; `code-architect` now has eight) is 6 x 2 x 2 = 24 runs: about
 $11 and 50 min at `-j 1`, 13 min at `-j 4`. `requirement-analyst` (two cases) is 8 runs: about $4.
 That average includes the cheap without-arm runs; these cases run 20+ turns and both variants
 run on the agent's pinned model (opus for three of the four, sonnet for
