@@ -62,6 +62,7 @@ refused "an existing file outside every temp root is refused and kept" -- /usr/b
 refused "/tmp itself is refused (a root is not strictly under itself)" -- /tmp
 refused "the TMPDIR root itself is refused" -- "${TMPDIR:-/tmp}"
 refused "TMPDIR=/ does not widen the roots" TMPDIR=/ -- /usr/bin/true
+refused "TMPDIR=/usr does not widen the roots" TMPDIR=/usr -- /usr/bin/true
 refused "TMPDIR=<home> does not widen the roots" "TMPDIR=$REALHOME" -- "$MISSING_HOME_PROBE"
 refused "TMPDIR inside the home does not widen the roots" "TMPDIR=$REALHOME/Library" -- "$REALHOME/Library/.mh-tmp-delete-probe-missing"
 SYSTMP=$(python3 -c 'import os,sys,subprocess; d=subprocess.run(["/usr/bin/getconf","DARWIN_USER_TEMP_DIR"],capture_output=True,text=True).stdout.strip() if sys.platform=="darwin" else ""; print(os.path.realpath(d or "/tmp"))')

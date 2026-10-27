@@ -13,10 +13,9 @@ stderr, exit 2, and nothing deleted at all. Refused:
 - the system temp dir itself or any ancestor of it (/tmp, and on macOS the per-user dir from
   `getconf DARWIN_USER_TEMP_DIR`): an earlier draft that allowed all of /private/var/folders
   deleted files from $TMPDIR itself;
-- any path whose location is not strictly under an allowed temp root: those system temp dirs,
-  plus the realpath of $TMPDIR when it is not `/`, not the home, an ancestor of it or inside it,
-  nor an ancestor of a system temp dir
-  (a test may export TMPDIR as its own mktemp dir and still delete that dir afterwards). The repo
+- any path whose location is not strictly under one of those system temp dirs. $TMPDIR is never
+  a root of its own: TMPDIR=/usr would otherwise make /usr deletable. A test that exports TMPDIR
+  as its own mktemp dir is still covered, since that dir sits under a system temp dir. The repo
   working tree is never a root: deleting there must stay recoverable. A tests/_lib/harness.sh
   _HARNESS_ROOT is a mktemp dir, so it is covered.
 A path that does not exist (after the root check) is a no-op success, so a cleanup can run twice.
@@ -41,12 +40,7 @@ def main(args):
         d = subprocess.run(["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True).stdout.strip()
         if d:
             system.add(os.path.realpath(d))
-    roots = set(system)
-    if os.environ.get("TMPDIR"):
-        t = os.path.realpath(os.environ["TMPDIR"])
-        broad = any(under(r, t) for r in system)  # e.g. TMPDIR=/private/var/folders
-        if t != "/" and t != home and not under(home, t) and not under(t, home) and not broad:
-            roots.add(t)
+    roots = system
 
     if not args:
         print("tmp_delete: no path given", file=sys.stderr)
