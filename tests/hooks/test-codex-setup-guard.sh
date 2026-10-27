@@ -18,7 +18,7 @@ pass=0
 fail=0
 
 FIXTURE=$(mktemp -d)
-trap 'trash "$FIXTURE" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FIXTURE" || true' EXIT
 export MH_GATE_JOURNAL_PATH="$FIXTURE/gate-decisions.jsonl"
 
 payload_skill() { # payload_skill <skill> <args>

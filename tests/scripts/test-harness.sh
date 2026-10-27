@@ -49,80 +49,62 @@ if [ "$COUNT2" = "1" ]; then
 else
   bad "track_trash <real-path> expected count=1, got $COUNT2"
 fi
-
 # _cleanup_trash with EXTRA_TRASH full of empties and an empty FAKE_HOME
-# must never invoke the real `trash` at all -- the actual incident this
-# guards against is `trash ""` deleting the process's cwd. Shim `trash` to
-# log its argv so we can assert it was never called with anything, not
-# just that the process didn't crash.
-TRASHSHIM=$(mktemp -d)
-cat > "$TRASHSHIM/trash" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@" >> "$TRASH_LOG"
-EOF
-chmod +x "$TRASHSHIM/trash"
-TRASH_LOG=$(mktemp)
+# must delete nothing -- the actual incident this guards against is
+# `trash ""` deleting the process's cwd. Run it from a fresh cwd and check
+# that cwd is still there afterwards.
+TD="$ROOT/tests/_lib/tmp_delete.py"
+CWD3=$(mktemp -d)
 ROOT_LOG3=$(mktemp)
-export TRASH_LOG
-PATH="$TRASHSHIM:$PATH" bash -c "
+(cd "$CWD3" && bash -c "
   . '$LIB'
   printf '%s' \"\$_HARNESS_ROOT\" > '$ROOT_LOG3'
   _HARNESS_ROOT=''
   FAKE_HOME=''
   EXTRA_TRASH=('' '')
   _cleanup_trash
-"
+")
 LEAKED3=$(cat "$ROOT_LOG3" 2>/dev/null)
 [ -n "$LEAKED3" ] && LEAKED_ROOTS+=("$LEAKED3")
-if [ ! -s "$TRASH_LOG" ]; then
-  ok "_cleanup_trash with only empty targets never invokes trash at all"
+if [ -d "$CWD3" ]; then
+  ok "_cleanup_trash with only empty targets leaves the cwd alone"
 else
-  bad "_cleanup_trash invoked trash with: $(cat "$TRASH_LOG")"
+  bad "_cleanup_trash with only empty targets deleted the cwd"
 fi
-CLEANUP1=()
-[ -n "$TRASHSHIM" ] && CLEANUP1+=("$TRASHSHIM")
-[ -n "$TRASH_LOG" ] && CLEANUP1+=("$TRASH_LOG")
-[ -n "$ROOT_LOG3" ] && CLEANUP1+=("$ROOT_LOG3")
-[ "${#CLEANUP1[@]}" -gt 0 ] && trash "${CLEANUP1[@]}" 2>/dev/null
+python3 "$TD" "$CWD3" "$ROOT_LOG3"
 
-# _cleanup_trash DOES invoke trash, once, with every real non-empty target
-# (FAKE_HOME plus a mix of empty and real EXTRA_TRASH entries) -- proves the
-# filter drops empties without also dropping real targets.
-TRASHSHIM2=$(mktemp -d)
-cat > "$TRASHSHIM2/trash" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@" >> "$TRASH_LOG2"
-EOF
-chmod +x "$TRASHSHIM2/trash"
-TRASH_LOG2=$(mktemp)
-ROOT_LOG4=$(mktemp)
-export TRASH_LOG2
+# _cleanup_trash deletes every real non-empty target (FAKE_HOME, a mix of
+# empty and real EXTRA_TRASH entries, and its own _HARNESS_ROOT), and a
+# target the delete helper refuses (outside every temp root; it never
+# exists, so a broken helper could not delete anything real) is reported
+# without blocking the others.
 FAKE_REAL_HOME=$(mktemp -d)
 FAKE_REAL_EXTRA=$(mktemp -d)
-PATH="$TRASHSHIM2:$PATH" bash -c "
+ROOT_LOG4=$(mktemp)
+ERR4=$(bash -c "
   . '$LIB'
   FAKE_HOME='$FAKE_REAL_HOME'
-  EXTRA_TRASH=('' '$FAKE_REAL_EXTRA' '')
+  EXTRA_TRASH=('' \"\$HOME/.mh-tmp-delete-refused-probe\" '$FAKE_REAL_EXTRA' '')
   printf '%s' \"\$_HARNESS_ROOT\" > '$ROOT_LOG4'
   _cleanup_trash
-"
+" 2>&1 >/dev/null)
 LEAKED4=$(cat "$ROOT_LOG4" 2>/dev/null)
-[ -n "$LEAKED4" ] && LEAKED_ROOTS+=("$LEAKED4")
-LOGGED=$(cat "$TRASH_LOG2" 2>/dev/null)
-if /usr/bin/grep -qF "$FAKE_REAL_HOME" <<<"$LOGGED" && /usr/bin/grep -qF "$FAKE_REAL_EXTRA" <<<"$LOGGED" && ! /usr/bin/grep -qx '' <<<"$LOGGED"; then
-  ok "_cleanup_trash trashes every real target, mixed with empties, without an empty argv element"
+if [ -n "$LEAKED4" ] && [ ! -e "$LEAKED4" ] && [ ! -e "$FAKE_REAL_HOME" ] && [ ! -e "$FAKE_REAL_EXTRA" ]; then
+  ok "_cleanup_trash deletes its root, FAKE_HOME and every real EXTRA_TRASH target"
 else
-  bad "_cleanup_trash real-target pass failed: logged='$LOGGED'"
+  bad "_cleanup_trash left a target behind (root, FAKE_HOME or EXTRA_TRASH)"
+  [ -n "$LEAKED4" ] && LEAKED_ROOTS+=("$LEAKED4")
 fi
-CLEANUP2=()
-for c in "$TRASHSHIM2" "$TRASH_LOG2" "$ROOT_LOG4" "$FAKE_REAL_HOME" "$FAKE_REAL_EXTRA"; do
-  [ -n "$c" ] && CLEANUP2+=("$c")
-done
-[ "${#CLEANUP2[@]}" -gt 0 ] && trash "${CLEANUP2[@]}" 2>/dev/null
+if /usr/bin/grep -q 'refused' <<<"$ERR4"; then
+  ok "_cleanup_trash reports a refused target on stderr"
+else
+  bad "_cleanup_trash said nothing about a target outside every temp root"
+fi
+python3 "$TD" "$ROOT_LOG4" "$FAKE_REAL_HOME" "$FAKE_REAL_EXTRA"
 
-# Every _HARNESS_ROOT any of the 4 sub-invocations above created (as a side
-# effect of sourcing harness.sh) and never itself trashed for real.
-[ "${#LEAKED_ROOTS[@]}" -gt 0 ] && trash "${LEAKED_ROOTS[@]}" 2>/dev/null
+# Every _HARNESS_ROOT the sub-invocations above created (as a side effect of
+# sourcing harness.sh) and never deleted themselves.
+[ "${#LEAKED_ROOTS[@]}" -gt 0 ] && python3 "$TD" "${LEAKED_ROOTS[@]}"
 
 echo "tests/_lib/harness: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

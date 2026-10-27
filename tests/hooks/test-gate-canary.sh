@@ -11,7 +11,7 @@ pass=0; fail=0
 check() { if [ "$2" -eq 0 ]; then pass=$((pass+1)); echo "  ok   $1"; else fail=$((fail+1)); echo "  FAIL $1"; fi; }
 
 tmp=$(mktemp -d)
-trap '[ -n "$tmp" ] && trash "$tmp" 2>/dev/null || true' EXIT
+trap '[ -n "$tmp" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp" || true' EXIT
 fresh() { cp "$ROOT"/hooks/gates/*.sh "$ROOT"/hooks/gates/*.py "$tmp"/; }
 
 bash "$CANARY" "$ROOT/hooks/gates" >/dev/null 2>&1
@@ -61,7 +61,7 @@ bash "$CANARY" "$tmp" >/dev/null 2>&1; rc=$?
 [ "$rc" -ne 0 ]; check "apostrophe inside an embedded python string fails the canary" $?
 
 fresh
-trash "$tmp/canary-fixture-apostrophe.sh"
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp/canary-fixture-apostrophe.sh"
 # A sourced _*.sh helper is not a gate: one that exits 1 when run directly must not fail the canary.
 printf '#!/usr/bin/env bash\necho "Error: sourced helper run as a gate" >&2\nexit 1\n' > "$tmp/_helper-probe.sh"
 bash "$CANARY" "$tmp" >/dev/null 2>&1

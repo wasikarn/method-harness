@@ -29,7 +29,7 @@ fi
 
 # 2. Script check: a linked worktree resolves to the main checkout's store.
 TMP="$(mktemp -d)"
-trap 'trash "$TMP" 2>/dev/null || python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1])" "$TMP"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP"' EXIT
 TMP="$(cd "$TMP" && pwd -P)"
 git init -q "$TMP/main"
 git -C "$TMP/main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init

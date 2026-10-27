@@ -13,7 +13,7 @@ ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 # trash "" resolves to the cwd and deletes it (documented repo incident) — a
 # test that mktemp's off its own output must never pass an unchecked result.
-safe_trash() { [ -n "${1:-}" ] && trash "$1" 2>/dev/null; return 0; }
+safe_trash() { [ -n "${1:-}" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$1"; return 0; }
 
 echo "=== gauntlet log preservation on failure (GH #158) ==="
 

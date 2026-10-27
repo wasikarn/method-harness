@@ -56,7 +56,7 @@ fi
 
 tmp=$(mktemp -d) || exit 2
 [ -n "$tmp" ] && [ -d "$tmp" ] || { echo "gate-differential: mktemp failed" >&2; exit 2; }
-cleanup() { [ -n "$tmp" ] && [ -d "$tmp" ] && trash "$tmp"; }
+cleanup() { [ -n "$tmp" ] && [ -d "$tmp" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp"; }
 trap cleanup EXIT
 
 if [ ! -d "$old" ]; then
