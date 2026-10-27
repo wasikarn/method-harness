@@ -70,12 +70,12 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 
 ## What it ships
 
-- **Skills (15):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
+- **Skills (16):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
   `mh:gate-report`, `mh:learn`, `mh:model-bench`, `mh:compliance-audit`, `mh:deep-audit`,
-  `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:tech-humanize`, `mh:code-architect`, `mh:backend-architect`, `mh:requirement-analyst`. `ste-lint` exists in the repo
+  `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:tech-humanize`, `mh:code-architect`, `mh:backend-architect`, `mh:requirement-analyst`, `mh:performance-optimizer`. `ste-lint` exists in the repo
   and is tested, but `.claude-plugin/plugin.json`'s skills list deliberately excludes it.
-- **Agents (7):** blind-spot-hunter, ideate-critic,
-  performance-optimizer, plan-reviewer, silent-failure-hunter,
+- **Agents (6):** blind-spot-hunter, ideate-critic,
+  plan-reviewer, silent-failure-hunter,
   test-gap-analyzer, type-design-analyzer (the last two adapted from Anthropic's
   `pr-review-toolkit`, Apache-2.0; three of its other agents duplicate native `/code-review`,
   `/simplify`, and `mh:silent-failure-hunter`, and `comment-analyzer` was skipped as low value here). Generic TS review and security review go to

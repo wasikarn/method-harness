@@ -125,9 +125,12 @@ instead (as a skill, no Agent dispatch happens, so that check now always passes)
 flipped true to load the plugin's skills at all, handled automatically via
 `with_default_enabled_true` (see the runnable commands below).
 
-Six for `performance-optimizer` (tag `performance-optimizer`, agent, same dispatch/ablation
-mechanics as `code-architect` — explicit dispatch instruction in every fire-case prompt,
-`agent-fired.md` is the tool-error-string regex, same automatic `defaultEnabled` flip as above). Five
+Six for `performance-optimizer` (tag `performance-optimizer`, a skill since 2026-10-27, folded from
+an agent after the fold-vs-keep eval scored the folded form worse on no case; same ablation
+mechanics as `code-architect` — every fire-case prompt loads it via the Skill tool with
+`skill: "mh:performance-optimizer"`, `dispatch-confirmed.md` checks that Skill call,
+`agent-fired.md` is the agent-era tool-error-string regex and now always passes, same automatic
+`defaultEnabled` flip as above). Five
 fire cases against small runnable JS fixtures with a `bench.js`: a nested-loop O(n²) lookup the
 fix must convert to Map/Set and actually benchmark before/after via real `node bench.js` runs, not
 invented numbers (`nested-loop-fix`); a function with no measurable bottleneck and no
@@ -144,9 +147,9 @@ rather than shipping a local tweak that implies the volume problem is solved —
 `backend-architect` by name isn't required, "this needs your decision on X" framing for the real
 lever counts (`architectural-handoff`). Plus one should-NOT-fire case: a reported regression with
 a before/after (5ms → 2s after a merge) is `mattpocock-skills:diagnosing-bugs`' literal trigger
-per this agent's own Scope section, not this agent's — it must take a root-cause diagnostic
+per this skill's own Scope section, not this skill's — it must take a root-cause diagnostic
 approach instead of jumping to speculative optimizations (`regression-routing`). Needs
-`--allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent`.
+`--allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill`.
 
 Six for `backend-architect` (tag `backend-architect`, a skill since 2026-10-27, folded from an agent
 after the fold-vs-keep eval scored the folded form worse on no case; same ablation mechanics as
@@ -268,7 +271,7 @@ claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --
 # regardless of your login shell; it flips defaultEnabled true for the duration and restores it
 # after, even on failure -- no manual edit, nothing to remember.
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill --ablation with-without --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent --ablation with-without --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate --allow-tools Agent,Bash,Read,Glob,Grep,Skill --runs 1 --no-publish'  # the run case spawns 6 agents (5 + mh:ideate-critic)
