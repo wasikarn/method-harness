@@ -1802,23 +1802,38 @@ WORD_LIT = "\x04"
 # "$(" starts is O(n^2) (65s on a 100,000-char payload under the length cap).
 # Exhaustion leaves the span un-blanked -- exactly the bypass shape -- so it is
 # recorded here (mutated, not rebound) and denied once after tokenization,
-# never reset across the primary and fallback calls. GH #702: it can hold the reason string
-# _PARAM_END_DIFFERS instead of True (truthy, so the save/restore and body cache carry it unchanged), and
-# _deny_if_depth_blown prints that reason.
+# never reset across the primary and fallback calls. GH #702/#713: it can hold a reason string
+# (_PARAM_END_DIFFERS, _SUBST_END_DIFFERS) instead of True (truthy, so the save/restore and body cache carry
+# it unchanged), and _deny_if_depth_blown prints that reason.
 _DEPTH_BUDGET_BLOWN = [False]
 _DEPTH_SCAN_BUDGET = 2_000_000
-def _close_bracket(s, j, opener, closer, depth_work_used):
+# GH #713: the work of the second closers that check _close_bracket/_close_psub (_close_param), charged
+# apart so the check does not halve the budget nested spans get; reset with each top-level scan's budget.
+_CHECK_WORK = [0]
+def _close_bracket(s, j, opener, closer, depth_work_used, comments=False):
     # The "$(...)" / "${...}" closer search: from s[j] (just past the opener), count same-type
     # brackets until the matching closer, charging one budget unit per char. Returns the index just
     # past the closer, or None when there is none (end of text, or the budget ran out, which also
     # sets _DEPTH_BUDGET_BLOWN). Quotes inside the span are not tracked (GH #184).
-    n, depth = len(s), 1
+    # GH #713: `comments` (a $(...) body) skips a word-start "#" to the newline, as bash does, so a
+    # commented ")" is no closer; read quote-blind like the count, so a quoted " #" only moves the end
+    # later (more text read as the body), never earlier. A "#" right after an escaped char is mid-word, as
+    # in _close_psub/_close_param/_scan_once (`\ #`), or the skip hides a ")" bash closes on.
+    n, depth, start, esc_end = len(s), 1, j, -1
     while j < n and depth and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
         depth_work_used[0] += 1
         if s[j] == opener:
             depth += 1
         elif s[j] == closer:
             depth -= 1
+        elif s[j] == "\\" and j != esc_end - 1:
+            esc_end = j + 2
+        elif comments and s[j] == "#" and j != esc_end and (j == start or s[j - 1] in _REDIRECT_TARGET_STOP):
+            k = s.find("\n", j)
+            k = n if k == -1 else k
+            depth_work_used[0] += k - j
+            j = k
+            continue
         j += 1
     if depth and depth_work_used[0] > _DEPTH_SCAN_BUDGET:
         _DEPTH_BUDGET_BLOWN[0] = True
@@ -1893,12 +1908,29 @@ def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
     return None if depth else j
 
 _PARAM_END_DIFFERS = "could not safely tokenize command (a ${...} word ends at a different place for bash than for the gate) - confirm with user first"
+_SUBST_END_DIFFERS = "could not safely tokenize command (a ${ ...; } substitution ends at a different place for bash than for the gate) - confirm with user first"
+def _at_command_word(s, j, start, esc_end):
+    # GH #713: s[j] is in command position in a body that starts at `start`: after a separator, "(", ")",
+    # "{", "!", or a reserved word a command follows; an escaped character before it is a word character
+    k = j - 1
+    while k >= start and s[k] in " \t":
+        if k == esc_end - 1:
+            return False
+        k -= 1
+    if k < start:
+        return True
+    if k == esc_end - 1:
+        return False
+    return s[k] in ";&|\n(){!" or re.search(r"(?:^|[\s;&|()])(?:then|do|else|if|elif|while|until|time)$",
+                                            s[max(start, k - 6):k + 1]) is not None
+
 def _close_param(s, j, depth_work_used, closer="}", _depth=0):
     # GH #702: the end of a ${...} word as bash 5.3 finds it, kept apart from _close_bracket/_close_psub so
     # a wrong count in one does not repeat in the other: the first "}" outside quotes, escapes and nested
     # $(...)/backtick/${...}/$'...'; a bare "{" is not counted. A command body (closer ")" for $(...), "f"
-    # for a funsub ending in "}") also skips a word-start "#" comment; ")" counts parens. Index past the
-    # closer, or None (unclosed, budget, or nesting past 50).
+    # for a funsub ending in "}") also skips a word-start "#" comment; ")" counts parens. GH #713: "f" ends
+    # at a "}" in command position only, and a "{ " group there nests one. Index past the closer, or None
+    # (unclosed, budget, or nesting past 50).
     if _depth >= 50:
         return None
     n, parens, dq, start, esc_end = len(s), 1, False, j, -1
@@ -1943,8 +1975,15 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
                 return None
             depth_work_used[0] += k - j
             j = k
-        elif closer != ")" and c == "}":
+        elif closer == "}" and c == "}":
             return j + 1
+        elif closer == "f" and c in "{}" and _at_command_word(s, j, start, esc_end):
+            if c == "}":
+                parens -= 1
+                if not parens:
+                    return j + 1
+            elif s[j + 1:j + 2] in (" ", "\t", "\n"):
+                parens += 1
         elif closer != "}" and c == "#" and j != esc_end and (j == start or s[j - 1] in _REDIRECT_TARGET_STOP):
             k = s.find("\n", j)
             if k == -1:
@@ -1974,10 +2013,11 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         bodies.append(s[i + 1:j])
         return PH, j + 1
     if c == "$" and nxt == "(":
-        j = _close_bracket(s, i + 2, "(", ")", depth_work_used)
+        j = _close_bracket(s, i + 2, "(", ")", depth_work_used, comments=True)
         if j is None:
             return None
-        bodies.append(s[i + 2:j - 1])
+        # GH #713: the prepass leaves newlines inside "..." alone, but in a $(...) body they separate commands
+        bodies.append(_newlines_to_seps(s[i + 2:j - 1]) if in_dquote else s[i + 2:j - 1])
         return PH, j
     if c == "$" and nxt == "{":
         # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
@@ -1985,9 +2025,12 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         funsub = s[i + 2:i + 3] in (" ", "\t", "\n", "|")
         if funsub:
             j = _close_psub(s, i + 2, depth_work_used, "{", "}")
+            # GH #713: bash ends it at a "}" in command position, not at a "}" argument (`"${ echo }; V; }"`)
+            if not _DEPTH_BUDGET_BLOWN[0] and _close_param(s, i + 2, _CHECK_WORK, "f") != j:
+                _DEPTH_BUDGET_BLOWN[0] = _SUBST_END_DIFFERS
         else:
             j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
-            p = _close_param(s, i + 2, depth_work_used)
+            p = _close_param(s, i + 2, _CHECK_WORK)
             # A "}" in a plain "..." ends _close_bracket early (`${y:-"a}b"}`); the quote-crossing fallback
             # after _tokens handles that, so only a body with no $, backtick, ' or \ is let through
             if not _DEPTH_BUDGET_BLOWN[0] and p != j and not (
@@ -2081,12 +2124,13 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
 # and depth are unchanged from before. Sharing one `depth_work_used`
 # list across the whole recursion (never a fresh one per call) keeps the
 # total work bounded by one _DEPTH_SCAN_BUDGET regardless of nesting
-# depth; `_depth` caps the recursion itself, since a budget check alone
+# depth (plus one more for the check closers, _CHECK_WORK); `_depth` caps the recursion itself, since a budget check alone
 # does not stop Python's own RecursionError on ~1000 properly-closed,
 # budget-cheap nested spans.
 def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
     if depth_work_used is None:
         depth_work_used = [0]
+        _CHECK_WORK[0] = 0
     out = []
     in_dquote = False
     # See _newlines_to_seps's own comment: an escaped separator is still a
@@ -2838,8 +2882,8 @@ except ValueError:
 
 # A scan that could not finish left a span un-blanked -- deny before dispatch.
 def _deny_if_depth_blown():
-    if _DEPTH_BUDGET_BLOWN[0] == _PARAM_END_DIFFERS:
-        deny(_PARAM_END_DIFFERS)
+    if isinstance(_DEPTH_BUDGET_BLOWN[0], str):
+        deny(_DEPTH_BUDGET_BLOWN[0])
     if _DEPTH_BUDGET_BLOWN[0]:
         deny("could not safely tokenize command (nested substitution exceeded the depth-scan budget, or a funsub body has an unbalanced quote) - confirm with user first")
 _deny_if_depth_blown()
