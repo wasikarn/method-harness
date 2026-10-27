@@ -2,8 +2,8 @@
 type: llm
 focus: trace
 ---
-Find the code-architect agent's blueprint (or, if the agent wasn't dispatched, whatever
-architecture the session produced inline). Every existing service in this repo takes its
+Find the code-architect blueprint (or, if the skill wasn't loaded, whatever architecture the
+session produced inline). Every existing service in this repo takes its
 dependencies as constructor parameters (`OrderService(db, mailer)`, `RefundService(db,
 payment_gateway)`), composed explicitly in `wiring.py`. Score 1 only if the proposed
 `ShippingService` follows the same constructor-injection style (its `__init__` takes `db` and

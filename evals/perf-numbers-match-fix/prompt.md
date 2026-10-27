@@ -4,9 +4,8 @@ tags: [performance-optimizer, planted]
 runs: 3
 max_turns: 25
 timeout_seconds: 400
-allowed_tools: [Bash, Read, Write, Edit, Grep, Glob, Agent]
+allowed_tools: [Bash, Read, Write, Edit, Grep, Glob, Agent, Skill]
 ---
 `Leaderboard.currentMin()` in `src/leaderboard.js` re-sorts the whole array on every call —
-`bench.js` reproduces the slowdown. Optimize it. Use the `mh:performance-optimizer` agent for this
-(dispatch it via the Agent tool with `subagent_type: "mh:performance-optimizer"`). Run
-`node bench.js` before and after. Relay whatever it produces back to me in full, verbatim.
+`bench.js` reproduces the slowdown. Optimize it. Use the `mh:performance-optimizer` skill for this (Skill tool, `skill: "mh:performance-optimizer"`). Run
+`node bench.js` before and after. End with the full report as your final message.

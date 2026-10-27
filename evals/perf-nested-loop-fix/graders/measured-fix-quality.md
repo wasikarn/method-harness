@@ -2,8 +2,8 @@
 type: llm
 focus: trace
 ---
-Find the performance work done on `findDuplicates` (whether by the dispatched agent or, if
-dispatch failed, whatever the session produced inline). Score 1 only if: `node bench.js` (or
+Find the performance work done on `findDuplicates` (whether by the loaded skill or, if the
+skill wasn't loaded, whatever the session produced inline). Score 1 only if: `node bench.js` (or
 equivalent) was actually run via Bash both before and after the fix (real timing output visible in
 the trace, not an invented number), the fix replaces the nested-loop O(n²) lookup with a Map/Set
 for O(1) lookups, and the final report names `src/dedupe.js` with the real measured before/after

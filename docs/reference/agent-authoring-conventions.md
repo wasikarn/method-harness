@@ -1,16 +1,16 @@
 # Agent authoring conventions
 
-What the 10-agent fleet actually does, made explicit so a new agent has something accurate to
+What the 8-agent fleet actually does, made explicit so a new agent has something accurate to
 pattern-match against. Prose guidance, not a gate; the mechanical checks are named per item.
 
 ## 1. Tool scoping: explicit allowlist, least privilege
 
 Every agent declares `tools:` as an explicit allowlist (`harness-audit` check 09, CRIT when
-missing). Read-only reviewers and analysts (`backend-architect`, `code-architect`, `blind-spot-hunter`,
+missing). Read-only reviewers and analysts (`backend-architect`, `blind-spot-hunter`,
 `silent-failure-hunter`, `requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) get `Read`, `Grep`, `Glob`, and
 usually `Bash` for `git log`/`git diff` inspection (read-only by discipline, not by tool grant);
-never `Write`/`Edit` (check 32). Mutating implementers
-(`performance-optimizer`) add `Write`/`Edit`. **`Agent` is never granted** (check 41): a
+never `Write`/`Edit` (check 32). An agent that must mutate files adds `Write`/`Edit`; none
+does today. **`Agent` is never granted** (check 41): a
 dispatched subagent returns scoped output, it does not spawn its own.
 
 Why: least privilege by construction (OWASP LLM06). The read/mutate split is where the blast
@@ -36,7 +36,7 @@ variable"), and `maxEffortLevel` or an org cap still clamps it.
 Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded review or
 mutation; `effort: high` for judgment and adversarial surfaces, `medium`/`low` for mechanical work or bounded review (`test-gap-analyzer`, `type-design-analyzer`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
 pins: `requirement-analyst` (readiness verdict), `plan-reviewer` and `blind-spot-hunter`
-(adversarial), `code-architect` and `backend-architect` (design trade-offs). Never pin `fable`
+(adversarial), `backend-architect` (design trade-offs). Never pin `fable`
 in an agent (Fable can bill usage credits depending on plan and seat tier, and `-p`/eval runs
 bill them without asking; it also loses model independence from a fable main session); never pin
 `max` (valid frontmatter per the sub-agents reference, but unbounded spend on a shipped agent;
