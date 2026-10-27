@@ -2,12 +2,9 @@
 type: regex
 target: trace
 match: not_contains
-pattern: "Agent type '[^']*' not found\\. Available agents"
+pattern: 'Unknown skill: (?:[\w-]+:)?code-architect\b'
 ---
-No "agent type not found" fallback happened for either agent in this chain: the pattern matches
-any agent type, so a missing `mh:code-architect` or `mh:plan-reviewer` both fail it. This is the
-guard for `reviewer-dispatched.md`, which as a `tool_used` check also matches a failed
-`plan-reviewer` dispatch in a without-plugin arm. A `tool_used: Agent` check on the requested
-`subagent_type` alone is a false positive here: the model still requests `mh:code-architect` even
-when it doesn't exist, gets this exact tool error, and falls back — this checks for that literal
-error string instead of a looser phrase that could appear in legitimate architecture discussion.
+The `mh:code-architect` skill actually loaded: the trace has no `Unknown skill: code-architect` error (the
+Skill tool's message, Claude Code 2.1.310, when it cannot find the name), which would leave the
+model answering without the skill. `dispatch-confirmed.md` checks the Skill call was made; this
+checks the call did not fail.
