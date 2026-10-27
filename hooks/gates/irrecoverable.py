@@ -196,6 +196,7 @@ _SQL_HEREDOC_DROP = [False]
 # GH #668 round 3: the line index in the stripped command right after each data body the top-level strip
 # kept as text, checked once the tokenizer exists (see _KEPT_MARK).
 _KEPT_BODY_ENDS = []
+_INTERP_HEREDOC_BODIES = []  # GH #681: quoted bodies python/node reads as its script, scanned like a -c body
 _HEREDOC_UNMATCHED = [False]  # the top-level strip, unsure, never found a delimiter (see _KEPT_MARK)
 
 def _pieces(text, pipe=False):
@@ -418,6 +419,14 @@ class _HeredocLine:
             self.stages[(k, "sh")] = shell
         return self.stages[(k, "sh")][j + 1]
 
+    def stdin_interp(self, pos):
+        # GH #681: (the heredoc's own stage, a later stage) runs python/node reading its script on stdin.
+        k, j, st, _ = self._stage(pos)
+        if (k, "py") not in self.stages:
+            self.stages[(k, "py")] = [_reads_stdin_interp(self.line[a:b]) for a, b in st]
+        py = self.stages[(k, "py")]
+        return py[j], any(py[j + 1:])
+
 def _heredoc_feeds_sql_client(ctx, openers, views, pos):
     # Whether the heredoc opened at ctx.line[pos] is read by a SQL client: its own pipe stage or one
     # downstream runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest
@@ -485,6 +494,23 @@ def _reads_stdin_shell(seg):
             k += t[1:].count("o") + t[1:].count("O")  # GH #674: each o or O (shopt) takes the next word,
             # as _shell_body's "oO" reads them (-o pipefail, +o histexpand, -eo x, -O extglob)
     return True
+
+# GH #681: python/node reads its script on stdin with no script operand or with `-` (python3 - <<'EOF',
+# cat <<'EOF' | node -). Only bare no-value flags may come first; -c, -m, -e, a script or an input
+# redirection is any other shape and keeps today's reading.
+_STDIN_INTERP_RE = re.compile(r"python[23]?(?:\.\d+)?|node(?:js)?")
+def _reads_stdin_interp(seg):
+    if "<<<" in seg:
+        return False
+    w = _split_words(_HEREDOC_OPEN_RE.sub(" ", seg))
+    w = _without_out_redirects(w) if w else None
+    i = _past_run_prefix(w) if w else None
+    if i is None or i >= len(w) or not _STDIN_INTERP_RE.fullmatch(w[i].rsplit("/", 1)[-1]):
+        return False
+    rest = w[i + 1:]
+    while rest and re.fullmatch(r"-[BdEIOqsSuv]+", rest[0]):
+        rest = rest[1:]
+    return (not rest or rest[0] == "-") and not any(t.startswith("<") for t in rest)
 
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
 
@@ -651,6 +677,13 @@ def _strip_heredocs(cmd, ends=None):
             feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
             strip_tabs, (delim, quoted) = bool(m.group(1)), _heredoc_delim(m.group(2)) or (
                 _heredoc_delim(m.group(2), True)[0], True)
+            # GH #681: a quoted body python/node reads as its script (its own stage, or a later one: cat <<'EOF' |
+            # python3 -) is scanned like a -c body; read by its own stage it is also stripped as data, so its
+            # quotes never pair with text past the delimiter. A shell downstream (| bash) keeps today's reading.
+            py_own, py_down = ctx.stdin_interp(m.start()) if (
+                ends is not None and quoted and ("python" in line or "node" in line)) else (False, False)
+            py_data = py_own and sure and not framed and not ctx.piped_shell(m.start())
+            sql_code, code = code, code and not py_data
             body_start, found, expands, early = i, False, False, False
             while i < len(lines):
                 body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
@@ -664,7 +697,9 @@ def _strip_heredocs(cmd, ends=None):
                 expands = expands or not quoted and (_odd_trailing_bs(body_line)
                                                      or bool(_BODY_EXPANDS_RE.search(body_line)))
             body = "\n".join(lines[body_start:i])
-            if code and not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(body) and _sql_drops(body):
+            if py_own or py_down:
+                _INTERP_HEREDOC_BODIES.append(body)
+            if sql_code and not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(body) and _sql_drops(body):
                 _SQL_HEREDOC_DROP[0] = True  # its own heredocs are not read, so a client in it reads its drop
             if early:
                 # Unsure from here: the body is kept and the EOF) line is read again as a command line.
@@ -3998,6 +4033,33 @@ def _root_or_home_word(rest):
             return True
     return False
 
+# trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
+# path. Any other variable stays allowed (trash is recoverable; the docs advise "${X:?}"). A ${HOME} or $(pwd)
+# word is blanked to a placeholder, so it is matched on trash's own raw arguments, as chmod's ${HOME} is.
+_TRASH_TREE_WORDS = ("/", "~", "~/", ".", "./", "..", "../..", "*", "", "$HOME", "$PWD")
+_TRASH_ARGS_RAW_RE = re.compile(r"(?<![\w.-])(?:trash(?:-put)?|gio\s+trash)(?![\w.-])([^;&|\n]*)")
+_PWD_SUBST_RAW_RE = re.compile(r"(?<![\w$/])[\"']?(?:\$\(\s*pwd\s*\)|`\s*pwd\s*`)[\"']?(?=[\s;&|)<>]|$)")
+def _trash_whole_tree(rest):
+    words, cur = [], []
+    for t in rest:
+        if cur and not isinstance(t, _Glued):
+            words.append("".join(cur))
+            cur = []
+        cur.append(t)
+    if cur:
+        words.append("".join(cur))
+    home, opts = os.path.normpath(os.path.expanduser("~")), True
+    for w in words:
+        if opts and w.startswith("-"):
+            opts = w != "--"
+            continue
+        if w in _TRASH_TREE_WORDS or (w.startswith("/") and PH not in w and os.path.normpath(w) in ("/", home)):
+            return True
+        if PH in w and w.strip(PH) == "" and any(_PWD_SUBST_RAW_RE.search(m.group(1)) or _HOME_BRACED_RAW_RE.search(
+                m.group(1)) for m in _TRASH_ARGS_RAW_RE.finditer(cmd.replace("\\\n", " "))):
+            return True
+    return False
+
 def _chmod_world(rest, recursive=False):
     # recursive: the mode reaches every file anyway (a find -exec action, GH #587).
     toks = [t.replace(PH, "") for t in rest]
@@ -4993,6 +5055,10 @@ def _check_window(_wi, w):
     if _a0 in ("chmod", "gchmod") and _chmod_world(rest):  # gchmod: GNU chmod from Homebrew (GH #587)
         deny("chmod 777 / a+rwx recursively or on / or ~ makes files world-writable — confirm with user first",
              rule="chmod-world", hint=_CHMOD_HINT)
+    if (_a0 in ("trash", "trash-put") and _trash_whole_tree(rest)) or (
+            _a0 == "gio" and rest and rest[0].replace(PH, "") == "trash" and _trash_whole_tree(rest[1:])):
+        deny("trash of /, ~, ., *, an empty word, $HOME or $PWD moves a whole tree to the trash — check the "
+             "argument is non-empty and names the path you mean (a variable: \"${X:?}\")", rule="trash-whole-tree")
     if not _in_value and _opaque_var(argv0, rest):
         ask("the program this runs is a variable with no visible assignment — confirm what it runs",
             rule="opaque-var-verb")
@@ -5467,6 +5533,11 @@ def _run_words():
 
 for _b in _SHELL_STDIN_BODIES:  # GH #567: each is a command line, like a sh -c body
     _scan_body(_b)
+for _b in _INTERP_HEREDOC_BODIES:  # GH #681: the process-API scan a python -c / node -e body gets (GH #608)
+    _ic = _interp_commands(_b)
+    _RM_VIA_INTERP[0] = _RM_VIA_INTERP[0] or bool(_ic)
+    for _c in _ic:
+        _scan_body(_c)
 _run_windows(0)
 
 # GH #245: the overlapping spawn scan, last (see _SPAWN_ANCHOR_RES).
