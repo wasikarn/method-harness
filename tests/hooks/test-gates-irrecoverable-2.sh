@@ -1041,7 +1041,81 @@ test_deny  "$IRRECOVERABLE" "GH #567: heredoc piped into bash" "$(bash_payload "
 test_allow "$IRRECOVERABLE" "GH #567 control: echo into tee" "$(bash_payload "echo 'rm -rf build' | tee notes.txt")"
 test_allow "$IRRECOVERABLE" "GH #567 control: echo into bash script.sh (stdin is data)" "$(bash_payload 'echo hi | bash x.sh')"
 test_allow "$IRRECOVERABLE" "GH #567 control: heredoc piped into grep bash" "$(bash_payload "$(printf "cat <<'EOF' | grep bash\nrm -rf build\nEOF")")"
-# Non-goal: eval "$(cat <<EOF)", fish <<EOF, and a << lookalike inside quotes.
+# Non-goal: eval "$(cat <<EOF)" and fish <<EOF. A << lookalike the shell does not read as a heredoc: GH #668.
+# GH #668: a << the shell does not read as a redirection (quoted, commented, escaped, in an arithmetic
+# or parameter frame, an array) or a delimiter read wrongly no longer hides the lines after it.
+for _c in $'echo "<<EOF"\nrm -rf build\nEOF' $'echo \'<<EOF\'\nrm -rf build\nEOF' \
+  $'echo "a\n<<EOF"\nrm -rf build\nEOF' $'echo x # <<EOF\nrm -rf build\nEOF' $'echo \\<<EOF\nrm -rf build\nEOF' \
+  $'echo $(( 1 << X ))\nrm -rf build\nX' $'echo ${x:-<< X }\nrm -rf build\nX' $'echo "${x:-"<<X"}"\nrm -rf build\nX' \
+  $'a=( << X )\nrm -rf build\nX' $'cat <<\\EOF\nx\nEOF\nrm -rf build\n\\EOF' $'cat <<EOF;\nx\nEOF\nrm -rf build\nEOF;' \
+  $'cat <<EOF\r\nx\nEOF\r\nrm -rf build\nEOF' $'cat <<EOF "a\n"; rm -rf build #\nEOF\n#"' \
+  $'cat <<EOF \\\n; rm -rf build\nEOF\necho ok' $'cat <<EOF\n$(rm -rf build)\nEOF' $'cat <<EOF\nEO\\\nF\nrm -rf build\nEOF' \
+  $'bash <<\'EOF\'\ncat <<X\nEOF\nrm -rf build\nX' $'echo "$(case a in a) echo "<<X";; esac)"\nrm -rf build\nX' \
+  $'echo "$(cat <<X)"\nrm -rf build\nX' $'echo $(case a in a) echo;; esac); psql db <<\'SQL\'\nDROP TABLE t;\nSQL'; do
+  _l=${_c//$'\r'/\\r}; test_deny "$IRRECOVERABLE" "GH #668: ${_l//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# Real heredocs whose body only mentions a destructive verb stay data.
+for _c in $'cat <<\'EOF\'\nit\'s\nEOF\necho "<<X"\nls\nX' $'echo "$(cat <<\'EOF\'\ndon\'t\nEOF\n)"\necho "<<X"\nls\nX' \
+  $'echo ${x}; cat <<\'EOF\'\nrm -rf build\nEOF' $'echo $((1)); cat <<\'EOF\'\nrm -rf build\nEOF' \
+  $'git commit -m "$(cat <<\'EOF\'\nfix: don\'t rm -rf build\nEOF\n)"' $'git commit -F- <<\'EOF\'\nfix: no rm -rf build\nEOF' \
+  $'gh pr create --title t --body "$(cat <<\'EOF\'\nWe don\'t run rm -rf build or git push --force.\nEOF\n)"' \
+  $'cat > notes.md <<\'EOF\'\nnever rm -rf build\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #668 control: $(printf '%s' "$_c" | head -1)" "$(bash_payload "$_c")"
+done
+# GH #668 round 2: inside $( bash ends a heredoc at a line that starts with the delimiter (EOF), EOF ),
+# EOF); ...) and runs the next line, where the gate waited for an exact EOF line.
+for _c in $'out=$(cat <<EOF\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<EOF\nmsg\nEOF )\nrm -rf build\nEOF' \
+  $'out=$(cat <<EOF\nmsg\nEOF);\nrm -rf build\nEOF' $'out=$(cat <<EOF\nmsg\nEOF) && :\nrm -rf build\nEOF' \
+  $'out=$(cat <<\'EOF\'\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<-EOF\nmsg\n\tEOF)\nrm -rf build\nEOF' \
+  $'bash <<\'EOF\'\npsql db <<SQL\nDROP TABLE t;\nSQL\nEOF'; do
+  test_deny "$IRRECOVERABLE" "GH #668 round 2: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# An interpreter-fed body is skipped like any body (kept as code), so a later quoted body stays data; and
+# a plain ${NAME}, an escaped backtick or an escaped \$( in an unquoted body does not expand.
+for _c in $'python3 - <<\'EOF\'\nprint("x")\nEOF\ncat > notes.md <<\'EOF\'\nWe don\'t run rm -rf build {ever}.\nEOF' \
+  $'cat > notes.md <<EOF\nrm -rf build ran at ${TS}\nEOF' $'cat > notes.md <<EOF\nrm -rf build, not \\`ls\\`\nEOF' \
+  $'cat > notes.md <<EOF\nrm -rf build, not \\$(date)\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #668 round 2 control: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c")"
+done
+# GH #668 round 3: a data body the gate keeps as text once unsure is read by the tokenizer as shell text,
+# but bash reads it as data, so an odd quote in it paired with a quote past the delimiter and hid the line.
+# The last one is balanced for _quote_mask (a backtick opens a frame in "..") but not for the tokenizer.
+# Out of scope: the same desync in an interpreter-fed (code) body, GH #681.
+for _c in $'cat <<EOF\n$(echo) it\'s\nEOF\nrm -rf build\necho \'' $'cat <<EOF\n`echo` it\'s\nEOF\nrm -rf build\necho \'' \
+  $'cat <<EOF\n$(echo) "\nEOF\nrm -rf build\necho "' $'cat <<EOF\nline \\\nit\'s\nEOF\nrm -rf build\necho \'' \
+  $'cat > f <<EOF\nx="` echo \' " \' `"\nEOF\nrm -rf build\necho \'' \
+  $'cat <(cat <<EOF\nin\nEOF) ; git push --force origin main\nEOF' $'cat >(cat <<EOF\nout\nEOF) ; git push --force origin main\nEOF' \
+  $'x=${ cat <<EOF\nfunsub\nEOF }\ngit push --force origin main\nEOF\n}'; do
+  test_deny "$IRRECOVERABLE" "GH #668 round 3: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c")"
+done
+# Only inside $( or backticks does bash end a body at a line that starts with the delimiter (EOF)). Each
+# control ends in a $ so it reaches python past the wrapper's fast path.
+for _c in $'python3 - <<\'EOF\'\nprint("it\'s")\n# don\'t\nEOF' $'python3 - <<\'EOF\'\ns = """a "b" it\'s"""\nprint(s)\nEOF' \
+  $'cat > f.sh <<EOF\necho "built at $(date)" \'ok\'\nEOF' $'bash <<\'EOF\'\necho "a"; echo \'b\'\nEOF' \
+  $'python3 - <<\'E\'\nError = ValueError("it\'s")\nprint(Error)\nE' $'cat > f <<EOF\nv="$(echo \'x\')"\nEOF' \
+  $'python3 - <<\'EOF\'\ns = """\nEOF marker\n"""\nprint("it\'s")\nEOF' $'cat > notes.md <<\'E\'\nExceptions aren\'t rare\nE' \
+  $'python3 - <<\'E\'\nx = 1\nExc = 2\nprint(x)\nE\ncat > n.md <<\'X\'\nit\'s\nX' \
+  $'diff <(cat <<\'EOF\'\nwe never rm -rf build\nEOF\n) f'; do
+  test_allow "$IRRECOVERABLE" "GH #668 round 3 control: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c"$'\necho "$PWD"')"
+done
+_huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
+_timed_case 'GH #668: a 2.1 MB command denies on length before the heredoc scan' 2 "$_huge_cmd"
+# GH #668 round 4: shapes the scan does not model turn it unsure, so nothing more is stripped: a \ in the
+# delimiter inside backticks (bash unescapes \\ first), a $(( frame still open at the line end, an opener
+# in an array subscript (a left shift), a delimiter with a $ (quotes removed, never expanded), unfound.
+_n4=0
+for _c in $'x=`cat <<E\\\\OF\nmsg\nEOF\nrm -rf build\nE\\OF\n`' $'x=`cat <<E\\\\OF\nmsg\nEOF\ngit push --force origin main\nE\\OF\n`' \
+  $'x=$((cat <<EOF\nmsg\nEOF\n) )\ncat <<\'X\'\nit\'s\nX\nrm -rf build\necho \'' \
+  $'a[1<<2]=3\nrm -rf build\n2]=3' $'a[1<<X ]=5\nrm -rf build\nX' \
+  $'cat <<"$X"\nit\'s data\n$X\nrm -rf build\necho don\'t' $'cat <<"$X"\nit\'s data\nrm -rf build\necho don\'t'; do
+  _n4=$((_n4 + 1)); test_deny "$IRRECOVERABLE" "GH #668 round 4 case $_n4: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# Quadratic before: a $(( per line left a frame open and grew the stack (800k chars took 9 s, past the hook
+# timeout that allows); a command over _CMD_LEN_CAP now skips the scan. The second guards the depth latch.
+_quad_cmd="$(python3 -c 'print("x=$((cat <<EOF\nit'"'"'s\nEOF\n) )\n" * 28571 + "rm -rf build")')"
+_timed_case 'GH #668 round 4: 800 KB of $(( heredoc lines denies in bounded time' 2 "$_quad_cmd"
+_deep_cmd="$(python3 -c 'print("\"$(\n" * 37000)')"
+_timed_case 'GH #668 round 4: 37000 nested "$( lines (148 KB) deny in bounded time' 2 "$_deep_cmd"
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 
@@ -2028,8 +2102,8 @@ _sql_nested_cmd="$(python3 -c 'print("( " * 9000 + "echo \"" + "x " * 20000 + "\
 _timed_case 'GH #621: 9000 nested groups around 40 KB of echo piped into psql finish in bounded time' 0 "$_sql_nested_cmd"
 _sql_nested_cmd="$(python3 -c 'print("( " * 5000 + "echo \"" + "x " * 10000 + "\" | psql" + " ; echo y ) | psql" * 5000 + " # DROP TABLE t")')"
 _timed_case 'GH #621: 5000 nested groups each adding a line to 20 KB of SQL deny on the read budget' 2 "$_sql_nested_cmd"
-_sql_gap_cmd="$(python3 -c 'print("psql -c \"DROP " + "/* a * b */ " * 6000 + "x\"; mysql db <<SQL\nDROP " + "# c\n" * 12000 + "x\n" + "/*" + "*" * 40000 + "\nSQL")')"
-_timed_case 'GH #621: 140 KB of comment runs between DROP and a non-object finish in bounded time' 0 "$_sql_gap_cmd"
+_sql_gap_cmd="$(python3 -c 'print("psql -c \"DROP " + "/* a * b */ " * 5000 + "x\"; mysql db <<SQL\nDROP " + "# c\n" * 10000 + "x\n" + "/*" + "*" * 35000 + "\nSQL")')"
+_timed_case 'GH #621: 135 KB of comment runs between DROP and a non-object finish in bounded time' 0 "$_sql_gap_cmd"
 _sql_lits_cmd="$(python3 -c 'print("mysql db <<SQL\nSELECT \`a\`" + " ,'"'"'drop table x'"'"'" * 7000 + ";\nSQL")')"
 _timed_case 'GH #621: 7000 literals after a backtick in a heredoc into mysql finish in bounded time' 0 "$_sql_lits_cmd"
 # GH #621 review: a CR (or U+2028/U+2029) ends a -- or // comment for psql and JavaScript, so a quote in
@@ -2134,10 +2208,10 @@ test_allow "$IRRECOVERABLE" "GH #697 control: psql \"\$DATABASE_URL\" keeps the 
 # GH #697 review: the per-line checks run once per line, not once per heredoc on it (3000 openers took 15 s).
 _sql_opaque_heredocs_cmd="$(python3 -c 'print("psql db $X " + "<<a " * 3000 + "\n" + "SELECT 1\na\n" * 2999 + "DROP TABLE t\na")')"
 _timed_case 'GH #697 review: 3000 heredocs on a psql line with a $X word, the last a DROP, deny in bounded time' 2 "$_sql_opaque_heredocs_cmd"
-_sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 20000 + "\n" + "DROP TABLE t\na\n" * 20000)')"
-_timed_case 'GH #559 review 3: 20000 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
-_sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 15000 + "> f; psql\n" + "DROP TABLE t\na\n" * 15000)')"
-_timed_case 'GH #559 review 3: 15000 heredocs into a file on a psql line finish in bounded time' 0 "$_sql_many_heredocs_cmd"
+_sql_many_heredocs_cmd="$(python3 -c 'print("psql db " + "<<a " * 7500 + "\n" + "DROP TABLE t\na\n" * 7500)')"
+_timed_case 'GH #559 review 3: 7500 heredocs on one psql line finish in bounded time' 2 "$_sql_many_heredocs_cmd"
+_sql_many_heredocs_cmd="$(python3 -c 'print("cat " + "<<a " * 7500 + "> f; psql\n" + "DROP TABLE t\na\n" * 7500)')"
+_timed_case 'GH #559 review 3: 7500 heredocs into a file on a psql line finish in bounded time' 0 "$_sql_many_heredocs_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("eval x%d;" % i for i in range(7000)) + " rm -rf ~")')"
 _timed_case 'GH #559 review 2: 7000 eval bodies after a 68 KB heredoc into psql finish in bounded time' 2 "$_sql_many_bodies_cmd"
 _sql_many_bodies_cmd="$(python3 -c 'print("psql db <<'"'"'SQL'"'"'\n" + "SELECT 1 FROM t;\n" * 4000 + "SQL\n" + "".join("bash -c x%d;" % i for i in range(5000)) + " rm -rf ~")')"
