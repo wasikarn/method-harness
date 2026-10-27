@@ -17,8 +17,8 @@
 # Exit: 0 no diffs, 1 diffs, 2 usage error or refusal.
 # Both sides write their journal rows to a temp file (MH_GATE_JOURNAL_PATH) under a temp HOME, so
 # the operator's real gate journal is never touched; the temp dir is trashed at exit.
-# It waits in the pre-push gauntlet's queue (scripts/_lib/gauntlet-lock.sh) for up to
-# GAUNTLET_LOCK_WAIT_SECS (1800 s), then runs anyway.
+# It runs at the lowest CPU priority and never takes the pre-push gauntlet's queue: holding it, a
+# 28-min replay kept every push waiting (2026-10-27).
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() { sed -n '5,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -56,16 +56,13 @@ if [ -n "$slug" ]; then
   esac
 fi
 
-# A large --replay beside peers' gauntlets held load at 8-12 (2026-10-27): wait in their queue.
-# shellcheck source=_lib/gauntlet-lock.sh
-. "$ROOT/scripts/_lib/gauntlet-lock.sh"
-gauntlet_lock_acquire
-trap gauntlet_lock_release EXIT
+# Yield the CPU to peers' gauntlets instead of queueing behind them; children inherit it.
+renice -n 19 -p $$ >/dev/null
 
 tmp=$(mktemp -d) || exit 2
 [ -n "$tmp" ] && [ -d "$tmp" ] || { echo "gate-differential: mktemp failed" >&2; exit 2; }
 cleanup() { [ -n "$tmp" ] && [ -d "$tmp" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp"; }
-trap 'cleanup; gauntlet_lock_release' EXIT
+trap cleanup EXIT
 
 if [ ! -d "$old" ]; then
   # A git ref: extract hooks/gates at it (the gates import their _*.py siblings).
