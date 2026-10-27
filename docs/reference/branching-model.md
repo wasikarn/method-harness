@@ -11,8 +11,9 @@ a squashed feature branch is not merged by ancestry, so only `git branch -D` rem
 `delete_branch_on_merge: true` on the remote handles cleanup.
 
 Enforcement layers, weakest to strongest:
-- `git-hooks/pre-push` refuses a direct push whose remote ref is `refs/heads/develop`, before the
-  gauntlet even runs — local, defense-in-depth, one manual retry if a stdin ref line is malformed.
+- `git-hooks/pre-push` refuses a direct push whose remote ref is `refs/heads/develop`, before
+  anything else runs — local, defense-in-depth, one manual retry if a stdin ref line is malformed.
+  Then it lints only the pushed files (GH #735); the full gauntlet runs at merge time (below).
   It also refuses to *create* a branch that changes a file (not the manifests) `develop` changed since
   the branch point, listing those commits: merge `develop`, check none already makes the change, push
   again (84c57d69 had fixed what #613's first branch re-fixed). Parallel open PRs are not checked.
@@ -30,8 +31,9 @@ Enforcement layers, weakest to strongest:
   credential. "Review" here is this repo's own operating custom, not something
   branch protection mechanically enforces. An admin editing the protection rule itself is a
   separate, named, accepted residual risk, not something any of the above closes.
-  There is no CI (2026-10-03): the pre-commit and pre-push hooks are the only gates, so a clone with
-  `core.hooksPath` unset, or a push from another machine, skips them. Re-add a workflow and the
+  There is no CI (2026-10-03): the pre-commit and pre-push hooks and the full gauntlet in
+  `merge-pr.sh`/`sync-pr-head.sh` are the only gates, so a clone with `core.hooksPath` unset, or a
+  push from another machine, skips the hooks. Re-add a workflow and the
   required contexts together if that stops being acceptable.
 
 ## Merging: `scripts/merge-pr.sh <PR>` (GH #450)
@@ -63,15 +65,15 @@ refuses on any change. It:
    conflicts are the manifests, the script merges them again with the version set aside, so the
    PR's other manifest edits survive, then keeps the PR's own version if it is higher (a deliberate
    minor bump); any other conflict refuses (merge by hand, push, rerun);
-6. pushes to the PR branch, so the pre-push gauntlet runs on the exact tree that will merge. Git
-   opens the SSH connection before the hook runs, so the push adds `-o ServerAliveInterval=10 -o
-   ServerAliveCountMax=30` to the ssh command (GitHub dropped the idle connection on the first real run, exit 141). It checks
-   the push by `git ls-remote`, not the exit code, and waits for GitHub to show the new head. A red gauntlet refuses and leaves the commit
-   on the local branch: fix, commit, rerun (a fix commit that touches more than the manifests needs
-   a new review verdict). If the tree changed while the gauntlet ran, it refuses the merge. When
-   origin already has the head (an earlier run pushed it, or an older PR is already up to date and
-   above develop), the script runs the pre-push hook itself on the clean tree instead of pushing,
-   and refuses if there is no executable hook;
+6. runs the full gauntlet (`scripts/run-gauntlet.sh`, under the gauntlet queue) on that exact clean
+   tree, or skips it when a pass is cached for the tree (GH #735), then pushes that sha to the PR
+   branch when origin does not have it yet (an earlier run pushed it, or an older PR is already up to
+   date and above develop). A red gauntlet refuses before any push and leaves the commit on the local
+   branch: fix, commit, rerun (a fix commit that touches more than the manifests needs a new review
+   verdict). If the tree changed while the gauntlet ran, it refuses. The push keeps `-o
+   ServerAliveInterval=10 -o ServerAliveCountMax=30` on the ssh command (GitHub dropped an idle
+   connection during a hook-run gauntlet, exit 141), checks the push by `git ls-remote`, not the exit
+   code, and waits for GitHub to show the new head;
 7. fetches; if `origin/develop` moved (a merge made outside the script), goes back to step 4, three
    rounds at most;
 8. re-checks the version (plain `X.Y.Z`, both manifests equal, above `origin/develop`'s), the review
@@ -108,9 +110,11 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
    reads arrays saved one after another, like `gh --paginate` output), and check the total against
    the PR's comment count. A page left out can hide the latest verdict: a FIX FIRST on page 2 after a
    MERGE on page 1;
-2. if the head lacks `origin/develop` or a version above it, run `scripts/sync-pr-head.sh <head branch>
-   <head sha>` and use the sha it prints. It merges develop and bumps in a temporary worktree and
-   pushes leased on the head, so the pre-push gauntlet runs on the tree that merges. A PR from a fork
+2. run `scripts/sync-pr-head.sh <head branch> <head sha>` and use the sha it prints, every time: it is
+   the cloud path's only full gauntlet (GH #735; a push only lints). When the head lacks
+   `origin/develop` or a version above it, it merges develop and bumps in a temporary worktree; either
+   way it runs the full gauntlet on the tree that merges (a cached pass skips it), then pushes leased
+   on the head when it made a commit. A PR from a fork
    (its head repository is not this one) cannot be synced this way, since the sync pushes to a branch
    of `origin`: merge develop into it and bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,

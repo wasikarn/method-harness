@@ -11,8 +11,10 @@ bash scripts/run-gauntlet.sh                       # plugin-validate, lint, ever
 ```
 
 pre-commit: staged lint, home-path ban, audit, 4096-byte cap on `docs/METHODOLOGY.md`, gate canary.
-pre-push: the gauntlet. There is no CI, so these two local hooks are the only gates; branch
-protection requires a PR, no status checks. Detail: `docs/reference/repo-gotchas.md`.
+pre-push: lint of the pushed files only (GH #735; `MH_PREPUSH_FULL=1` runs the gauntlet). The full
+gauntlet runs in `scripts/merge-pr.sh` and `scripts/sync-pr-head.sh`, on the exact tree they merge;
+a clean passing run is cached by tree hash. There is no CI, so these local gates are the only ones;
+branch protection requires a PR, no status checks. Detail: `docs/reference/repo-gotchas.md`.
 
 ## Composer-not-creator
 
