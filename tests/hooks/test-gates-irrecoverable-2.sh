@@ -62,6 +62,39 @@ test_deny  "$IRRECOVERABLE" "env GIT_CONFIG_PARAMETERS=core.hooksPath=... git co
   "$(bash_payload 'env GIT_CONFIG_PARAMETERS="'"'"'core.hooksPath=/dev/null'"'"'" git commit -m x')"
 test_allow "$IRRECOVERABLE" "FOO=bar ls (assignment prefix on a benign command)" \
   "$(bash_payload 'FOO=bar ls')"
+# --- actionable refusals: a "confirm with user first" deny names a next step a headless run can take ---
+_NODECIDE='if nobody can confirm, skip this step, keep going on the rest'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard keeps the confirm text" "$(bash_payload 'git reset --hard')" "confirm with user first"
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard has the no-one-to-confirm tail" "$(bash_payload 'git reset --hard')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tail says list it for the user" "$(bash_payload 'git clean -fd')" "list it for the user in your final report"
+test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload 'dropdb prod')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
+# hints name steps every mh/dotfiles guard allows: no git stash (subagent-git-guard denies it; the stash is shared)
+_SAVE='or commit first, or save a patch with `git diff HEAD > x.patch`'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git reset --keep <ref>`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard names commit/patch" "$(bash_payload 'git reset --hard')" "$_SAVE"
+test_deny_says "$IRRECOVERABLE" "refusal: restore hint" "$(bash_payload 'git restore f')" "$_SAVE" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: checkout -- hint" "$(bash_payload 'git checkout -- f')" "$_SAVE" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: switch --force hint" "$(bash_payload 'git switch -f main')" 'or commit first, then a plain `git switch`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: commit --amend hint" "$(bash_payload 'git commit --amend -m x')" "make a new commit"
+test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'preview with `git clean -n`, then move the files aside with `mv`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: push --mirror hint" "$(bash_payload 'git push --mirror origin')" "push named refs"
+test_deny_says "$IRRECOVERABLE" "refusal: stash drop hint" "$(bash_payload 'git stash drop')" "leave the stash in place" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: worktree remove --force hint" "$(bash_payload 'git worktree remove --force ../wt')" "then a plain \`git worktree remove" '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: rm -f hint" "$(bash_payload 'git rm -f f.txt')" "then plain \`git rm"
+test_deny_says "$IRRECOVERABLE" "refusal: chmod 777 hint" "$(bash_payload 'chmod -R 777 /')" "narrowest mode"
+test_deny_says "$IRRECOVERABLE" "refusal: find -exec chmod 777 hint" "$(bash_payload 'find . -exec chmod 777 {} +')" "narrowest mode"
+# a git -c / git config deny names the override, not the verb's hint: tail only
+test_deny_says "$IRRECOVERABLE" "refusal: alias definition gets the tail only" "$(bash_payload "git config alias.x 'reset --hard'")" "$_NODECIDE" 'reset --keep'
+test_deny_says "$IRRECOVERABLE" "refusal: -c alias run gets the tail only" "$(bash_payload "git -c alias.x='!git reset --hard' x")" "$_NODECIDE" 'reset --keep'
+test_deny_says "$IRRECOVERABLE" "refusal: -c risk key gets the tail only" "$(bash_payload 'git -c clean.requireForce=false clean')" "$_NODECIDE" 'git clean -n'
+# each alternative a hint names must itself pass the gate
+for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff HEAD > x.patch' 'git clean -n' \
+  'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
+  'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
+  test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"
+done
 # --- git branch force-delete: discards unmerged commits ---
 test_deny  "$IRRECOVERABLE" "git branch -D (force-delete short flag)" \
   "$(bash_payload 'git branch -D main')"
