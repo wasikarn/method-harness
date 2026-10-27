@@ -1943,7 +1943,8 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         j = _close_bracket(s, i + 2, "(", ")", depth_work_used, comments=True)
         if j is None:
             return None
-        bodies.append(s[i + 2:j - 1])
+        # GH #713: the prepass leaves newlines inside "..." alone, but in a $(...) body they separate commands
+        bodies.append(_newlines_to_seps(s[i + 2:j - 1]) if in_dquote else s[i + 2:j - 1])
         return PH, j
     if c == "$" and nxt == "{":
         # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
