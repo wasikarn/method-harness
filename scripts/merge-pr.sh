@@ -20,7 +20,8 @@
 # passes what those tools return: the head sha, the base branch, and the PR's issue comments as a JSON
 # array of objects with a "body" (read by the same verdict parser). It runs the base, review, ancestry
 # and version checks and never takes the lock, syncs, pushes or merges: a head that lacks origin/develop
-# or a version above it is refused with the scripts/sync-pr-head.sh command to run first. On a pass it
+# or a version above it is refused with the scripts/sync-pr-head.sh command to run first, and so is a
+# head whose tree has no cached full-gauntlet pass (GH #735; GAUNTLET_PASS_CACHE=0 always refuses). On a pass it
 # prints the head; merge it pinned to that sha (expectedHeadSha) right away. Before this mode, cloud
 # sessions retyped these checks by hand for every merge (#633, #644, #648).
 set -euo pipefail
@@ -474,7 +475,13 @@ if [ "$verify" = 1 ]; then
     die "PR $pr head $head does not contain origin/develop; $(resync_hint)."
   fi
   check_version
-  echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE); merge it pinned to that sha now, and verify again if develop moves first." >&2
+  # A push only lints (GH #735), so the merged tree must have passed the full gauntlet here: a pass
+  # cached for its tree, which sync-pr-head.sh or a clean run-gauntlet.sh writes. No cache, no merge.
+  tree=$(git rev-parse --verify "$head^{tree}") || die "cannot read the tree of $head."
+  if [ "${GAUNTLET_PASS_CACHE:-1}" = 0 ] || [ ! -f "$(gauntlet_pass_dir)/$tree" ]; then
+    die "no full-gauntlet pass is cached for $head's tree $tree in $(gauntlet_pass_dir)${GAUNTLET_PASS_CACHE:+ (GAUNTLET_PASS_CACHE=$GAUNTLET_PASS_CACHE)}; run scripts/sync-pr-head.sh <head branch> $head (it runs the gauntlet), or bash scripts/run-gauntlet.sh on a clean checkout of $head, then --verify again."
+  fi
+  echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE, full gauntlet passed on its tree); merge it pinned to that sha now, and verify again if develop moves first." >&2
   echo "$head"
   exit 0
 fi

@@ -119,7 +119,10 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
    of `origin`: merge develop into it and bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,
    review (same verdict parser), ancestry and version checks, never a gh call, lock, sync, push or
-   merge. It prints the head on a pass, and on a head that is not synced it names the sync command;
+   merge. It also refuses unless a full-gauntlet pass is cached for the head's tree (GH #735: step 2
+   writes it, or `bash scripts/run-gauntlet.sh` on a clean checkout of that head, in the same
+   session's `~/.cache`). It prints the head on a pass, and on a head that is not synced or has no
+   cached pass it names the command to run;
 4. read the PR once more with the MCP tools and confirm its base is still `develop` and its head is
    still that sha (`--verify` only knows the values it was given; the `gh` path re-reads the base
    itself), then merge through the MCP merge tool with `expectedHeadSha` set to that head, straight

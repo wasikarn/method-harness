@@ -602,12 +602,19 @@ refuses "a MERGE in an indented fence" "is FIX FIRST"
 #     load wait, lock, sync, push or merge. vrun <head> <base> <comments file>: sets out (stdout), err, rc.
 #     Load reads 9.99 against a max of 4 with no wait, and a live pid (this test's) holds the merge lock,
 #     so a load wait or a lock take in verify mode would refuse or touch the lock.
+#     GH #735: --verify also needs a full-gauntlet pass cached for the head's tree. vrun seeds one in
+#     $F/pass unless NO_PASS is set; PASS_CACHE sets GAUNTLET_PASS_CACHE (default 1).
 vrun() {
+  local t
   [ -d "$F/work" ] || work
   : >"$F/calls.log"
   [ -d "$F/merge.lock" ] || { mkdir "$F/merge.lock"; echo "$$" >"$F/merge.lock/pid"; }
+  if [ -z "${NO_PASS:-}" ] && t=$(git --git-dir="$F/origin.git" rev-parse -q --verify "$1^{tree}"); then
+    mkdir -p "$F/pass"; date >"$F/pass/$t"
+  fi
   out=$(cd "$F/work" && PATH="$STUB:$PATH" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
     STUB_LOAD=9.99 MERGE_PR_LOAD_MAX=4 MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
+    GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
     bash "$SCRIPT" --verify 451 "$1" "$2" "$3" 2>"$F/verify.err")
   rc=$?
   err=$(cat "$F/verify.err")
@@ -636,6 +643,23 @@ setup; on feat/x "bump" set_ver 1.1.2
 tip=$(remote_tip feat/x); verdict "MERGE @ $FEATURE" >"$F/comments.json"
 vrun "$tip" develop "$F/comments.json"
 if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ]; then ok "--verify keeps a review across a later bump commit"; else bad "--verify bump after review rc=$rc out='$out' err=$err"; fi
+# GH #735: a synced, reviewed head with no full-gauntlet pass cached for its tree is refused, with the way
+# to get one, and nothing on stdout; GAUNTLET_PASS_CACHE=0 means no cache can satisfy it.
+setup; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+NO_PASS=1 vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify refuses a head with no cached gauntlet pass" "no full-gauntlet pass is cached for $tip's tree"
+if /usr/bin/grep -q 'scripts/sync-pr-head.sh' <<<"$err" && /usr/bin/grep -q 'scripts/run-gauntlet.sh' <<<"$err"; then
+  ok "--verify names sync-pr-head.sh and run-gauntlet.sh as the way to get a pass"
+else bad "--verify no-pass hint: $err"; fi
+no_side_effects "--verify no pass"
+mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$FEATURE^{tree}")"
+NO_PASS=1 vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify refuses when only another tree (the pre-bump head) has a pass" "no full-gauntlet pass is cached"
+PASS_CACHE=0 vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify with GAUNTLET_PASS_CACHE=0 refuses even with a cached pass" "GAUNTLET_PASS_CACHE=0"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ]; then ok "--verify passes once the head's tree has a cached pass"; else bad "--verify with pass rc=$rc out='$out' err=$err"; fi
 # a head behind develop, or at develop's version, is refused with the sync command to run. The work
 # clone is made before the peer lands, so only the script's own fetch can show the head is behind.
 setup; work; on develop "peer" set_ver 1.1.2
