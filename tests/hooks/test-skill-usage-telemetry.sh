@@ -14,7 +14,7 @@ pass=0
 fail=0
 
 TMP_HOME="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP_HOME" || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP_HOME"' EXIT
 LOG_FILE="$TMP_HOME/.local/share/kbg/metrics/skill-usage.jsonl"
 
 run_hook() {

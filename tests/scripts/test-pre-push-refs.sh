@@ -54,7 +54,7 @@ out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -ne 0 && "$out" == *"refused"* && "$out" != *"stub gauntlet ran"* ]] && ok=1 || ok=0
 assert_pass() { [ "$1" -eq 1 ] && ok "$2" || bad "$2"; }
 assert_pass "$ok" "push to refs/heads/develop is refused, gauntlet never runs"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- delete of develop (all-zero local_sha): still refused ---
 in=$(mktemp)
@@ -62,7 +62,7 @@ printf '(delete) %s refs/heads/develop %s\n' "$REMOTE_SHA_ZERO" "$LOCAL_SHA" > "
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -ne 0 && "$out" == *"refused"* ]] && ok=1 || ok=0
 assert_pass "$ok" "deleting refs/heads/develop is also refused (any local_sha, including the delete sentinel)"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- multi-ref push, only one line targets develop: refused overall ---
 in=$(mktemp)
@@ -73,7 +73,7 @@ in=$(mktemp)
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -ne 0 && "$out" == *"refused"* ]] && ok=1 || ok=0
 assert_pass "$ok" "a multi-ref push where only one line targets develop is refused"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- a tag push: allowed, gauntlet runs ---
 in=$(mktemp)
@@ -81,7 +81,7 @@ printf 'refs/tags/v1 %s refs/tags/v1 %s\n' "$LOCAL_SHA" "$REMOTE_SHA_ZERO" > "$i
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -eq 0 && "$out" == *"stub gauntlet ran"* ]] && ok=1 || ok=0
 assert_pass "$ok" "a tag push is allowed"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- a feat/* branch: allowed ---
 in=$(mktemp)
@@ -89,7 +89,7 @@ printf 'refs/heads/feat/x %s refs/heads/feat/x %s\n' "$LOCAL_SHA" "$REMOTE_SHA_Z
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -eq 0 && "$out" == *"stub gauntlet ran"* ]] && ok=1 || ok=0
 assert_pass "$ok" "a feat/* branch push is allowed"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- a fix/* branch: allowed ---
 in=$(mktemp)
@@ -97,7 +97,7 @@ printf 'refs/heads/fix/y %s refs/heads/fix/y %s\n' "$LOCAL_SHA" "$REMOTE_SHA_ZER
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -eq 0 && "$out" == *"stub gauntlet ran"* ]] && ok=1 || ok=0
 assert_pass "$ok" "a fix/* branch push is allowed"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- genuinely empty stdin: allowed ---
 in=$(mktemp)
@@ -105,7 +105,7 @@ in=$(mktemp)
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -eq 0 && "$out" == *"stub gauntlet ran"* ]] && ok=1 || ok=0
 assert_pass "$ok" "empty stdin (nothing to push) is allowed"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- a malformed non-empty line: fails closed, with a diagnostic ---
 in=$(mktemp)
@@ -113,7 +113,7 @@ printf 'only-two-fields %s\n' "$LOCAL_SHA" > "$in"
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -ne 0 && "$out" == *"malformed"* && "$out" != *"stub gauntlet ran"* ]] && ok=1 || ok=0
 assert_pass "$ok" "a malformed ref line fails closed with a diagnostic, never a silent pass-through"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- GH #158: the gauntlet runs while the hook holds the machine-wide lock, and the lock is
 # released afterwards, on success and on a failing gauntlet ---
@@ -126,7 +126,7 @@ printf '#!/usr/bin/env bash\necho "stub gauntlet failed"\nexit 3\n' > "$FIXTURE/
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -eq 3 && ! -e "$GAUNTLET_LOCK_DIR" ]] && ok=1 || ok=0
 assert_pass "$ok" "a failing gauntlet keeps its exit status and still releases the lock"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 # --- a refused push never touches the lock ---
 in=$(mktemp)
@@ -134,7 +134,7 @@ printf 'refs/heads/feat/x %s refs/heads/develop %s\n' "$LOCAL_SHA" "$REMOTE_SHA_
 out=$(run_hook "$in" 2>&1); rc=$?
 [[ "$rc" -ne 0 && ! -e "$GAUNTLET_LOCK_DIR" ]] && ok=1 || ok=0
 assert_pass "$ok" "a push refused before the gauntlet never takes the lock"
-tmp_delete "$in" || true
+tmp_delete "$in"
 
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
