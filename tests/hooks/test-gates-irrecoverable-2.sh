@@ -3328,4 +3328,98 @@ _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
 _timed_case 'GH #693: 12 nested funsubs around 124 KB of words are read in bounded time' 0 \
   "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 15500))$(printf '; }%.0s' $(seq 12))"
 
+# GH #702: the ${...} closer counted every "{" and ignored quotes, escapes and nested $(...)/backtick, so it
+# ended the word before bash (a "}" in a nested substitution) or after it (a "\{", a bare "{"), and a "#"
+# comment in a funsub or <(...) held a closer bash skips. bash 5.3 runs @V@ in each.
+_N=$'\n'
+_p702=('echo ${x:-$(@V@; echo })}' 'echo ${x:-`@V@; echo }`}' 'echo "${x:-$(@V@; echo })}"'
+  'echo ${x:-"$(@V@; echo })"}' "echo \${x:-\${ echo 'a}'; @V@; }}" "echo \"\${x:-\${ echo 'a}'; @V@; }}\""
+  "echo \${ : # }'$_N@V@$_N: # '$_N}" "cat <( : # )'$_N@V@$_N: # '$_N)"
+  "echo \${x:-\\{}$_N@V@${_N}echo }" "echo \"\${x:-\\{}\"$_N@V@${_N}echo }" "echo \${x:-{}$_N@V@${_N}echo }"
+  "echo \${x:-\`echo {\`}$_N@V@${_N}echo }" "echo \${x:-\$'\\{'}$_N@V@${_N}echo }"
+  "echo \"\${x:-'{'}\"$_N@V@${_N}echo }" "echo \${x:-\${y:-\\{}}$_N@V@${_N}echo }"
+  # a plain "..." is let through only when it ends the gate's word early; a "{" in one still denies
+  "echo \${x:-\"a{\"}$_N@V@${_N}echo }" 'echo ${x:-"a}"}; @V@'
+  # already denied before #702; kept so the new closer cannot lose them
+  'echo ${x:-$(case a in a) @V@; echo };; esac)}' 'echo ${x:-$(case a in a) echo };; esac; @V@)}'
+  "echo \${x:-\$(cat <<E$_N})${_N}E$_N@V@)}" "echo \${x:-'a}'}$_N@V@" "echo \"\${x:-'a}'}\"$_N@V@")
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p702[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #702: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in 'echo ${x//\"/}' 'echo ${x:-"a b"}' "echo \${x:-'a b'}" 'echo ${x:-$(echo "a b")}' 'echo ${x:-`date`}' \
+  'echo ${x:-${y:-z}}' 'echo ${x:-$((1+2))}' 'echo ${arr[$i]}' 'echo "${x:-$(date +%s)}"' 'echo ${x/#\//}' \
+  "echo \${ echo x # note$_N}" "cat <(echo a # note$_N)" 'echo ${x:-$(echo "}")}' "echo \${x:-\$(echo '}')}" 'echo ${y:-"a}b"}'; do
+  test_allow "$IRRECOVERABLE" "GH #702 control: $_c" "$(bash_payload "$_c")"
+done
+# the funsub body's odd quote comes from the inner word's wrong close, so that reason is the one shown
+test_deny_says "$IRRECOVERABLE" "GH #702: a funsub holding \${x:-'a}'} names the \${...} word, not the depth budget" \
+  "$(bash_payload "echo \${ echo \${x:-'a}'}; }")" "ends at a different place" "depth-scan budget"
+test_deny_says "$IRRECOVERABLE" "GH #702: a bash -c body keeps the \${...} word reason" \
+  "$(bash_payload "bash -c 'echo \${x:-\\{}${_N}rm -rf ~/x${_N}echo }'")" "ends at a different place" "depth-scan budget"
+_timed_case 'GH #702: a ${x:-\{} target before 9000 padding words denies in bounded time' 2 \
+  "echo \${x:-\\{}$_N$(printf '${x:-a} %.0s' $(seq 9000))"
+_timed_case 'GH #702: a ${x:-\{} target after 9000 padding words denies in bounded time' 2 \
+  "echo $(printf '${x:-a} %.0s' $(seq 9000))\${x:-\\{}"
+_timed_case 'GH #702: 10000 ${y:-"a}b"} words (the plain-quote exemption) are read in bounded time' 0 \
+  "echo $(printf '${y:-"a}b"} %.0s' $(seq 10000))"
+
+# GH #676: chroot, taskset, unshare, nsenter, chpst and setuidgid run the command after their own options
+# and positionals (chroot NEWROOT, taskset's mask, setuidgid's account). Option syntax checked on util-linux
+# 2.39 / coreutils 9.4 (live), runit 2.1.2's chpst getopt string and daemontools 0.76's setuidgid (man pages).
+test_deny  "$IRRECOVERABLE" "GH #676: chroot / rm -rf b" "$(bash_payload 'chroot / rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: taskset 1 rm -rf b" "$(bash_payload 'taskset 1 rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: unshare rm -rf b" "$(bash_payload 'unshare rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -t 1 rm -rf b" "$(bash_payload 'nsenter -t 1 rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: chpst -u x rm -rf b" "$(bash_payload 'chpst -u x rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: setuidgid x rm -rf b" "$(bash_payload 'setuidgid x rm -rf b')"
+# value options, attached or as the next word, and `--`
+test_deny  "$IRRECOVERABLE" "GH #676: chroot --userspec u:g / rm -rf b" "$(bash_payload 'chroot --userspec u:g / rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: chroot --groups=g --skip-chdir / rm -rf b" "$(bash_payload 'chroot --groups=g --skip-chdir / rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: chroot -- / rm -rf b" "$(bash_payload 'chroot -- / rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: taskset -c 0-3 rm -rf b" "$(bash_payload 'taskset -c 0-3 rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: taskset -a 0x3 rm -rf b" "$(bash_payload 'taskset -a 0x3 rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: unshare -S 0 -G 0 rm -rf b" "$(bash_payload 'unshare -S 0 -G 0 rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: unshare -R /x -w /y rm -rf b" "$(bash_payload 'unshare -R /x -w /y rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: unshare --map-user 0 --setgroups deny rm -rf b" "$(bash_payload 'unshare --map-user 0 --setgroups deny rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: unshare -m -f --mount-proc rm -rf b" "$(bash_payload 'unshare -m -f --mount-proc rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -t 1 -m -u -i -n -p rm -rf b" "$(bash_payload 'nsenter -t 1 -m -u -i -n -p rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -S 0 -G 0 -W/x -t 1 rm -rf b" "$(bash_payload 'nsenter -S 0 -G 0 -W/x -t 1 rm -rf b')"
+# nsenter's -W, like -m -r -w, takes an optional value that must be attached: `-W cmd` runs cmd
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -W rm -rf b" "$(bash_payload 'nsenter -W rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -t 1 --wdns rm -rf b" "$(bash_payload 'nsenter -t 1 --wdns rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter --wdns=/x -t 1 rm -rf b" "$(bash_payload 'nsenter --wdns=/x -t 1 rm -rf b')"
+# an attached optional value is part of its flag word (nsenter's m u i n p C U T r w W are "::"), however
+# it ends: `-m/proc/1/ns/mnt` is -m with that path, not -t. Bundled clusters are GH #709.
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -m/proc/1/ns/mnt rm -rf b" "$(bash_payload 'nsenter -m/proc/1/ns/mnt rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -n/proc/1/ns/net rm -rf b" "$(bash_payload 'nsenter -n/proc/1/ns/net rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -t 1 -m/proc/1/ns/mnt sh -c 'rm -rf b'" "$(bash_payload "nsenter -t 1 -m/proc/1/ns/mnt sh -c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -t 1 -r/mnt rm -rf b" "$(bash_payload 'nsenter -t 1 -r/mnt rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter -rS rm -rf b" "$(bash_payload 'nsenter -rS rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: unshare -fw/x rm -rf b" "$(bash_payload 'unshare -fw/x rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: subagent: nsenter -m/proc/1/ns/mnt claude -p x" "$(bash_agent_payload 'nsenter -m/proc/1/ns/mnt claude -p x' fork)"
+test_deny  "$IRRECOVERABLE" "GH #676: nsenter --target 1 -r -w rm -rf b" "$(bash_payload 'nsenter --target 1 -r -w rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: chpst -u x -/ /r -b y rm -rf b" "$(bash_payload 'chpst -u x -/ /r -b y rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: chpst -v -P -n 5 rm -rf b" "$(bash_payload 'chpst -v -P -n 5 rm -rf b')"
+# nested, behind another wrapper or a path, and the other rules and shell bodies through them
+test_deny  "$IRRECOVERABLE" "GH #676: busybox chroot / rm -rf b" "$(bash_payload 'busybox chroot / rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: sudo chroot / rm -rf b" "$(bash_payload 'sudo chroot / rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: /usr/sbin/chroot / rm -rf b" "$(bash_payload '/usr/sbin/chroot / rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: taskset 1 setuidgid x rm -rf b" "$(bash_payload 'taskset 1 setuidgid x rm -rf b')"
+test_deny  "$IRRECOVERABLE" "GH #676: chroot / bash -c 'rm -rf b'" "$(bash_payload "chroot / bash -c 'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #676: unshare dd of=/dev/sda" "$(bash_payload 'unshare dd if=/dev/zero of=/dev/sda')"
+test_deny  "$IRRECOVERABLE" "GH #676: subagent: taskset 1 claude -p x" "$(bash_agent_payload 'taskset 1 claude -p x' fork)"
+test_allow "$IRRECOVERABLE" "GH #676 control: chroot /srv/root ls" "$(bash_payload 'chroot /srv/root ls')"
+test_allow "$IRRECOVERABLE" "GH #676 control: chroot /srv/root (a shell, no command)" "$(bash_payload 'chroot /srv/root')"
+test_allow "$IRRECOVERABLE" "GH #676 control: taskset -p 700" "$(bash_payload 'taskset -p 700')"
+test_allow "$IRRECOVERABLE" "GH #676 control: taskset -c 0 make -j4" "$(bash_payload 'taskset -c 0 make -j4')"
+test_allow "$IRRECOVERABLE" "GH #676 control: unshare -r id" "$(bash_payload 'unshare -r id')"
+test_allow "$IRRECOVERABLE" "GH #676 control: nsenter -t 1 -n ip addr" "$(bash_payload 'nsenter -t 1 -n ip addr')"
+test_allow "$IRRECOVERABLE" "GH #676 control: nsenter -W ls" "$(bash_payload 'nsenter -W ls')"
+test_allow "$IRRECOVERABLE" "GH #676 control: chpst -u www ls" "$(bash_payload 'chpst -u www ls')"
+test_allow "$IRRECOVERABLE" "GH #676 control: setuidgid www ls -la" "$(bash_payload 'setuidgid www ls -la')"
+test_allow "$IRRECOVERABLE" "GH #676 control: echo chroot / rm -rf b" "$(bash_payload 'echo chroot / rm -rf b')"
+
 gates_summary
