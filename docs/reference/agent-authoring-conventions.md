@@ -1,16 +1,16 @@
 # Agent authoring conventions
 
-What the 10-agent fleet actually does, made explicit so a new agent has something accurate to
+What the 8-agent fleet actually does, made explicit so a new agent has something accurate to
 pattern-match against. Prose guidance, not a gate; the mechanical checks are named per item.
 
 ## 1. Tool scoping: explicit allowlist, least privilege
 
 Every agent declares `tools:` as an explicit allowlist (`harness-audit` check 09, CRIT when
-missing). Read-only reviewers and analysts (`backend-architect`, `code-architect`, `blind-spot-hunter`,
+missing). Read-only reviewers and analysts (`backend-architect`, `blind-spot-hunter`,
 `silent-failure-hunter`, `requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) get `Read`, `Grep`, `Glob`, and
 usually `Bash` for `git log`/`git diff` inspection (read-only by discipline, not by tool grant);
-never `Write`/`Edit` (check 32). Mutating implementers
-(`performance-optimizer`) add `Write`/`Edit`. **`Agent` is never granted** (check 41): a
+never `Write`/`Edit` (check 32). An agent that must mutate files adds `Write`/`Edit`; none
+does today. **`Agent` is never granted** (check 41): a
 dispatched subagent returns scoped output, it does not spawn its own.
 
 Why: least privilege by construction (OWASP LLM06). The read/mutate split is where the blast
@@ -36,7 +36,7 @@ variable"), and `maxEffortLevel` or an org cap still clamps it.
 Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded review or
 mutation; `effort: high` for judgment and adversarial surfaces, `medium`/`low` for mechanical work or bounded review (`test-gap-analyzer`, `type-design-analyzer`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
 pins: `requirement-analyst` (readiness verdict), `plan-reviewer` and `blind-spot-hunter`
-(adversarial), `code-architect` and `backend-architect` (design trade-offs). Never pin `fable`
+(adversarial), `backend-architect` (design trade-offs). Never pin `fable`
 in an agent (Fable can bill usage credits depending on plan and seat tier, and `-p`/eval runs
 bill them without asking; it also loses model independence from a fable main session); never pin
 `max` (valid frontmatter per the sub-agents reference, but unbounded spend on a shipped agent;
@@ -97,7 +97,7 @@ vocabulary fixed at authoring time prevents that.
 A flat, prose-style report's bottom line goes first in a document read top-down (an audit
 artifact, a `docs/research/*.md` file) and last when it's read as one narrative in a scrolling
 terminal or chat stream, where the final line is what the reader's eye lands on first.
-`skills/review/deep-audit/SKILL.md:260`'s "Final Verdict" on line one and this fleet's "End with
+`skills/review/deep-audit/SKILL.md`'s "Final Verdict" on line one and this fleet's "End with
 a one-line verdict" (`agents/type-design-analyzer.md`, `agents/blind-spot-hunter.md`,
 `agents/test-gap-analyzer.md`, `agents/silent-failure-hunter.md`) are the same principle applied
 to two different media, not a contradiction between them.

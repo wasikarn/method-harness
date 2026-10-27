@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-77 cases in Claude Code's native `claude plugin eval` layout (count:
+79 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -96,13 +96,20 @@ predated this and used) is mis-parsed as a literal path under the installed CLI 
 — confirmed on `post-mortem`. See "A previously-invisible defect" below: every other suite in
 this file has since been converted to the file-path form.
 
-Six for `code-architect` (tag `code-architect`, agent not a skill — dispatched via the `Agent`
-tool with `subagent_type: "mh:code-architect"`, not a `disable-model-invocation` slash command).
-Natural routing into this agent never fires on its own for a well-worded architecture request —
+`code-architect` and `performance-optimizer` were agents until 2026-10-27, when they were folded
+into skills after the fold-vs-keep eval below (folded worse on no code-architect case and on
+one performance-optimizer case at `--runs 3`, which the operator judged noise). Their
+cases were written for the agent form; every fire-case prompt now loads the skill via the Skill
+tool (`skill: "mh:<name>"`), `dispatch-confirmed.md` checks that Skill call, and `agent-fired.md`
+checks the trace has no `Unknown skill: <name>` error (in the two chain cases it also fails on an
+`Agent type '...' not found` error, the guard for their `reviewer-dispatched.md`).
+
+Eight for `code-architect` (tag `code-architect`).
+Natural routing into this skill never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
-prompt explicitly instructs dispatch; that shifts what's measured from "does routing pick this
-agent" to "does its process beat a generic fallback," which is what these cases actually test.
-Five fire cases, each targeting one of the agent's own specific, checkable claims against a small
+prompt explicitly names the skill; that shifts what's measured from "does routing pick this
+skill" to "does its process beat a generic fallback," which is what these cases actually test.
+Five fire cases, each targeting one of the skill's own specific, checkable claims against a small
 scaffolded fixture repo (comments that would spoon-feed the answer are deliberately absent from
 the fixtures): a layered repo where the blueprint must not have the domain layer import infra
 (`layer-direction`); a closest-shaped existing analog that itself violates layer direction, which
@@ -111,27 +118,29 @@ concrete implementation with a request phrased to invite a speculative plugin in
 (`premature-abstraction`); a codebase with a consistent constructor-injection style the blueprint
 must match (`di-style-respect`); and a requirement with a genuine two-reading fork that must be
 named as a prominent callout, not silently resolved (`ambiguous-requirement`). Plus one
-should-NOT-fire case: a trivial one-line rename, which must be done directly without dispatching
-the agent or producing a full blueprint as a substitute (`trivial-no-dispatch`). In the
-without-plugin arm, `mh:code-architect` doesn't exist — the model's first dispatch attempt gets
-`Agent type 'mh:code-architect' not found. Available agents: ...` and it falls back to the
-built-in `Plan` agent. This makes `tool_used: Agent` with `input_match` on the requested
-subagent_type a false-positive trap (it matches the failed attempt too, not just a successful
-one): `agent-fired.md` is a `regex`/`trace` `not_contains` check on that exact tool-error string
-instead. Needs `--allow-tools Bash,Read,Grep,Glob,Agent,Edit`; the with-arm needs `defaultEnabled`
-flipped true to load the plugin's agents at all, handled automatically via
+should-NOT-fire case: a trivial one-line rename, which must be done directly without loading
+the skill or producing a full blueprint as a substitute (`trivial-no-dispatch`). Plus two chain
+cases (second tag `chain`), where the blueprint is handed on to `mh:plan-reviewer`: one prompt names
+the reviewer and scores the handoff's quality (`chain-plan-reviewer`), and one only asks for the
+plan to be checked and scores whether a fresh-context reviewer is called unprompted
+(`chain-unprompted`). These catch a folded main loop skipping the next specialist. In the
+without-plugin arm, `mh:code-architect` doesn't exist — the Skill call fails with
+`Unknown skill: mh:code-architect` and the model answers without it. A `tool_used: Skill` check
+alone matches that failed call too, so `agent-fired.md` is a `regex`/`trace` `not_contains`
+check on that error string instead. Needs
+`--allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill`; the with-arm needs `defaultEnabled`
+flipped true to load the plugin's skills at all, handled automatically via
 `with_default_enabled_true` (see the runnable commands below).
 
-Six for `performance-optimizer` (tag `performance-optimizer`, agent, same dispatch/ablation
-mechanics as `code-architect` — explicit dispatch instruction in every fire-case prompt,
-`agent-fired.md` is the tool-error-string regex, same automatic `defaultEnabled` flip as above). Five
+Six for `performance-optimizer` (tag `performance-optimizer`, same skill mechanics and automatic
+`defaultEnabled` flip as `code-architect`). Five
 fire cases against small runnable JS fixtures with a `bench.js`: a nested-loop O(n²) lookup the
 fix must convert to Map/Set and actually benchmark before/after via real `node bench.js` runs, not
 invented numbers (`nested-loop-fix`); a function with no measurable bottleneck and no
 benchmark/test infra at all, where the report must not assert a specific improvement number it
 never actually measured (`cant-measure-refusal`); a deep-clone hot path with a caller that mutates
 a nested field on the result, where the fix must stay a real deep clone and not regress to a
-`{...obj}` shallow copy — this agent's own reference table names the trap (`shallow-copy-trap`); a
+`{...obj}` shallow copy — this skill's own reference table names the trap (`shallow-copy-trap`); a
 repeated-re-sort-for-min pattern where the reported complexity/impact numbers must match whatever
 was actually shipped, not the reference table's heap-queue figure for a technique not built
 (`numbers-match-fix`); and a bottleneck ruled architectural in the prompt (parallelization already
@@ -141,13 +150,13 @@ rather than shipping a local tweak that implies the volume problem is solved —
 `backend-architect` by name isn't required, "this needs your decision on X" framing for the real
 lever counts (`architectural-handoff`). Plus one should-NOT-fire case: a reported regression with
 a before/after (5ms → 2s after a merge) is `mattpocock-skills:diagnosing-bugs`' literal trigger
-per this agent's own Scope section, not this agent's — it must take a root-cause diagnostic
+per this skill's own Scope section, not this skill's — it must take a root-cause diagnostic
 approach instead of jumping to speculative optimizations (`regression-routing`). Needs
-`--allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent`.
+`--allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill`.
 
-Six for `backend-architect` (tag `backend-architect`, agent, same dispatch/ablation mechanics as
-`code-architect`/`performance-optimizer` — explicit dispatch instruction in every fire-case prompt,
-`agent-fired.md` is the tool-error-string regex, same automatic `defaultEnabled` flip as above). Five
+Six for `backend-architect` (tag `backend-architect`, agent — explicit dispatch instruction in
+every fire-case prompt, `agent-fired.md` is a `not_contains` regex on the
+`Agent type '...' not found` tool error, same automatic `defaultEnabled` flip as above). Five
 fire cases against small scaffolded fixtures: a payment-claim worker whose `UPDATE` guards on a
 different column (`charge_id IS NULL`) than the one it sets (`status`), letting two concurrent
 workers both pass the claim guard and double-charge (`guard-column-bug`); a checkout endpoint that
@@ -161,8 +170,8 @@ defer characterizing exploitability to `/security-review` per the agent's own do
 rule, and not itself construct an attack payload or CVE-style writeup, while a short illustrative
 before/after code snippet as part of its own architectural fix doesn't count against it
 (`security-handoff`). Plus one should-NOT-fire case: "give me the files/interfaces/build order" for
-one new endpoint is file-by-file blueprinting — `code-architect`'s territory per both agents' own
-cross-references, not a system-level review — so `backend-architect` must not be dispatched
+one new endpoint is file-by-file blueprinting — `code-architect`'s territory per the cross-references
+in both the `code-architect` skill and this agent, not a system-level review — so `backend-architect` must not be dispatched
 (`file-blueprint-misroute`). Needs `--allow-tools Bash,Read,Grep,Glob,Agent`.
 
 Six for `ideate-critic` (tag `ideate-critic`, agent — `mh:ideate`'s fresh-context Phase 2 critic,
@@ -255,14 +264,14 @@ claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 
 claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish
 claude plugin eval . --scaffold --tag deep-audit --allow-tools Bash,Edit,Write --runs 1 --no-publish
 claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --no-publish
-# These five dispatch a subagent (subagent_type:), which needs mh's agents actually loaded in
+# These load an mh agent (subagent_type:) or skill (skill:), which needs the plugin actually loaded in
 # the eval sandbox -- sandboxes load no user settings, so defaultEnabled: false never loads
 # them (silent no-plugin fallback, no error). The helper needs bash specifically (it relies on
 # BASH_SOURCE) -- it silently does nothing under zsh/sh, so run each line through `bash -c`
 # regardless of your login shell; it flips defaultEnabled true for the duration and restores it
 # after, even on failure -- no manual edit, nothing to remember.
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit --ablation with-without --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent --ablation with-without --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill --ablation with-without --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate --allow-tools Agent,Bash,Read,Glob,Grep,Skill --runs 1 --no-publish'  # the run case spawns 6 agents (5 + mh:ideate-critic)
@@ -288,8 +297,9 @@ repo's tracked files into a temp dir twice:
   `skills/fold/<agent>/SKILL.md`, with frontmatter `name`, `description` and the agent's own
   `model:`/`effort:` pin. In every case whose first tag is the agent, the prompt's dispatch
   sentence asks for the `mh:<agent>` skill (Skill tool) instead, `Skill` joins `allowed_tools`,
-  each Agent `tool_used` grader that names the agent checks the Skill tool instead (same file
-  name), and the case gains `fold-agent-calls.md`, a display-only count of Agent calls. The build
+  each Agent `tool_used` grader that names the agent checks the Skill tool instead, the
+  `Agent type '...' not found` regex grader checks the Skill tool's `Unknown skill: <agent>` error
+  instead (same file names), and the case gains `fold-agent-calls.md`, a display-only count of Agent calls. The build
   fails if a `subagent_type` is left, or if a fire case's dispatch sentence isn't found.
 
 What "folded" does and does not hold equal:
@@ -298,11 +308,11 @@ What "folded" does and does not hold equal:
   effort flag, so the pin rides in the skill's frontmatter instead: a concrete `model:` on a
   main-thread skill switches the model once the skill loads
   (`docs/reference/skill-authoring-conventions.md`). Turns before the Skill call still run on the
-  eval child's model. Pins today: `code-architect` opus/high, `backend-architect` and
-  `requirement-analyst` opus/medium, `performance-optimizer` sonnet/high.
+  eval child's model. The fold measures the agent's pin; a shipped fold then uses `model: inherit`
+  (the convention), so it runs on the session's model.
 - **Tool limits.** The folded variant gets the case's `allowed_tools`, not the agent's own
-  `tools:` list. `code-architect` has no Edit or Write, but its cases allow Edit, so folded it can
-  edit where the subagent could not.
+  `tools:` list. An agent with no Edit or Write whose cases allow Edit can edit, folded, where the
+  subagent could not (the 2026-10-27 `code-architect` run had exactly this gap).
 - **Delegation.** The folded main loop keeps the Agent tool. `compare` prints each folded run's
   Agent call count (from the runner's own `Agent called Nx` grader explanation; trace files are
   deleted after a run) and flags `DELEGATED` when a run still handed work to a subagent; `?`
@@ -320,25 +330,32 @@ only if the folded variant scores worse. The shipped plugin gains no skill: the 
 exists in the temp dir.
 
 ```bash
-bash scripts/eval-fold.sh code-architect            # free: builds + validates both copies, prints example eval commands
-bash scripts/eval-fold.sh code-architect --run -j 4 -- --max-cost-usd 25   # paid
+bash scripts/eval-fold.sh plan-reviewer             # free: builds + validates both copies, prints example eval commands
+bash scripts/eval-fold.sh plan-reviewer --run -j 4 -- --max-cost-usd 25   # paid
 ```
 
 Without `--run` the temp dir is removed on exit, so the printed commands are examples of what
 `--run` executes; add `--keep` to leave the dir in place and run them by hand.
 
-Agent names: `code-architect`, `backend-architect`, `requirement-analyst`, `performance-optimizer`.
+Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
+(`plan-reviewer`, `blind-spot-hunter`, `silent-failure-hunter`, `test-gap-analyzer`,
+`type-design-analyzer`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
+don't, so its build stops). The 2026-10-27 `--runs 2` pass folded worse on 0 cases for each of
+`code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; at
+`--runs 3` `performance-optimizer` folded worse on one case (`perf-shallow-copy-trap`, 4/5 in both
+arms across all runs). The
+operator shipped `code-architect` and `performance-optimizer` as skills and kept the other two as
+agents (a scored reviewer, maker≠checker; a read-only boundary for untrusted tickets, with no
+injection case in the eval).
 Results: `evals/results/fold-<agent>-<timestamp>/{kept,folded}/aggregate-result.json` and
 `compare.txt`. The copy holds tracked files only (working-tree bytes), so commit or `git add` a
 new case before running it.
 
 Cost, from the 2026-09-13 run above: about 272 agent runs (30 cases x 3 + 46 x 1, two arms) for
-$119.40 and 34,801 s, so roughly $0.44 and 128 s a run. At `--runs 2` a six-case agent
-(`code-architect`, `backend-architect`, `performance-optimizer`) is 6 x 2 x 2 = 24 runs: about
-$11 and 50 min at `-j 1`, 13 min at `-j 4`. `requirement-analyst` (two cases) is 8 runs: about $4.
-That average includes the cheap without-arm runs; these cases run 20+ turns and both variants
-run on the agent's pinned model (opus for three of the four, sonnet for
-`performance-optimizer`), so budget up to twice that. Arguments after `--` go to both variants, so
+$119.40 and 34,801 s, so roughly $0.44 and 128 s a run. At `--runs 2` a six-case agent is
+6 x 2 x 2 = 24 runs: about $11 and 50 min at `-j 1`, 13 min at `-j 4`; a two-case agent is 8
+runs: about $4. That average includes the cheap without-arm runs; these cases run 20+ turns and
+both variants run on the agent's pinned model, so budget up to twice that. Arguments after `--` go to both variants, so
 `--max-cost-usd 25` caps each at $25.
 
 `--scaffold` is required: the fixtures live in each case's `scaffold_script`, which must be a

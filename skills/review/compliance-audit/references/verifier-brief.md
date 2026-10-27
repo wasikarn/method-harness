@@ -44,5 +44,5 @@ requirement text itself sanctions this exact deviation, cited as a backticked co
 include a `pass` field yourself — `scripts/check-verdict.py` computes it from this object. If you
 cannot safely determine something (the pinned SHA won't check out, the gauntlet command is
 ambiguous, or the gauntlet fails and fails identically at the base SHA in the same sandbox —
-`SKILL.md` Phase 2's sandbox-contract bullet), return `NEEDS-DECISION <question>` instead of
+`references/sandbox-gauntlet.md`, from `SKILL.md` Phase 2's sandbox-contract bullet), return `NEEDS-DECISION <question>` instead of
 guessing — never a hedged JSON object.

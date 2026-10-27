@@ -29,8 +29,11 @@ it never skips check 3, a hard precondition. Otherwise ask and abort on any NO:
    source or aborts with the same message check 3 always gave.
 
 Not a check, so never an abort: before Phase 1, grep `docs/research/` (names do not always say `audit`) and the memory index
-for the source's URL or title. On a hit, name the earlier audit in the report and say what changed
-since, instead of re-deriving its verdict as if it were new.
+for the source's URL or title. Then run one `qmd` MCP `query` with no `collections` filter: an
+audit of the same source done from another repo is invisible to this repo's grep. Also grep
+`scripts/` and `evals/` for the topic, since an earlier audit may already have shipped a tool or
+run. On a hit, name the earlier audit in the report and say what changed since, instead of
+re-deriving its verdict as if it were new.
 
 On abort, answer directly; optionally note: *"For a scored adoption audit with an independent
 adversarial check, run `mh:idea-audit <source>`."*
@@ -47,17 +50,9 @@ adversarial check, run `mh:idea-audit <source>`."*
 ## Phase 0: Locate source (only when check 3 has nothing to point at)
 
 Triggers only when the invocation names a topic/tool/practice with no URL, local file, or pasted
-text attached.
-
-1. **`qmd` MCP `query` with `collections: ["llm-wiki"]`, first.**
-2. **If nothing usable there:** `firecrawl_developer_search` for a repo/library/tool name (or
-   `firecrawl_search`/`WebSearch` for a general article or practice).
-3. **Present the top 1-3 candidates** (title, URL, one-line snippet) and require an explicit pick
-   from the user — never auto-fetch the top hit and proceed silently.
-4. **Once picked,** the chosen URL/file re-enters check 3's URL/Local-file branches in Phase 1
-   unchanged.
-5. **If Phase 0 finds nothing plausible,** abort with check 3's original message: ask the user for
-   the source directly.
+text attached: **load `references/phase-0-locate-source.md` before searching.** Search qmd
+`llm-wiki` first, then the web; show the top 1-3 candidates and act only on an explicit user pick,
+never auto-fetching the top hit. Nothing plausible: abort and ask the user for the source.
 
 ## Untrusted-source rule
 
@@ -151,10 +146,9 @@ with a real citation **regardless of `pass`/`findings`**.
 schema mismatch, timeout, auth failure, a missing/empty `checked[]` (`check-verdict.py` exit 1),
 or any other semantic refusal. On any of these: fall back to `general-purpose`, carrying
 `references/attacker-brief.md` as its full prompt — **not** `mh:plan-reviewer`. Note
-"independence reduced for this pass". Pipe the fallback agent's raw final message to the same
-`scripts/check-verdict.py`, then `check-citations.py`. The fallback keeps every tool including
-`Bash` and has no sandbox: capture `git status --porcelain` before and after and treat any diff
-as a violation. The brief states: *you write nothing; report findings only in your final message.*
+"independence reduced for this pass". The fallback has no sandbox: capture `git status --porcelain`
+before and after, and any diff is a violation. Validation steps: `references/codex-fallback.md`;
+**load it before dispatching the fallback.**
 
 **If the fallback also fails, or every finding fails the citation-shape check**, Phase 3 marks the
 adversarial criterion `insufficient evidence` (never scores it as a passed check silently).
@@ -250,21 +244,8 @@ a non-empty-path check, or Python `os.remove`).
   at all three object levels; `checked[]` required and non-empty. **Pass as
   `--output-schema <skill-dir>/references/attacker-output-schema.json` (absolute path).**
 - `scripts/check-verdict.py` — validates both paths' output before `check-citations.py`.
-- `references/rationale.md` — why each rule exists. Not needed to run.
-
-No new agent `.md` files. `general-purpose` ×2 (Phase 1), `codex exec`/`general-purpose` ×1
-(Phase 2) — 3 agents per wave, well under Rule 13's cap of 10.
-
-## Failure modes
-
-- **Decoration, not divergence.** Two analysts producing the same angle — vary framing.
-- **Judge as ground truth.** The attacker is advisory evidence, not a verdict the user can't
-  question.
-- **Silent parse failure.** An attacker output that doesn't validate, reported as if it passed.
-- **A WebFetch-derived save graded as verbatim.** Never skip the banner-and-downgrade path.
-- **Attacker restates instead of independently checking.** A citation that quotes Agent A's own
-  claim back is not verification.
-- **A blended percentage instead of per-claim verdicts.** Report `MATCH/PARTIAL/GAP/N-A` per claim
-  and a scored decision.
-- **Phase 0 auto-fetching the top search hit without confirmation.**
-- **`pass: true` with an empty `checked[]` accepted as-is.** That is a fallback trigger, not a result.
+- `references/phase-0-locate-source.md` — Phase 0 search order. **Load before Phase 0.**
+- `references/codex-fallback.md` — Phase 2 fallback validation and no-sandbox guard. **Load
+  before dispatching the fallback.**
+- `references/rationale.md` — why each rule exists, plus the agent count and failure modes.
+  **Load its Failure modes section before reporting**; the rest is background.

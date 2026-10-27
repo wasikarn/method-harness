@@ -360,8 +360,10 @@ test_allow "$IRRECOVERABLE" "Layer 3 negative control: \$(which git) status -- c
 # terminate an earlier, still-open "#" comment.
 test_deny "$IRRECOVERABLE" "trailing comment after a live substitution buried the recovered body in an open shlex comment (echo \$(git push --force)  # push it, was silently ALLOWed)" \
   "$(bash_payload 'echo $(git push --force)  # push it')"
-test_deny "$IRRECOVERABLE" "same bug via a # embedded inside an EARLIER recovered body (echo \$(echo hi # note) \$(git push --force), was silently ALLOWed)" \
-  "$(bash_payload 'echo $(echo hi # note) $(git push --force)')"
+# GH #713: the comment runs to the newline, so the ")" goes after it; on one line bash refuses the text
+# (the comment eats the ")") and runs nothing.
+test_deny "$IRRECOVERABLE" "same bug via a # embedded inside an EARLIER recovered body (echo \$(echo hi # note<NL>) \$(git push --force), was silently ALLOWed)" \
+  "$(bash_payload $'echo $(echo hi # note\n) $(git push --force)')"
 test_deny "$IRRECOVERABLE" "baseline: same splice with no comment at all, no bug involved (must stay denied)" \
   "$(bash_payload 'echo $(git push --force)')"
 

@@ -27,7 +27,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 command -v python3 >/dev/null || { echo "python3 required" >&2; exit 1; }
 command -v node >/dev/null || { echo "node required (validates regex graders against the real JS engine)" >&2; exit 1; }
 TMP=$(mktemp -d)
-trap 'trash "$TMP" 2>/dev/null || true' EXIT
+trap 'python3 "$HERE/../_lib/tmp_delete.py" "$TMP" || true' EXIT
 
 # Cases whose prompt deliberately does not name a subagent_type/skill: they prove
 # the agent/skill must NOT be dispatched for an out-of-scope or misrouted ask.
@@ -95,6 +95,8 @@ for d in "$EVALS"/*/; do
     deep-audit-*)    /usr/bin/grep -q 'skill: "mh:deep-audit"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     cost-report-*)   /usr/bin/grep -q 'skill: "mh:cost-report"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     ste-lint-*)      /usr/bin/grep -q 'skill: "mh:ste-lint"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
+    perf-*)          /usr/bin/grep -q 'skill: "mh:performance-optimizer"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
+    code-architect-*) /usr/bin/grep -q 'skill: "mh:code-architect"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     *) /usr/bin/grep -q 'subagent_type: "mh:' "$d/prompt.md" || { bad "$c: prompt.md does not name a subagent_type"; continue; } ;;
     esac ;;
   esac
@@ -217,16 +219,23 @@ for c, gdir in cases:
             items.append((f, "  %s: no column-0 frontmatter with a known type" % f, None)); continue
         if "type: regex" not in m.group(1):
             continue
-        p = re.search(r"^pattern: '(.*)'$", m.group(1), re.M) or re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
-        if not p:
+        sq = re.search(r"^pattern: '(.*)'$", m.group(1), re.M)
+        dq = None if sq else re.search(r'^pattern: "(.*)"$', m.group(1), re.M)
+        if not (sq or dq):
             items.append((f, "  no pattern in %s" % f, None)); continue
+        # Check the regex the eval runtime gets, i.e. the YAML-decoded scalar, not its raw text: "x\\" is the
+        # invalid regex x\ once decoded. JSON's string escapes cover the \\ and \" these graders use.
         try:
-            re.compile(p.group(1))
+            pat = sq.group(1).replace("''", "'") if sq else json.loads('"%s"' % dq.group(1))
+        except ValueError as e:
+            items.append((f, "  bad double-quoted pattern escape in %s: %s" % (f, e), None)); continue
+        try:
+            re.compile(pat)
         except re.error as e:
             items.append((f, "  bad regex in %s: %s" % (f, e), None)); continue
         fl = re.search(r"^flags: (\w+)$", m.group(1), re.M)
-        items.append((f, None, (m.group(1), p.group(1), fl.group(1) if fl else "", len(js_in))))
-        js_in.append([p.group(1), fl.group(1) if fl else ""])
+        items.append((f, None, (m.group(1), pat, fl.group(1) if fl else "", len(js_in))))
+        js_in.append([pat, fl.group(1) if fl else ""])
     parsed.append((c, gdir, items))
 # Same call the eval runtime makes, `new RegExp(pattern, flags)`, once per pattern, one process.
 js = subprocess.run(["node", "-e", """

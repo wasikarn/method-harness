@@ -70,15 +70,18 @@ test_deny_says "$IRRECOVERABLE" "refusal: tail says list it for the user" "$(bas
 test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload 'dropdb prod')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
-# hints name steps every mh/dotfiles guard allows: no git stash (subagent-git-guard denies it; the stash is shared)
-_SAVE='or commit first, or save a patch with `git diff HEAD > x.patch`'
-test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git reset --keep <ref>`' '`git stash'
+# hints name steps this gate allows, and never git stash (subagent-git-guard denies it; the stash is shared).
+# A step the subagent guard denies is marked "in the main session" in the hint (checked below).
+# --binary: a plain diff writes only "Binary files differ" for a binary file; --no-textconv/--no-ext-diff/--no-color:
+# a diff driver or forced color would write text git apply cannot use
+_SAVE='or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" 'in the main session, move HEAD with `git reset --keep <ref>`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: reset --hard names commit/patch" "$(bash_payload 'git reset --hard')" "$_SAVE"
 test_deny_says "$IRRECOVERABLE" "refusal: restore hint" "$(bash_payload 'git restore f')" "$_SAVE" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: checkout -- hint" "$(bash_payload 'git checkout -- f')" "$_SAVE" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: switch --force hint" "$(bash_payload 'git switch -f main')" 'or commit first, then a plain `git switch`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: commit --amend hint" "$(bash_payload 'git commit --amend -m x')" "make a new commit"
-test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'preview with `git clean -n`, then move the files aside with `mv`' '`git stash'
+test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" 'in the main session, preview with `git clean -n`; then move the files aside with `mv`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: push --mirror hint" "$(bash_payload 'git push --mirror origin')" "push named refs"
 test_deny_says "$IRRECOVERABLE" "refusal: stash drop hint" "$(bash_payload 'git stash drop')" "leave the stash in place" '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: worktree remove --force hint" "$(bash_payload 'git worktree remove --force ../wt')" "then a plain \`git worktree remove" '`git stash'
@@ -90,10 +93,20 @@ test_deny_says "$IRRECOVERABLE" "refusal: alias definition gets the tail only" "
 test_deny_says "$IRRECOVERABLE" "refusal: -c alias run gets the tail only" "$(bash_payload "git -c alias.x='!git reset --hard' x")" "$_NODECIDE" 'reset --keep'
 test_deny_says "$IRRECOVERABLE" "refusal: -c risk key gets the tail only" "$(bash_payload 'git -c clean.requireForce=false clean')" "$_NODECIDE" 'git clean -n'
 # each alternative a hint names must itself pass the gate
-for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff HEAD > x.patch' 'git clean -n' \
+for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch' 'git clean -n' \
   'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
   'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
   test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"
+done
+# a subagent reads the same hints: every alternative not marked "in the main session" must pass its guard too
+for _alt in 'git commit -m x' 'git add f.txt' 'git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch' \
+  'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
+  'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
+  test_allow "$SUBAGENT_GIT_GUARD" "refusal hint alternative, subagent: $_alt" "$(bash_agent_payload "$_alt" fork)"
+done
+# the two marked main-session-only really are denied to a subagent (drop the mark if the guard ever allows them)
+for _alt in 'git reset --keep HEAD~1' 'git clean -n'; do
+  test_deny "$SUBAGENT_GIT_GUARD" "refusal hint alternative, subagent denied: $_alt" "$(bash_agent_payload "$_alt" fork)"
 done
 # --- git branch force-delete: discards unmerged commits ---
 test_deny  "$IRRECOVERABLE" "git branch -D (force-delete short flag)" \
@@ -1195,7 +1208,7 @@ else
   fail=$((fail + 1))
 fi
 
-trash "$MERGE_FIX" "$NOMERGE_FIX" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$MERGE_FIX" "$NOMERGE_FIX" || true
 test_deny "$IRRECOVERABLE" "subagent: claude -p hi via Bash denied" \
   "$(bash_agent_payload 'claude -p hi' fork)"
 test_deny "$IRRECOVERABLE" "subagent: claude --worktree x denied (new flag in the ported nested-spawn deny)" \
@@ -1356,7 +1369,7 @@ else
   fail=$((fail + 1))
 fi
 rm -f "$_errf"
-trash "$MISSPY_RTG_DIR" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSPY_RTG_DIR" || true
 
 echo "=== GNU tr stays quiet (cloud audit 2026-10-23: an unescaped trailing backslash in tr -d warned on every Bash call) ==="
 _trdir=$(mktemp -d "${TMPDIR:-/tmp}/kbg-gnutr.XXXXXX")
@@ -1369,7 +1382,7 @@ else
   echo "  ❌ the gate wrote to stderr on a plain command: $_trerr" >&2
   fail=$((fail + 1))
 fi
-trash "$_trdir" 2>/dev/null || true
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$_trdir" || true
 
 echo "=== same damage, other git verbs (2026-10-23 bypass sweep after the cloud audit) ==="
 for c in 'git push --mirror' 'git push origin --mirror' 'git push --prune origin' \
@@ -1556,7 +1569,7 @@ rm -f "$_errf"
 # irrecoverable fails closed (exit 2) and subagent-git-guard fails open (exit 0), each with its own message.
 MISSRUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/kbg-missrun.XXXXXX")
 cp "$ROOT"/hooks/gates/*.sh "$ROOT"/hooks/gates/*.py "$MISSRUN_DIR"/
-[ -e "$MISSRUN_DIR/_run.py" ] && trash "$MISSRUN_DIR/_run.py"
+[ -e "$MISSRUN_DIR/_run.py" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSRUN_DIR/_run.py"
 _errf="$MISSRUN_DIR/err"
 _out=$(bash_payload 'rm -rf /tmp/x' | bash "$MISSRUN_DIR/irrecoverable.sh" 2>"$_errf"); _rc=$?
 if [ "$_rc" -eq 2 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py missing' "$_errf"; then
@@ -1570,7 +1583,7 @@ if [ "$_rc" -eq 0 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py 
 else
   echo "  ❌ missing _run.py: subagent-git-guard expected exit 0 + [mh:gate] _run.py message, got rc=$_rc stdout='$_out' stderr: $(cat "$_errf")" >&2; fail=$((fail + 1))
 fi
-trash "$MISSRUN_DIR"
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSRUN_DIR"
 
 # GH #184/#185/#194/#195/#196: fail closed when the command is syntactically ambiguous (nested or
 # mixed substitutions, a quoted ")" inside "$(", a "case" inside "$(", brace tokens, eval of a
@@ -3328,6 +3341,44 @@ _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
 _timed_case 'GH #693: 12 nested funsubs around 124 KB of words are read in bounded time' 0 \
   "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 15500))$(printf '; }%.0s' $(seq 12))"
 
+# GH #702: the ${...} closer counted every "{" and ignored quotes, escapes and nested $(...)/backtick, so it
+# ended the word before bash (a "}" in a nested substitution) or after it (a "\{", a bare "{"), and a "#"
+# comment in a funsub or <(...) held a closer bash skips. bash 5.3 runs @V@ in each.
+_N=$'\n'
+_p702=('echo ${x:-$(@V@; echo })}' 'echo ${x:-`@V@; echo }`}' 'echo "${x:-$(@V@; echo })}"'
+  'echo ${x:-"$(@V@; echo })"}' "echo \${x:-\${ echo 'a}'; @V@; }}" "echo \"\${x:-\${ echo 'a}'; @V@; }}\""
+  "echo \${ : # }'$_N@V@$_N: # '$_N}" "cat <( : # )'$_N@V@$_N: # '$_N)"
+  "echo \${x:-\\{}$_N@V@${_N}echo }" "echo \"\${x:-\\{}\"$_N@V@${_N}echo }" "echo \${x:-{}$_N@V@${_N}echo }"
+  "echo \${x:-\`echo {\`}$_N@V@${_N}echo }" "echo \${x:-\$'\\{'}$_N@V@${_N}echo }"
+  "echo \"\${x:-'{'}\"$_N@V@${_N}echo }" "echo \${x:-\${y:-\\{}}$_N@V@${_N}echo }"
+  # a plain "..." is let through only when it ends the gate's word early; a "{" in one still denies
+  "echo \${x:-\"a{\"}$_N@V@${_N}echo }" 'echo ${x:-"a}"}; @V@'
+  # already denied before #702; kept so the new closer cannot lose them
+  'echo ${x:-$(case a in a) @V@; echo };; esac)}' 'echo ${x:-$(case a in a) echo };; esac; @V@)}'
+  "echo \${x:-\$(cat <<E$_N})${_N}E$_N@V@)}" "echo \${x:-'a}'}$_N@V@" "echo \"\${x:-'a}'}\"$_N@V@")
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p702[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #702: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in 'echo ${x//\"/}' 'echo ${x:-"a b"}' "echo \${x:-'a b'}" 'echo ${x:-$(echo "a b")}' 'echo ${x:-`date`}' \
+  'echo ${x:-${y:-z}}' 'echo ${x:-$((1+2))}' 'echo ${arr[$i]}' 'echo "${x:-$(date +%s)}"' 'echo ${x/#\//}' \
+  "echo \${ echo x # note$_N}" "cat <(echo a # note$_N)" 'echo ${x:-$(echo "}")}' "echo \${x:-\$(echo '}')}" 'echo ${y:-"a}b"}'; do
+  test_allow "$IRRECOVERABLE" "GH #702 control: $_c" "$(bash_payload "$_c")"
+done
+# the funsub body's odd quote comes from the inner word's wrong close, so that reason is the one shown
+test_deny_says "$IRRECOVERABLE" "GH #702: a funsub holding \${x:-'a}'} names the \${...} word, not the depth budget" \
+  "$(bash_payload "echo \${ echo \${x:-'a}'}; }")" "ends at a different place" "depth-scan budget"
+test_deny_says "$IRRECOVERABLE" "GH #702: a bash -c body keeps the \${...} word reason" \
+  "$(bash_payload "bash -c 'echo \${x:-\\{}${_N}rm -rf ~/x${_N}echo }'")" "ends at a different place" "depth-scan budget"
+_timed_case 'GH #702: a ${x:-\{} target before 9000 padding words denies in bounded time' 2 \
+  "echo \${x:-\\{}$_N$(printf '${x:-a} %.0s' $(seq 9000))"
+_timed_case 'GH #702: a ${x:-\{} target after 9000 padding words denies in bounded time' 2 \
+  "echo $(printf '${x:-a} %.0s' $(seq 9000))\${x:-\\{}"
+_timed_case 'GH #702: 10000 ${y:-"a}b"} words (the plain-quote exemption) are read in bounded time' 0 \
+  "echo $(printf '${y:-"a}b"} %.0s' $(seq 10000))"
+
 # GH #676: chroot, taskset, unshare, nsenter, chpst and setuidgid run the command after their own options
 # and positionals (chroot NEWROOT, taskset's mask, setuidgid's account). Option syntax checked on util-linux
 # 2.39 / coreutils 9.4 (live), runit 2.1.2's chpst getopt string and daemontools 0.76's setuidgid (man pages).
@@ -3395,4 +3446,77 @@ test_deny  "$IRRECOVERABLE" 'GH #690: rm $(printf -- --{recursive,force}) b' "$(
 test_allow "$IRRECOVERABLE" 'GH #690 control: echo {a,b}${IFS}x; ls' "$(bash_payload 'echo {a,b}${IFS}x; ls')"
 test_allow "$IRRECOVERABLE" 'GH #690 control: mkdir -p {a,b}/c && echo $(echo hi)' "$(bash_payload 'mkdir -p {a,b}/c && echo $(echo hi)')"
 test_allow "$IRRECOVERABLE" 'GH #690 control: rm -f {a,b}.log $(echo c.log)' "$(bash_payload 'rm -f {a,b}.log $(echo c.log)')"
+# The composed copies run on ~63 KB of brace text here; develop allows the second row, so it proves they ran.
+_timed_case 'GH #690: 3000 {a,b}${IFS}$(echo c) words are read in bounded time' 0 \
+  "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 3000))"
+_timed_case 'GH #690: r{m,m}${IFS}-rf after 3000 brace words denies in bounded time' 2 \
+  "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 3000)); r{m,m}\${IFS}-rf b"
+
+# GH #713: the $(...) closer had no comment state, so a commented ")" ended it before bash and the "'" in the
+# comment hid the rest; and a funsub ended at any "}", where bash ends it only at a "}" in command position,
+# so a "}" argument inside "..." left the rest in the gate's quotes. bash 5.3 runs @V@ in each.
+_p713=("echo \$( : # )'$_N@V@$_N: # '$_N)" "echo \${x:-\$( : # )'$_N@V@$_N: # '$_N)}"
+  "echo \"\$( : # )'$_N@V@$_N: # '$_N)\"" "echo \$(: #)'$_N@V@$_N#'$_N)" "x=\$( : # )'$_N@V@$_N: # '$_N)"
+  'echo "${ echo }; @V@; }"' 'echo "${ echo a}b; @V@; }"' 'echo "${| echo }; @V@; }"' 'x="${ echo }; @V@; }"'
+  'echo "${ printf %s }; @V@; }"' 'echo "${ echo {; @V@; }"' 'echo "${ echo \;}; @V@; }"'
+  # a "#" after an escaped char is mid-word, so bash closes the $(...) at the next ")"
+  "echo \"\$( : \\ #)'\"$_N@V@$_N\"'$_N)\"" "echo \"\$( : \\;#)'\"$_N@V@$_N\"'$_N)\""
+  "x=\"\$( : \\ #)'\"$_N@V@$_N\"'$_N)\"")
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p713[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #713: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in 'echo $(grep "#" f)' "echo \$(grep '#' f)" 'echo $(echo ${#x})' 'echo $(( 16#ff ))' \
+  "echo \$(awk -F'#' '{print \$1}' f)" 'echo $(sed "s/#.*//" f)' "echo \$(git log --format='%h #%s' -1)" \
+  "echo \$(ls # list$_N)" 'echo ${ echo {a,b}; }' 'echo ${ f() { echo; }; f; }' \
+  'echo ${ if true; then { echo; }; fi; }' 'echo "${ echo a; }"' 'echo ${x:-${ echo a; }}' \
+  'echo "${ true && { echo a; }; }"' 'echo "${ (echo a) }"' "echo \"\${ echo a$_N}\"" 'echo "${ echo a;}"' \
+  'echo $(echo \ #)' 'echo "$(printf %s \ #)"' 'echo $(echo a\ #b)'; do
+  test_allow "$IRRECOVERABLE" "GH #713 control: $_c" "$(bash_payload "$_c")"
+done
+test_deny_says "$IRRECOVERABLE" "GH #713: a funsub whose \"}\" argument ends it early names the substitution" \
+  "$(bash_payload 'echo "${ echo }; rm -rf ~/x; }"')" "substitution ends at a different place"
+# kept on purpose: a harmless funsub with a "}" argument over-denies (fail closed), quoted or not
+test_deny_says "$IRRECOVERABLE" "GH #713: a funsub with a \"}\" argument over-denies, by design" \
+  "$(bash_payload 'echo ${ echo }; }')" "substitution ends at a different place"
+_timed_case 'GH #713: a commented-) $(...) target before 9000 $(echo #) words denies in bounded time' 2 \
+  "echo \$( : # )'${_N}rm -rf ~/x$_N: # '$_N) $(printf '$(echo "#") %.0s' $(seq 9000))"
+_timed_case 'GH #713: a commented-) $(...) target after 9000 $(echo #) words denies in bounded time' 2 \
+  "echo $(printf '$(echo "#") %.0s' $(seq 9000))\$( : # )'${_N}rm -rf ~/x$_N: # '$_N)"
+_timed_case 'GH #713: 10000 $(echo #) words are read in bounded time' 0 \
+  "echo $(printf '$(echo "#") %.0s' $(seq 10000))"
+_timed_case 'GH #713: 5000 "${ echo a; }" funsubs are read in bounded time' 0 \
+  "echo $(printf '"${ echo a; }" %.0s' $(seq 5000))"
+
+# GH #674: a shell reads its commands on stdin behind a wrapper, with its own wrapper options, or with its own
+# -o NAME / +o NAME pairs; the echo feeding it may sit behind a wrapper or an assignment too.
+for _c674 in "echo 'rm -rf b' | command -p sh" "echo 'rm -rf b' | time -p sh" "echo 'rm -rf b' | bash -o pipefail" \
+  "bash -o pipefail <<< 'rm -rf b'" "echo 'rm -rf b' | nice sh" "echo 'rm -rf b' | nice -n 5 sh" \
+  "echo 'rm -rf b' | timeout 5 sh" "echo 'rm -rf b' | timeout -s KILL 5 sh" "echo 'rm -rf b' | env -i sh" \
+  "echo 'rm -rf b' | env -u HOME sh" "echo 'rm -rf b' | sudo -u bob sh" "echo 'rm -rf b' | dash -o errexit" \
+  "echo 'rm -rf b' | bash +o histexpand" "echo 'rm -rf b' | bash -eo pipefail" "echo 'rm -rf b' | builtin command sh" \
+  "echo 'rm -rf b' | FOO=1 sh" "echo 'rm -rf b' | nohup nice timeout 5 sh" \
+  "echo 'rm -rf b' | nsenter -t 1 sh" "echo 'rm -rf b' | chroot / sh" "chroot / sh <<< 'rm -rf b'" \
+  "echo 'rm -rf b' | unshare sh" "echo 'rm -rf b' | taskset 1 bash" "echo 'rm -rf b' | chpst -u x sh" \
+  "echo 'rm -rf b' | setuidgid x sh" "echo 'rm -rf b' | flock f sh" "echo 'rm -rf b' | strace -o log sh" \
+  "sudo echo 'rm -rf b' | sh" "env echo 'rm -rf b' | sh" "FOO=1 echo 'rm -rf b' | sh" \
+  "timeout 5 echo 'rm -rf b' | sh" "nice -n 5 printf 'rm -rf b' | sh" "echo 'rm -rf b' | watch sh" \
+  "echo 'rm -rf b' | bash -O extglob" "bash +O extglob <<< 'rm -rf b'" "echo 'rm -rf b' | timeout 5 bash -o nounset -O extglob" \
+  "echo 'rm -rf b' | sudo --prompt x sh" "echo 'rm -rf b' | sudo -T 5 sh" \
+  "echo 'rm -rf b' | sh 2>/dev/null" "echo 'rm -rf b' | sh 2>&1" "echo 'rm -rf b' | sh >log" "echo 'rm -rf b' | sh > log" \
+  "echo 'rm -rf b' | 2>/dev/null sh" "echo 'rm -rf b' | timeout 5 sh 2>/dev/null" "echo 'rm -rf b' | sh &>log" \
+  "sh 2>/dev/null <<< 'rm -rf b'"; do
+  test_deny "$IRRECOVERABLE" "GH #674: $_c674" "$(bash_payload "$_c674")"
+done
+test_deny  "$IRRECOVERABLE" "GH #674: cat <<EOF | timeout 5 sh" "$(bash_payload $'cat <<EOF | timeout 5 sh\nrm -rf b\nEOF')"
+test_deny  "$IRRECOVERABLE" "GH #674: cat <<EOF | nsenter -t 1 sh" "$(bash_payload $'cat <<EOF | nsenter -t 1 sh\nrm -rf b\nEOF')"
+for _c674 in "echo 'ls' | timeout 5 sh" "echo 'rm -rf b' | bash -o pipefail x.sh" "echo 'rm -rf b' | timeout 5 sh x.sh" \
+  "echo 'rm -rf b' | flock f -c ls" "echo 'rm -rf b' | sh < in.sh" "echo 'rm -rf b' | bash -O extglob x.sh" \
+  "echo 'rm -rf b' | sh x.sh 2>/dev/null" "echo 'rm -rf b' | sudo -u bob cat" "echo 'rm -rf b' | nice grep rm" \
+  "echo 'rm -rf b' | env -i bash -c ls" "printf 'ls\n' | nice sh"; do
+  test_allow "$IRRECOVERABLE" "GH #674 control: $_c674" "$(bash_payload "$_c674")"
+done
+
 gates_summary

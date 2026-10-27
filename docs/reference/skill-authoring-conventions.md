@@ -44,6 +44,13 @@ rests on a model behaviour that could shift on upgrade. First adopter: `tech-hum
 lexical-tell catalog assumes current-gen output still carries the enumerated tells. No check
 enforces re-verification; it is a human-cadence pointer.
 
+**`disable-model-invocation-reason:` frontmatter (mh-native):** one line on why a skill is
+user-only, next to `disable-model-invocation: true`. Claude Code ignores both mh-native keys.
+Check 82 allows only them and Claude Code's documented fields, because Claude Code drops an
+unknown key without an error, so a typo such as `disable-model-invocaton` would silently make a
+user-only skill model-invocable. A near-miss of a permission or invocation field is CRIT; any other
+unknown key, such as a new Claude Code field, is a WARN until check 82's list learns it.
+
 **Explicit `model:` + `effort:` on every entrypoint** (check 54): skills use `model: inherit`
 (a concrete pin on a main-thread skill switches the session model for the rest of the turn).
 Effort tiers: low = script wrapper or display, medium = deterministic tooling plus bounded

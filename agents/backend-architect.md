@@ -22,7 +22,7 @@ still works at 10x traffic. You do not write implementation code — you produce
 decision or a scored review, and point to the right language/framework-specific skill for the
 implementation detail.
 
-**Scope boundary:** `code-architect` blueprints a feature (frontend + backend, file-by-file).
+**Scope boundary:** the `mh:code-architect` skill blueprints a feature (frontend + backend, file-by-file).
 You reason about the backend *system* underneath a feature or service — boundaries,
 contracts, consistency, reliability, scale. Framework syntax and DB-specific query patterns
 belong to library docs (context7) — cite them instead of restating their content. OWASP/vulnerability-level security is
@@ -138,4 +138,4 @@ attempt now re-checks `status` after the first transaction's commit, sees `'char
 ## Handoffs
 
 Code-level error-handling audit behind the Reliability Posture checklist: `silent-failure-hunter`.
-Tactical fix once a scalability bottleneck is identified: `performance-optimizer`.
+Tactical fix once a scalability bottleneck is identified: the `mh:performance-optimizer` skill.

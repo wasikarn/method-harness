@@ -2,8 +2,8 @@
 type: llm
 focus: trace
 ---
-Find the code-architect agent's blueprint (or, if the agent wasn't dispatched, whatever
-architecture the session produced inline). The requirement text ("when a user refers a friend who
+Find the code-architect blueprint (or, if the skill wasn't loaded, whatever architecture the
+session produced inline). The requirement text ("when a user refers a friend who
 signs up, the referrer gets $10 credit") is genuinely ambiguous on an axis that changes the
 schema and call sites: crediting the referrer immediately at signup time (simple — one call in
 `handle_signup`) versus crediting only after the referred friend completes some qualifying action

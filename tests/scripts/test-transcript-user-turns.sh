@@ -14,7 +14,7 @@ fail=0
 python3 "$SCRIPT" --selftest || { echo "FAIL: transcript-user-turns.py selftest"; exit 1; }
 
 TMP="$(mktemp -d)"
-trap 'trash "$TMP" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" || true' EXIT
 
 # Equivalence check: the retired SKILL filter (frozen copy, verbatim logic)
 # vs the script's --json mode, on one fixture covering every edge class.

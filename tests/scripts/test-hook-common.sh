@@ -34,7 +34,7 @@ cleanup() {
   for t in "${EXTRA_TRASH[@]:-}"; do
     [ -n "$t" ] && targets+=("$t")
   done
-  [ "${#targets[@]}" -gt 0 ] && trash "${targets[@]}" 2>/dev/null
+  [ "${#targets[@]}" -gt 0 ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "${targets[@]}"
   return 0
 }
 trap cleanup EXIT

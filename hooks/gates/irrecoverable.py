@@ -242,8 +242,8 @@ def _pieces(text, pipe=False):
 # GH #559 review: the client is the command a pipe stage runs, not the word anywhere in it: "grep -v psql"
 # and a gh title naming psql read no SQL. A stage's argv0 is its first word past shell keywords, VAR=x
 # assignments and the wrappers that run the word after them (with their value flags; timeout's duration).
-# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`: _strip_heredocs runs before those
-# are defined. A wrapper missing here hides the client, as it does in the rule loop.
+# A literal copy of PREFIX_WRAPPERS / FLAG_VALUE_WRAPPERS plus `builtin`, kept separate because it carries
+# sudo's full value-option list. A wrapper missing here hides the client, as it does in the rule loop.
 _SQL_CLIENTS = ("mysql", "psql", "sqlite3", "mariadb", "mongosh", "mongo", "redis-cli")  # mongo, redis: GH #607
 _SQL_STAGE_WRAPPERS = {
     "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"), "command": (), "nohup": (), "time": (),
@@ -445,22 +445,45 @@ def _split_words(seg):
     except ValueError:
         return None
 
+# GH #674 review: an output redirection anywhere in the stage (`| sh 2>/dev/null`, `| 2>&1 sh`, `| sh > log`)
+# leaves the shell's stdin the pipe, so it is no script operand. Its target is the next word when the
+# operator stands alone. An input redirection (`sh < f`) gives the shell other commands and is left as it was.
+_OUT_REDIR_RE = re.compile(r"(?:\d*|&)>>?(?:\||&\d*-?)?(.*)")
+
+def _without_out_redirects(w):
+    out, i = [], 0
+    while i < len(w):
+        m = _OUT_REDIR_RE.fullmatch(w[i])
+        if m:
+            i += 1 if m.group(1) or w[i].endswith(("&1", "&2", "&-")) else 2
+            continue
+        out.append(w[i])
+        i += 1
+    return out
+
 def _reads_stdin_shell(seg):
     w = _split_words(seg.split("<<<", 1)[0].split("<<", 1)[0])
     if not w:
         return False
-    i = 0
-    while i < len(w) and (re.fullmatch(r"[A-Za-z_]\w*=.*", w[i]) or w[i].rsplit("/", 1)[-1] in ("sudo", "env", "command", "exec", "nohup", "time",
-                                                             "busybox", "busybox.static", "busybox-static", "toybox",
-                                                             "--")):
-        i += 1
-    if i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+    w = _without_out_redirects(w)
+    if not w:
         return False
-    for t in w[i + 1:]:
+    i = _past_run_prefix(w)  # GH #674: every wrapper the rule loop unwraps, with its options
+    if i is None or i >= len(w) or w[i].rsplit("/", 1)[-1] not in _STDIN_SHELLS:
+        return False
+    k = i + 1
+    while k < len(w):
+        t = w[k]
+        k += 1
         if t == "-s" or (t.startswith("-") and not t.startswith("--") and "s" in t[1:] and "c" not in t[1:]):
             return True  # -s: the rest are positional parameters, commands come from stdin
         if not t.startswith(("-", "+")) or (t.startswith("-") and not t.startswith("--") and "c" in t[1:]):
             return False  # a script operand, or -c
+        if t in ("--rcfile", "--init-file"):
+            k += 1
+        elif t[:1] in "-+" and t[1:2] != "-":
+            k += t[1:].count("o") + t[1:].count("O")  # GH #674: each o or O (shopt) takes the next word,
+            # as _shell_body's "oO" reads them (-o pipefail, +o histexpand, -eo x, -O extglob)
     return True
 
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
@@ -897,11 +920,6 @@ def _rm_prompts_each(rest):
 # shlex cost is superlinear in the longest SINGLE token (700k chars blows a 2s
 # timeout), so an oversized command denies on length ALONE before shlex runs.
 _CMD_LEN_CAP = 150_000
-# GH #668: the heredoc scan runs before the _CMD_LEN_CAP deny and a timeout allows, so a command over the
-# cap skips it and is denied by that cap unchanged.
-_SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
-cmd = d["tool_input"].get("command", "")
-cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= _CMD_LEN_CAP else cmd
 
 def _mid_merge():
     # `git add -A|--all|.` is allowed only mid-merge (staging a manual conflict
@@ -1050,6 +1068,54 @@ _RUN_WRAPPERS = {
 # GH #662: the walks with their own wrapper list (xargs, find -exec, a shell reading stdin) read past these too.
 _BUSYBOX_NAMES = ("busybox", "busybox.static", "busybox-static", "toybox")
 _STEP_WRAPPERS = PREFIX_WRAPPERS + _BUSYBOX_NAMES
+def _past_run_prefix(w, i=0):
+    # GH #674: the index of the program word in w[i:] past assignments and every wrapper the rule loop
+    # unwraps: PREFIX_WRAPPERS with their value options (sudo's, env's, FLAG_VALUE_WRAPPERS), timeout's
+    # DURATION, builtin, busybox, and _RUN_WRAPPERS with their value options and positionals. None when a
+    # wrapper runs a body of its own instead (flock -c, su -c, script -c, env -S) or no program follows.
+    # Self-contained: the heredoc strip calls it (via _reads_stdin_shell) before the rule loop's helpers exist.
+    while i < len(w):
+        t = w[i]
+        b = t.rsplit("/", 1)[-1]
+        if re.fullmatch(r"[A-Za-z_]\w*=.*", t):
+            i += 1
+            continue
+        if b in PREFIX_WRAPPERS or b in _UNWRAP_ONLY or b in _BUSYBOX_NAMES:
+            # the value options of _SQL_STAGE_WRAPPERS (sudo's full list) and FLAG_VALUE_WRAPPERS, not a third copy
+            vals = set(FLAG_VALUE_WRAPPERS.get(b, ())) | set(_SQL_STAGE_WRAPPERS.get(b, ()))
+            i += 1
+            while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
+                if b == "env" and w[i].split("=", 1)[0] in ("-S", "--split-string") or b == "env" and w[i].startswith("-S"):
+                    return None
+                done = w[i] == "--"
+                i += 2 if w[i] in vals else 1
+                if done:
+                    break
+            if b in ("timeout", "gtimeout") and i < len(w):
+                i += 1  # the DURATION positional
+        elif b in _RUN_WRAPPERS:
+            vals, npos, bodies, join = _RUN_WRAPPERS[b]
+            i += 1
+            while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
+                if w[i].split("=", 1)[0] in bodies:
+                    return None
+                done = w[i] == "--"
+                i += 2 if w[i] in vals else 1
+                if done:
+                    break
+            if join is None:
+                return None  # su: a user, not a command
+            i += npos  # watch (join) runs `sh -c "<words>"`, whose first word is still the program
+        else:
+            return i
+    return None
+
+# GH #668: the heredoc scan runs before the _CMD_LEN_CAP deny and a timeout allows, so a command over the
+# cap skips it and is denied by that cap unchanged. GH #674: it runs here, past the wrapper tables, because
+# its stdin-shell check (_reads_stdin_shell) walks them.
+_SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
+cmd = d["tool_input"].get("command", "")
+cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= _CMD_LEN_CAP else cmd
 # A package runner's package names map to the program they install (`npx @anthropic-ai/claude-code -p x`).
 _PKG_PROGRAMS = {"claude-code": "claude"}
 _SPAWN_WINDOW_FLAGS = ("-p", "--print", "--agent", "--bg", "--worktree")
@@ -1486,8 +1552,12 @@ def _shadowed(rule, decision):
                 rule=rule, command=cmd[:300])
     return True
 
-# Safe next steps a deny names (hint=). Each must pass this gate and the subagent guard, so no git stash.
-_SAVE_HINT = "or commit first, or save a patch with `git diff HEAD > x.patch`"
+# Safe next steps a deny names (hint=). Each passes this gate and never names git stash. A step subagent-git-guard
+# denies (reset --keep, clean -n) says "in the main session" (tests/hooks/test-gates-irrecoverable-2.sh checks both).
+# The patch restores content with `git apply`, not the staged/unstaged split: re-stage after applying it.
+# --binary: a plain diff writes only "Binary files differ" for a binary file. --no-textconv, --no-ext-diff, --no-color:
+# a diff driver (git-crypt, a textconv) or forced color writes text that git apply cannot restore.
+_SAVE_HINT = "or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`"
 _CHMOD_HINT = "or grant the narrowest mode needed (`chmod 755`, `chmod u+x`)"
 # Set once a git -c / git config alias body is queued: its windows are checked later, outside the alias call.
 # shortcut: it drops the hints of every later deny in the run too (the tail stays); tag windows if that matters.
@@ -1732,21 +1802,38 @@ WORD_LIT = "\x04"
 # "$(" starts is O(n^2) (65s on a 100,000-char payload under the length cap).
 # Exhaustion leaves the span un-blanked -- exactly the bypass shape -- so it is
 # recorded here (mutated, not rebound) and denied once after tokenization,
-# never reset across the primary and fallback calls.
+# never reset across the primary and fallback calls. GH #702/#713: it can hold a reason string
+# (_PARAM_END_DIFFERS, _SUBST_END_DIFFERS) instead of True (truthy, so the save/restore and body cache carry
+# it unchanged), and _deny_if_depth_blown prints that reason.
 _DEPTH_BUDGET_BLOWN = [False]
 _DEPTH_SCAN_BUDGET = 2_000_000
-def _close_bracket(s, j, opener, closer, depth_work_used):
+# GH #713: the work of the second closers that check _close_bracket/_close_psub (_close_param), charged
+# apart so the check does not halve the budget nested spans get; reset with each top-level scan's budget.
+_CHECK_WORK = [0]
+def _close_bracket(s, j, opener, closer, depth_work_used, comments=False):
     # The "$(...)" / "${...}" closer search: from s[j] (just past the opener), count same-type
     # brackets until the matching closer, charging one budget unit per char. Returns the index just
     # past the closer, or None when there is none (end of text, or the budget ran out, which also
     # sets _DEPTH_BUDGET_BLOWN). Quotes inside the span are not tracked (GH #184).
-    n, depth = len(s), 1
+    # GH #713: `comments` (a $(...) body) skips a word-start "#" to the newline, as bash does, so a
+    # commented ")" is no closer; read quote-blind like the count, so a quoted " #" only moves the end
+    # later (more text read as the body), never earlier. A "#" right after an escaped char is mid-word, as
+    # in _close_psub/_close_param/_scan_once (`\ #`), or the skip hides a ")" bash closes on.
+    n, depth, start, esc_end = len(s), 1, j, -1
     while j < n and depth and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
         depth_work_used[0] += 1
         if s[j] == opener:
             depth += 1
         elif s[j] == closer:
             depth -= 1
+        elif s[j] == "\\" and j != esc_end - 1:
+            esc_end = j + 2
+        elif comments and s[j] == "#" and j != esc_end and (j == start or s[j - 1] in _REDIRECT_TARGET_STOP):
+            k = s.find("\n", j)
+            k = n if k == -1 else k
+            depth_work_used[0] += k - j
+            j = k
+            continue
         j += 1
     if depth and depth_work_used[0] > _DEPTH_SCAN_BUDGET:
         _DEPTH_BUDGET_BLOWN[0] = True
@@ -1766,6 +1853,7 @@ def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
     # it is skipped whole (an unclosed one leaves the funsub unclosed).
     n, depth = len(s), 1
     tsq = tdq = False
+    start, esc_end = j, -1
     while j < n and depth and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
         depth_work_used[0] += 1
         tc = s[j]
@@ -1800,6 +1888,15 @@ def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
             tdq = True; j += 1; continue
         if tc == "\\" and j + 1 < n:
             j += 2
+            esc_end = j
+            continue
+        # GH #702: a word-start "#" opens a comment bash skips to the newline (same test as _scan_once)
+        if tc == "#" and j != esc_end and (j == start or s[j - 1] in _REDIRECT_TARGET_STOP):
+            k = s.find("\n", j)
+            if k == -1:
+                return None
+            depth_work_used[0] += k - j
+            j = k
             continue
         if tc == opener:
             depth += 1
@@ -1809,6 +1906,100 @@ def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
     if depth and depth_work_used[0] > _DEPTH_SCAN_BUDGET:
         _DEPTH_BUDGET_BLOWN[0] = True
     return None if depth else j
+
+_PARAM_END_DIFFERS = "could not safely tokenize command (a ${...} word ends at a different place for bash than for the gate) - confirm with user first"
+_SUBST_END_DIFFERS = "could not safely tokenize command (a ${ ...; } substitution ends at a different place for bash than for the gate) - confirm with user first"
+def _at_command_word(s, j, start, esc_end):
+    # GH #713: s[j] is in command position in a body that starts at `start`: after a separator, "(", ")",
+    # "{", "!", or a reserved word a command follows; an escaped character before it is a word character
+    k = j - 1
+    while k >= start and s[k] in " \t":
+        if k == esc_end - 1:
+            return False
+        k -= 1
+    if k < start:
+        return True
+    if k == esc_end - 1:
+        return False
+    return s[k] in ";&|\n(){!" or re.search(r"(?:^|[\s;&|()])(?:then|do|else|if|elif|while|until|time)$",
+                                            s[max(start, k - 6):k + 1]) is not None
+
+def _close_param(s, j, depth_work_used, closer="}", _depth=0):
+    # GH #702: the end of a ${...} word as bash 5.3 finds it, kept apart from _close_bracket/_close_psub so
+    # a wrong count in one does not repeat in the other: the first "}" outside quotes, escapes and nested
+    # $(...)/backtick/${...}/$'...'; a bare "{" is not counted. A command body (closer ")" for $(...), "f"
+    # for a funsub ending in "}") also skips a word-start "#" comment; ")" counts parens. GH #713: "f" ends
+    # at a "}" in command position only, and a "{ " group there nests one. Index past the closer, or None
+    # (unclosed, budget, or nesting past 50).
+    if _depth >= 50:
+        return None
+    n, parens, dq, start, esc_end = len(s), 1, False, j, -1
+    while j < n and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
+        depth_work_used[0] += 1
+        c = s[j]
+        if c == "\\":
+            j += 2
+            esc_end = j
+            continue
+        if c == "$" and s[j + 1:j + 2] == "{" and s[j + 2:j + 3] in (" ", "\t", "\n", "|"):
+            j = _close_param(s, j + 2, depth_work_used, "f", _depth + 1)
+            if j is None:
+                return None
+            continue
+        if c == "`":
+            k = j + 1
+            while k < n and s[k] != "`":
+                k += 2 if s[k] == "\\" else 1
+            if k >= n:
+                return None
+            depth_work_used[0] += k - j
+            j = k + 1
+            continue
+        if c == "$" and s[j + 1:j + 2] in ("(", "{"):
+            j = _close_param(s, j + 2, depth_work_used, ")" if s[j + 1] == "(" else "}", _depth + 1)
+            if j is None:
+                return None
+            continue
+        if dq:
+            dq = c != DQ
+            j += 1
+            continue
+        if c == DQ:
+            dq = True
+        elif c == SQ or (c == "$" and s[j + 1:j + 2] == SQ):
+            j += c == "$"
+            k = j + 1
+            while k < n and s[k] != SQ:
+                k += 2 if c == "$" and s[k] == "\\" else 1
+            if k >= n:
+                return None
+            depth_work_used[0] += k - j
+            j = k
+        elif closer == "}" and c == "}":
+            return j + 1
+        elif closer == "f" and c in "{}" and _at_command_word(s, j, start, esc_end):
+            if c == "}":
+                parens -= 1
+                if not parens:
+                    return j + 1
+            elif s[j + 1:j + 2] in (" ", "\t", "\n"):
+                parens += 1
+        elif closer != "}" and c == "#" and j != esc_end and (j == start or s[j - 1] in _REDIRECT_TARGET_STOP):
+            k = s.find("\n", j)
+            if k == -1:
+                return None
+            depth_work_used[0] += k - j
+            j = k
+        elif closer == ")" and c == "(":
+            parens += 1
+        elif closer == ")" and c == ")":
+            parens -= 1
+            if not parens:
+                return j + 1
+        j += 1
+    if depth_work_used[0] > _DEPTH_SCAN_BUDGET:
+        _DEPTH_BUDGET_BLOWN[0] = True
+    return None
 
 def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
     # The substitution that starts at s[i] (a backtick, "$(", "${", or an unquoted "<(" / ">("):
@@ -1822,10 +2013,11 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         bodies.append(s[i + 1:j])
         return PH, j + 1
     if c == "$" and nxt == "(":
-        j = _close_bracket(s, i + 2, "(", ")", depth_work_used)
+        j = _close_bracket(s, i + 2, "(", ")", depth_work_used, comments=True)
         if j is None:
             return None
-        bodies.append(s[i + 2:j - 1])
+        # GH #713: the prepass leaves newlines inside "..." alone, but in a $(...) body they separate commands
+        bodies.append(_newlines_to_seps(s[i + 2:j - 1]) if in_dquote else s[i + 2:j - 1])
         return PH, j
     if c == "$" and nxt == "{":
         # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
@@ -1833,8 +2025,17 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         funsub = s[i + 2:i + 3] in (" ", "\t", "\n", "|")
         if funsub:
             j = _close_psub(s, i + 2, depth_work_used, "{", "}")
+            # GH #713: bash ends it at a "}" in command position, not at a "}" argument (`"${ echo }; V; }"`)
+            if not _DEPTH_BUDGET_BLOWN[0] and _close_param(s, i + 2, _CHECK_WORK, "f") != j:
+                _DEPTH_BUDGET_BLOWN[0] = _SUBST_END_DIFFERS
         else:
             j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
+            p = _close_param(s, i + 2, _CHECK_WORK)
+            # A "}" in a plain "..." ends _close_bracket early (`${y:-"a}b"}`); the quote-crossing fallback
+            # after _tokens handles that, so only a body with no $, backtick, ' or \ is let through
+            if not _DEPTH_BUDGET_BLOWN[0] and p != j and not (
+                    j is not None and p is not None and j < p and not re.search(r"[$`'\\]", s[i + 2:p])):
+                _DEPTH_BUDGET_BLOWN[0] = _PARAM_END_DIFFERS
         if j is None:
             # No closer: bash would refuse the text, but GH #233's "}"-masking can eat a real one
             # (`"${x:-"'$(V)'"}"`), so the rest is read as the word, quote-blind, charged to the budget.
@@ -1862,8 +2063,9 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
             try:
                 shlex.split(body)
             except ValueError:
-                # an unbalanced quote here would pair with one left in the main text and hide its tail
-                _DEPTH_BUDGET_BLOWN[0] = True
+                # an unbalanced quote here would pair with one left in the main text and hide its tail; a
+                # reason already set (a nested ${...} word that closed in the wrong place) is the cause, kept
+                _DEPTH_BUDGET_BLOWN[0] = _DEPTH_BUDGET_BLOWN[0] or True
             bodies.append(body)
         return PH, j
     if c in ("<", ">") and not in_dquote and nxt == "(":
@@ -1922,12 +2124,13 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
 # and depth are unchanged from before. Sharing one `depth_work_used`
 # list across the whole recursion (never a fresh one per call) keeps the
 # total work bounded by one _DEPTH_SCAN_BUDGET regardless of nesting
-# depth; `_depth` caps the recursion itself, since a budget check alone
+# depth (plus one more for the check closers, _CHECK_WORK); `_depth` caps the recursion itself, since a budget check alone
 # does not stop Python's own RecursionError on ~1000 properly-closed,
 # budget-cheap nested spans.
 def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
     if depth_work_used is None:
         depth_work_used = [0]
+        _CHECK_WORK[0] = 0
     out = []
     in_dquote = False
     # See _newlines_to_seps's own comment: an escaped separator is still a
@@ -2483,12 +2686,9 @@ def _shell_stdin_bodies(c):
             up = _split_words(_decode_quotes(segs[k - 1])) if k else None
             # GH #662: the echo as written past a path, `command [-p] [--]`, `builtin` or busybox [--]
             # (`busybox echo ... | sh`). An index, not slicing: a flood of wrapper words must stay linear.
-            j = 0
-            while up and j < len(up) and (up[j].rsplit("/", 1)[-1] in (
-                    "command", "builtin", "busybox", "busybox.static", "busybox-static", "toybox")
-                    or (j and up[j] in ("--", "-p"))):
-                j += 1
-            up = up[j:] if up else up
+            # GH #674: and past every other wrapper the rule loop unwraps, assignments too (sudo echo, FOO=1 echo).
+            j = _past_run_prefix(up) if up else None
+            up = up[j:] if j is not None else None
             name = up[0].rsplit("/", 1)[-1] if up else ""
             if name in ("echo", "printf"):
                 args = up[1:]
@@ -2682,6 +2882,8 @@ except ValueError:
 
 # A scan that could not finish left a span un-blanked -- deny before dispatch.
 def _deny_if_depth_blown():
+    if isinstance(_DEPTH_BUDGET_BLOWN[0], str):
+        deny(_DEPTH_BUDGET_BLOWN[0])
     if _DEPTH_BUDGET_BLOWN[0]:
         deny("could not safely tokenize command (nested substitution exceeded the depth-scan budget, or a funsub body has an unbalanced quote) - confirm with user first")
 _deny_if_depth_blown()
@@ -3210,7 +3412,7 @@ def _scan_body(body):
             _WDEPTH[len(windows)] = _cur_depth + 1
             windows.append(curc)
     if blown:
-        _DEPTH_BUDGET_BLOWN[0] = True
+        _DEPTH_BUDGET_BLOWN[0] = _DEPTH_BUDGET_BLOWN[0] or blown  # GH #702: a body's reason string survives
     if bad:
         deny("could not safely tokenize the body of a bash -c / eval string - confirm with user first")
     _deny_if_depth_blown()
@@ -4984,7 +5186,7 @@ def _check_window(_wi, w):
                              or _drops_core_section(args)):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
-                    deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard", hint=_SAVE_HINT + ", or move HEAD with `git reset --keep <ref>`, which refuses to lose local changes")
+                    deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard", hint=_SAVE_HINT + ", or, in the main session, move HEAD with `git reset --keep <ref>`, which refuses to lose local changes")
                 # SHORT bundled cluster counts per-character, LONG option via
                 # _is_flag's prefix match (bare containment false-positived on
                 # "--find-renames" / "--format=fuller" under candidate duplication --
@@ -4993,7 +5195,7 @@ def _check_window(_wi, w):
                     _is_flag(t, "--force") or (t.startswith("-") and not t.startswith("--") and "f" in t)
                     for t in scan
                 ):
-                    deny("git clean -f deletes untracked files — confirm with user first", rule="git-clean-force", hint="or preview with `git clean -n`, then move the files aside with `mv` or commit them")
+                    deny("git clean -f deletes untracked files — confirm with user first", rule="git-clean-force", hint="or, in the main session, preview with `git clean -n`; then move the files aside with `mv` or commit them")
                 # git restore: default mode and --worktree target the WORKTREE
                 # (unrecoverable); --staged alone targets the INDEX (recoverable,
                 # allowed). Unlike checkout, a restore pathspec is never a branch

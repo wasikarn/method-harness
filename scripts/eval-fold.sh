@@ -33,7 +33,7 @@ tmp="$(mktemp -d)" || exit 1
 if [ "$keep" -eq 1 ]; then
   echo "eval-fold: kept temp dir: $tmp"
 else
-  trap 'trash "$tmp"' EXIT
+  trap 'python3 "$root/tests/_lib/tmp_delete.py" "$tmp"' EXIT
 fi
 allow="$(python3 scripts/_lib/eval-fold.py build "$root" "$agent" "$tmp")" || exit 1
 

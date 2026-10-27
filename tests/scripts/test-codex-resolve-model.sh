@@ -15,7 +15,7 @@ fails_with() { [ "$1" -ne 0 ] && [ -z "$2" ] && grep -q "$4" "$3"; }
 clean_error() { [ "$1" -ne 0 ] && [ -z "$2" ] && [ -s "$3" ] && ! grep -q Traceback "$3"; }
 
 T="$(mktemp -d)" || exit 1
-trap 'trash "$T"' EXIT
+trap 'python3 "$HERE/../_lib/tmp_delete.py" "$T"' EXIT
 export CODEX_HOME="$T"
 cat > "$T/models_cache.json" <<'JSON'
 {"models": [
@@ -41,7 +41,7 @@ t "unknown tier: exit non-zero, no stdout, reason on stderr" fails_with "$rc" "$
 echo '{not json' > "$T/models_cache.json"
 out="$(python3 "$RESOLVE" sol 2>"$T/err")"; rc=$?
 t "malformed catalog: clean error, no traceback" clean_error "$rc" "$out" "$T/err"
-trash "$T/models_cache.json"
+python3 "$HERE/../_lib/tmp_delete.py" "$T/models_cache.json"
 out="$(python3 "$RESOLVE" sol 2>"$T/err")"; rc=$?
 t "missing catalog: clean error" fails_with "$rc" "$out" "$T/err" catalog
 

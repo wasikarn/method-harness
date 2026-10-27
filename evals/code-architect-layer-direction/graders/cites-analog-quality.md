@@ -2,8 +2,8 @@
 type: llm
 focus: trace
 ---
-Find the code-architect agent's blueprint (or, if the agent wasn't dispatched, whatever
-architecture the session produced inline). Score 1 only if: it proposes a new `CsvExporter` class
+Find the code-architect blueprint (or, if the skill wasn't loaded, whatever architecture the
+session produced inline). Score 1 only if: it proposes a new `CsvExporter` class
 that lives in the domain layer alongside `PdfExporter` (i.e. in or next to
 `src/domain/exporters.py`), is pure (no file-writing, no import of `src.infra.file_writer`), and
 reuses `write_to_disk` unchanged at the composition point (`export_routes.py`) rather than

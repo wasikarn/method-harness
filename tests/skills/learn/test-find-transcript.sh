@@ -16,7 +16,7 @@ ok()  { pass=$((pass + 1)); echo "PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL: $1" >&2; }
 
 FAKE_HOME=$(mktemp -d)
-trap 'trash "$FAKE_HOME" 2>/dev/null || true' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FAKE_HOME" || true' EXIT
 CWD="/fake/project"
 SLUG="${CWD//\//-}"
 DIR="$FAKE_HOME/.claude/projects/$SLUG"
@@ -131,7 +131,7 @@ if [ "$(echo "$out" | awk '{print $1}')" = "$DIR/$MOVED_ID.jsonl" ]; then
 else
   bad "expected the cwd folder copy, got '$out'"
 fi
-trash "$DIR/$MOVED_ID.jsonl"
+python3 "$ROOT/tests/_lib/tmp_delete.py" "$DIR/$MOVED_ID.jsonl"
 
 # the same id in two other folders is ambiguous: fail loud and list both
 TWIN_ID="66666666-6666-6666-6666-666666666666"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-eval-fold.sh — scripts/eval-fold.sh + scripts/_lib/eval-fold.py without model calls:
-# the folded/kept plugin builder for each of the four fold candidates, the compare table on
+# the folded/kept plugin builder for two agents that still have eval cases, the compare table on
 # hand-made aggregate-result.json fixtures, and the --runs floor.
 set -uo pipefail
 # The fixture-repo check below runs `git init`; a hook-exported GIT_DIR would retarget it at the real repo.
@@ -13,14 +13,14 @@ ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 TMP="$(mktemp -d)" || exit 1
 [ -n "$TMP" ] || { echo "test-eval-fold: mktemp gave an empty path" >&2; exit 1; }
-trap 'trash "$TMP"' EXIT
+trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP"' EXIT
 
 echo "=== eval-fold self-test ==="
 
 guarded() { (cd "$ROOT" && shasum .claude-plugin/plugin.json agents/*.md && find skills -type f -exec shasum {} +) | sort; }
 guarded >"$TMP/before"
 
-for a in code-architect backend-architect requirement-analyst performance-optimizer; do
+for a in blind-spot-hunter plan-reviewer; do
   out="$TMP/$a"
   if ! python3 "$LIB" build "$ROOT" "$a" "$out" >"$TMP/$a.allow" 2>"$TMP/$a.err"; then
     bad "$a: build failed: $(cat "$TMP/$a.err")"; continue
@@ -119,23 +119,47 @@ fx="$TMP/fixture-repo"
 mkdir -p "$fx/.claude-plugin" "$fx/agents" "$fx/evals/x-case/graders"
 echo '{"name": "mh", "defaultEnabled": false, "skills": []}' >"$fx/.claude-plugin/plugin.json"
 printf -- '---\nname: x-agent\ndescription: "X."\nmodel: opus\neffort: high\n---\nBody.\n' >"$fx/agents/x-agent.md"
-printf -- '---\nname: x-case\ntags: [x-agent, planted]\n---\nAsk the x-agent about it, somehow.\n' >"$fx/evals/x-case/prompt.md"
+printf -- '---\nname: x-case\ntags: [x-agent, planted]\nallowed_tools: [Read, Agent]\n---\nAsk the x-agent about it, somehow.\n' >"$fx/evals/x-case/prompt.md"
 printf -- '---\ntype: regex\ntarget: last_message\nmatch: contains\npattern: ok\n---\nOutcome.\n' >"$fx/evals/x-case/graders/finding.md"
 git -C "$fx" init -q
 git -C "$fx" add -- .claude-plugin agents evals
 python3 "$LIB" build "$fx" x-agent "$TMP/fx-out-fire" >/dev/null 2>&1 \
   && bad "build accepted a fire case with no dispatch sentence to rewrite" || ok "build stops on a fire case with no rewritable dispatch sentence"
 printf -- '---\ntype: tool_used\ntool: Agent\ninput_match: x-agent\nmin: 0\nmax: 0\narm: both\n---\nShould not fire.\n' >"$fx/evals/x-case/graders/no-agent-dispatch.md"
+# the agent-era "Agent type ... not found" regex can never fire once no Agent call happens; the
+# fold must turn it into the Skill tool's own error (Claude Code 2.1.310: "Unknown skill: <name>")
+printf -- '---\ntype: regex\ntarget: trace\nmatch: not_contains\npattern: "Agent type '"'"'[^'"'"']*'"'"' not found\\\\. Available agents"\n---\nThe x-agent agent ran.\n' >"$fx/evals/x-case/graders/agent-fired.md"
 git -C "$fx" add -- evals
-python3 "$LIB" build "$fx" x-agent "$TMP/fx-out-nofire" >/dev/null 2>"$TMP/fx.err" \
+python3 "$LIB" build "$fx" x-agent "$TMP/fx-out-nofire" >"$TMP/fx.allow" 2>"$TMP/fx.err" \
   && ok "build accepts a should-not-fire case with no dispatch sentence" || bad "build refused a should-not-fire case: $(cat "$TMP/fx.err")"
-/usr/bin/grep -qx 'Agent,Bash,Edit,Glob,Grep,Read,Skill,Write' "$TMP/performance-optimizer.allow" 2>/dev/null \
-  && ok "allow-tools: union of case allowed_tools plus Skill" || bad "allow-tools: got '$(cat "$TMP/performance-optimizer.allow")'"
+/usr/bin/grep -qx 'Agent,Read,Skill' "$TMP/fx.allow" 2>/dev/null \
+  && ok "allow-tools: union of case allowed_tools plus Skill" || bad "allow-tools: got '$(cat "$TMP/fx.allow")'"
+af_probs=$(python3 - "$TMP/fx-out-nofire/folded/evals/x-case/graders/agent-fired.md" <<'PY'
+import re, subprocess, sys
+t = open(sys.argv[1]).read()
+fm = t[4:t.index("\n---\n", 4)]
+m = re.search(r"^pattern:\s*'(.*)'\s*$", fm, re.M)
+if not m:
+    print("no single-quoted pattern"); sys.exit()
+if not re.search(r"^match:\s*not_contains\s*$", fm, re.M):
+    print("match is no longer not_contains")
+def js(p, s):
+    return subprocess.run(["node", "-e", "process.exit(new RegExp(process.argv[1]).test(process.argv[2]) ? 0 : 1)", p, s]).returncode == 0
+p = m.group(1)
+for s in ("Unknown skill: x-agent", "Unknown skill: mh:x-agent"):
+    if not js(p, s):
+        print(f"pattern misses {s!r}")
+for s in ("Unknown skill: mh:other", "Agent type 'mh:x-agent' not found. Available agents"):
+    if js(p, s):
+        print(f"pattern matches {s!r}")
+PY
+)
+[ -z "$af_probs" ] && ok "fold rewrites the Agent-not-found regex to the Unknown-skill error" || bad "agent-fired fold: $af_probs"
 
 guarded >"$TMP/after"
 cmp -s "$TMP/before" "$TMP/after" && ok "repo manifest, agents/ and skills/ unchanged" || bad "build touched the repo"
 
-python3 "$LIB" build "$ROOT" code-architect "$ROOT/evals/results/should-not-exist" >/dev/null 2>&1 \
+python3 "$LIB" build "$ROOT" plan-reviewer "$ROOT/evals/results/should-not-exist" >/dev/null 2>&1 \
   && bad "build accepted an output dir inside the repo" || ok "build refuses an output dir inside the repo"
 [ ! -e "$ROOT/evals/results/should-not-exist" ] || bad "build wrote inside the repo"
 
@@ -194,11 +218,11 @@ python3 "$LIB" compare "$TMP/nowith.json" "$TMP/folded.json" >/dev/null 2>&1 \
 
 # dry run (no model calls: build + claude plugin validate): commands are labeled examples;
 # --keep leaves the temp dir and says where
-if bash "$ROOT/scripts/eval-fold.sh" requirement-analyst --keep >"$TMP/dry.out" 2>&1; then
+if bash "$ROOT/scripts/eval-fold.sh" blind-spot-hunter --keep >"$TMP/dry.out" 2>&1; then
   /usr/bin/grep -q 'example' "$TMP/dry.out" && ok "dry run labels the printed commands as examples" || bad "dry run: no example label"
   kept_dir=$(sed -n 's/^eval-fold: kept temp dir: //p' "$TMP/dry.out")
-  if [ -n "$kept_dir" ] && [ -d "$kept_dir/folded/skills/fold/requirement-analyst" ]; then
-    ok "--keep leaves the temp dir"; trash "$kept_dir"
+  if [ -n "$kept_dir" ] && [ -d "$kept_dir/folded/skills/fold/blind-spot-hunter" ]; then
+    ok "--keep leaves the temp dir"; python3 "$ROOT/tests/_lib/tmp_delete.py" "$kept_dir"
   else
     bad "--keep: no kept temp dir reported: $(cat "$TMP/dry.out")"
   fi
@@ -206,7 +230,7 @@ else
   bad "dry run failed: $(cat "$TMP/dry.out")"
 fi
 
-bash "$ROOT/scripts/eval-fold.sh" code-architect --runs 1 >/dev/null 2>&1
+bash "$ROOT/scripts/eval-fold.sh" plan-reviewer --runs 1 >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 2 ] && ok "eval-fold.sh refuses --runs 1" || bad "eval-fold.sh --runs 1 exited $rc, want 2"
 
