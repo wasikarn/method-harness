@@ -3209,6 +3209,55 @@ test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'shift 2>/dev/null; ls \$1
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'rm \"\$@\"' _ a.log b.log" "$(bash_payload "bash -c 'rm \"\$@\"' _ a.log b.log")"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'echo \"\$@\"' _ rm -rf b" "$(bash_payload "bash -c 'echo \"\$@\"' _ rm -rf b")"
 test_allow "$IRRECOVERABLE" "GH #663 control: sh -c 'ls \$1' _ -la" "$(bash_payload "sh -c 'ls \$1' _ -la")"
+# GH #664: a here-string or echo argument written with ANSI-C quoting is decoded before the stdin shell's body is read.
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'rm -rf b'" "$(bash_payload "bash <<< \$'rm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: sh <<< \$'rm\\x20-rf b'" "$(bash_payload "sh <<< \$'rm\\x20-rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'ls\\nrm -rf b'" "$(bash_payload "bash <<< \$'ls\\nrm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: zsh <<< \$\"rm -rf b\"" "$(bash_payload 'zsh <<< $"rm -rf b"')"
+test_deny  "$IRRECOVERABLE" "GH #664: echo \$'rm -rf b' | sh" "$(bash_payload "echo \$'rm -rf b' | sh")"
+test_deny  "$IRRECOVERABLE" "GH #664: dash <<< \$'git push --force origin main'" "$(bash_payload "dash <<< \$'git push --force origin main'")"
+# an even backslash run escapes nothing, and \u, \U and \cX are decoded too (also at the top level)
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \\\\\$\"rm -rf b\"" "$(bash_payload 'bash <<< \\$"rm -rf b"')"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'\\u0072m -rf b'" "$(bash_payload "bash <<< \$'\\u0072m -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'\\U00000072m -rf b'" "$(bash_payload "bash <<< \$'\\U00000072m -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: bash <<< \$'echo hi\\cJrm -rf b'" "$(bash_payload "bash <<< \$'echo hi\\cJrm -rf b'")"
+test_deny  "$IRRECOVERABLE" "GH #664: \$'\\u0072m' -rf b (top level)" "$(bash_payload "\$'\\u0072m' -rf b")"
+# \cX is X & 0x1f as bash computes it, a NUL ends the $'...' value, and a \U past U+10FFFF is empty
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< $'"'"'echo hi\c*rm -rf b'"'"' (\c* is a newline)' "$(bash_payload 'bash <<< $'"'"'echo hi\c*rm -rf b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< $'"'"'rm\c)-rf\c)b'"'"' (\c) is a tab)' "$(bash_payload 'bash <<< $'"'"'rm\c)-rf\c)b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #664: r$'"'"'\u0000'"'"'m -rf b (a NUL ends the value)' "$(bash_payload 'r$'"'"'\u0000'"'"'m -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664: r$'"'"'\0'"'"'m -rf b' "$(bash_payload 'r$'"'"'\0'"'"'m -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664: r$'"'"'\UFFFFFFFF'"'"'m -rf b' "$(bash_payload 'r$'"'"'\UFFFFFFFF'"'"'m -rf b')"
+test_allow "$IRRECOVERABLE" 'GH #664 control: echo $'"'"'\cß'"'"' (no crash)' "$(bash_payload 'echo $'"'"'\cß'"'"'')"
+test_allow "$IRRECOVERABLE" 'GH #664 control: bash <<< $'"'"'echo hi\c{rm -rf b'"'"' (\c{ is ESC, not ;)' "$(bash_payload 'bash <<< $'"'"'echo hi\c{rm -rf b'"'"'')"
+test_allow "$IRRECOVERABLE" "GH #664 control: echo \"\\\$\" | sh" "$(bash_payload 'echo "\$" | sh')"
+# a $'...' inside double quotes is literal to that shell (the stdin shell decodes it later), and \x{HH} decodes
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< "$'"'"'\x22'"'"'; rm -rf b; #"' "$(bash_payload 'bash <<< "$'"'"'\x22'"'"'; rm -rf b; #"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: echo "x$'"'"'\x22'"'"'; rm -rf b; : $'"'"'\x22'"'"'" | bash' "$(bash_payload 'echo "x$'"'"'\x22'"'"'; rm -rf b; : $'"'"'\x22'"'"'" | bash')"
+test_deny  "$IRRECOVERABLE" 'GH #664: echo "$'"'"'\x22'"'"'"; rm -rf b; echo "$'"'"'\x22'"'"'" (top level)' "$(bash_payload 'echo "$'"'"'\x22'"'"'"; rm -rf b; echo "$'"'"'\x22'"'"'"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash <<< $'"'"'\x{72}m -rf b'"'"'' "$(bash_payload 'bash <<< $'"'"'\x{72}m -rf b'"'"'')"
+test_deny  "$IRRECOVERABLE" 'GH #664: $'"'"'\x{172}m'"'"' -rf b (top level, & 0xFF)' "$(bash_payload '$'"'"'\x{172}m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664: bash -c "$'"'"'\x72m'"'"' -rf b" (decoded when the body is read)' "$(bash_payload 'bash -c "$'"'"'\x72m'"'"' -rf b"')"
+test_deny  "$IRRECOVERABLE" 'GH #664: a literal $'"'"' in "..." does not swallow a live one after it' "$(bash_payload '"$'"'"'" ; $'"'"'\x72m'"'"' -rf b')"
+test_allow "$IRRECOVERABLE" 'GH #664 control: echo "$'"'"'say hi'"'"'"' "$(bash_payload 'echo "$'"'"'say hi'"'"'"')"
+test_allow "$IRRECOVERABLE" "GH #664 control: bash <<< \$'echo hi'" "$(bash_payload "bash <<< \$'echo hi'")"
+test_allow "$IRRECOVERABLE" "GH #664 control: grep x <<< \$'rm -rf b'" "$(bash_payload "grep x <<< \$'rm -rf b'")"
+# GH #664 review 4: a $'...' the line's own shell reads is decoded wherever it sits, as develop did.
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: $(true)# is no comment' "$(bash_payload 'echo $(true)#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: $((1))# is no comment' "$(bash_payload 'echo $((1))#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: an escaped blank before # is no comment' "$(bash_payload 'echo a\ #; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: an escaped ; before # is no comment' "$(bash_payload 'echo x\;#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: a line continuation before # is no comment' "$(bash_payload 'echo a\
+#; $'"'"'\x72m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: octal after $(true)#' "$(bash_payload 'echo $(true)#; $'"'"'\162m'"'"' -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: git verb after $(true)#' "$(bash_payload 'echo $(true)#; git $'"'"'\x70ush'"'"' --force origin main')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 4: case ) inside $(...) inside "..."' "$(bash_payload 'echo "$(case x in x) $'"'"'\x72m'"'"' -rf b;; esac)"')"
+test_allow "$IRRECOVERABLE" 'GH #664 review 4 control: \x{} is a NUL that ends the value' "$(bash_payload 'bash <<< $'"'"'\x{}\nrm -rf b'"'"'')"
+test_allow "$IRRECOVERABLE" 'GH #664 review 4 control: \U past U+10FFFF spells no verb' "$(bash_payload '$'"'"'\U110000a'"'"'rm -rf b')"
+# GH #664 review 5: a decoded " \ $ or backtick in "..." is escaped there, not left undecoded.
+test_deny  "$IRRECOVERABLE" 'GH #664 review 5: a nested shell'"'"'s eval of \$'"'"'...'"'"' whose text holds a $' "$(bash_payload 'sh -c "eval \$'"'"'\x72m -rf b \x24x'"'"'"')"
+test_deny  "$IRRECOVERABLE" 'GH #664 review 5: a nested shell'"'"'s eval of \$'"'"'...'"'"' whose text holds a "' "$(bash_payload 'sh -c "eval \$'"'"'\x72m -rf b \x22'"'"'"')"
+test_allow "$IRRECOVERABLE" 'GH #664 review 5 control: a decoded " inside $(case) in "..."' "$(bash_payload 'echo "$(case x in x) echo $'"'"'a\x22b'"'"';; esac)"')"
 
 # GH #693: a $(...)/backtick in the word of a ${...} (default, pattern, subscript, offset) runs, and a bash 5.3
 # funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command; the ${...} body was never read.

@@ -670,13 +670,13 @@ def _strip_heredocs(cmd, ends=None):
                     _SQL_HEREDOC_DROP[0] = True
     return "\n".join(out)
 
-def _normalize_ansi_c_quotes(cmd):
+def _normalize_ansi_c_quotes(cmd, live_only=False):
     # shlex does not understand ANSI-C quoting ($SQ...SQ): a spliced argv0 like
     # $SQ\x74SQ never reassembles into the decoded byte. Dispatch below compares
     # argv0 by EXACT string, so the escape must actually be RESOLVED (a
     # boundary-only re-quote still yields the literal token "gi\x74").
-    # Bounded escape set: \xHH, \nnn octal, \n \t \r \\ \SQ \DQ; anything else
-    # stays a literal (non-matching, safe-direction) pair.
+    # Bounded escape set: \xHH, \nnn octal, \uHHHH, \UHHHHHHHH, \cX (control-X), \n \t \r \a \b \e \E \f \v
+    # \\ \SQ \DQ (GH #664: \u, \U and \c spelled a verb bash decodes); anything else stays a literal pair.
     # A decoded SQ byte (\SQ, \047, \x27) cannot sit inside the SQ...SQ wrapper
     # returned here, so a second pass splices it into the close-escape-reopen
     # idiom -- otherwise the unbalanced quote desyncs _newlines_to_seps.
@@ -684,7 +684,8 @@ def _normalize_ansi_c_quotes(cmd):
     # after this) does not read them as statement separators.
     OCTAL = "01234567"
     HEXDIGITS = "0123456789abcdefABCDEF"
-    SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", SQ: SQ, DQ: DQ}
+    SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f",
+              "v": "\v", "\\": "\\", SQ: SQ, DQ: DQ}
     def _decode_ansi_c(m):
         body = m.group(1)
         decoded = []
@@ -696,6 +697,13 @@ def _normalize_ansi_c_quotes(cmd):
                 if nxt in SIMPLE:
                     decoded.append(SIMPLE[nxt])
                     i += 2
+                elif nxt == "x" and body[i + 2:i + 3] == "{":  # \x{HH...}: any hex digits, the byte is & 0xFF
+                    j, digits = i + 3, ""
+                    while j < n and body[j] in HEXDIGITS:
+                        digits += body[j]
+                        j += 1
+                    decoded.append(chr(int(digits, 16) & 0xFF) if digits else "\x00")  # bash: \x{} is a NUL
+                    i = j + 1 if body[j:j + 1] == "}" else j
                 elif nxt == "x":
                     j, digits = i + 2, ""
                     while j < n and len(digits) < 2 and body[j] in HEXDIGITS:
@@ -707,6 +715,31 @@ def _normalize_ansi_c_quotes(cmd):
                     else:
                         decoded.append(body[i:i + 2])
                         i += 2
+                elif nxt in "uU":
+                    j, digits = i + 2, ""
+                    while j < n and len(digits) < (4 if nxt == "u" else 8) and body[j] in HEXDIGITS:
+                        digits += body[j]
+                        j += 1
+                    cp = int(digits, 16) if digits else -1
+                    if 0 <= cp <= 0x10FFFF:
+                        decoded.append(chr(cp))
+                        i = j
+                    elif digits:  # bash 5.2: from 0x80000000 nothing; past U+10FFFF, bytes no verb is spelled with
+                        decoded.append("" if cp >= 0x80000000 else body[i:j])
+                        i = j
+                    else:
+                        decoded.append(body[i:i + 2])
+                        i += 2
+                elif nxt == "c" and i + 2 < n:  # \cX: X & 0x1f as bash computes it (\cJ and \c* are a newline)
+                    x = body[i + 2]
+                    if x == "?":
+                        decoded.append("\x7f")
+                    elif ord(x) < 128:
+                        decoded.append(chr(ord(x) & 0x1f))
+                    else:  # bash takes the first byte of a multibyte character; the rest stay
+                        b = x.encode("utf-8", "surrogatepass")
+                        decoded.append(chr(b[0] & 0x1f) + b[1:].decode("latin-1"))
+                    i += 4 if x == "\\" and body[i + 3:i + 4] == "\\" else 3
                 elif nxt in OCTAL:
                     j, digits = i + 1, ""
                     while j < n and len(digits) < 3 and body[j] in OCTAL:
@@ -721,13 +754,66 @@ def _normalize_ansi_c_quotes(cmd):
                 decoded.append(c)
                 i += 1
         spliced = []
-        for ch in decoded:
+        for ch in "".join(decoded).split("\x00", 1)[0]:  # a NUL ends the value, as in bash
             if ch == SQ:
                 spliced.append(SQ + "\\" + SQ + SQ)
             else:
                 spliced.append(ch)
         return SQ + "".join(spliced) + SQ
-    return _ANSI_C_QUOTE_RE.sub(_decode_ansi_c, cmd)
+    # GH #664 review 3: a here-string or an echo word holds text another shell reads later, and in its "..."
+    # a $'...' is literal (decoding a \x22 there early cut the text short). So a $'...' that opens outside
+    # quotes, or in a $(...) / `...` inside "...", is decoded, matched at each such start so a literal one
+    # cannot swallow a live one. Review 4: the command line's own reading (live_only false) also decodes the
+    # rest, as develop did, so a start the scanner misses (a case ) in "$(...)") or one a nested shell reads
+    # (sh -c "eval \$'...'") is still read. Those sit in "...", so a decoded " \ $ or backtick is escaped
+    # there: it must not reshape the quoting around it (review 4), nor stop the decode (review 5).
+    def _rest(m):
+        dec = _decode_ansi_c(m)
+        return SQ + re.sub(r'(["\\$`])', r"\\\1", dec[1:-1]) + SQ
+    out, last = [], 0
+    for i in _ansi_c_live_starts(cmd):
+        m = _ANSI_C_QUOTE_RE.match(cmd, i) if i >= last else None
+        if m:
+            gap = cmd[last:i]
+            out += [gap if live_only else _ANSI_C_QUOTE_RE.sub(_rest, gap), _decode_ansi_c(m)]
+            last = m.end()
+    gap = cmd[last:]
+    out.append(gap if live_only else _ANSI_C_QUOTE_RE.sub(_rest, gap))
+    return "".join(out)
+
+def _ansi_c_live_starts(t):
+    # The offsets of each $' that opens an ANSI-C quote the shell decodes: outside quotes, or in a $(..) or
+    # `..` nested in "...". Quote state only: a here-string or echo word holds no comment.
+    starts, stack, i, n = [], [None], 0, len(t)
+    while i < n:
+        c, q = t[i], stack[-1]
+        if q == SQ:
+            if c == SQ:
+                stack.pop()
+        elif q in ('"', "$'"):
+            if c == "\\":
+                i += 1
+            elif c == (SQ if q == "$'" else '"'):
+                stack.pop()
+            elif q == '"' and c == "$" and t[i + 1:i + 2] == "(":
+                stack.append("(")
+                i += 1
+            elif q == '"' and c == "`":
+                stack.append("`")
+        elif c == "\\":
+            i += 1
+        elif c == "$" and t[i + 1:i + 2] == SQ:
+            starts.append(i)
+            stack.append("$'")
+            i += 1
+        elif c in (SQ, '"'):
+            stack.append(c)
+        elif q == "(" and c in "()":
+            stack.append(c) if c == "(" else stack.pop()
+        elif q == "`" and c == "`":
+            stack.pop()
+        i += 1
+    return starts
 
 # GH #606, #611 review finding 1: rm -i asks per file, and the Bash tool's stdin gives EOF, which rm reads
 # as "no". The command can answer for it instead: a pipe (yes | rm -ri), any < redirect (<, <<, <<<, <&, <>,
@@ -2346,6 +2432,14 @@ def _group_piped_sql_drop(c):
             return r
     return False
 
+def _decode_quotes(t):
+    # GH #664: shlex reads `$'rm -rf b'` as the word `$rm -rf b` and `$"x"` as `$x`. The shell gives the
+    # decoded text (ANSI-C escapes resolved; a $"..." locale string is its plain text), so that is what is read.
+    # A `$"` is a locale string unless an odd run of backslashes escapes its `$` (`\\$"x"` is `\` then $"x").
+    return _normalize_ansi_c_quotes(re.sub(r'(?<![\\$])(\\*)\$(?=")',
+                                           lambda m: m.group(0) if len(m.group(1)) % 2 else m.group(1), t),
+                                    live_only=True) if "$" in t else t
+
 def _shell_stdin_bodies(c):
     # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
     # right upstream of it. printf's format is read with \n as a newline; its other escapes stay literal.
@@ -2356,10 +2450,10 @@ def _shell_stdin_bodies(c):
             if not _reads_stdin_shell(g):
                 continue
             if "<<<" in g:
-                w = _split_words(g.split("<<<", 1)[1])
+                w = _split_words(_decode_quotes(g.split("<<<", 1)[1]))
                 if w:
                     out.append(w[0])
-            up = _split_words(segs[k - 1]) if k else None
+            up = _split_words(_decode_quotes(segs[k - 1])) if k else None
             # GH #662: the echo as written past a path, `command [-p] [--]`, `builtin` or busybox [--]
             # (`busybox echo ... | sh`). An index, not slicing: a flood of wrapper words must stay linear.
             j = 0
