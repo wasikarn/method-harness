@@ -155,3 +155,36 @@ only 2 runs and 20 single-agent cases.
   edited.
 
 <!-- Reserved: a later pass appends a dated correction here, never rewrites the sections above. -->
+
+**Result (2026-10-27, recommendation 1 run):** `scripts/eval-fold.sh` was run at `--runs 3` and
+`-j 4`, with a per-variant cost cap. It added two chain cases:
+
+- `code-architect-chain-plan-reviewer`: the prompt names the reviewer.
+- `code-architect-chain-unprompted`: the prompt asks for a "checked" plan but does not name the
+  reviewer.
+
+No run errored or hit its cap. Total cost was $34.35.
+
+| Agent | folded worse | folded better | same | Cost kept / folded | Flipped grader |
+|---|---|---|---|---|---|
+| code-architect (8 cases) | 0 | 2 | 6 | $17.21 / $8.34 | `di-style-match` FPP → PPP, `no-speculative-interface` FFF → PFF |
+| performance-optimizer (6 cases) | 1 | 1 | 4 | $4.31 / $4.49 | `measured-fix-quality` FFF → PPP, `no-shallow-copy-quality` PPP → PFP |
+
+What the chain cases showed:
+
+- Both chain cases passed in all 3 runs of both arms (PPP).
+- In the unprompted case, both arms called `mh:plan-reviewer` on their own, and every check came
+  from a fresh context.
+- The folded arm's `DELEGATED` line counts exactly those reviewer calls, one per run.
+- So in this case, folding the planner did not skip the next specialist.
+
+What `performance-optimizer`'s "folded worse" means:
+
+- The one worse case is `perf-shallow-copy-trap`. The 2026-10-26 run had flipped the other way
+  (kept FP, folded PP).
+- Across all 5 runs, both arms pass 4 of 5.
+- Read per case, the adopted rule says keep the agent. Read by mean score, folded is ahead (5.67
+  vs 5.00 over 6 cases).
+
+Results: `evals/results/fold-{code-architect,performance-optimizer}-20261027T{092413,122715,123727}/compare.txt`
+(gitignored, local only).
