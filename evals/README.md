@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-70 cases in Claude Code's native `claude plugin eval` layout (count:
+77 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -273,6 +273,73 @@ Cost and time: the last full run (2026-09-13, 76 cases, `-j 1`) took 34,801 s an
 use the cheapest judge (`--judge-model` defaults to haiku), so do not raise it. Add `-j 4` to any
 line above to run cases in parallel (same cost, roughly a quarter of the wall time; runs share one
 rate limit), and `--max-cost-usd` to cap a run.
+
+### Fold-vs-keep (one agent)
+
+The `--ablation with-without` lines above turn off the whole plugin, so their without arm is the
+built-in `Plan` (or general) agent, not this agent's own prompt. `scripts/eval-fold.sh` answers the
+narrower question the fold-subagents audit asks (dotfiles repo,
+`docs/research/fold-subagents-article-audit-2026-10-26.md`, recommendation 1): does the agent's
+prompt do as well folded into a skill the main loop loads? It copies the
+repo's tracked files into a temp dir twice:
+
+- **kept**: the plugin as shipped (`defaultEnabled` set true in the copy only).
+- **folded**: `agents/<agent>.md` removed; its body, byte-identical, becomes
+  `skills/fold/<agent>/SKILL.md`, with frontmatter `name`, `description` and the agent's own
+  `model:`/`effort:` pin. In every case whose first tag is the agent, the prompt's dispatch
+  sentence asks for the `mh:<agent>` skill (Skill tool) instead, `Skill` joins `allowed_tools`,
+  each Agent `tool_used` grader that names the agent checks the Skill tool instead (same file
+  name), and the case gains `fold-agent-calls.md`, a display-only count of Agent calls. The build
+  fails if a `subagent_type` is left, or if a fire case's dispatch sentence isn't found.
+
+What "folded" does and does not hold equal:
+
+- **Model and effort.** `claude plugin eval` has `--model` (every case, both variants) but no
+  effort flag, so the pin rides in the skill's frontmatter instead: a concrete `model:` on a
+  main-thread skill switches the model once the skill loads
+  (`docs/reference/skill-authoring-conventions.md`). Turns before the Skill call still run on the
+  eval child's model. Pins today: `code-architect` opus/high, `backend-architect` and
+  `requirement-analyst` opus/medium, `performance-optimizer` sonnet/high.
+- **Tool limits.** The folded variant gets the case's `allowed_tools`, not the agent's own
+  `tools:` list. `code-architect` has no Edit or Write, but its cases allow Edit, so folded it can
+  edit where the subagent could not.
+- **Delegation.** The folded main loop keeps the Agent tool. `compare` prints each folded run's
+  Agent call count (from the runner's own `Agent called Nx` grader explanation; trace files are
+  deleted after a run) and flags `DELEGATED` when a run still handed work to a subagent; `?`
+  means the count was unreadable, not zero.
+
+Both run with `--ablation none` and `--runs 2` or more (the script refuses fewer), then
+`scripts/_lib/eval-fold.py compare` prints each case's graders run by run (`PP` / `PF` / `FF`,
+`E` for an errored run, `S` for a run that hit `--max-cost-usd`, whose `skippedPaidGraders` left
+its llm graders marked failed without judging) for both variants, a `*` on every grader whose
+pass rate changed (a flipped task), and the per-case outcome mean. `E` and `S` runs stay out of
+rates, flips, means and the verdict, and each kind is counted at the end; the cap is per variant,
+so one capped variant would otherwise read as a fake "folded worse". `agent-fired`, `dispatch-confirmed` and `fold-agent-calls`
+show whether the variant's mechanism ran and are left out of the score. Rule: keep the subagent
+only if the folded variant scores worse. The shipped plugin gains no skill: the folded copy only
+exists in the temp dir.
+
+```bash
+bash scripts/eval-fold.sh code-architect            # free: builds + validates both copies, prints example eval commands
+bash scripts/eval-fold.sh code-architect --run -j 4 -- --max-cost-usd 25   # paid
+```
+
+Without `--run` the temp dir is removed on exit, so the printed commands are examples of what
+`--run` executes; add `--keep` to leave the dir in place and run them by hand.
+
+Agent names: `code-architect`, `backend-architect`, `requirement-analyst`, `performance-optimizer`.
+Results: `evals/results/fold-<agent>-<timestamp>/{kept,folded}/aggregate-result.json` and
+`compare.txt`. The copy holds tracked files only (working-tree bytes), so commit or `git add` a
+new case before running it.
+
+Cost, from the 2026-09-13 run above: about 272 agent runs (30 cases x 3 + 46 x 1, two arms) for
+$119.40 and 34,801 s, so roughly $0.44 and 128 s a run. At `--runs 2` a six-case agent
+(`code-architect`, `backend-architect`, `performance-optimizer`) is 6 x 2 x 2 = 24 runs: about
+$11 and 50 min at `-j 1`, 13 min at `-j 4`. `requirement-analyst` (two cases) is 8 runs: about $4.
+That average includes the cheap without-arm runs; these cases run 20+ turns and both variants
+run on the agent's pinned model (opus for three of the four, sonnet for
+`performance-optimizer`), so budget up to twice that. Arguments after `--` go to both variants, so
+`--max-cost-usd 25` caps each at $25.
 
 `--scaffold` is required: the fixtures live in each case's `scaffold_script`, which must be a
 relative path to an external `.sh` file in the case directory — never inline YAML block content
