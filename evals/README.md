@@ -96,8 +96,10 @@ predated this and used) is mis-parsed as a literal path under the installed CLI 
 — confirmed on `post-mortem`. See "A previously-invisible defect" below: every other suite in
 this file has since been converted to the file-path form.
 
-Six for `code-architect` (tag `code-architect`, agent not a skill — dispatched via the `Agent`
-tool with `subagent_type: "mh:code-architect"`, not a `disable-model-invocation` slash command).
+Six for `code-architect` (tag `code-architect`, a skill since 2026-10-27: folded from an agent
+after the fold-vs-keep eval below scored the folded form worse on no case; every fire-case prompt
+loads it via the Skill tool with `skill: "mh:code-architect"`, and `dispatch-confirmed.md` checks
+that Skill call). The history below describes the agent form these cases were written for.
 Natural routing into this agent never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
 prompt explicitly instructs dispatch; that shifts what's measured from "does routing pick this
@@ -118,8 +120,9 @@ without-plugin arm, `mh:code-architect` doesn't exist — the model's first disp
 built-in `Plan` agent. This makes `tool_used: Agent` with `input_match` on the requested
 subagent_type a false-positive trap (it matches the failed attempt too, not just a successful
 one): `agent-fired.md` is a `regex`/`trace` `not_contains` check on that exact tool-error string
-instead. Needs `--allow-tools Bash,Read,Grep,Glob,Agent,Edit`; the with-arm needs `defaultEnabled`
-flipped true to load the plugin's agents at all, handled automatically via
+instead (as a skill, no Agent dispatch happens, so that check now always passes). Needs
+`--allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill`; the with-arm needs `defaultEnabled`
+flipped true to load the plugin's skills at all, handled automatically via
 `with_default_enabled_true` (see the runnable commands below).
 
 Six for `performance-optimizer` (tag `performance-optimizer`, agent, same dispatch/ablation
@@ -255,13 +258,13 @@ claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 
 claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish
 claude plugin eval . --scaffold --tag deep-audit --allow-tools Bash,Edit,Write --runs 1 --no-publish
 claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --no-publish
-# These five dispatch a subagent (subagent_type:), which needs mh's agents actually loaded in
+# These load an mh agent (subagent_type:) or skill (skill:), which needs the plugin actually loaded in
 # the eval sandbox -- sandboxes load no user settings, so defaultEnabled: false never loads
 # them (silent no-plugin fallback, no error). The helper needs bash specifically (it relies on
 # BASH_SOURCE) -- it silently does nothing under zsh/sh, so run each line through `bash -c`
 # regardless of your login shell; it flips defaultEnabled true for the duration and restores it
 # after, even on failure -- no manual edit, nothing to remember.
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit --ablation with-without --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
@@ -298,11 +301,11 @@ What "folded" does and does not hold equal:
   effort flag, so the pin rides in the skill's frontmatter instead: a concrete `model:` on a
   main-thread skill switches the model once the skill loads
   (`docs/reference/skill-authoring-conventions.md`). Turns before the Skill call still run on the
-  eval child's model. Pins today: `code-architect` opus/high, `backend-architect` and
-  `requirement-analyst` opus/medium, `performance-optimizer` sonnet/high.
+  eval child's model. The fold measures the agent's pin; a shipped fold then uses `model: inherit`
+  (the convention), so it runs on the session's model.
 - **Tool limits.** The folded variant gets the case's `allowed_tools`, not the agent's own
-  `tools:` list. `code-architect` has no Edit or Write, but its cases allow Edit, so folded it can
-  edit where the subagent could not.
+  `tools:` list. An agent with no Edit or Write whose cases allow Edit can edit, folded, where the
+  subagent could not (the 2026-10-27 `code-architect` run had exactly this gap).
 - **Delegation.** The folded main loop keeps the Agent tool. `compare` prints each folded run's
   Agent call count (from the runner's own `Agent called Nx` grader explanation; trace files are
   deleted after a run) and flags `DELEGATED` when a run still handed work to a subagent; `?`
@@ -320,25 +323,27 @@ only if the folded variant scores worse. The shipped plugin gains no skill: the 
 exists in the temp dir.
 
 ```bash
-bash scripts/eval-fold.sh code-architect            # free: builds + validates both copies, prints example eval commands
-bash scripts/eval-fold.sh code-architect --run -j 4 -- --max-cost-usd 25   # paid
+bash scripts/eval-fold.sh plan-reviewer             # free: builds + validates both copies, prints example eval commands
+bash scripts/eval-fold.sh plan-reviewer --run -j 4 -- --max-cost-usd 25   # paid
 ```
 
 Without `--run` the temp dir is removed on exit, so the printed commands are examples of what
 `--run` executes; add `--keep` to leave the dir in place and run them by hand.
 
-Agent names: `code-architect`, `backend-architect`, `requirement-analyst`, `performance-optimizer`.
+Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
+(`plan-reviewer`, `blind-spot-hunter`, `silent-failure-hunter`, `test-gap-analyzer`,
+`type-design-analyzer`; `ideate-critic`'s prompts don't, so its build stops). The 2026-10-27 runs
+folded `code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`
+(folded worse on 0 cases each), and those four now ship as skills.
 Results: `evals/results/fold-<agent>-<timestamp>/{kept,folded}/aggregate-result.json` and
 `compare.txt`. The copy holds tracked files only (working-tree bytes), so commit or `git add` a
 new case before running it.
 
 Cost, from the 2026-09-13 run above: about 272 agent runs (30 cases x 3 + 46 x 1, two arms) for
-$119.40 and 34,801 s, so roughly $0.44 and 128 s a run. At `--runs 2` a six-case agent
-(`code-architect`, `backend-architect`, `performance-optimizer`) is 6 x 2 x 2 = 24 runs: about
-$11 and 50 min at `-j 1`, 13 min at `-j 4`. `requirement-analyst` (two cases) is 8 runs: about $4.
-That average includes the cheap without-arm runs; these cases run 20+ turns and both variants
-run on the agent's pinned model (opus for three of the four, sonnet for
-`performance-optimizer`), so budget up to twice that. Arguments after `--` go to both variants, so
+$119.40 and 34,801 s, so roughly $0.44 and 128 s a run. At `--runs 2` a six-case agent is
+6 x 2 x 2 = 24 runs: about $11 and 50 min at `-j 1`, 13 min at `-j 4`; a two-case agent is 8
+runs: about $4. That average includes the cheap without-arm runs; these cases run 20+ turns and
+both variants run on the agent's pinned model, so budget up to twice that. Arguments after `--` go to both variants, so
 `--max-cost-usd 25` caps each at $25.
 
 `--scaffold` is required: the fixtures live in each case's `scaffold_script`, which must be a
