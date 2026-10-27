@@ -97,7 +97,7 @@ vocabulary fixed at authoring time prevents that.
 A flat, prose-style report's bottom line goes first in a document read top-down (an audit
 artifact, a `docs/research/*.md` file) and last when it's read as one narrative in a scrolling
 terminal or chat stream, where the final line is what the reader's eye lands on first.
-`skills/review/deep-audit/SKILL.md:260`'s "Final Verdict" on line one and this fleet's "End with
+`skills/review/deep-audit/SKILL.md`'s "Final Verdict" on line one and this fleet's "End with
 a one-line verdict" (`agents/type-design-analyzer.md`, `agents/blind-spot-hunter.md`,
 `agents/test-gap-analyzer.md`, `agents/silent-failure-hunter.md`) are the same principle applied
 to two different media, not a contradiction between them.

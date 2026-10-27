@@ -2,6 +2,12 @@
 
 Why each rule in `SKILL.md` exists. Not needed to run the skill; read it before changing a rule.
 
+## Step 2: why an insufficient dimension leaves the denominator
+
+An `insufficient`-flagged dimension is dropped from both the numerator and the denominator, so
+the total renormalizes over the dimensions that actually scored — it is never divided by the
+full weight sum, which would be arithmetically identical to scoring the dropped dimension 0.
+
 ## Step 3: withholding the maker's claims
 
 Handing the checker the maker's own per-file claims or rubric scores is the CoVe "joint" failure
