@@ -8,7 +8,9 @@
                       (frontmatter: name, description and the agent's model/effort pin; body
                       byte-identical); the <agent>-tagged cases ask for the skill instead of the
                       subagent, their Agent-dispatch tool_used graders check the Skill tool
-                      instead (same file names), and each gains fold-agent-calls.md, a display
+                      instead, their "Agent type ... not found" regex graders check the
+                      "Unknown skill: <agent>" error instead (same file names), and each gains
+                      fold-agent-calls.md, a display
                       counter of Agent calls (did the folded main loop still delegate?)
       Prints the --allow-tools list for the agent's cases (empty line if none).
       Never writes inside <repo>.
@@ -142,6 +144,16 @@ def is_no_dispatch_grader(path, agent):
 
 def fold_grader(path, agent):
     fm, body = split_fm(open(path).read())
+    if not fm:
+        return False
+    pat = re.search(r"^pattern:.*Agent type .*not found.*$", fm, re.M)
+    if pat and re.search(r"^type:\s*regex\s*$", fm, re.M):
+        # the agent-era "Agent type '...' not found" check can never fire once no Agent call
+        # happens; check the Skill tool's own error instead (Claude Code 2.1.310: "Unknown skill: <name>")
+        fm = fm.replace(pat.group(0), "pattern: 'Unknown skill: (?:[\\w-]+:)?" + agent + "\\b'")
+        with open(path, "w") as f:
+            f.write(f"---\n{fm}\n---\n(fold arm: Skill-tool form of the kept arm's Agent-not-found check)\n{body}")
+        return True
     if not fm or not re.search(r"^type:\s*tool_used\s*$", fm, re.M) \
             or not re.search(r"^tool:\s*Agent\s*$", fm, re.M):
         return False

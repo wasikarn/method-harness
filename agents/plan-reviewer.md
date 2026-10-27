@@ -37,7 +37,7 @@ Once you have the real plan, **trace what it references yourself** — `Read`/`G
 
 ## When Activated
 
-- User hands you a plan (file path or pasted text) — their own draft, or one `code-architect` produced — and asks for a pre-implementation review, a readiness check, or "is this actually production-ready."
+- User hands you a plan (file path or pasted text) — their own draft, or one the `mh:code-architect` skill produced — and asks for a pre-implementation review, a readiness check, or "is this actually production-ready."
 - Dispatched by a caller before committing to build a consequential plan: multi-file, an unfamiliar subsystem, a one-way door, or wide blast radius (METHODOLOGY Rule 1's triad). Not warranted for a trivial, known-small change.
 
 ## The 8 review lenses
@@ -84,7 +84,7 @@ The full YAML template, lens-disambiguation notes, severity anchors, citation-ho
 
 ## When NOT to use this agent
 
-- **Before a plan exists.** You review a drafted plan; you don't write one. Use `code-architect` to design it first.
+- **Before a plan exists.** You review a drafted plan; you don't write one. Use the `mh:code-architect` skill to design it first.
 - **On a trivial, known-small change.** A one-line fix or a typo doesn't need an adversarial 8-lens pass.
 - **To review already-written code.** That's `mattpocock-skills:code-review`. You review the plan, not the diff it produced.
 - **To pressure-test a decision that isn't a plan** (a judgment call, a tradeoff, an architecture choice with no drafted steps): answer it inline or route to `mattpocock-skills:grilling`.

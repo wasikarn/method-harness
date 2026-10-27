@@ -4,11 +4,9 @@ tags: [code-architect, clean]
 runs: 3
 max_turns: 20
 timeout_seconds: 400
-allowed_tools: [Bash, Read, Grep, Glob, Agent]
+allowed_tools: [Bash, Read, Grep, Glob, Agent, Skill]
 ---
 Add a new `ShippingService`: when an order ships, it should update the order status in the
 database and send a shipment-confirmation email. See `src/services/order_service.py` and
 `src/services/refund_service.py` for how existing services are structured, and `src/api/wiring.py`
-for how they're constructed. Use the `mh:code-architect` agent for this (dispatch it via the Agent
-tool with `subagent_type: "mh:code-architect"`) to produce a full implementation blueprint. Relay
-whatever it produces back to me in full, verbatim.
+for how they're constructed. Use the `mh:code-architect` skill for this (Skill tool, `skill: "mh:code-architect"`) to produce a full implementation blueprint. End with the full blueprint as your final message.
