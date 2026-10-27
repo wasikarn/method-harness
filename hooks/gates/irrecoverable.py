@@ -1034,6 +1034,18 @@ _RUN_WRAPPERS = {
     "npx": (("-p", "--package"), 0, ("-c", "--call"), False), "bunx": (("-p", "--package"), 0, (), False),
     # GH #662: `busybox [--] APPLET args` runs the applet (rm, dd, mkfs.ext2, find, sh, ...); toybox likewise.
     **{_bb: ((), 0, (), False) for _bb in ("busybox", "busybox.static", "busybox-static", "toybox")},
+    # GH #676: each stops at its first non-option word (checked live on util-linux 2.39 and coreutils 9.4,
+    # and on runit 2.1.2's chpst and daemontools 0.76's setuidgid). An optional value (nsenter's -m -r -w
+    # -W and its other "::" letters) can only be attached, so it is no value flag here. taskset -p takes a
+    # pid, not a command. Bundled short flags and abbreviated long options are GH #709 for every wrapper.
+    "chroot": (("--userspec", "--groups"), 1, (), False),  # NEWROOT, then the command
+    "taskset": ((), 1, (), False),  # the mask or cpu list (-c only changes how it is read)
+    "unshare": (("-S", "--setuid", "-G", "--setgid", "-R", "--root", "-w", "--wd", "--map-user", "--map-group",
+                 "--map-users", "--map-groups", "--propagation", "--setgroups", "--monotonic", "--boottime"),
+                0, (), False),
+    "nsenter": (("-t", "--target", "-S", "--setuid", "-G", "--setgid"), 0, (), False),
+    "chpst": (tuple("-" + c for c in "uUbemdopfcrt/nlL"), 0, (), False),  # runit's getopt string
+    "setuidgid": ((), 1, (), False),  # the account, then the command
 }
 # GH #662: the walks with their own wrapper list (xargs, find -exec, a shell reading stdin) read past these too.
 _BUSYBOX_NAMES = ("busybox", "busybox.static", "busybox-static", "toybox")
@@ -3836,6 +3848,7 @@ _BLANKS_RE = re.compile(r"[ \t]*")
 _PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])([\w./~"'$-][^\s;&|()<>]*)""")
 _PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "hush", "env", "xargs", "eval", "exec", "sudo", "doas", "su",
                         "nohup", "setsid", "stdbuf", "timeout", "nice", "ionice", "taskset", "chroot", "unshare",
+                        "nsenter", "chpst", "setuidgid",
                         "script", "command", "builtin", "time", "find", "watch", "flock", "parallel", "npx",
                         "python", "python3", "perl", "ruby", "node"}
 _DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
