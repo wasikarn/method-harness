@@ -4,7 +4,7 @@
 # audit.sh's fragment integrity guard catches LOST checks, not SILENT ones. Each
 # known-bad fixture below is paired with a clean one; the matching check must
 # FIRE on bad and stay SILENT on good. Per-check fixtures cover 04, 05, 20, 22, 28, 29, 54,
-# 70, 71, 72, 73, 74 (five fixtures, two added 2026-09-21), 75, 76, 77, 78, 79, 80, 81; the fleet-bad / fleet-good pair covers every other check with at
+# 70, 71, 72, 73, 74 (five fixtures, two added 2026-09-21), 75, 76, 77, 78, 79, 80, 81, 82, 83; the fleet-bad / fleet-good pair covers every other check with at
 # least one defect per check (43 is driven by the env ceiling, not a planted defect).
 # check-73-bad-missing-command-field and check-73-bad-args-fingerprint-mismatch (below) are
 # deep-audit fixes, 2026-09-10: a Codex-primary fresh-context checker found the original check
@@ -322,6 +322,15 @@ expect_warn_match 81 check-81-bad-fenced 'fx/ref.md is over 100 lines'
 expect_silent     81 check-81-good
 expect_warn_match 81 check-81-edge-101 'fx/ref.md is over 100 lines'
 expect_silent     81 check-81-edge-100
+
+# Check 82: unknown top-level frontmatter key (Claude Code ignores one silently).
+expect_warn_match 82 check-82-bad-skill-typo "frontmatter key 'disable-model-invocaton'"
+expect_warn_match 82 check-82-bad-agent-key "agents/fx.md: frontmatter key 'tool'"
+expect_silent     82 check-82-good
+
+# Check 83: SKILL.md over 18,000 bytes, the ~5,000-token part re-attached after compaction.
+expect_warn_match 83 check-83-bad 'fx/SKILL.md is 18001 bytes'
+expect_silent     83 check-83-good-edge
 
 # Check 76: measurement coverage status freshness (harness gap-audit M14,
 # 2026-09-20). Shallow on purpose -- WARN, not CRIT -- for the retired
