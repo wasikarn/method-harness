@@ -3073,6 +3073,12 @@ _INTERP_BODY_FLAGS = {"python": ("-c",), "perl": ("-e", "-E"), "ruby": ("-e",), 
 _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)[\d.]*|(node)(?:js)?")
 _INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
                              r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`")
+# GH #681: a whole python/node heredoc script is often a docs edit whose prose says spawn, exec or system and
+# holds markdown backticks (no API in python/node), so it is read only when it names a module or calls a
+# function that runs a process.
+_PYNODE_PROC_RE = re.compile(r"\b(?:subprocess|child_process|execSync|execFileSync|execFile|spawnSync|getoutput|"
+                             r"getstatusoutput|check_output|check_call|Popen|pty)\b"
+                             r"|\b(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?)\s*\(")
 _INTERP_LIT_RE = re.compile("'''(?:.|\\n)*?'''|\"\"\"(?:.|\\n)*?\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`[^`]*`"
                             r"|\bqx\s*([{(\[<|/!])|%x\s*([{(\[<|/!])")
 _INTERP_CLOSE = {"{": "}", "(": ")", "[": "]", "<": ">"}
@@ -5534,9 +5540,15 @@ def _run_words():
 for _b in _SHELL_STDIN_BODIES:  # GH #567: each is a command line, like a sh -c body
     _scan_body(_b)
 for _b in _INTERP_HEREDOC_BODIES:  # GH #681: the process-API scan a python -c / node -e body gets (GH #608)
-    _ic = _interp_commands(_b)
+    _ic = _interp_commands(_b) if _PYNODE_PROC_RE.search(_b) else []
     _RM_VIA_INTERP[0] = _RM_VIA_INTERP[0] or bool(_ic)
     for _c in _ic:
+        # A whole script holds many literals, most never run: one the tokenizer cannot read (an apostrophe in an
+        # argv item, half a quote) is read again with its quotes and backslashes blanked, so its words are still
+        # checked; only one that is still unreadable denies, as a -c body's does.
+        if _body_readings(_c)[2]:
+            _d = re.sub(r"[\"'`\\]", " ", _c)
+            _c = _d if not _body_readings(_d)[2] else _c
         _scan_body(_c)
 _run_windows(0)
 

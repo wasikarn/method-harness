@@ -274,4 +274,4 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   also hide the statements after it (the guard's walk ran across `;` to the last `git`).
 
 Per-issue measurements (GH #245, #246, #248, #273, #274, #276, #307, #317, #318, #320, #322, #327,
-#336, #339, #340, #344, #349, #375, #382, #469): [`gate-heuristic-history.md`](gate-heuristic-history.md).
+#336, #339, #340, #344, #349, #375, #382, #469, #681): [`gate-heuristic-history.md`](gate-heuristic-history.md).

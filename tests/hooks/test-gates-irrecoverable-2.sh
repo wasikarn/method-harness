@@ -1155,12 +1155,18 @@ for _c in $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\',\'pu
   $'python3 -c \'import os,sys;os.system(sys.stdin.read())\' <<\'EOF\'\nrm -rf x\nEOF' \
   $'node -e "require(\'child_process\').execSync(require(\'fs\').readFileSync(0,\'utf8\'))" <<\'EOF\'\nrm -rf x\nEOF' \
   $'python3 run.py <<\'EOF\'\nrm -rf x\nEOF' $'python3 -V; bash <<\'EOF\'\nrm -rf x\nEOF' \
-  $'python3 <<EOF\n$(rm -rf x)\nEOF' $'bash -s <<\'EOF\'\nrm -rf x\nEOF' $'bash <<\'EOF\'\ngit push --force\nEOF'; do
+  $'python3 <<EOF\n$(rm -rf x)\nEOF' $'bash -s <<\'EOF\'\nrm -rf x\nEOF' $'bash <<\'EOF\'\ngit push --force\nEOF' \
+  $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\', \'push\', \'--force\', \'-m\', "it\'s"])\nEOF' \
+  $'python3 - <<\'EOF\'\nfrom os import system\nsystem("git push --force")\nEOF' \
+  $'node - <<\'EOF\'\nconst { spawnSync } = require("node:child_process")\nspawnSync("git", ["push", "--force"])\nEOF'; do
   test_deny "$IRRECOVERABLE" "GH #681 python/node heredoc: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 for _c in $'python3 - <<\'EOF\'\nx=\'\'\'it\'s\'\'\'\nprint(x)\nEOF' $'python3 <<\'EOF\'\n# don\'t\nprint("rm -rf build")\nEOF' \
   $'node - <<\'EOF\'\nconsole.log("it\'s")\nEOF' $'cat <<\'EOF\' | python3 -\nprint("it\'s")\nEOF' \
-  $'python3 - <<\'EOF\'\nprint("never git push --force")\nEOF'; do
+  $'python3 - <<\'EOF\'\nprint("never git push --force")\nEOF' \
+  $'python3 - <<\'EOF\'\nimport subprocess\nprint("Don\'t use it", \'"\')\nsubprocess.run([\'ls\'])\nEOF' \
+  $'python3 - <<\'EOF\'\nopen("x.md", "w").write("run `git restore f` to undo")\nEOF' \
+  $'python3 - <<\'EOF\'\nopen("x.md", "w").write("a subagent may spawn work; git push --force is denied")\nEOF'; do
   test_allow "$IRRECOVERABLE" "GH #681 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c"$'\ngit status')"
 done
 # trash of a whole tree (/, ~, ., *, an empty word, $HOME, $PWD) denies; any other operand, a variable too, is allowed.
