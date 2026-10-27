@@ -193,6 +193,10 @@ def _sql_drops(sql, sql_client=True):
 # GH #559 review 2: set when _strip_heredocs strips a body a SQL client reads that drops, so each body is
 # matched once where it is stripped (rescanning every stored body per bash -c / eval body was quadratic).
 _SQL_HEREDOC_DROP = [False]
+# GH #668 round 3: the line index in the stripped command right after each data body the top-level strip
+# kept as text, checked once the tokenizer exists (see _KEPT_MARK).
+_KEPT_BODY_ENDS = []
+_HEREDOC_UNMATCHED = [False]  # the top-level strip, unsure, never found a delimiter (see _KEPT_MARK)
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -353,7 +357,24 @@ def _has_opaque_argv0(text):
 
 # GH #559 review 3: every heredoc a line opens is read, in order (cat <<A >/dev/null; psql db <<B), not
 # only the first. A here-string's <<< opens none.
-_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?\s*([" + SQ + r"\"]?)([^\s" + SQ + r"\"]+)\2")
+# GH #668: the delimiter is a whole shell word, ended by a blank or an operator (<<EOF; is EOF), quotes removed.
+_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-)?[ \t]*((?:[^ \t;&|()<>'\"\\]|\\.|'[^']*'|\"(?:[^\"\\]|\\.)*\")+)")
+
+def _heredoc_delim(word, expanding=False):
+    # (delimiter, quoted) the way the shell removes quotes, or None for a word with an expansion in it
+    # (unless expanding: bash never expands the word, it only removes quotes, so $X stays $X).
+    if not expanding and ("$" in word or "`" in word):
+        return None
+    return (re.sub(r"'([^']*)'|\"((?:[^\"\\]|\\.)*)\"|\\(.)",
+                   lambda m: m.group(1) if m.group(1) is not None else
+                   re.sub(r'\\([\\"])', r"\1", m.group(2)) if m.group(2) is not None else m.group(3), word),
+            any(ch in word for ch in "'\"\\"))
+
+# An unquoted body line that expands: an unescaped backtick, $( or ${ with more than a plain name inside.
+_BODY_EXPANDS_RE = re.compile(r"(?<!\\)(?:\\\\)*(?:`|\$\(|\$\{(?![A-Za-z_][A-Za-z0-9_]*\}))")
+
+def _odd_trailing_bs(line):
+    return (len(line) - len(line.rstrip("\\"))) % 2 == 1
 # A heredoc feeding an interpreter is executable code, not inert data: an interpreter word anywhere on the
 # line BEFORE the << counts. GH #559 review 4: not only the heredoc's own pipe stage, since a heredoc on a
 # compound command feeds every command in it ({ bash; } <<EOF, while read x; do bash; done <<EOF), and \b
@@ -442,61 +463,24 @@ def _reads_stdin_shell(seg):
             return False  # a script operand, or -c
     return True
 
-def _strip_heredocs(cmd):
-    # Heredoc bodies are literal data (a quoted commit message mentioning
-    # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
-    # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
-    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is checked for a
-    # drop whatever the interpreter decision (GH #559 review 3), and one that
-    # drops sets _SQL_HEREDOC_DROP for the SQL check.
-    lines = cmd.split("\n")
-    out, i = [], 0
-    while i < len(lines):
-        line = lines[i]
-        out.append(line)
-        i += 1
-        ms = list(_HEREDOC_OPEN_RE.finditer(line))
-        if not ms:
-            continue
-        ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
-        openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
-        interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
-        for n_m, m in enumerate(ms):
-            # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
-            # from the line's stages parsed once.
-            code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
-            feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
-            if code and not feeds and n_m == len(ms) - 1:
-                break  # the body is code: its lines stay, read (and their own heredocs stripped) as lines
-            strip_tabs, delim = bool(m.group(1)), m.group(3)
-            body_start, found = i, False
-            while i < len(lines):
-                body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
-                i += 1
-                if body_line == delim:
-                    found = True
-                    break
-            if not found:
-                # Unmatched closing delimiter: put the scanned lines BACK rather
-                # than silently eat a real write statement that followed.
-                out.extend(lines[body_start:i])
-                break
-            if code:
-                out.extend(lines[body_start:i])
-            if feeds and not _SQL_HEREDOC_DROP[0]:
-                if line_sql is None:  # GH #697 review: read once per line, not once per heredoc on it
-                    line_sql = not _NON_SQL_CLIENT_RE.search(_dequoted(line)) and not _has_opaque_argv0(line)
-                if _sql_drops("\n".join(lines[body_start:i - 1]), line_sql):
-                    _SQL_HEREDOC_DROP[0] = True
-    return "\n".join(out)
+_HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
 
-def _quote_mask(c, ansi_c_starts=None):
+def _quote_mask(c, stack=None, hd=False):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
     # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
     # per scanned text.
-    mask, stack, i, n = bytearray(len(c)), [None], 0, len(c)
+    # GH #668 (hd, _strip_heredocs only): stack carries the state from one line to the next, and ${..},
+    # $((..)), ((..)), $[..] and name=(..) are masked too. A `case` inside $( pushes "!", which never pops
+    # and masks the rest: its pattern ) would close the $( early.
+    mask, i, n = bytearray(len(c)), 0, len(c)
+    stack = [None] if stack is None else stack
     while i < n:
         ch, q = c[i], stack[-1]
+        if q == "!":
+            mask[i:] = b"\1" * (n - i)
+            break
+        if q in _HD_OFF:
+            mask[i] = 1
         if q == SQ:
             mask[i] = 1
             if ch == SQ:
@@ -508,8 +492,11 @@ def _quote_mask(c, ansi_c_starts=None):
                 i += 1
             elif ch == '"':
                 stack.pop()
-            elif ch == "$" and c[i + 1:i + 2] == "(":
-                stack.append("(")
+            elif hd and c.startswith("$((", i):
+                stack.append("((")
+                i += 2
+            elif ch == "$" and c[i + 1:i + 2] == "(" or hd and ch == "$" and c[i + 1:i + 2] == "{":
+                stack.append(c[i + 1])
                 i += 1
             elif ch == "`":
                 stack.append("`")
@@ -524,8 +511,6 @@ def _quote_mask(c, ansi_c_starts=None):
             mask[i + 1] = 1
             i += 1
         elif ch == "$" and c[i + 1:i + 2] == SQ:
-            if ansi_c_starts is not None:  # a $'...' the shell decodes: outside quotes, or in a $(..) / `..`
-                ansi_c_starts.add(i)
             mask[i] = mask[i + 1] = 1
             stack.append("$'")
             i += 1
@@ -538,14 +523,154 @@ def _quote_mask(c, ansi_c_starts=None):
             mask[i:j] = b"\1" * (j - i)
             i = j
             continue
-        elif q == "(" and ch in "()":
-            stack.append(ch) if ch == "(" else stack.pop()
-        elif q == "`" and ch == "`":
+        elif not hd:
+            if q == "(" and ch in "()":
+                stack.append(ch) if ch == "(" else stack.pop()
+            elif q == "`" and ch == "`":
+                stack.pop()
+        elif c.startswith("((", i) or c.startswith("$((", i):
+            stack.append("((")
+            i += 1 if ch == "(" else 2
+        elif ch == "$" and c[i + 1:i + 2] in ("{", "[", "("):
+            stack.append(c[i + 1])
+            i += 1
+        elif ch in "<>" and c[i + 1:i + 2] == "(":  # <( and >( read their body as $( does
+            stack.append("(")
+            i += 1
+        elif ch == "=" and c[i + 1:i + 2] == "(":
+            stack.append("=(")
+            i += 1
+        elif ch == "`":
+            stack.pop() if q == "`" else stack.append("`")
+        elif q == "(" and c.startswith("case", i) and (i == 0 or c[i - 1] in " \t;&|(") and c[i + 4:i + 5] in ("", " ", "\t"):
+            stack.append("!")
+        elif (q, ch) in (("{", "}"), ("[", "]"), ("=(", ")"), ("a(", ")"), ("(", ")")):
             stack.pop()
+        elif q == "((" and ch == ")" and c[i + 1:i + 2] == ")":
+            stack.pop()
+            i += 1
+        elif ch == "(" and q in ("((", "a("):
+            stack.append("a(")  # a ( inside arithmetic: its ) closes it, not the (( frame
+        elif ch == "(" and q == "(":
+            stack.append("(")
         i += 1
     return mask
 
-def _normalize_ansi_c_quotes(cmd):
+def _in_subscript(line, mask, starts):
+    # Whether an opener at one of starts follows an unmasked [ with no unmasked ] after it. One pass.
+    br = False
+    for k in range(max(starts) + 1):
+        if k in starts and br:
+            return True
+        if not mask[k] and line[k] in "[]":
+            br = line[k] == "["
+    return False
+
+def _strip_heredocs(cmd, ends=None):
+    # Heredoc bodies are literal data (a quoted commit message mentioning
+    # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
+    # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
+    # A body a SQL client reads (psql <<EOF, cat <<EOF | mysql) is checked for a
+    # drop whatever the interpreter decision (GH #559 review 3), and one that
+    # drops sets _SQL_HEREDOC_DROP for the SQL check.
+    # GH #668: a << counts only where the shell reads it as a redirection, so the quote state is carried
+    # from line to line (bodies skipped). Once a shape the scan does not model shows up (sure turns False)
+    # nothing more is stripped: an opener line ending inside a quote, ${ or $((, or in a backslash; a
+    # delimiter with $ or a backtick; an unquoted body that expands $(, `, ${..} or joins lines; inside
+    # $( or a backtick (or once unsure), a body line that starts with the delimiter but is not it. Openers
+    # are then read as before, for the SQL check only. An interpreter-fed body is skipped like any other
+    # (its text is the child's, not this shell's) but kept whole as code, its own heredocs unstripped.
+    # GH #668 round 3: ends (the top-level call's _KEPT_BODY_ENDS) gets the index in the output right after
+    # each data body kept as text (unsure, or ended early), where the tokenizer must stand outside any
+    # quote; bash reads the body as data, so a quote in it must not pair with one past the delimiter. The
+    # unmatched-delimiter put-back runs to the end, and a code body is GH #681, so neither is recorded.
+    # GH #668 round 4: unsure too, checked on every line while sure: a \ in the delimiter inside a backtick
+    # (bash unescapes \\ there first), a ${ $(( (( $[ name=( or case frame still open at the line end, a
+    # stack deeper than 64 (keeps `framed` linear), an opener after an unclosed [ (a[1<<2]=3 shifts). A
+    # delimiter with $ or a backtick is still searched for with its quotes removed (bash never expands
+    # it), and an unsure body whose delimiter is never found denies (_HEREDOC_UNMATCHED): bash may end it
+    # elsewhere. Sure and not found keeps the put-back.
+    lines = cmd.split("\n")
+    out, i, stack, sure = [], 0, [None], True
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        ms = list(_HEREDOC_OPEN_RE.finditer(line))
+        if sure:
+            mask = _quote_mask(line, stack, hd=True)
+            real = [m for m in ms if not mask[m.start()]]
+            # Unsure too: a masked opener on a SQL client's line (the SQL check reads every opener), and a
+            # $( or backtick closing after the opener on its own line (zsh reads that heredoc as empty).
+            sure = stack[-1] != "!" and not (len(real) < len(ms) and _SQL_CLIENT_RE.search(line)) and not (real and (
+                stack[-1] not in (None, "(", "`") or _odd_trailing_bs(line)
+                or any(_heredoc_delim(m.group(2)) is None for m in real)
+                or any(not mask[k] and line[k] in ")`" for k in range(real[-1].end(), len(line)))))
+            # Checked on every line while sure: a \ in the delimiter inside a backtick (unescaped first), a
+            # frame where << is no redirection still open at the line end, a stack past 64 (bounds `framed`),
+            # an opener inside an array subscript (bash: a[1<<2]=3 is a shift).
+            if sure and (len(stack) > 64 or any(f in _HD_OFF or f == "!" for f in stack[1:])
+                         or ("`" in stack and any("\\" in m.group(2) for m in real))
+                         or real and _in_subscript(line, mask, {m.start() for m in real})):
+                sure = False
+            if sure:
+                ms = real
+        framed = "(" in stack or "`" in stack  # the heredoc sits in $( or a backtick (read only while sure)
+        if not ms:
+            continue
+        ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
+        openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
+        interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
+        for n_m, m in enumerate(ms):
+            # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
+            # from the line's stages parsed once.
+            code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
+            feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
+            strip_tabs, (delim, quoted) = bool(m.group(1)), _heredoc_delim(m.group(2)) or (
+                _heredoc_delim(m.group(2), True)[0], True)
+            body_start, found, expands, early = i, False, False, False
+            while i < len(lines):
+                body_line = lines[i].lstrip("\t") if strip_tabs else lines[i]
+                i += 1
+                if body_line == delim:
+                    found = True
+                    break
+                if body_line.startswith(delim) and (framed or not sure):
+                    early = True  # bash inside $( ends the body at EOF) too
+                    break
+                expands = expands or not quoted and (_odd_trailing_bs(body_line)
+                                                     or bool(_BODY_EXPANDS_RE.search(body_line)))
+            body = "\n".join(lines[body_start:i])
+            if code and not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(body) and _sql_drops(body):
+                _SQL_HEREDOC_DROP[0] = True  # its own heredocs are not read, so a client in it reads its drop
+            if early:
+                # Unsure from here: the body is kept and the EOF) line is read again as a command line.
+                out.extend(lines[body_start:i - 1])
+                if ends is not None and not code:
+                    ends.append(len(out))
+                i, sure = i - 1, False
+                break
+            if not found:
+                # Unmatched closing delimiter: put the scanned lines BACK rather
+                # than silently eat a real write statement that followed. Unsure, bash may end the body
+                # where the gate does not, so the top-level call denies (_HEREDOC_UNMATCHED).
+                out.extend(lines[body_start:i])
+                if ends is not None and not sure:
+                    _HEREDOC_UNMATCHED[0] = True
+                break
+            sure = sure and not expands
+            if code or not sure:
+                out.extend(lines[body_start:i])
+                if ends is not None and not code:
+                    ends.append(len(out))
+            if feeds and not _SQL_HEREDOC_DROP[0]:
+                if line_sql is None:  # GH #697 review: read once per line, not once per heredoc on it
+                    line_sql = not _NON_SQL_CLIENT_RE.search(_dequoted(line)) and not _has_opaque_argv0(line)
+                if _sql_drops("\n".join(lines[body_start:i - 1]), line_sql):
+                    _SQL_HEREDOC_DROP[0] = True
+    return "\n".join(out)
+
+def _normalize_ansi_c_quotes(cmd, live_only=False):
     # shlex does not understand ANSI-C quoting ($SQ...SQ): a spliced argv0 like
     # $SQ\x74SQ never reassembles into the decoded byte. Dispatch below compares
     # argv0 by EXACT string, so the escape must actually be RESOLVED (a
@@ -577,12 +702,8 @@ def _normalize_ansi_c_quotes(cmd):
                     while j < n and body[j] in HEXDIGITS:
                         digits += body[j]
                         j += 1
-                    if digits:
-                        decoded.append(chr(int(digits, 16) & 0xFF))
-                        i = j + 1 if body[j:j + 1] == "}" else j
-                    else:
-                        decoded.append(body[i:i + 2])
-                        i += 2
+                    decoded.append(chr(int(digits, 16) & 0xFF) if digits else "\x00")  # bash: \x{} is a NUL
+                    i = j + 1 if body[j:j + 1] == "}" else j
                 elif nxt == "x":
                     j, digits = i + 2, ""
                     while j < n and len(digits) < 2 and body[j] in HEXDIGITS:
@@ -603,7 +724,8 @@ def _normalize_ansi_c_quotes(cmd):
                     if 0 <= cp <= 0x10FFFF:
                         decoded.append(chr(cp))
                         i = j
-                    elif digits:  # past U+10FFFF bash consumes the digits and yields nothing
+                    elif digits:  # bash 5.2: from 0x80000000 nothing; past U+10FFFF, bytes no verb is spelled with
+                        decoded.append("" if cp >= 0x80000000 else body[i:j])
                         i = j
                     else:
                         decoded.append(body[i:i + 2])
@@ -638,21 +760,59 @@ def _normalize_ansi_c_quotes(cmd):
             else:
                 spliced.append(ch)
         return SQ + "".join(spliced) + SQ
-    # Only a $'...' the shell reading this text would decode: not inside "..." or '...' (GH #664 review 3: a
-    # double-quoted $'\x22' is literal there, and decoding it early hid what followed it). A $(...) or `...`
-    # inside "..." is a context of its own, so a $'...' there is decoded (_quote_mask).
-    if "$" + SQ not in cmd:
-        return cmd
-    live = set()
-    _quote_mask(cmd, live)
+    # GH #664 review 3: a here-string or an echo word holds text another shell reads later, and in its "..."
+    # a $'...' is literal (decoding a \x22 there early cut the text short). So a $'...' that opens outside
+    # quotes, or in a $(...) / `...` inside "...", is decoded, matched at each such start so a literal one
+    # cannot swallow a live one. Review 4: the command line's own reading (live_only false) also decodes the
+    # rest, as develop did, so a start the scanner misses (a case ) in "$(...)") is still read, unless the
+    # decoded text holds a character special in "..." that would reshape the quoting around it.
+    def _rest(m):
+        dec = _decode_ansi_c(m)
+        return m.group(0) if any(ch in dec[1:-1] for ch in '"\\$`') else dec
     out, last = [], 0
-    for i in sorted(live):  # matched at each live start, so a literal $' in "..." cannot swallow a live one
+    for i in _ansi_c_live_starts(cmd):
         m = _ANSI_C_QUOTE_RE.match(cmd, i) if i >= last else None
         if m:
-            out += [cmd[last:i], _decode_ansi_c(m)]
+            gap = cmd[last:i]
+            out += [gap if live_only else _ANSI_C_QUOTE_RE.sub(_rest, gap), _decode_ansi_c(m)]
             last = m.end()
-    out.append(cmd[last:])
+    gap = cmd[last:]
+    out.append(gap if live_only else _ANSI_C_QUOTE_RE.sub(_rest, gap))
     return "".join(out)
+
+def _ansi_c_live_starts(t):
+    # The offsets of each $' that opens an ANSI-C quote the shell decodes: outside quotes, or in a $(..) or
+    # `..` nested in "...". Quote state only: a here-string or echo word holds no comment.
+    starts, stack, i, n = [], [None], 0, len(t)
+    while i < n:
+        c, q = t[i], stack[-1]
+        if q == SQ:
+            if c == SQ:
+                stack.pop()
+        elif q in ('"', "$'"):
+            if c == "\\":
+                i += 1
+            elif c == (SQ if q == "$'" else '"'):
+                stack.pop()
+            elif q == '"' and c == "$" and t[i + 1:i + 2] == "(":
+                stack.append("(")
+                i += 1
+            elif q == '"' and c == "`":
+                stack.append("`")
+        elif c == "\\":
+            i += 1
+        elif c == "$" and t[i + 1:i + 2] == SQ:
+            starts.append(i)
+            stack.append("$'")
+            i += 1
+        elif c in (SQ, '"'):
+            stack.append(c)
+        elif q == "(" and c in "()":
+            stack.append(c) if c == "(" else stack.pop()
+        elif q == "`" and c == "`":
+            stack.pop()
+        i += 1
+    return starts
 
 # GH #606, #611 review finding 1: rm -i asks per file, and the Bash tool's stdin gives EOF, which rm reads
 # as "no". The command can answer for it instead: a pipe (yes | rm -ri), any < redirect (<, <<, <<<, <&, <>,
@@ -733,8 +893,14 @@ def _rm_prompts_each(rest):
             operand = True
     return mode == "always"
 
+# shlex cost is superlinear in the longest SINGLE token (700k chars blows a 2s
+# timeout), so an oversized command denies on length ALONE before shlex runs.
+_CMD_LEN_CAP = 150_000
+# GH #668: the heredoc scan runs before the _CMD_LEN_CAP deny and a timeout allows, so a command over the
+# cap skips it and is denied by that cap unchanged.
 _SQL_BLANKING[0] = _sql_blanking_allowed(d["tool_input"].get("command", ""))
-cmd = _strip_heredocs(d["tool_input"].get("command", ""))
+cmd = d["tool_input"].get("command", "")
+cmd = _strip_heredocs(cmd, _KEPT_BODY_ENDS) if len(cmd) <= _CMD_LEN_CAP else cmd
 
 def _mid_merge():
     # `git add -A|--all|.` is allowed only mid-merge (staging a manual conflict
@@ -1092,6 +1258,7 @@ def _spawn_statement(tail, work):
             break
         buf.append(t)
     return "".join(buf), work
+
 
 _SPAWN_SESSION_SEEN = {}  # the three anchor passes, joined and plain text, re-read the same statements
 
@@ -1487,7 +1654,8 @@ def _newlines_to_seps(s):
 # leading-only strip: a mid-flag PH like --for<PH>ce is an exact-match bypass).
 # Blanking must not DISCARD the body ("$ (git push --force)" is a real deny), so
 # every backtick/$(...)/<(...)/>(...) body is re-appended as its own statement;
-# ${...} bodies are not (parameter expansion, not a command). Single-quoted
+# a ${...} body is scanned for those nested spans, and a bash 5.3 funsub body
+# (`${ cmd; }`) is appended as a command (GH #693). Single-quoted
 # spans are never blanked; double-quoted $(...) IS live in bash -- telling them
 # apart needs the real quote-state scan below, not a regex. A span inside a "#"
 # comment passes through unchanged. <(...)/>(...) (GH #181) is never a real
@@ -1556,7 +1724,7 @@ def _close_bracket(s, j, opener, closer, depth_work_used):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None if depth else j
 
-def _close_psub(s, j, depth_work_used):
+def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
     # The "<(...)" / ">(...)" closer search, same contract as _close_bracket but quote-aware, unlike
     # the "$(...)"/"${...}" one: a ")" inside a quoted string in the body
     # ("<(echo \")\"; rm -rf x)") is not a real closer, and the
@@ -1566,6 +1734,8 @@ def _close_psub(s, j, depth_work_used):
     # adversarial pass; the identical gap in "$(...)" itself is
     # pre-existing and unrelated -- filed as GH #184, not fixed
     # here). Each step (one char, or an escaped pair) charges one budget unit.
+    # GH #693: opener "{" finds a funsub's closer; a $(...)/backtick in it may hold a "}" or a quote, so
+    # it is skipped whole (an unclosed one leaves the funsub unclosed).
     n, depth = len(s), 1
     tsq = tdq = False
     while j < n and depth and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
@@ -1575,6 +1745,18 @@ def _close_psub(s, j, depth_work_used):
             if tc == SQ:
                 tsq = False
             j += 1
+            continue
+        if opener == "{" and tc == "`":
+            k = s.find("`", j + 1)
+            if k == -1:
+                return None
+            depth_work_used[0] += k - j  # the skipped span is charged per char, like every other step
+            j = k + 1
+            continue
+        if opener == "{" and tc == "$" and s[j + 1:j + 2] == "(":
+            j = _close_psub(s, j + 2, depth_work_used)
+            if j is None:
+                return None
             continue
         if tdq:
             if tc == "\\" and j + 1 < n and s[j + 1] in (DQ, "\\", "$", "`"):
@@ -1591,9 +1773,9 @@ def _close_psub(s, j, depth_work_used):
         if tc == "\\" and j + 1 < n:
             j += 2
             continue
-        if tc == "(":
+        if tc == opener:
             depth += 1
-        elif tc == ")":
+        elif tc == closer:
             depth -= 1
         j += 1
     if depth and depth_work_used[0] > _DEPTH_SCAN_BUDGET:
@@ -1618,8 +1800,44 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         bodies.append(s[i + 2:j - 1])
         return PH, j
     if c == "$" and nxt == "{":
-        j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
-        return None if j is None else (PH, j)
+        # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
+        # (`${ echo 'a}'; V; }`) is no closer: find it quote-aware, as for <(...).
+        funsub = s[i + 2:i + 3] in (" ", "\t", "\n", "|")
+        if funsub:
+            j = _close_psub(s, i + 2, depth_work_used, "{", "}")
+        else:
+            j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
+        if j is None:
+            # No closer: bash would refuse the text, but GH #233's "}"-masking can eat a real one
+            # (`"${x:-"'$(V)'"}"`), so the rest is read as the word, quote-blind, charged to the budget.
+            depth_work_used[0] += len(s) - i
+            if depth_work_used[0] > _DEPTH_SCAN_BUDGET or _depth >= 50:
+                _DEPTH_BUDGET_BLOWN[0] = True
+            else:
+                _scan_once(s[i + 2:], bodies, depth_work_used, _depth + 1, in_param=True)
+            return None
+        # GH #693: the word inside ${...} (default, pattern, subscript, offset) still expands, so a
+        # $(...)/backtick/<(...) in it runs: scan the body as the <(...) branch does, quote-blind (bash's
+        # quote rules there vary by operator; fail closed), and keep only the nested bodies. A funsub
+        # body is scanned with normal quoting and appended blanked, as the <(...) body is (a backtick
+        # nested in an appended body is not read again downstream, and a raw one would repeat its nested
+        # bodies once per level).
+        body = s[i + 2:j - 1]
+        if funsub:
+            body = body[1:] if body[0] == "|" else body
+        if _depth >= 50:
+            _DEPTH_BUDGET_BLOWN[0] = True
+        elif not funsub:
+            _scan_once(body, bodies, depth_work_used, _depth + 1, in_param=True)
+        else:
+            body = _scan_once(body, bodies, depth_work_used, _depth + 1)
+            try:
+                shlex.split(body)
+            except ValueError:
+                # an unbalanced quote here would pair with one left in the main text and hide its tail
+                _DEPTH_BUDGET_BLOWN[0] = True
+            bodies.append(body)
+        return PH, j
     if c in ("<", ">") and not in_dquote and nxt == "(":
         # Process substitution (GH #181): "<(cmd)"/">(cmd)" is a WORD,
         # never a real redirect (a real "<"/">" redirect target can't
@@ -1648,10 +1866,9 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         # neighbor characters and evading exact-match dispatch
         # (an adversarial pass caught this live: "<(echo `rm -rf
         # x`)" reached shlex as "`rm", never matching "rm").
-        # Recursively re-scanning it here (this branch only --
-        # the sibling "$(...)"/"${...}" branches above share the
-        # identical gap, confirmed pre-existing, filed as GH
-        # #185, not fixed here) closes that while a shared
+        # Recursively re-scanning it here (the "${...}" branch
+        # above does the same since GH #693; "$(...)" shares the
+        # gap, filed as GH #185) closes that while a shared
         # depth_work_used bounds the total work across every
         # recursion level to one budget; _depth caps the
         # recursion itself, since a budget check alone doesn't
@@ -1667,12 +1884,12 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
     return None
 
 # One left-to-right pass with real quote/comment state; collects
-# backtick/$(...) bodies (never ${...}) into the shared `bodies` list.
-# `depth_work_used`/`_depth`: only the <(...)/>(...) branch (GH #181)
-# passes these, to recursively re-scan ITS OWN extracted body for a
-# nested different-type substitution before splicing it back in verbatim
-# (a backtick nested inside "<(...)" was found live/unscanned by an
-# adversarial pass -- see the GH #181 comment on that branch). The
+# backtick/$(...) bodies, and those nested in ${...} (GH #693), into the shared `bodies` list.
+# `depth_work_used`/`_depth`: the <(...)/>(...) branch (GH #181) and the ${...} branch
+# pass these, to recursively re-scan their own extracted body for a
+# nested different-type substitution (a backtick nested inside "<(...)"
+# was found live/unscanned by an adversarial pass -- see the GH #181
+# comment on that branch); `in_param` reads a ${...} word quote-blind. The
 # top-level fixed-point loop below never passes them, so its own budget
 # and depth are unchanged from before. Sharing one `depth_work_used`
 # list across the whole recursion (never a fresh one per call) keeps the
@@ -1680,7 +1897,7 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
 # depth; `_depth` caps the recursion itself, since a budget check alone
 # does not stop Python's own RecursionError on ~1000 properly-closed,
 # budget-cheap nested spans.
-def _scan_once(s, bodies, depth_work_used=None, _depth=0):
+def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
     if depth_work_used is None:
         depth_work_used = [0]
     out = []
@@ -1706,12 +1923,13 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0):
                 continue
             # else: fall through -- substitutions ARE live inside double quotes
         else:
-            if c == SQ:
+            # in_param (a ${...} word, GH #693): quote- and comment-blind, so every $(/backtick/<( is live.
+            if c == SQ and not in_param:
                 out.append(c)
                 i = _copy_squote(s, i + 1, out)
                 last_escaped = False
                 continue
-            if c == DQ:
+            if c == DQ and not in_param:
                 in_dquote = True
                 out.append(c); i += 1
                 last_escaped = False
@@ -1721,7 +1939,7 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0):
                 i += 2
                 last_escaped = True
                 continue
-            if c == "#" and not last_escaped and (not out or out[-1] in _REDIRECT_TARGET_STOP):
+            if c == "#" and not in_param and not last_escaped and (not out or out[-1] in _REDIRECT_TARGET_STOP):
                 out.append(c)
                 i = _copy_comment(s, i + 1, out, "\n")
                 last_escaped = False
@@ -2049,11 +2267,25 @@ def _drop_ph_tokens(w):
     # w without its bare-placeholder tokens (a substitution that may expand to nothing).
     return [t for t in w if not (t and all(c == PH for c in t))]
 
-# shlex cost is superlinear in the longest SINGLE token (700k chars blows a 2s
-# timeout), so an oversized command denies on length ALONE before shlex runs.
-_CMD_LEN_CAP = 150_000
 if len(cmd) > _CMD_LEN_CAP:
     deny("command too long to safely tokenize (" + str(len(cmd)) + " chars, cap " + str(_CMD_LEN_CAP) + ") - confirm with user first")
+# GH #668 round 3: a mark line goes where each kept data body ends, and the tokenizer's own reader runs once:
+# a mark not at a statement start sits in a quote or a join, so a quote in the body (or on its opener
+# line) pairs with one past the delimiter and would hide the lines between. A command holding the mark
+# (a noncharacter) could forge one. Structural, so no rule id and no shadow (repo-gotchas.md, GH #337).
+_KEPT_MARK = "﷑"
+if _KEPT_BODY_ENDS:
+    _at, _marked, _lns = set(_KEPT_BODY_ENDS), [], cmd.split("\n")
+    for _k in range(len(_lns) + 1):  # index len(_lns): a body that ends the command
+        if _k in _at:
+            _marked.append(_KEPT_MARK)
+        if _k < len(_lns):
+            _marked.append(_lns[_k])
+    if _KEPT_MARK in cmd or _newlines_to_seps(_normalize_ansi_c_quotes("\n".join(_marked))).count(
+            "\n; " + _KEPT_MARK) < len(_at):
+        deny("a heredoc body the gate reads as commands leaves a quote open - confirm with user first")
+if _HEREDOC_UNMATCHED[0]:
+    deny("a heredoc the gate reads unsure has no closing delimiter it can find - confirm with user first")
 
 def _sql_stdin_drop(c):
     # SQL a client reads on stdin drops or truncates: a heredoc body it reads (_SQL_HEREDOC_DROP), a
@@ -2204,8 +2436,8 @@ def _decode_quotes(t):
     # decoded text (ANSI-C escapes resolved; a $"..." locale string is its plain text), so that is what is read.
     # A `$"` is a locale string unless an odd run of backslashes escapes its `$` (`\\$"x"` is `\` then $"x").
     return _normalize_ansi_c_quotes(re.sub(r'(?<![\\$])(\\*)\$(?=")',
-                                           lambda m: m.group(0) if len(m.group(1)) % 2 else m.group(1), t)) \
-        if "$" in t else t
+                                           lambda m: m.group(0) if len(m.group(1)) % 2 else m.group(1), t),
+                                    live_only=True) if "$" in t else t
 
 def _shell_stdin_bodies(c):
     # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
@@ -2423,7 +2655,7 @@ except ValueError:
 # A scan that could not finish left a span un-blanked -- deny before dispatch.
 def _deny_if_depth_blown():
     if _DEPTH_BUDGET_BLOWN[0]:
-        deny("command too long to safely tokenize (nested substitution exceeded depth-scan budget) - confirm with user first")
+        deny("could not safely tokenize command (nested substitution exceeded the depth-scan budget, or a funsub body has an unbalanced quote) - confirm with user first")
 _deny_if_depth_blown()
 
 # GH #254: a "{" or "}" inside a word is literal in bash ("feat{1}"), but shlex splits the word there
@@ -2685,6 +2917,7 @@ def _scan_body(body):
     # The same body comes back from every window copy (see _BODY_READINGS), so each is checked once.
     if body not in _SQL_BODIES_SEEN:
         _SQL_BODIES_SEEN.add(body)
+        # Stripped for the SQL check only (the rules read the body whole), so it records no kept bodies.
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
