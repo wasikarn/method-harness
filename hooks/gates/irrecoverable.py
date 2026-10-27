@@ -2594,12 +2594,12 @@ def _unwrap_shell(argv0, rest):
 # runs them while a value's `;` is never a separator. A double-quoted body keeps the outer shell's backslash
 # before a $ or backtick, which is dropped first. Operators (defaults, # % patterns, case, /x/y, substrings,
 # @ slices) are applied; an unknown one gives the plain value. A leading `shift [N]` drops arguments.
-_POSITIONAL_SHIFT_RE = re.compile(r"\s*shift(?:\s+(\d+))?\s*(?:;|&&|\n)")
+_POSITIONAL_SHIFT_RE = re.compile(r"\s*shift(?:\s+(\d+))?(?:\s*\d*[<>]&?\s*\S+)*\s*(?:;|&&|\|\|[^;&|\n]*(?:;|&&|\n)|\n)")
 _POSITIONAL_PARAM_RE = re.compile(r"\$([@*#0-9])")
 _POSITIONAL_NAME_RE = re.compile(r"(!#|[@*#]|\d+)")
 _POSITIONAL_SLICE_RE = re.compile(r":\s*\(?\s*(-?\d+)\s*\)?(?::\s*\(?\s*(-?\d+)\s*\)?)?")
 _POSITIONAL_CAP = 150_000  # characters of work across the whole command; past it the command denies
-_POSITIONAL_CUT_MAX = 4096  # a # % pattern cut longer than this keeps the raw value (the cut is O(n^2))
+_POSITIONAL_CUT_MAX = 4096  # a # % pattern cut on a longer value denies (the cut is O(n^2))
 _POSITIONAL_SPENT = [0]
 
 class _PositionalOverCap(Exception):
@@ -2641,8 +2641,8 @@ def _positional_op(vals, op, is_list, expand):
     if m:
         pat, longest, front = _positional_pattern(m.group(2)), len(m.group(1)) == 2, m.group(1)[0] == "#"
         def cut(x):
-            if len(x) > _POSITIONAL_CUT_MAX:
-                return x
+            if len(x) > _POSITIONAL_CUT_MAX:  # too long to cut cheaply: deny rather than read the raw value
+                raise _PositionalOverCap
             _positional_charge(len(x) * len(x) // 64 + 1)
             cuts = [i for i in range(len(x) + 1) if fnmatch.fnmatchcase(x[:i] if front else x[i:], pat)]
             if not cuts:
@@ -2656,20 +2656,25 @@ def _positional_op(vals, op, is_list, expand):
     m = re.fullmatch(r"/([/#%]?)((?:[^/\\]|\\.)*)(?:/(.*))?", op, re.S)
     if m:
         kind, pat, rep = m.group(1), _positional_pattern(m.group(2)), m.group(3) or ""
-        if re.search(r"[*?\[]", pat):
-            return vals
+        rx = re.compile(fnmatch.translate(pat)[4:-3] if pat else "", re.S)  # (?s:...)\Z -> the bare pattern
         def sub(x):
             if kind == "#":
-                return rep + x[len(pat):] if x.startswith(pat) else x
+                hit = rx.match(x)
+                return rep + x[hit.end():] if hit else x
             if kind == "%":
-                return x[:len(x) - len(pat)] + rep if pat and x.endswith(pat) else x
-            return x.replace(pat, rep) if kind == "/" else x.replace(pat, rep, 1)
+                hit = re.search("(?:" + rx.pattern + r")\Z", x, re.S)
+                return x[:hit.start()] + rep if hit else x
+            if not pat:
+                return x
+            _positional_charge(len(rx.findall(x)) * len(rep) + len(x))  # the result's size, before it is built
+            return rx.sub(lambda _m: rep, x) if kind == "/" else rx.sub(lambda _m: rep, x, count=1)
         return each(sub)
     return vals
 
 def _brace_end(t, i):
     # The index just past the `}` closing the `{` at t[i], counting nested braces; -1 when unclosed.
     depth, j, n = 1, i + 1, len(t)
+    start = j
     while j < n:
         c = t[j]
         if c == "\\":
@@ -2680,8 +2685,10 @@ def _brace_end(t, i):
         elif c == "}":
             depth -= 1
             if not depth:
+                _positional_charge(j - start)
                 return j + 1
         j += 1
+    _positional_charge(j - start)  # an unclosed ${ scans to the end: counted, so a flood of them hits the cap
     return -1
 
 def _pos_expand(text, args, quoted):
@@ -2704,7 +2711,7 @@ def _pos_expand(text, args, quoted):
             out.append(text[i:i + 2])
             i += 2
             continue
-        if quote is None and c == "#" and (not out or out[-1][-1:] in " \t\n;&|("):
+        if quote is None and c == "#" and (i == 0 or text[i - 1] in " \t\n;&|("):
             j = text.find("\n", i)  # a comment runs to the end of the line, quotes and all
             j = n if j < 0 else j
             out.append(text[i:j])
@@ -2720,9 +2727,26 @@ def _pos_expand(text, args, quoted):
             out.append(c)
             i += 1
             continue
+        if quote == '"' and c == "`":  # a backtick inside "...": copied whole, its quotes are its own
+            j = text.find("`", i + 1)
+            j = n - 1 if j < 0 else j
+            out.append(text[i:j + 1])
+            i = j + 1
+            continue
         if c != "$":
             out.append(c)
             i += 1
+            continue
+        if quote == '"' and text[i + 1:i + 2] == "(":  # a $(...) inside "...": copied whole by depth
+            depth, j = 0, i + 1
+            while j < n:
+                depth += {"(": 1, ")": -1}.get(text[j], 0)
+                if not depth:
+                    break
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            _positional_charge(j - i)
+            i = j + 1
             continue
         if text[i + 1:i + 2] == "{":
             end = _brace_end(text, i + 1)
@@ -2759,8 +2783,14 @@ def _pos_expand(text, args, quoted):
         elif quote == '"':
             esc = [re.sub(r'([\\"$`])', r"\\\1", x) for x in vals]
             text_out = '" "'.join(esc) if name == "@" else " ".join(esc)
+        elif re.search(r"(?:^|[\s;&|(])[A-Za-z_]\w*\+?=\S*$", "".join(out[-3:])):  # an assignment's value: no split
+            text_out = shlex.quote(" ".join(vals))
         else:
             text_out = " ".join(shlex.quote(p) for x in vals for p in x.split())
+            # An empty expansion glued to more of its word (`$9#`) leaves that word, which is no comment; a
+            # standalone one vanishes, as in bash (`$9 rm -rf b` runs rm).
+            if not text_out and nxt < n and text[nxt] not in " \t\n;&|()<>":
+                text_out = "''"
         _positional_charge(len(text_out))
         out.append(text_out)
         i = nxt

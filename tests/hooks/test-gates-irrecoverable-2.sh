@@ -3078,6 +3078,18 @@ test_deny  "$IRRECOVERABLE" 'GH #663: a comment with an apostrophe before rm "$@
 test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'sh -c "echo \"\$@\"" _ "$@"'"'"' _ a b (nested forwarding)' "$(bash_payload 'sh -c '"'"'sh -c "echo \"\$@\"" _ "$@"'"'"' _ a b')"
 _timed_case "GH #663: a \${1##*/} cut on a 100 KB value is read in bounded time" 2 \
   "sh -c 'echo \"\${1##*/}\"; rm -rf b' _ $(printf 'a/%.0s' $(seq 45000))"
+# GH #663 review 4: comments after an expansion, backticks in quotes, glob replacements, shift forms, assignments
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'echo $9#; rm "$@"'"'"' _ -rf b ($9# is a word, not a comment)' "$(bash_payload 'sh -c '"'"'echo $9#; rm "$@"'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: a backtick in double quotes holding an apostrophe' "$(bash_payload 'sh -c '"'"'x="`echo "it'"'"'"'"'"'"'"'"'s"`"; rm "$@"'"'"' _ -rf b')"
+test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm "${1/#*x/-}" b'"'"' _ zzxrf' "$(bash_payload 'sh -c '"'"'rm "${1/#*x/-}" b'"'"' _ zzxrf')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'git push "${1/%/-force}" origin main'"'"' _ -' "$(bash_payload 'bash -c '"'"'git push "${1/%/-force}" origin main'"'"' _ -')"
+test_deny  "$IRRECOVERABLE" 'GH #663: bash -c '"'"'shift || exit; rm $1 b'"'"' _ x -rf' "$(bash_payload 'bash -c '"'"'shift || exit; rm $1 b'"'"' _ x -rf')"
+test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'msg=$1; git commit -m "$msg"'"'"' _ '"'"'docs: rm -rf is replaced'"'"' (no split in an assignment)' "$(bash_payload 'sh -c '"'"'msg=$1; git commit -m "$msg"'"'"' _ '"'"'docs: rm -rf is replaced'"'"'')"
+test_allow "$IRRECOVERABLE" 'GH #663 control: bash -c '"'"'f=$1; cp "$f" "$f.bak"'"'"' _ '"'"'notes rm -rf b.txt'"'"'' "$(bash_payload 'bash -c '"'"'f=$1; cp "$f" "$f.bak"'"'"' _ '"'"'notes rm -rf b.txt'"'"'')"
+_timed_case "GH #663: 9000 unclosed \${ in a body are read in bounded time" 2 \
+  "sh -c 'echo $(printf '\${%.0s' $(seq 9000))' _ a; rm -rf b"
+_timed_case "GH #663: a \${1//a/<30000 b>} on 30000 a's is charged before it is built" 2 \
+  "sh -c 'echo \"\${1//a/$(printf 'b%.0s' $(seq 30000))}\"' _ $(printf 'a%.0s' $(seq 30000)); rm -rf b"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'rm \"\$@\"' _ a.log b.log" "$(bash_payload "bash -c 'rm \"\$@\"' _ a.log b.log")"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'echo \"\$@\"' _ rm -rf b" "$(bash_payload "bash -c 'echo \"\$@\"' _ rm -rf b")"
 test_allow "$IRRECOVERABLE" "GH #663 control: sh -c 'ls \$1' _ -la" "$(bash_payload "sh -c 'ls \$1' _ -la")"
