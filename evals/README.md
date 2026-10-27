@@ -96,8 +96,7 @@ predated this and used) is mis-parsed as a literal path under the installed CLI 
 — confirmed on `post-mortem`. See "A previously-invisible defect" below: every other suite in
 this file has since been converted to the file-path form.
 
-Eight for `code-architect` (tag `code-architect`; the two `code-architect-chain-*` cases also
-carry tag `chain`, agent not a skill — dispatched via the `Agent`
+Eight for `code-architect` (tag `code-architect`, agent not a skill — dispatched via the `Agent`
 tool with `subagent_type: "mh:code-architect"`, not a `disable-model-invocation` slash command).
 Natural routing into this agent never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
@@ -113,7 +112,11 @@ concrete implementation with a request phrased to invite a speculative plugin in
 must match (`di-style-respect`); and a requirement with a genuine two-reading fork that must be
 named as a prominent callout, not silently resolved (`ambiguous-requirement`). Plus one
 should-NOT-fire case: a trivial one-line rename, which must be done directly without dispatching
-the agent or producing a full blueprint as a substitute (`trivial-no-dispatch`). In the
+the agent or producing a full blueprint as a substitute (`trivial-no-dispatch`). Plus two chain
+cases (second tag `chain`), where the blueprint is handed on to `mh:plan-reviewer`: one prompt names
+the reviewer and scores the handoff's quality (`chain-plan-reviewer`), and one only asks for the
+plan to be checked and scores whether a fresh-context reviewer is called unprompted
+(`chain-unprompted`). These catch a folded main loop skipping the next specialist. In the
 without-plugin arm, `mh:code-architect` doesn't exist — the model's first dispatch attempt gets
 `Agent type 'mh:code-architect' not found. Available agents: ...` and it falls back to the
 built-in `Plan` agent. This makes `tool_used: Agent` with `input_match` on the requested
