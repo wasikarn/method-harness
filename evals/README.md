@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-77 cases in Claude Code's native `claude plugin eval` layout (count:
+79 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -96,7 +96,7 @@ predated this and used) is mis-parsed as a literal path under the installed CLI 
 — confirmed on `post-mortem`. See "A previously-invisible defect" below: every other suite in
 this file has since been converted to the file-path form.
 
-Six for `code-architect` (tag `code-architect`, agent not a skill — dispatched via the `Agent`
+Eight for `code-architect` (tag `code-architect`, agent not a skill — dispatched via the `Agent`
 tool with `subagent_type: "mh:code-architect"`, not a `disable-model-invocation` slash command).
 Natural routing into this agent never fires on its own for a well-worded architecture request —
 the top-level model just solves it inline, since it has the same read tools — so every fire-case
@@ -112,7 +112,11 @@ concrete implementation with a request phrased to invite a speculative plugin in
 must match (`di-style-respect`); and a requirement with a genuine two-reading fork that must be
 named as a prominent callout, not silently resolved (`ambiguous-requirement`). Plus one
 should-NOT-fire case: a trivial one-line rename, which must be done directly without dispatching
-the agent or producing a full blueprint as a substitute (`trivial-no-dispatch`). In the
+the agent or producing a full blueprint as a substitute (`trivial-no-dispatch`). Plus two chain
+cases (second tag `chain`), where the blueprint is handed on to `mh:plan-reviewer`: one prompt names
+the reviewer and scores the handoff's quality (`chain-plan-reviewer`), and one only asks for the
+plan to be checked and scores whether a fresh-context reviewer is called unprompted
+(`chain-unprompted`). These catch a folded main loop skipping the next specialist. In the
 without-plugin arm, `mh:code-architect` doesn't exist — the model's first dispatch attempt gets
 `Agent type 'mh:code-architect' not found. Available agents: ...` and it falls back to the
 built-in `Plan` agent. This makes `tool_used: Agent` with `input_match` on the requested
@@ -334,7 +338,7 @@ new case before running it.
 
 Cost, from the 2026-09-13 run above: about 272 agent runs (30 cases x 3 + 46 x 1, two arms) for
 $119.40 and 34,801 s, so roughly $0.44 and 128 s a run. At `--runs 2` a six-case agent
-(`code-architect`, `backend-architect`, `performance-optimizer`) is 6 x 2 x 2 = 24 runs: about
+(`backend-architect`, `performance-optimizer`; `code-architect` now has eight) is 6 x 2 x 2 = 24 runs: about
 $11 and 50 min at `-j 1`, 13 min at `-j 4`. `requirement-analyst` (two cases) is 8 runs: about $4.
 That average includes the cheap without-arm runs; these cases run 20+ turns and both variants
 run on the agent's pinned model (opus for three of the four, sonnet for
