@@ -3464,11 +3464,21 @@ test_deny_says "$IRRECOVERABLE" "GH #713: a funsub whose \"}\" argument ends it 
 # kept on purpose: a harmless funsub with a "}" argument over-denies (fail closed), quoted or not
 test_deny_says "$IRRECOVERABLE" "GH #713: a funsub with a \"}\" argument over-denies, by design" \
   "$(bash_payload 'echo ${ echo }; }')" "substitution ends at a different place"
+_timed_case 'GH #713: a commented-) $(...) target before 9000 $(echo #) words denies in bounded time' 2 \
+  "echo \$( : # )'${_N}rm -rf ~/x$_N: # '$_N) $(printf '$(echo "#") %.0s' $(seq 9000))"
+_timed_case 'GH #713: a commented-) $(...) target after 9000 $(echo #) words denies in bounded time' 2 \
+  "echo $(printf '$(echo "#") %.0s' $(seq 9000))\$( : # )'${_N}rm -rf ~/x$_N: # '$_N)"
+_timed_case 'GH #713: 10000 $(echo #) words are read in bounded time' 0 \
+  "echo $(printf '$(echo "#") %.0s' $(seq 10000))"
+_timed_case 'GH #713: 5000 "${ echo a; }" funsubs are read in bounded time' 0 \
+  "echo $(printf '"${ echo a; }" %.0s' $(seq 5000))"
+
 # GH #726: the same $(...) inside a ${...} word with "..." around the ${...} or inside the word: the word is read
 # quote-blind, so #713's newline split (done only inside "...") never ran. bash 5.3 runs @V@ in each.
 _p726=("echo \"\${x:-\$( : # )'$_N@V@$_N: # '$_N)}\"" "echo \${x:-\"\$( : # )'$_N@V@$_N: # '$_N)\"}"
   "z=\"\${x:+\$(: #)'$_N@V@$_N#'$_N)}\"" "echo \"a\${x#\$( : # )'$_N@V@$_N: # '$_N)}b\""
-  "echo \${x/\"\$(: #)'$_N@V@$_N#'$_N)\"/y}")
+  "echo \${x/\"\$(: #)'$_N@V@$_N#'$_N)\"/y}" "echo \"\${x:-\${x:-\$( : # )'$_N@V@$_N: # '$_N)}}\""
+  "echo \"\${x:-\$(: #)'$_N@V@$_N#'$_N)}\"")
 for _v in 'rm -rf ~/x' 'git push --force origin main'; do
   for _t in "${_p726[@]}"; do
     _c=${_t//@V@/"$_v"}
@@ -3478,14 +3488,6 @@ done
 for _c in "echo \"\${x:-\$(ls # list$_N)}\"" "echo \${x:-\"\$(date$_N)\"}" "echo \"\${x:-\$(echo a$_N echo b)}\""; do
   test_allow "$IRRECOVERABLE" "GH #726 control: $_c" "$(bash_payload "$_c")"
 done
-_timed_case 'GH #713: a commented-) $(...) target before 9000 $(echo #) words denies in bounded time' 2 \
-  "echo \$( : # )'${_N}rm -rf ~/x$_N: # '$_N) $(printf '$(echo "#") %.0s' $(seq 9000))"
-_timed_case 'GH #713: a commented-) $(...) target after 9000 $(echo #) words denies in bounded time' 2 \
-  "echo $(printf '$(echo "#") %.0s' $(seq 9000))\$( : # )'${_N}rm -rf ~/x$_N: # '$_N)"
-_timed_case 'GH #713: 10000 $(echo #) words are read in bounded time' 0 \
-  "echo $(printf '$(echo "#") %.0s' $(seq 10000))"
-_timed_case 'GH #713: 5000 "${ echo a; }" funsubs are read in bounded time' 0 \
-  "echo $(printf '"${ echo a; }" %.0s' $(seq 5000))"
 
 # GH #674: a shell reads its commands on stdin behind a wrapper, with its own wrapper options, or with its own
 # -o NAME / +o NAME pairs; the echo feeding it may sit behind a wrapper or an assignment too.

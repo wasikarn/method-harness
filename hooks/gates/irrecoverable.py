@@ -2001,7 +2001,7 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None
 
-def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param=False):
+def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param):
     # The substitution that starts at s[i] (a backtick, "$(", "${", or an unquoted "<(" / ">("):
     # (placeholder, index just past it), its command body appended to `bodies`. None when s[i]
     # starts none, or its closer is missing.
