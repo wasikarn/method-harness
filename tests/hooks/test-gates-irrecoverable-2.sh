@@ -3198,6 +3198,14 @@ _timed_case "GH #663: 9000 unclosed \${ in a body are read in bounded time" 2 \
   "sh -c 'echo $(printf '\${%.0s' $(seq 9000))' _ a; rm -rf b"
 _timed_case "GH #663: a \${1//a/<30000 b>} on 30000 a's is charged before it is built" 2 \
   "sh -c 'echo \"\${1//a/$(printf 'b%.0s' $(seq 30000))}\"' _ $(printf 'a%.0s' $(seq 30000)); rm -rf b"
+# GH #663 review 5: a shift's glued redirects and a / replacement on a long value are read in bounded time
+_timed_case "GH #663: shift with 30 glued <a redirects, then a force push outside the body" 2 \
+  "bash -c 'shift$(printf '<a%.0s' $(seq 30)) x y; echo \$1' _ a; git push --force origin main"
+_timed_case "GH #663: a \${1//*z/x} on a 120000-character value is bounded" 2 \
+  "sh -c 'echo \"\${1//*z/x}\"' _ $(printf 'a%.0s' $(seq 120000)); git push --force origin main"
+_timed_case "GH #663: a \${1/%*z/x} on a 60000-character value is bounded" 2 \
+  "sh -c 'echo \"\${1/%*z/x}\"' _ $(printf 'a%.0s' $(seq 60000)); git push --force origin main"
+test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'shift 2>/dev/null; ls \$1' _ a -la" "$(bash_payload "bash -c 'shift 2>/dev/null; ls \$1' _ a -la")"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'rm \"\$@\"' _ a.log b.log" "$(bash_payload "bash -c 'rm \"\$@\"' _ a.log b.log")"
 test_allow "$IRRECOVERABLE" "GH #663 control: bash -c 'echo \"\$@\"' _ rm -rf b" "$(bash_payload "bash -c 'echo \"\$@\"' _ rm -rf b")"
 test_allow "$IRRECOVERABLE" "GH #663 control: sh -c 'ls \$1' _ -la" "$(bash_payload "sh -c 'ls \$1' _ -la")"

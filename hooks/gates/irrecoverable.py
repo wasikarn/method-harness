@@ -2778,7 +2778,10 @@ def _unwrap_shell(argv0, rest):
 # runs them while a value's `;` is never a separator. A double-quoted body keeps the outer shell's backslash
 # before a $ or backtick, which is dropped first. Operators (defaults, # % patterns, case, /x/y, substrings,
 # @ slices) are applied; an unknown one gives the plain value. A leading `shift [N]` drops arguments.
-_POSITIONAL_SHIFT_RE = re.compile(r"\s*shift(?:\s+(\d+))?(?:\s*\d*[<>]&?\s*\S+)*\s*(?:;|&&|\|\|[^;&|\n]*(?:;|&&|\n)|\n)")
+# GH #663 review 5: each redirect is matched atomically (a lookahead captured, then consumed by backreference)
+# and its target stops at the next operator, so glued `<a<a<a...` redirects cannot backtrack exponentially.
+_POSITIONAL_SHIFT_RE = re.compile(
+    r"\s*shift(?:\s+(\d+))?(?:(?=(\s*\d*[<>]&?\s*[^\s<>;&|]+))\2)*\s*(?:;|&&|\|\|[^;&|\n]*(?:;|&&|\n)|\n)")
 _POSITIONAL_PARAM_RE = re.compile(r"\$([@*#0-9])")
 _POSITIONAL_NAME_RE = re.compile(r"(!#|[@*#]|\d+)")
 _POSITIONAL_SLICE_RE = re.compile(r":\s*\(?\s*(-?\d+)\s*\)?(?::\s*\(?\s*(-?\d+)\s*\)?)?")
@@ -2842,6 +2845,10 @@ def _positional_op(vals, op, is_list, expand):
         kind, pat, rep = m.group(1), _positional_pattern(m.group(2)), m.group(3) or ""
         rx = re.compile(fnmatch.translate(pat)[4:-3] if pat else "", re.S)  # (?s:...)\Z -> the bare pattern
         def sub(x):
+            if pat:  # GH #663 review 5: a pattern match is O(n^2) on a leading *, bounded as a cut is
+                if len(x) > _POSITIONAL_CUT_MAX:
+                    raise _PositionalOverCap
+                _positional_charge(len(x) * len(x) // 64 + 1)
             if kind == "#":
                 hit = rx.match(x)
                 return rep + x[hit.end():] if hit else x
