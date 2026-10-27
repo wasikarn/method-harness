@@ -53,7 +53,7 @@ refuses on any change. It:
 3. takes a per-user merge lock (`~/.cache/mh/merge-pr.lock`, the gauntlet queue's code with its own
    dir), so one merge runs at a time and develop holds still during its gauntlet; after 3600 s it
    refuses instead of running unlocked;
-4. waits for load below the online core count (`MERGE_PR_LOAD_MAX`; default 900 s, then fails with the load figure);
+4. waits for load below the online core count (`MERGE_PR_LOAD_MAX`), up to 900 s, then fails with the load figure;
 5. merges `origin/develop` into the branch when it is behind (the develop tip its own last fetch saw:
    every worktree shares the `origin/develop` ref and peer sessions fetch all the time, so it never
    re-reads the ref between fetches), and writes develop's version + 1 into

@@ -397,7 +397,8 @@ wait_for_load() {
   # A fixed 4 on a 12-core machine blocked every merge while peer sessions ran (load 8-12, 2026-10-27).
   # Too high a cap only risks a timing row failing the gauntlet, which refuses the push: safe to retry.
   local cores load_max wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}" waited=0 load
-  cores=$(getconf _NPROCESSORS_ONLN) || cores=4
+  cores=$(getconf _NPROCESSORS_ONLN)
+  [ -n "$cores" ] || cores=4  # an empty cap would read as 0 and refuse every merge
   load_max="${MERGE_PR_LOAD_MAX:-$cores}"
   while :; do
     load=$(uptime | sed 's/.*load average[s]*: *//' | awk -F'[ ,]+' '{print $1}')

@@ -24,7 +24,7 @@ export HOME="$T/home"
 JOURNAL="$HOME/.local/share/kbg/metrics/gate-decisions.jsonl"
 mkdir -p "$(dirname "$JOURNAL")"
 printf '{"seed":1}\n{"seed":2}\n{"seed":3}\n' > "$JOURNAL"
-unset MH_GATE_JOURNAL_PATH
+unset MH_GATE_JOURNAL_PATH GAUNTLET_LOCK_DIR
 export CLAUDE_CONFIG_DIR="$T/cc"
 
 cp -R "$GATES" "$T/old"
@@ -122,6 +122,8 @@ echo "=== waits in the gauntlet queue ==="
 # A live gauntlet (this test's pid) holds the lock under the fake HOME: the run must wait for it, then
 # run without it after GAUNTLET_LOCK_WAIT_SECS, and leave the holder's lock in place.
 lock="$HOME/.cache/mh/gauntlet.lock"
+if [ ! -d "$lock" ]; then ok "every run above released the gauntlet lock"
+else bad "a run above left the gauntlet lock behind: $(cat "$lock/pid" 2>&1)"; fi
 mkdir -p "$lock" && echo "$$" > "$lock/pid"
 out=$(env -u MH_GAUNTLET_LOCK_OWNER GAUNTLET_LOCK_WAIT_SECS=0 bash "$SCRIPT" --cases "$T/deny.txt" "$T/old" "$T/same" irrecoverable 2>&1)
 if /usr/bin/grep -q 'gauntlet-lock: waited' <<<"$out" && [ "$(cat "$lock/pid")" = "$$" ]; then
