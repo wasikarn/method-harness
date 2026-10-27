@@ -1174,11 +1174,11 @@ for _c in 'trash ~' 'trash ""' 'trash .' 'trash *' 'trash /' 'trash ~/' 'trash .
   'trash $HOME' 'trash ${HOME}' 'trash "$HOME"' 'trash $PWD' 'trash $(pwd)' "trash $HOME" "trash $HOME/" \
   'trash-put /' 'gio trash ~' 'sudo trash ~/' 'trash -v .' 'trash build/x .' \
   'trash ~/*' 'trash /*' 'trash "$PWD/"' 'trash $HOME/' 'trash "$HOME"/*' 'trash ~/.' 'trash ../' 'trash .*' \
-  'trash "$HOME/"' 'trash $HOME/*'; do
+  'trash "$HOME/"' 'trash $HOME/*' 'trash $(pwd)/' 'trash "$(pwd)"/'; do
   test_deny "$IRRECOVERABLE" "trash whole tree: $_c" "$(bash_payload "$_c")"
 done
 for _c in 'trash "$X"' 'trash "${X:?}"' 'trash $TMPDIR/x' 'trash build/out.txt' 'trash ./build' 'trash "$HOME/tmp/x"' \
-  'trash $(pwd)/build' 'echo trash ~' 'gio info ~' 'trash' 'trash ~/foo' 'trash .gitignore'; do
+  'trash $(pwd)/build' 'echo trash ~' 'gio info ~' 'trash' 'trash ~/foo' 'trash .gitignore' 'trash "$(pwd)/build"'; do
   test_allow "$IRRECOVERABLE" "trash control: $_c" "$(bash_payload "$_c")"
 done
 _huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
