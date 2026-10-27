@@ -1747,15 +1747,18 @@ def _close_bracket(s, j, opener, closer, depth_work_used, comments=False):
     # sets _DEPTH_BUDGET_BLOWN). Quotes inside the span are not tracked (GH #184).
     # GH #713: `comments` (a $(...) body) skips a word-start "#" to the newline, as bash does, so a
     # commented ")" is no closer; read quote-blind like the count, so a quoted " #" only moves the end
-    # later (more text read as the body), never earlier.
-    n, depth, start = len(s), 1, j
+    # later (more text read as the body), never earlier. A "#" right after an escaped char is mid-word, as
+    # in _close_psub/_close_param/_scan_once (`\ #`), or the skip hides a ")" bash closes on.
+    n, depth, start, esc_end = len(s), 1, j, -1
     while j < n and depth and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
         depth_work_used[0] += 1
         if s[j] == opener:
             depth += 1
         elif s[j] == closer:
             depth -= 1
-        elif comments and s[j] == "#" and (j == start or s[j - 1] in _REDIRECT_TARGET_STOP):
+        elif s[j] == "\\" and j != esc_end - 1:
+            esc_end = j + 2
+        elif comments and s[j] == "#" and j != esc_end and (j == start or s[j - 1] in _REDIRECT_TARGET_STOP):
             k = s.find("\n", j)
             k = n if k == -1 else k
             depth_work_used[0] += k - j

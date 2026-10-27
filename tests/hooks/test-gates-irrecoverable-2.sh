@@ -3428,7 +3428,10 @@ test_allow "$IRRECOVERABLE" "GH #676 control: echo chroot / rm -rf b" "$(bash_pa
 _p713=("echo \$( : # )'$_N@V@$_N: # '$_N)" "echo \${x:-\$( : # )'$_N@V@$_N: # '$_N)}"
   "echo \"\$( : # )'$_N@V@$_N: # '$_N)\"" "echo \$(: #)'$_N@V@$_N#'$_N)" "x=\$( : # )'$_N@V@$_N: # '$_N)"
   'echo "${ echo }; @V@; }"' 'echo "${ echo a}b; @V@; }"' 'echo "${| echo }; @V@; }"' 'x="${ echo }; @V@; }"'
-  'echo "${ printf %s }; @V@; }"' 'echo "${ echo {; @V@; }"' 'echo "${ echo \;}; @V@; }"')
+  'echo "${ printf %s }; @V@; }"' 'echo "${ echo {; @V@; }"' 'echo "${ echo \;}; @V@; }"'
+  # a "#" after an escaped char is mid-word, so bash closes the $(...) at the next ")"
+  "echo \"\$( : \\ #)'\"$_N@V@$_N\"'$_N)\"" "echo \"\$( : \\;#)'\"$_N@V@$_N\"'$_N)\""
+  "x=\"\$( : \\ #)'\"$_N@V@$_N\"'$_N)\"")
 for _v in 'rm -rf ~/x' 'git push --force origin main'; do
   for _t in "${_p713[@]}"; do
     _c=${_t//@V@/"$_v"}
@@ -3439,7 +3442,8 @@ for _c in 'echo $(grep "#" f)' "echo \$(grep '#' f)" 'echo $(echo ${#x})' 'echo 
   "echo \$(awk -F'#' '{print \$1}' f)" 'echo $(sed "s/#.*//" f)' "echo \$(git log --format='%h #%s' -1)" \
   "echo \$(ls # list$_N)" 'echo ${ echo {a,b}; }' 'echo ${ f() { echo; }; f; }' \
   'echo ${ if true; then { echo; }; fi; }' 'echo "${ echo a; }"' 'echo ${x:-${ echo a; }}' \
-  'echo "${ true && { echo a; }; }"' 'echo "${ (echo a) }"' "echo \"\${ echo a$_N}\"" 'echo "${ echo a;}"'; do
+  'echo "${ true && { echo a; }; }"' 'echo "${ (echo a) }"' "echo \"\${ echo a$_N}\"" 'echo "${ echo a;}"' \
+  'echo $(echo \ #)' 'echo "$(printf %s \ #)"' 'echo $(echo a\ #b)'; do
   test_allow "$IRRECOVERABLE" "GH #713 control: $_c" "$(bash_payload "$_c")"
 done
 test_deny_says "$IRRECOVERABLE" "GH #713: a funsub whose \"}\" argument ends it early names the substitution" \
