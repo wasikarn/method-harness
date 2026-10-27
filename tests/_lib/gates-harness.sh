@@ -196,6 +196,20 @@ test_deny() {
   fi
 }
 
+# test_deny, plus the stderr reason must contain <needle> (the next step a refusal names).
+test_deny_says() {
+  local gate="$1" desc="$2" payload="$3" needle="$4"
+  local rc
+  rc=$(echo "$payload" | bash "$gate" 2>"$_ERRF"; echo $?)
+  if [[ "$rc" == "2" ]] && ! /usr/bin/grep -qE 'Traceback|internal error' "$_ERRF" && /usr/bin/grep -qF -- "$needle" "$_ERRF"; then
+    echo "  ✅ DENY ($needle): $desc"
+    pass=$((pass + 1))
+  else
+    echo "  ❌ DENY naming '$needle' EXPECTED but got exit $rc ($(tail -1 "$_ERRF")): $desc" >&2
+    fail=$((fail + 1))
+  fi
+}
+
 # Expect exit 2 FROM the fail-closed wrapper after an internal error: the one case test_deny rejects.
 test_deny_failclosed() {
   local gate="$1" desc="$2" payload="$3"

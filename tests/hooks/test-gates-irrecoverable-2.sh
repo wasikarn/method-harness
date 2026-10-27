@@ -62,6 +62,28 @@ test_deny  "$IRRECOVERABLE" "env GIT_CONFIG_PARAMETERS=core.hooksPath=... git co
   "$(bash_payload 'env GIT_CONFIG_PARAMETERS="'"'"'core.hooksPath=/dev/null'"'"'" git commit -m x')"
 test_allow "$IRRECOVERABLE" "FOO=bar ls (assignment prefix on a benign command)" \
   "$(bash_payload 'FOO=bar ls')"
+# --- actionable refusals: a "confirm with user first" deny names a next step a headless run can take ---
+_NODECIDE='if nobody can confirm, skip this step, keep going on the rest'
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard keeps the confirm text" "$(bash_payload 'git reset --hard')" "confirm with user first"
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard has the no-one-to-confirm tail" "$(bash_payload 'git reset --hard')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tail names the report section" "$(bash_payload 'git clean -fd')" '"Needs your decision"'
+test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload 'dropdb prod')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
+test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
+test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git stash`'
+test_deny_says "$IRRECOVERABLE" "refusal: commit --amend hint" "$(bash_payload 'git commit --amend -m x')" "make a new commit"
+test_deny_says "$IRRECOVERABLE" "refusal: clean -f hint" "$(bash_payload 'git clean -f')" '`git clean -n`'
+test_deny_says "$IRRECOVERABLE" "refusal: push --mirror hint" "$(bash_payload 'git push --mirror origin')" "push named refs"
+test_deny_says "$IRRECOVERABLE" "refusal: stash drop hint" "$(bash_payload 'git stash drop')" "leave the stash"
+test_deny_says "$IRRECOVERABLE" "refusal: worktree remove --force hint" "$(bash_payload 'git worktree remove --force ../wt')" "plain \`git worktree remove"
+test_deny_says "$IRRECOVERABLE" "refusal: rm -f hint" "$(bash_payload 'git rm -f f.txt')" "then plain \`git rm"
+test_deny_says "$IRRECOVERABLE" "refusal: chmod 777 hint" "$(bash_payload 'chmod -R 777 /')" "narrowest mode"
+# each alternative a hint names must itself pass the gate
+for _alt in 'git stash' 'git stash -u' 'git commit -m x' 'git diff HEAD > x.patch' 'git clean -n' \
+  'git push origin feat/x' 'git stash list' 'git stash show -p' 'git worktree remove ../wt' 'git rm f.txt' \
+  'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
+  test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"
+done
 # --- git branch force-delete: discards unmerged commits ---
 test_deny  "$IRRECOVERABLE" "git branch -D (force-delete short flag)" \
   "$(bash_payload 'git branch -D main')"

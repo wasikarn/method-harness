@@ -1401,6 +1401,12 @@ def deny(reason, rule=None):
         if _VIEW[0]:
             raise _ViewStop
         return
+    if "confirm with user first" in reason:
+        # A headless run has nobody to confirm: name a step the model can still take (2026-10-27 audit).
+        if rule is None:  # every rule-less confirm deny is a tokenizer/complexity refusal
+            reason += "; split it into simpler separate commands"
+        reason += ('; if nobody can confirm, skip this step, keep going on the rest, and list it under'
+                   ' "Needs your decision" in your final report')
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
     # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
@@ -4285,7 +4291,7 @@ def _check_window(_wi, w):
                         and _find_action_spawns(sub):
                     _deny_nested_spawn()
                 if rest[j].replace(PH, "") in ("-exec", "-execdir") and _find_action_chmod_world(sub):
-                    deny("chmod 777 / a+rwx on every file find yields makes them world-writable — confirm with user first",
+                    deny("chmod 777 / a+rwx on every file find yields makes them world-writable — confirm with user first, or grant the narrowest mode needed (`chmod 755`, `chmod u+x`)",
                          rule="chmod-world")
                 if rest[j].replace(PH, "") in ("-exec", "-execdir") and _shell_body_runs_rm(sub):
                     deny("find -exec/-execdir runs rm through a shell body — destructive delete; " + delete_hint(),
@@ -4369,7 +4375,7 @@ def _check_window(_wi, w):
             not t.replace(PH, "").startswith("-") for t in rest):
         deny("mkfs formats a filesystem — irrecoverable disk-level destruction", rule="mkfs")
     if _a0 in ("chmod", "gchmod") and _chmod_world(rest):  # gchmod: GNU chmod from Homebrew (GH #587)
-        deny("chmod 777 / a+rwx recursively or on / or ~ makes files world-writable — confirm with user first",
+        deny("chmod 777 / a+rwx recursively or on / or ~ makes files world-writable — confirm with user first, or grant the narrowest mode needed (`chmod 755`, `chmod u+x`)",
              rule="chmod-world")
     if not _in_value and _opaque_var(argv0, rest):
         ask("the program this runs is a variable with no visible assignment — confirm what it runs",
@@ -4563,7 +4569,7 @@ def _check_window(_wi, w):
                              or _drops_core_section(args)):
                     deny("git config core.hooksPath rewires/disables the repo git hooks — only `git config core.hooksPath git-hooks` is allowed", rule="git-config-hooks-path")
                 if sub == "reset" and any(_is_flag(t, "--hard") for t in scan):
-                    deny("git reset --hard discards uncommitted work — confirm with user first", rule="git-reset-hard")
+                    deny("git reset --hard discards uncommitted work — confirm with user first, or keep the changes recoverable with `git stash` or a commit", rule="git-reset-hard")
                 # SHORT bundled cluster counts per-character, LONG option via
                 # _is_flag's prefix match (bare containment false-positived on
                 # "--find-renames" / "--format=fuller" under candidate duplication --
@@ -4572,7 +4578,7 @@ def _check_window(_wi, w):
                     _is_flag(t, "--force") or (t.startswith("-") and not t.startswith("--") and "f" in t)
                     for t in scan
                 ):
-                    deny("git clean -f deletes untracked files — confirm with user first", rule="git-clean-force")
+                    deny("git clean -f deletes untracked files — confirm with user first, or preview with `git clean -n`, or move them aside recoverably with `git stash -u`", rule="git-clean-force")
                 # git restore: default mode and --worktree target the WORKTREE
                 # (unrecoverable); --staged alone targets the INDEX (recoverable,
                 # allowed). Unlike checkout, a restore pathspec is never a branch
@@ -4624,7 +4630,7 @@ def _check_window(_wi, w):
                         or (t.startswith("-") and not t.startswith("--") and "W" in t.split("s", 1)[0])
                         for t in _opts)
                     if has_pathspec and targets_worktree:
-                        deny("git restore discards working-tree changes — confirm with user first", rule="git-restore")
+                        deny("git restore discards working-tree changes — confirm with user first, or keep the changes recoverable with `git stash` or a commit", rule="git-restore")
                 # checkout: "--"/"." = discard; 2+ nonflag = tree-ish + path
                 # (`git checkout HEAD~1 file` overwrites the worktree). 1 nonflag
                 # stays allowed: it may be a legit branch switch.
@@ -4653,9 +4659,9 @@ def _check_window(_wi, w):
                                             _co_nonflag >= 2 or
                                             any(_is_flag(t.split("=", 1)[0], "--pathspec-from-file") for t in scan) or
                                             any(t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, ("b", "B")) for t in scan)):
-                    deny("git checkout -- / git checkout . / git checkout -f / git checkout <tree> <file> discards working-tree changes — confirm with user first", rule="git-checkout-discard")
+                    deny("git checkout -- / git checkout . / git checkout -f / git checkout <tree> <file> discards working-tree changes — confirm with user first, or keep the changes recoverable with `git stash` or a commit", rule="git-checkout-discard")
                 if sub == "switch" and any(t == "-f" or _is_flag(t, "--force", "--discard-changes") or _bundled_flag(t, ("c", "C")) for t in scan):
-                    deny("git switch --force discards working-tree changes — confirm with user first", rule="git-switch-force")
+                    deny("git switch --force discards working-tree changes — confirm with user first, or `git stash`, then a plain `git switch`", rule="git-switch-force")
                 # A force-delete is allowed only for a whole command of the plain shape
                 # "git [-C <path>] branch <flags and names>" in which no name's last path part
                 # is main/master/develop in any case ("origin/main", "Main" on a case-
@@ -4674,9 +4680,9 @@ def _check_window(_wi, w):
                     if not _names or any(t.rstrip("/").rsplit("/", 1)[-1].lower() in ("main", "master", "develop") for t in _names):
                         deny("git branch -D is allowed only as a plain `git branch -D <names>` without main/master/develop — confirm with user first", rule="git-branch-force-delete")
                 if sub == "stash" and args and args[0].replace(PH, "") in ("drop", "clear"):
-                    deny("git stash drop/clear discards stashed changes — confirm with user first", rule="git-stash-drop")
+                    deny("git stash drop/clear discards stashed changes — confirm with user first, or leave the stash in place (`git stash list` and `git stash show -p` read it)", rule="git-stash-drop")
                 if sub == "commit" and any(_is_flag(t, "--amend") for t in scan):
-                    deny("git commit --amend rewrites history — confirm with user first", rule="git-commit-amend")
+                    deny("git commit --amend rewrites history — confirm with user first, or make a new commit instead", rule="git-commit-amend")
                 # `commit -n` is --no-verify (push -n is --dry-run, merge -n --no-stat, so
                 # commit only). Cluster stops at a value-taking letter: -mnew is a message,
                 # -Fnotes.txt a file, -tnotes a template, -uno the untracked-files mode.
@@ -4685,7 +4691,7 @@ def _check_window(_wi, w):
                 # 2026-10-23 bypass sweep: other verbs with the same damage as a deny above.
                 _nonflag = [t for t in scan if not t.startswith("-")]
                 if sub == "push" and any(_is_flag(t, "--mirror", "--prune") for t in scan):
-                    deny("git push --mirror/--prune overwrites or deletes remote refs, like --force — confirm with user first", rule="git-push-mirror")
+                    deny("git push --mirror/--prune overwrites or deletes remote refs, like --force — confirm with user first, or push named refs (`git push origin <branch>`)", rule="git-push-mirror")
                 # GH #563 review: send-pack (push's plumbing) deletes with the same ":ref" refspec; --delete
                 # and -d are not send-pack options (git rejects them), so mirroring them only over-denies.
                 if sub in ("push", "send-pack") and (
@@ -4699,7 +4705,7 @@ def _check_window(_wi, w):
                     deny("git checkout-index -f overwrites working-tree files — confirm with user first", rule="git-checkout-index-force")
                 if sub == "worktree" and _nonflag[:1] == ["remove"] and any(
                         t == "-f" or _is_flag(t, "--force") or _bundled_flag(t, "", "f") for t in scan):  # -ff: GH #563
-                    deny("git worktree remove --force deletes the worktree's uncommitted changes — confirm with user first", rule="git-worktree-remove-force")
+                    deny("git worktree remove --force deletes the worktree's uncommitted changes — confirm with user first, or commit/stash inside it, then plain `git worktree remove <path>`", rule="git-worktree-remove-force")
                 # The reflog is the way back after a reset or a branch delete; these empty it now, not in 90 days.
                 _now = lambda v: v.lower() in ("now", "all", "0")
                 _vals = [t.split("=", 1)[1] for t in scan if "=" in t] + [
@@ -4730,7 +4736,7 @@ def _check_window(_wi, w):
                 # pair wins (-f/--no-force, -n/--no-dry-run, --cached/--no-cached); only words before "--"
                 # are options (after it "-f" is a path), and a bare --pathspec-from-file takes the next word.
                 if sub == "rm" and _rm_forced(scan):
-                    deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first", rule="git-rm-force")
+                    deny("git rm -f discards the uncommitted changes of the files it removes — confirm with user first, or commit the changes first, then plain `git rm`", rule="git-rm-force")
                 if sub == "branch" and _force and _nonflag and _protected_ref(_nonflag[0]) and not any(
                         t.startswith("-") and not t.startswith("--") and any(c in t for c in "dDmMcC")
                         or _is_flag(t, "--delete", "--move", "--copy") for t in scan):
