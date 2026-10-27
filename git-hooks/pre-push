@@ -98,6 +98,7 @@ if [ "${MH_PREPUSH_FULL:-}" != 1 ]; then
     fi
     [ -n "$_files" ] || continue
     _tmp=$(mktemp -d) && [ -d "$_tmp" ] || { echo "pre-push: mktemp -d failed" >&2; exit 1; }
+    # shortcut: git archive drops export-ignore paths (none in this repo); extract per blob if one is added.
     git archive "$_sha" | tar -x -C "$_tmp"
     echo "pre-push: linting $(printf '%s\n' "$_files" | wc -l | tr -d ' ') changed file(s) in ${_sha:0:12} (MH_PREPUSH_FULL=1 runs the full gauntlet)"
     ( cd "$_tmp" && printf '%s\n' "$_files" | run_lint ) || _lint_rc=1
