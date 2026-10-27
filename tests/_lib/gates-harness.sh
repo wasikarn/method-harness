@@ -187,28 +187,24 @@ test_deny() {
   if /usr/bin/grep -qE 'Traceback|internal error' "$_ERRF"; then
     echo "  ❌ DENY came from a crash, not the gate's own rule: $desc ($(tail -1 "$_ERRF"))" >&2
     fail=$((fail + 1))
-  elif [[ "$rc" == "2" ]]; then
-    echo "  ✅ DENY: $desc"
-    pass=$((pass + 1))
-  else
+  elif [[ "$rc" != "2" ]]; then
     echo "  ❌ DENY EXPECTED but got exit $rc: $desc" >&2
     fail=$((fail + 1))
+  elif [ -n "${_DENY_SAYS:-}" ] && ! /usr/bin/grep -qF -- "$_DENY_SAYS" "$_ERRF"; then
+    echo "  ❌ DENY naming '$_DENY_SAYS' EXPECTED ($(tail -1 "$_ERRF")): $desc" >&2
+    fail=$((fail + 1))
+  elif [ -n "${_DENY_NOT:-}" ] && /usr/bin/grep -qF -- "$_DENY_NOT" "$_ERRF"; then
+    echo "  ❌ DENY must not name '$_DENY_NOT' ($(tail -1 "$_ERRF")): $desc" >&2
+    fail=$((fail + 1))
+  else
+    echo "  ✅ DENY${_DENY_SAYS:+ ($_DENY_SAYS)}: $desc"
+    pass=$((pass + 1))
   fi
 }
 
-# test_deny, plus the stderr reason must contain <needle> (the next step a refusal names).
-test_deny_says() {
-  local gate="$1" desc="$2" payload="$3" needle="$4"
-  local rc
-  rc=$(echo "$payload" | bash "$gate" 2>"$_ERRF"; echo $?)
-  if [[ "$rc" == "2" ]] && ! /usr/bin/grep -qE 'Traceback|internal error' "$_ERRF" && /usr/bin/grep -qF -- "$needle" "$_ERRF"; then
-    echo "  ✅ DENY ($needle): $desc"
-    pass=$((pass + 1))
-  else
-    echo "  ❌ DENY naming '$needle' EXPECTED but got exit $rc ($(tail -1 "$_ERRF")): $desc" >&2
-    fail=$((fail + 1))
-  fi
-}
+# test_deny, plus the stderr reason must contain <needle> (the next step a refusal names) and,
+# when given, must not contain <absent>.
+test_deny_says() { _DENY_SAYS="$4" _DENY_NOT="${5:-}" test_deny "$1" "$2" "$3"; }
 
 # Expect exit 2 FROM the fail-closed wrapper after an internal error: the one case test_deny rejects.
 test_deny_failclosed() {
