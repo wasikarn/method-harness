@@ -71,7 +71,9 @@ test_deny_says "$IRRECOVERABLE" "refusal: dropdb has the tail" "$(bash_payload '
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny has the tail" "$(bash_payload 'rm -rf "x')" "$_NODECIDE"
 test_deny_says "$IRRECOVERABLE" "refusal: tokenizer deny says split the command" "$(bash_payload 'rm -rf "x')" "split it into simpler separate commands"
 # hints name steps every mh/dotfiles guard allows: no git stash (subagent-git-guard denies it; the stash is shared)
-_SAVE='or commit first, or save a patch with `git diff HEAD > x.patch`'
+# --binary: a plain diff writes only "Binary files differ" for a binary file; --no-textconv/--no-ext-diff/--no-color:
+# a diff driver or forced color would write text git apply cannot use
+_SAVE='or commit first, or save a patch with `git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch`'
 test_deny_says "$IRRECOVERABLE" "refusal: reset --hard hint" "$(bash_payload 'git reset --hard')" '`git reset --keep <ref>`' '`git stash'
 test_deny_says "$IRRECOVERABLE" "refusal: reset --hard names commit/patch" "$(bash_payload 'git reset --hard')" "$_SAVE"
 test_deny_says "$IRRECOVERABLE" "refusal: restore hint" "$(bash_payload 'git restore f')" "$_SAVE" '`git stash'
@@ -90,7 +92,7 @@ test_deny_says "$IRRECOVERABLE" "refusal: alias definition gets the tail only" "
 test_deny_says "$IRRECOVERABLE" "refusal: -c alias run gets the tail only" "$(bash_payload "git -c alias.x='!git reset --hard' x")" "$_NODECIDE" 'reset --keep'
 test_deny_says "$IRRECOVERABLE" "refusal: -c risk key gets the tail only" "$(bash_payload 'git -c clean.requireForce=false clean')" "$_NODECIDE" 'git clean -n'
 # each alternative a hint names must itself pass the gate
-for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff HEAD > x.patch' 'git clean -n' \
+for _alt in 'git reset --keep HEAD~1' 'git commit -m x' 'git add f.txt' 'git diff --binary --no-textconv --no-ext-diff --no-color HEAD > x.patch' 'git clean -n' \
   'mv f.txt aside/' 'git push origin feat/x' 'git worktree remove ../wt' 'git rm f.txt' \
   'chmod 755 f.sh' 'chmod u+x f.sh' 'git switch main'; do
   test_allow "$IRRECOVERABLE" "refusal hint alternative: $_alt" "$(bash_payload "$_alt")"
@@ -3421,5 +3423,34 @@ test_allow "$IRRECOVERABLE" "GH #676 control: nsenter -W ls" "$(bash_payload 'ns
 test_allow "$IRRECOVERABLE" "GH #676 control: chpst -u www ls" "$(bash_payload 'chpst -u www ls')"
 test_allow "$IRRECOVERABLE" "GH #676 control: setuidgid www ls -la" "$(bash_payload 'setuidgid www ls -la')"
 test_allow "$IRRECOVERABLE" "GH #676 control: echo chroot / rm -rf b" "$(bash_payload 'echo chroot / rm -rf b')"
+
+# GH #674: a shell reads its commands on stdin behind a wrapper, with its own wrapper options, or with its own
+# -o NAME / +o NAME pairs; the echo feeding it may sit behind a wrapper or an assignment too.
+for _c674 in "echo 'rm -rf b' | command -p sh" "echo 'rm -rf b' | time -p sh" "echo 'rm -rf b' | bash -o pipefail" \
+  "bash -o pipefail <<< 'rm -rf b'" "echo 'rm -rf b' | nice sh" "echo 'rm -rf b' | nice -n 5 sh" \
+  "echo 'rm -rf b' | timeout 5 sh" "echo 'rm -rf b' | timeout -s KILL 5 sh" "echo 'rm -rf b' | env -i sh" \
+  "echo 'rm -rf b' | env -u HOME sh" "echo 'rm -rf b' | sudo -u bob sh" "echo 'rm -rf b' | dash -o errexit" \
+  "echo 'rm -rf b' | bash +o histexpand" "echo 'rm -rf b' | bash -eo pipefail" "echo 'rm -rf b' | builtin command sh" \
+  "echo 'rm -rf b' | FOO=1 sh" "echo 'rm -rf b' | nohup nice timeout 5 sh" \
+  "echo 'rm -rf b' | nsenter -t 1 sh" "echo 'rm -rf b' | chroot / sh" "chroot / sh <<< 'rm -rf b'" \
+  "echo 'rm -rf b' | unshare sh" "echo 'rm -rf b' | taskset 1 bash" "echo 'rm -rf b' | chpst -u x sh" \
+  "echo 'rm -rf b' | setuidgid x sh" "echo 'rm -rf b' | flock f sh" "echo 'rm -rf b' | strace -o log sh" \
+  "sudo echo 'rm -rf b' | sh" "env echo 'rm -rf b' | sh" "FOO=1 echo 'rm -rf b' | sh" \
+  "timeout 5 echo 'rm -rf b' | sh" "nice -n 5 printf 'rm -rf b' | sh" "echo 'rm -rf b' | watch sh" \
+  "echo 'rm -rf b' | bash -O extglob" "bash +O extglob <<< 'rm -rf b'" "echo 'rm -rf b' | timeout 5 bash -o nounset -O extglob" \
+  "echo 'rm -rf b' | sudo --prompt x sh" "echo 'rm -rf b' | sudo -T 5 sh" \
+  "echo 'rm -rf b' | sh 2>/dev/null" "echo 'rm -rf b' | sh 2>&1" "echo 'rm -rf b' | sh >log" "echo 'rm -rf b' | sh > log" \
+  "echo 'rm -rf b' | 2>/dev/null sh" "echo 'rm -rf b' | timeout 5 sh 2>/dev/null" "echo 'rm -rf b' | sh &>log" \
+  "sh 2>/dev/null <<< 'rm -rf b'"; do
+  test_deny "$IRRECOVERABLE" "GH #674: $_c674" "$(bash_payload "$_c674")"
+done
+test_deny  "$IRRECOVERABLE" "GH #674: cat <<EOF | timeout 5 sh" "$(bash_payload $'cat <<EOF | timeout 5 sh\nrm -rf b\nEOF')"
+test_deny  "$IRRECOVERABLE" "GH #674: cat <<EOF | nsenter -t 1 sh" "$(bash_payload $'cat <<EOF | nsenter -t 1 sh\nrm -rf b\nEOF')"
+for _c674 in "echo 'ls' | timeout 5 sh" "echo 'rm -rf b' | bash -o pipefail x.sh" "echo 'rm -rf b' | timeout 5 sh x.sh" \
+  "echo 'rm -rf b' | flock f -c ls" "echo 'rm -rf b' | sh < in.sh" "echo 'rm -rf b' | bash -O extglob x.sh" \
+  "echo 'rm -rf b' | sh x.sh 2>/dev/null" "echo 'rm -rf b' | sudo -u bob cat" "echo 'rm -rf b' | nice grep rm" \
+  "echo 'rm -rf b' | env -i bash -c ls" "printf 'ls\n' | nice sh"; do
+  test_allow "$IRRECOVERABLE" "GH #674 control: $_c674" "$(bash_payload "$_c674")"
+done
 
 gates_summary
