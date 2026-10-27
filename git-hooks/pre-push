@@ -101,7 +101,9 @@ if [ "${MH_PREPUSH_FULL:-}" != 1 ]; then
     git archive "$_sha" | tar -x -C "$_tmp"
     echo "pre-push: linting $(printf '%s\n' "$_files" | wc -l | tr -d ' ') changed file(s) in ${_sha:0:12} (MH_PREPUSH_FULL=1 runs the full gauntlet)"
     ( cd "$_tmp" && printf '%s\n' "$_files" | run_lint ) || _lint_rc=1
-    python3 "$HOOK_DIR/../tests/_lib/tmp_delete.py" "$_tmp"; _tmp=""
+    # A refused cleanup (tmp_delete's Linux root is /tmp only) leaks a temp dir; it must not fail the push.
+    python3 "$HOOK_DIR/../tests/_lib/tmp_delete.py" "$_tmp" || echo "pre-push: left the temp copy $_tmp behind (see above)." >&2
+    _tmp=""
   done
   [ "$_lint_rc" -eq 0 ] || { echo "pre-push: lint failed on the files above; fix them and push again." >&2; exit 1; }
   exit 0
