@@ -3448,6 +3448,9 @@ for _c in 'echo $(grep "#" f)' "echo \$(grep '#' f)" 'echo $(echo ${#x})' 'echo 
 done
 test_deny_says "$IRRECOVERABLE" "GH #713: a funsub whose \"}\" argument ends it early names the substitution" \
   "$(bash_payload 'echo "${ echo }; rm -rf ~/x; }"')" "substitution ends at a different place"
+# kept on purpose: a harmless funsub with a "}" argument over-denies (fail closed), quoted or not
+test_deny_says "$IRRECOVERABLE" "GH #713: a funsub with a \"}\" argument over-denies, by design" \
+  "$(bash_payload 'echo ${ echo }; }')" "substitution ends at a different place"
 _timed_case 'GH #713: a commented-) $(...) target before 9000 $(echo #) words denies in bounded time' 2 \
   "echo \$( : # )'${_N}rm -rf ~/x$_N: # '$_N) $(printf '$(echo "#") %.0s' $(seq 9000))"
 _timed_case 'GH #713: a commented-) $(...) target after 9000 $(echo #) words denies in bounded time' 2 \

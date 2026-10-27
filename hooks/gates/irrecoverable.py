@@ -2054,7 +2054,7 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
 # and depth are unchanged from before. Sharing one `depth_work_used`
 # list across the whole recursion (never a fresh one per call) keeps the
 # total work bounded by one _DEPTH_SCAN_BUDGET regardless of nesting
-# depth; `_depth` caps the recursion itself, since a budget check alone
+# depth (plus one more for the check closers, _CHECK_WORK); `_depth` caps the recursion itself, since a budget check alone
 # does not stop Python's own RecursionError on ~1000 properly-closed,
 # budget-cheap nested spans.
 def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
