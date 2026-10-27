@@ -3127,6 +3127,42 @@ test_allow "$IRRECOVERABLE" "GH #661 control: rm {a,b}.log" "$(bash_payload 'rm 
 test_allow "$IRRECOVERABLE" "GH #661 control: rm -f {a,b}.tmp" "$(bash_payload 'rm -f {a,b}.tmp')"
 test_allow "$IRRECOVERABLE" "GH #661 control: rm --{verbose,force} b (no -r)" "$(bash_payload 'rm --{verbose,force} b')"
 
+# GH #693: a $(...)/backtick in the word of a ${...} (default, pattern, subscript, offset) runs, and a bash 5.3
+# funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command; the ${...} body was never read.
+_p693=('echo ${x:-$(@V@)}' 'echo ${x-$(@V@)}' 'echo ${x:=$(@V@)}' 'echo ${x:?$(@V@)}' 'echo ${x:+$(@V@)}'
+  'echo ${x#$(@V@)}' 'echo ${x##$(@V@)}' 'echo ${x%$(@V@)}' 'echo ${x%%$(@V@)}' ': ${x/$(@V@)/}'
+  ': ${x//$(@V@)/y}' 'echo ${x[$(@V@)]}' 'echo ${x:$(@V@)}' 'echo ${x:0:$(@V@)}' 'echo "${x:-$(@V@)}"'
+  'echo ${x:-`@V@`}' 'echo ${x:-${y:-$(@V@)}}' 'x=${x:-$(@V@)}' 'echo ${x:-a #$(@V@)}'
+  "echo \"\${x:-'\$(@V@)'}\"" 'echo ${ @V@; }' 'echo ${| @V@; }' 'echo ${ echo $(@V@); }'
+  'echo ${ echo `@V@`; }'
+  # a quoted word holding "}" is not the funsub's closer (the quote-blind closer cut the body there)
+  "echo \${ echo 'a}'; @V@; }" 'echo ${ echo "a}"; @V@; }' "echo \${| REPLY='a}'; @V@; }"
+  "echo \${ echo 'a}'; }; @V@")
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p693[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #693: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in 'ls ${HOME:-/tmp}' 'echo ${x:-$(date)}' 'echo "${x:-$(date)}"' 'echo ${x//a/b}' 'echo ${#x}' \
+  'echo ${PWD##*/}' 'echo ${1:?usage}' 'cmd ${var:+--flag}' 'printf %s "${arr[@]}"' 'echo $((1+$(date +%s)))' \
+  'echo ${x:-$(rm --help)}' 'echo "${HOME}/rm -rf"' 'echo ${ date; }' 'echo ${x:- default}' \
+  "echo '\${x:-\$(rm -rf ~/x)}'" 'echo ${x:-\$(rm -rf ~/x)}' "echo \${ echo 'a}'; }; echo \"\$PWD\"" \
+  "echo \${ printf '%s}' x; }; echo \"\$PWD\""; do
+  test_allow "$IRRECOVERABLE" "GH #693 control: $_c" "$(bash_payload "$_c")"
+done
+_timed_case 'GH #693: 10000 ${x:-$(date)} words are read in bounded time' 0 \
+  "echo $(printf '${x:-$(date)} %.0s' $(seq 10000))"
+_timed_case 'GH #693: a ${x:-$(rm -rf ~/x)} target before 9000 padding words denies in bounded time' 2 \
+  "echo \${x:-\$(rm -rf ~/x)} $(printf '${x:-$(date)} %.0s' $(seq 9000))"
+_timed_case 'GH #693: a ${x:-$(rm -rf ~/x)} target after 9000 padding words denies in bounded time' 2 \
+  "echo $(printf '${x:-$(date)} %.0s' $(seq 9000)) \${x:-\$(rm -rf ~/x)}"
+_timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
+  "echo $(printf '${x:-a %.0s' $(seq 20000))"
+# each nested funsub level appends its body blanked, not raw, so nested text is not read once per level
+_timed_case 'GH #693: 12 nested funsubs around 124 KB of words are read in bounded time' 0 \
+  "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 15500))$(printf '; }%.0s' $(seq 12))"
+
 # GH #676: chroot, taskset, unshare, nsenter, chpst and setuidgid run the command after their own options
 # and positionals (chroot NEWROOT, taskset's mask, setuidgid's account). Option syntax checked on util-linux
 # 2.39 / coreutils 9.4 (live), runit 2.1.2's chpst getopt string and daemontools 0.76's setuidgid (man pages).

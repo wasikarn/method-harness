@@ -1580,7 +1580,8 @@ def _newlines_to_seps(s):
 # leading-only strip: a mid-flag PH like --for<PH>ce is an exact-match bypass).
 # Blanking must not DISCARD the body ("$ (git push --force)" is a real deny), so
 # every backtick/$(...)/<(...)/>(...) body is re-appended as its own statement;
-# ${...} bodies are not (parameter expansion, not a command). Single-quoted
+# a ${...} body is scanned for those nested spans, and a bash 5.3 funsub body
+# (`${ cmd; }`) is appended as a command (GH #693). Single-quoted
 # spans are never blanked; double-quoted $(...) IS live in bash -- telling them
 # apart needs the real quote-state scan below, not a regex. A span inside a "#"
 # comment passes through unchanged. <(...)/>(...) (GH #181) is never a real
@@ -1649,7 +1650,7 @@ def _close_bracket(s, j, opener, closer, depth_work_used):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None if depth else j
 
-def _close_psub(s, j, depth_work_used):
+def _close_psub(s, j, depth_work_used, opener="(", closer=")"):
     # The "<(...)" / ">(...)" closer search, same contract as _close_bracket but quote-aware, unlike
     # the "$(...)"/"${...}" one: a ")" inside a quoted string in the body
     # ("<(echo \")\"; rm -rf x)") is not a real closer, and the
@@ -1659,6 +1660,8 @@ def _close_psub(s, j, depth_work_used):
     # adversarial pass; the identical gap in "$(...)" itself is
     # pre-existing and unrelated -- filed as GH #184, not fixed
     # here). Each step (one char, or an escaped pair) charges one budget unit.
+    # GH #693: opener "{" finds a funsub's closer; a $(...)/backtick in it may hold a "}" or a quote, so
+    # it is skipped whole (an unclosed one leaves the funsub unclosed).
     n, depth = len(s), 1
     tsq = tdq = False
     while j < n and depth and depth_work_used[0] <= _DEPTH_SCAN_BUDGET:
@@ -1668,6 +1671,18 @@ def _close_psub(s, j, depth_work_used):
             if tc == SQ:
                 tsq = False
             j += 1
+            continue
+        if opener == "{" and tc == "`":
+            k = s.find("`", j + 1)
+            if k == -1:
+                return None
+            depth_work_used[0] += k - j  # the skipped span is charged per char, like every other step
+            j = k + 1
+            continue
+        if opener == "{" and tc == "$" and s[j + 1:j + 2] == "(":
+            j = _close_psub(s, j + 2, depth_work_used)
+            if j is None:
+                return None
             continue
         if tdq:
             if tc == "\\" and j + 1 < n and s[j + 1] in (DQ, "\\", "$", "`"):
@@ -1684,9 +1699,9 @@ def _close_psub(s, j, depth_work_used):
         if tc == "\\" and j + 1 < n:
             j += 2
             continue
-        if tc == "(":
+        if tc == opener:
             depth += 1
-        elif tc == ")":
+        elif tc == closer:
             depth -= 1
         j += 1
     if depth and depth_work_used[0] > _DEPTH_SCAN_BUDGET:
@@ -1711,8 +1726,44 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         bodies.append(s[i + 2:j - 1])
         return PH, j
     if c == "$" and nxt == "{":
-        j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
-        return None if j is None else (PH, j)
+        # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
+        # (`${ echo 'a}'; V; }`) is no closer: find it quote-aware, as for <(...).
+        funsub = s[i + 2:i + 3] in (" ", "\t", "\n", "|")
+        if funsub:
+            j = _close_psub(s, i + 2, depth_work_used, "{", "}")
+        else:
+            j = _close_bracket(s, i + 2, "{", "}", depth_work_used)
+        if j is None:
+            # No closer: bash would refuse the text, but GH #233's "}"-masking can eat a real one
+            # (`"${x:-"'$(V)'"}"`), so the rest is read as the word, quote-blind, charged to the budget.
+            depth_work_used[0] += len(s) - i
+            if depth_work_used[0] > _DEPTH_SCAN_BUDGET or _depth >= 50:
+                _DEPTH_BUDGET_BLOWN[0] = True
+            else:
+                _scan_once(s[i + 2:], bodies, depth_work_used, _depth + 1, in_param=True)
+            return None
+        # GH #693: the word inside ${...} (default, pattern, subscript, offset) still expands, so a
+        # $(...)/backtick/<(...) in it runs: scan the body as the <(...) branch does, quote-blind (bash's
+        # quote rules there vary by operator; fail closed), and keep only the nested bodies. A funsub
+        # body is scanned with normal quoting and appended blanked, as the <(...) body is (a backtick
+        # nested in an appended body is not read again downstream, and a raw one would repeat its nested
+        # bodies once per level).
+        body = s[i + 2:j - 1]
+        if funsub:
+            body = body[1:] if body[0] == "|" else body
+        if _depth >= 50:
+            _DEPTH_BUDGET_BLOWN[0] = True
+        elif not funsub:
+            _scan_once(body, bodies, depth_work_used, _depth + 1, in_param=True)
+        else:
+            body = _scan_once(body, bodies, depth_work_used, _depth + 1)
+            try:
+                shlex.split(body)
+            except ValueError:
+                # an unbalanced quote here would pair with one left in the main text and hide its tail
+                _DEPTH_BUDGET_BLOWN[0] = True
+            bodies.append(body)
+        return PH, j
     if c in ("<", ">") and not in_dquote and nxt == "(":
         # Process substitution (GH #181): "<(cmd)"/">(cmd)" is a WORD,
         # never a real redirect (a real "<"/">" redirect target can't
@@ -1741,10 +1792,9 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         # neighbor characters and evading exact-match dispatch
         # (an adversarial pass caught this live: "<(echo `rm -rf
         # x`)" reached shlex as "`rm", never matching "rm").
-        # Recursively re-scanning it here (this branch only --
-        # the sibling "$(...)"/"${...}" branches above share the
-        # identical gap, confirmed pre-existing, filed as GH
-        # #185, not fixed here) closes that while a shared
+        # Recursively re-scanning it here (the "${...}" branch
+        # above does the same since GH #693; "$(...)" shares the
+        # gap, filed as GH #185) closes that while a shared
         # depth_work_used bounds the total work across every
         # recursion level to one budget; _depth caps the
         # recursion itself, since a budget check alone doesn't
@@ -1760,12 +1810,12 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
     return None
 
 # One left-to-right pass with real quote/comment state; collects
-# backtick/$(...) bodies (never ${...}) into the shared `bodies` list.
-# `depth_work_used`/`_depth`: only the <(...)/>(...) branch (GH #181)
-# passes these, to recursively re-scan ITS OWN extracted body for a
-# nested different-type substitution before splicing it back in verbatim
-# (a backtick nested inside "<(...)" was found live/unscanned by an
-# adversarial pass -- see the GH #181 comment on that branch). The
+# backtick/$(...) bodies, and those nested in ${...} (GH #693), into the shared `bodies` list.
+# `depth_work_used`/`_depth`: the <(...)/>(...) branch (GH #181) and the ${...} branch
+# pass these, to recursively re-scan their own extracted body for a
+# nested different-type substitution (a backtick nested inside "<(...)"
+# was found live/unscanned by an adversarial pass -- see the GH #181
+# comment on that branch); `in_param` reads a ${...} word quote-blind. The
 # top-level fixed-point loop below never passes them, so its own budget
 # and depth are unchanged from before. Sharing one `depth_work_used`
 # list across the whole recursion (never a fresh one per call) keeps the
@@ -1773,7 +1823,7 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
 # depth; `_depth` caps the recursion itself, since a budget check alone
 # does not stop Python's own RecursionError on ~1000 properly-closed,
 # budget-cheap nested spans.
-def _scan_once(s, bodies, depth_work_used=None, _depth=0):
+def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
     if depth_work_used is None:
         depth_work_used = [0]
     out = []
@@ -1799,12 +1849,13 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0):
                 continue
             # else: fall through -- substitutions ARE live inside double quotes
         else:
-            if c == SQ:
+            # in_param (a ${...} word, GH #693): quote- and comment-blind, so every $(/backtick/<( is live.
+            if c == SQ and not in_param:
                 out.append(c)
                 i = _copy_squote(s, i + 1, out)
                 last_escaped = False
                 continue
-            if c == DQ:
+            if c == DQ and not in_param:
                 in_dquote = True
                 out.append(c); i += 1
                 last_escaped = False
@@ -1814,7 +1865,7 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0):
                 i += 2
                 last_escaped = True
                 continue
-            if c == "#" and not last_escaped and (not out or out[-1] in _REDIRECT_TARGET_STOP):
+            if c == "#" and not in_param and not last_escaped and (not out or out[-1] in _REDIRECT_TARGET_STOP):
                 out.append(c)
                 i = _copy_comment(s, i + 1, out, "\n")
                 last_escaped = False
@@ -2522,7 +2573,7 @@ except ValueError:
 # A scan that could not finish left a span un-blanked -- deny before dispatch.
 def _deny_if_depth_blown():
     if _DEPTH_BUDGET_BLOWN[0]:
-        deny("command too long to safely tokenize (nested substitution exceeded depth-scan budget) - confirm with user first")
+        deny("could not safely tokenize command (nested substitution exceeded the depth-scan budget, or a funsub body has an unbalanced quote) - confirm with user first")
 _deny_if_depth_blown()
 
 # GH #254: a "{" or "}" inside a word is literal in bash ("feat{1}"), but shlex splits the word there
