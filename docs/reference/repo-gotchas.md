@@ -220,9 +220,9 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   stderr and journal rows and prints diff classes with counts and 3 redacted samples, never raw
   transcript text. Both sides journal to a temp file under a temp HOME: earlier hand-built replays
   that did not isolate it left 268k session-less rows in the real journal. The fuzz is a few fixed
-  rewrites; the real-shell oracle and a validator's own generator below still apply. It waits in the
-  pre-push gauntlet's queue first, so a run started beside a peer's gauntlet can block up to
-  `GAUNTLET_LOCK_WAIT_SECS` (1800 s) before it starts.
+  rewrites; the real-shell oracle and a validator's own generator below still apply. It runs at
+  the lowest CPU priority (`renice 19`) and never takes the pre-push gauntlet's queue: a 28-min
+  replay holding the queue kept every push waiting (2026-10-27).
 
 - **Acceptance:** 0 commands that `develop` denies and the branch allows, apart from a category
   the PR names as intended. Over-denies are the safe direction and are reported, not blocking.
