@@ -3422,4 +3422,35 @@ test_allow "$IRRECOVERABLE" "GH #676 control: chpst -u www ls" "$(bash_payload '
 test_allow "$IRRECOVERABLE" "GH #676 control: setuidgid www ls -la" "$(bash_payload 'setuidgid www ls -la')"
 test_allow "$IRRECOVERABLE" "GH #676 control: echo chroot / rm -rf b" "$(bash_payload 'echo chroot / rm -rf b')"
 
+# GH #713: the $(...) closer had no comment state, so a commented ")" ended it before bash and the "'" in the
+# comment hid the rest; and a funsub ended at any "}", where bash ends it only at a "}" in command position,
+# so a "}" argument inside "..." left the rest in the gate's quotes. bash 5.3 runs @V@ in each.
+_p713=("echo \$( : # )'$_N@V@$_N: # '$_N)" "echo \${x:-\$( : # )'$_N@V@$_N: # '$_N)}"
+  "echo \"\$( : # )'$_N@V@$_N: # '$_N)\"" "echo \$(: #)'$_N@V@$_N#'$_N)" "x=\$( : # )'$_N@V@$_N: # '$_N)"
+  'echo "${ echo }; @V@; }"' 'echo "${ echo a}b; @V@; }"' 'echo "${| echo }; @V@; }"' 'x="${ echo }; @V@; }"'
+  'echo "${ printf %s }; @V@; }"' 'echo "${ echo {; @V@; }"' 'echo "${ echo \;}; @V@; }"')
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p713[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #713: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in 'echo $(grep "#" f)' "echo \$(grep '#' f)" 'echo $(echo ${#x})' 'echo $(( 16#ff ))' \
+  "echo \$(awk -F'#' '{print \$1}' f)" 'echo $(sed "s/#.*//" f)' "echo \$(git log --format='%h #%s' -1)" \
+  "echo \$(ls # list$_N)" 'echo ${ echo {a,b}; }' 'echo ${ f() { echo; }; f; }' \
+  'echo ${ if true; then { echo; }; fi; }' 'echo "${ echo a; }"' 'echo ${x:-${ echo a; }}' \
+  'echo "${ true && { echo a; }; }"' 'echo "${ (echo a) }"' "echo \"\${ echo a$_N}\"" 'echo "${ echo a;}"'; do
+  test_allow "$IRRECOVERABLE" "GH #713 control: $_c" "$(bash_payload "$_c")"
+done
+test_deny_says "$IRRECOVERABLE" "GH #713: a funsub whose \"}\" argument ends it early names the substitution" \
+  "$(bash_payload 'echo "${ echo }; rm -rf ~/x; }"')" "substitution ends at a different place"
+_timed_case 'GH #713: a commented-) $(...) target before 9000 $(echo #) words denies in bounded time' 2 \
+  "echo \$( : # )'${_N}rm -rf ~/x$_N: # '$_N) $(printf '$(echo "#") %.0s' $(seq 9000))"
+_timed_case 'GH #713: a commented-) $(...) target after 9000 $(echo #) words denies in bounded time' 2 \
+  "echo $(printf '$(echo "#") %.0s' $(seq 9000))\$( : # )'${_N}rm -rf ~/x$_N: # '$_N)"
+_timed_case 'GH #713: 10000 $(echo #) words are read in bounded time' 0 \
+  "echo $(printf '$(echo "#") %.0s' $(seq 10000))"
+_timed_case 'GH #713: 5000 "${ echo a; }" funsubs are read in bounded time' 0 \
+  "echo $(printf '"${ echo a; }" %.0s' $(seq 5000))"
+
 gates_summary
