@@ -139,15 +139,14 @@ lock is per machine.
 
 **`mh/gauntlet` branch protection (applied 2026-10-30; GH #742).** The scripts above
 post the commit status `mh/gauntlet` = `success` on a head only after a green or cached full gauntlet.
-To make GitHub refuse every merge path without it (web button, bare `gh pr merge`, MCP), the
-operator sets two things in develop's branch protection: the required status check context
-`mh/gauntlet`, and "Require branches to be up to date before merging" (so the checked head is the
-merged tree). The status is an honest-agent signal: any token with repo scope can post it, so it is
-not a security boundary.
+Develop's branch protection requires the status check context `mh/gauntlet` and "Require branches
+to be up to date before merging", so GitHub refuses every merge path without it (web button, bare
+`gh pr merge`, MCP) and the checked head is the merged tree. The status is an honest-agent signal:
+any token with repo scope can post it, so it is not a security boundary.
 
-The checks and the lock are local-only. The script narrows the gap; it does not close it: a merge made
-outside the script costs a retry round, a push to `develop` from another clone between the last check
-and the merge can still race, and nothing stops a merge made outside the script. The script's own `gh pr merge` call runs inside the script, so
+The checks and the lock are local-only. A merge made outside the script is refused unless its head
+already carries the status (or someone posts one by hand), and one that lands moves develop, which
+costs the script a retry round. The script's own `gh pr merge` call runs inside the script, so
 `gate:bash:irrecoverable`'s ask on that command does not see it.
 
 The former `git worktree add -b` deny predates this and was removed in the v1.0.0 rebuild;
