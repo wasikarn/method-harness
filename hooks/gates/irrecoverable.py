@@ -44,12 +44,15 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
 # can't fill the remote slot (`push -f --mirror HEAD:feat`: git reads --mirror and a repository HEAD:feat). An explicit src:dst ignores remote.<r>.push, push.default
 # and branch merge config, and mirror config refuses it. It skips only the force-push denies (git-push-force,
 # the ambiguity push arm, a -c remote.<r>.push "+" pair), and only when no dst or lease ref is protected.
-_FP_L = r"[A-Za-z0-9._/][A-Za-z0-9._/-]*(?::[0-9a-f]{4,40})?"
+_FP_LEASE_REF = r"[A-Za-z0-9._/][A-Za-z0-9._/-]*(?::[0-9a-f]{4,40})?"
 _FP_STRICT_RE = re.compile(
     r"git(?: -C [A-Za-z0-9._/~][A-Za-z0-9._/~-]*)? push"
-    r"(?: (?:-[fuqvn]+|--force|--force-if-includes|--force-with-lease(?:=" + _FP_L + r")?|--set-upstream|--quiet"
-    r"|--verbose|--dry-run|--atomic|--porcelain|--progress|--no-progress))*"
-    r" [A-Za-z0-9._][A-Za-z0-9._-]*(?: \+?[A-Za-z0-9._/@][A-Za-z0-9._/@-]*:[A-Za-z0-9._/][A-Za-z0-9._/-]*)+")
+    r"(?P<opts>(?: (?:-[fuqvn]+|--force|--force-if-includes|--force-with-lease(?:=" + _FP_LEASE_REF + r")?"
+    r"|--set-upstream|--quiet|--verbose|--dry-run|--atomic|--porcelain|--progress|--no-progress))*)"
+    r" [A-Za-z0-9._][A-Za-z0-9._-]*(?P<refs>(?: \+?[A-Za-z0-9._/@][A-Za-z0-9._/@-]*:[A-Za-z0-9._/][A-Za-z0-9._/-]*)+)")
+# The operator's force-push list (2026-10-27). The delete-protect checks (_protected_ref, git branch -D) keep
+# develop's main/master/develop: widening them is a separate policy change.
+_FP_PROTECTED = ("main", "master", "develop", "production", "staging")
 
 def _fp_protected(ref):
     ref = ref.lower()
@@ -57,21 +60,16 @@ def _fp_protected(ref):
         if ref.startswith(p):
             ref = ref[len(p):]
             break
-    return ref in ("main", "master", "develop", "production", "staging") or ref.startswith("release/")
+    return ref in _FP_PROTECTED or ref.startswith("release/")
 
 def _fp_allowed(raw):
     if not isinstance(raw, str):
         return False
-    raw = raw.strip(" \t\n")
-    if not _FP_STRICT_RE.fullmatch(raw):
+    m = _FP_STRICT_RE.fullmatch(raw.strip(" \t\n"))
+    if not m:
         return False
-    words = raw.split(" ")
-    refs = [w.split("=", 1)[1].split(":", 1)[0] for w in words if w.startswith("--force-with-lease=")]
-    # The remote is the first word after push that is not an option; every word after it is a src:dst.
-    i = 4 if words[1] == "-C" else 2  # past `git [-C P] push`; the path may itself be "push"
-    while words[i].startswith("-"):
-        i += 1
-    refs += [w.split(":", 1)[1] for w in words[i + 1:]]
+    refs = [w.split("=", 1)[1].split(":", 1)[0] for w in m["opts"].split() if w.startswith("--force-with-lease=")]
+    refs += [w.split(":", 1)[1] for w in m["refs"].split()]  # src holds no ':', so this is the dst
     return not any(_fp_protected(r) for r in refs)
 
 _FORCE_PUSH_OK = _fp_allowed(d["tool_input"].get("command"))
