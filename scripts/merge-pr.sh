@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # merge-pr.sh <PR> — bring a develop PR up to date, cut its version, push it, and merge it (GH #450).
 # PRs do not touch the version. When the PR branch is behind origin/develop the script merges develop
-# into it, writes develop's version + 1 into both manifests in the same commit, and pushes, so the
-# pre-push gauntlet runs on the exact tree that merges (#445 + #446 were green alone and red
-# together). Until 2026-10-25 each PR bumped its own version, and every peer merge re-conflicted every
+# into it, writes develop's version + 1 into both manifests in the same commit, runs the full gauntlet on
+# that exact tree under the gauntlet lock, then pushes (#445 + #446 were green alone and red together).
+# Since GH #735 a push runs only a fast lint, so this run is the full gauntlet's gate on develop; a pass
+# cached for the same tree (scripts/_lib/gauntlet-pass.sh) skips it, GAUNTLET_PASS_CACHE=0 forces it. Until 2026-10-25 each PR bumped its own version, and every peer merge re-conflicted every
 # open PR on those two lines (#581 took ~6 re-syncs). A per-user lock lets one merge-pr.sh run at a
 # time, so develop holds still while a merge's gauntlet runs; a merge made outside the script costs a
 # retry round (3 at most). --match-head-commit pins the merge to the pushed sha: a push after the check
@@ -11,7 +12,7 @@
 # refuses a PR with no fresh review verdict (see check_review).
 # Run it from the PR's own checkout, on its branch, with a clean tree: it commits there and pushes.
 # One run can span a gauntlet plus lock waits (> 10 min), so start it in the background.
-# Bash 3.2. Env: MERGE_PR_LOAD_MAX (default: the online core count, 4 if getconf cannot tell), MERGE_PR_LOAD_WAIT_SECS (900),
+# Bash 3.2. Env: GAUNTLET_PASS_DIR, GAUNTLET_PASS_CACHE, MERGE_PR_LOAD_MAX (default: the online core count, 4 if getconf cannot tell), MERGE_PR_LOAD_WAIT_SECS (900),
 # MERGE_PR_LOCK_DIR ($HOME/.cache/mh/merge-pr.lock), MERGE_PR_LOCK_WAIT_SECS (3600).
 #
 # merge-pr.sh --verify <PR> <head sha> <base branch> <comments.json> — the same checks without gh, for a
@@ -19,7 +20,8 @@
 # passes what those tools return: the head sha, the base branch, and the PR's issue comments as a JSON
 # array of objects with a "body" (read by the same verdict parser). It runs the base, review, ancestry
 # and version checks and never takes the lock, syncs, pushes or merges: a head that lacks origin/develop
-# or a version above it is refused with the scripts/sync-pr-head.sh command to run first. On a pass it
+# or a version above it is refused with the scripts/sync-pr-head.sh command to run first, and so is a
+# head whose tree has no cached full-gauntlet pass (GH #735; GAUNTLET_PASS_CACHE=0 always refuses). On a pass it
 # prints the head; merge it pinned to that sha (expectedHeadSha) right away. Before this mode, cloud
 # sessions retyped these checks by hand for every merge (#633, #644, #648).
 set -euo pipefail
@@ -27,6 +29,8 @@ set -euo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 # shellcheck source=_lib/gauntlet-lock.sh
 . "$HERE/_lib/gauntlet-lock.sh"
+# shellcheck source=_lib/gauntlet-pass.sh
+. "$HERE/_lib/gauntlet-pass.sh"
 
 usage() {
   echo "usage: merge-pr.sh <PR number>" >&2
@@ -76,7 +80,7 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
 # The merge lock is the gauntlet queue's code with its own dir. `local` keeps GAUNTLET_LOCK_DIR out of
-# the environment, so the pre-push hook under this script still queues on the gauntlet lock.
+# the environment, so the gauntlet this script runs still queues on the gauntlet lock.
 merge_lock_dir="${MERGE_PR_LOCK_DIR:-$HOME/.cache/mh/merge-pr.lock}"
 merge_lock_take() {
   # shellcheck disable=SC2034 # read by gauntlet_lock_acquire
@@ -125,9 +129,9 @@ fi
 # lock and load waits leave the caller time to edit this checkout.
 require_clean() {
   local dirty
-  dirty=$(git status --porcelain) || die "git status failed."
+  dirty=$(git status --porcelain --untracked-files=normal) || die "git status failed."
   if [ -n "$dirty" ]; then
-    die "the checkout has uncommitted or untracked files $1; the pre-push gauntlet runs on this tree, so it must match the commit that merges. Commit or move them, and do not edit this checkout while merge-pr.sh runs."
+    die "the checkout has uncommitted or untracked files $1; the gauntlet runs on this tree, so it must match the commit that merges. Commit or move them, and do not edit this checkout while merge-pr.sh runs."
   fi
 }
 if [ "$verify" = 0 ]; then
@@ -421,42 +425,39 @@ remote_head() {
 
 require_unchanged_after_gauntlet() {
   local dirty
-  dirty=$(git status --porcelain) || die "git status failed."
+  dirty=$(git status --porcelain --untracked-files=normal) || die "git status failed."
   if [ -n "$dirty" ]; then
-    die "the checkout changed while the pre-push gauntlet ran, so its result does not cover $head. Clean the checkout and run merge-pr.sh again; it runs the gauntlet again first."
+    die "the checkout changed while the gauntlet ran, so its result does not cover $head. Clean the checkout and run merge-pr.sh again; it runs the gauntlet again first."
   fi
+  # A commit or checkout during the run leaves the status clean but moves HEAD off the tree it tested.
+  [ "$(git rev-parse HEAD)" = "$head" ] ||
+    die "HEAD moved off $head while the gauntlet ran, so its result does not cover the checkout. Put the branch back on $head (or let a new review cover the new commit) and run merge-pr.sh again."
 }
 
-# run_gauntlet_here: origin already has $head, pushed by an earlier run or by the PR's author (who may
-# have edited the tree during that gauntlet, or pushed with hooks off), so run the pre-push hook on this
-# clean tree before merging it.
+# run_gauntlet_here: run the full gauntlet on this clean checkout, which is $head, before it is pushed or
+# merged (GH #735: the pre-push hook only lints). Also when origin already has $head: its author may have
+# edited the tree during a gauntlet, or never ran one. A pass cached for this tree skips the run.
 run_gauntlet_here() {
-  local hook
-  hook=$(git rev-parse --git-path hooks/pre-push) || die "cannot find the pre-push hook path."
-  if [ ! -x "$hook" ]; then
-    die "no executable pre-push hook at $hook, so nothing would run the gauntlet on $head; set core.hooksPath (git config core.hooksPath git-hooks)."
-  fi
-  echo "merge-pr: origin already has $head; running the pre-push gauntlet on it before merging." >&2
-  env -u MH_GAUNTLET_LOCK_OWNER "$hook" origin origin </dev/null || die "the pre-push gauntlet failed on $head; fix it, commit, and run merge-pr.sh again (a fix commit needs a new review verdict)."
+  [ "$(git rev-parse HEAD)" = "$head" ] || die "HEAD moved off $head before the gauntlet; run merge-pr.sh again."
+  gauntlet_full merge-pr || die "the gauntlet failed on $head; fix it, commit, and run merge-pr.sh again (a fix commit needs a new review verdict)."
   require_unchanged_after_gauntlet
 }
 
-# push_head: push HEAD to the PR branch (the pre-push gauntlet runs on this tree) and wait until GitHub
-# shows it as the PR head. A push that exits non-zero after the hook passed (exit 141, an idle SSH
-# drop) still counts when origin has the commit.
+# push_head: push $head, the sha the gauntlet passed, to the PR branch and wait until GitHub shows it as
+# the PR head. A push that exits non-zero but landed (exit 141, an idle SSH drop) still counts when origin
+# has the commit.
 push_head() {
   local rc=0 remote n=0 ssh_cmd
-  # git opens the SSH connection before the pre-push hook runs, so it idles through the whole gauntlet
-  # and GitHub drops it (exit 141 on #634's first merge run, 2026-10-26): keep it alive, with the
-  # 10 s x 30 setting that held on 2026-09-30.
+  # The SSH keepalive dates from the hook running the whole gauntlet while the connection idled (exit 141
+  # on #634's first merge run, 2026-10-26); the 10 s x 30 setting that held on 2026-09-30 stays, cheap,
+  # for a hook run with MH_PREPUSH_FULL=1.
   ssh_cmd="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand || echo "${GIT_SSH:-ssh}")} -o ServerAliveInterval=10 -o ServerAliveCountMax=30"
-  # MH_GAUNTLET_LOCK_OWNER is this script's merge-lock pid; the hook must queue on the gauntlet lock.
-  env -u MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND="$ssh_cmd" git push origin "HEAD:refs/heads/$branch" || rc=$?
+  # MH_GAUNTLET_LOCK_OWNER is this script's merge-lock pid; a full-gauntlet hook must queue on the gauntlet lock.
+  env -u MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND="$ssh_cmd" git push origin "$head:refs/heads/$branch" || rc=$?
   remote=$(remote_head) || exit 1
   if [ "$remote" != "$head" ]; then
-    die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push gauntlet failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch, and a fix commit needs a new review verdict."
+    die "the push of $head to $branch did not land (origin has ${remote:-nothing}, push rc=$rc). If the pre-push lint failed, fix it, commit, and run merge-pr.sh again: the sync and version commits stay on the local branch, and a fix commit needs a new review verdict."
   fi
-  require_unchanged_after_gauntlet
   [ "$rc" -eq 0 ] || echo "merge-pr: git push exited $rc but origin has $head; going on." >&2
   until [ "$(gh pr view "$pr" --json headRefOid -q .headRefOid)" = "$head" ]; do
     n=$((n + 1))
@@ -477,7 +478,13 @@ if [ "$verify" = 1 ]; then
     die "PR $pr head $head does not contain origin/develop; $(resync_hint)."
   fi
   check_version
-  echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE); merge it pinned to that sha now, and verify again if develop moves first." >&2
+  # A push only lints (GH #735), so the merged tree must have passed the full gauntlet here: a pass
+  # cached for its tree, which sync-pr-head.sh or a clean run-gauntlet.sh writes. No cache, no merge.
+  tree=$(git rev-parse --verify "$head^{tree}") || die "cannot read the tree of $head."
+  if ! gauntlet_pass_has "$tree"; then
+    die "no full-gauntlet pass is cached for $head's tree $tree in $(gauntlet_pass_dir)${GAUNTLET_PASS_CACHE:+ (GAUNTLET_PASS_CACHE=$GAUNTLET_PASS_CACHE)}; run scripts/sync-pr-head.sh <head branch> $head (it runs the gauntlet), or bash scripts/run-gauntlet.sh on a clean checkout of $head, then --verify again."
+  fi
+  echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE, full gauntlet passed on its tree); merge it pinned to that sha now, and verify again if develop moves first." >&2
   echo "$head"
   exit 0
 fi
@@ -499,11 +506,8 @@ while :; do
   check_review
   remote=$(remote_head) || exit 1
   require_clean "before the gauntlet"
-  if [ "$remote" != "$head" ]; then
-    push_head
-  else
-    run_gauntlet_here
-  fi
+  run_gauntlet_here
+  [ "$remote" = "$head" ] || push_head
   # A merge made outside this script lands no matter the lock: fetch, and sync again if it did.
   fetch_develop "git fetch failed after the push; not merging."
   rc=0

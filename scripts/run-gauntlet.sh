@@ -16,7 +16,10 @@
 #             tests/mods/*.test.ts run via tests/hooks/test-cost-ledger-module.sh
 #             (`claude plugin test`). test-run-gauntlet-wiring.sh fails on a tests/<dir>
 #             no layer runs (GH #448).
-# Wired to git-hooks/pre-push. harness-audit runs in pre-commit, not here.
+# A full, clean, passing run records a pass for its tree (scripts/_lib/gauntlet-pass.sh, GH #735).
+# Run by scripts/merge-pr.sh and scripts/sync-pr-head.sh before they push, and by git-hooks/pre-push only
+# with MH_PREPUSH_FULL=1 (a plain push runs the lint layer on the changed files). harness-audit runs in
+# pre-commit, not here.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 1
@@ -78,33 +81,12 @@ run_validate() {
   claude plugin validate .claude-plugin/plugin.json
 }
 
-existing() { local f; while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done; return 0; }
-
-# Syntax layers skip the audit's known-bad fixtures, invalid on purpose (same rule as pre-commit).
-lintable() { git ls-files "$@" ':(exclude)tests/skills/harness-audit/known-bad' | existing; }
-
-run_lint() {
-  local rc=0
-  # Lint runs beside 4 test jobs; P stays low because GH #158 timing rows flake under load.
-  # Without -x or a .shellcheckrc, shellcheck checks each file alone, so batching keeps its verdicts.
-  # bash -n stays one file per call: `bash -n a b` checks only a (b is its $1).
-  lintable '*.sh' 'git-hooks/*' | tr '\n' '\0' | xargs -0 -n 1 -P 2 bash -n || rc=1
-  if command -v shellcheck >/dev/null; then
-    lintable '*.sh' 'git-hooks/*' | tr '\n' '\0' | xargs -0 -n 60 -P 2 shellcheck -S warning || rc=1
-  fi
-  # One python process for every .py and .json, instead of one per file.
-  lintable '*.py' '*.json' | tr '\n' '\0' | xargs -0 python3 scripts/_lib/lint-files.py || rc=1
-  # Whole-tree home-path ban (pre-commit only sees staged blobs).
-  # Env goes on xargs, not after it: BSD xargs treats `LC_ALL=C` as the command (exit 127,
-  # once swallowed by 2>/dev/null). Hits are captured because xargs exits 123 on any batch
-  # where grep found nothing, which an `if` on the pipeline would read as a miss.
-  home_hits=$(git ls-files | existing \
-       | LC_ALL=C xargs /usr/bin/grep -alE '/Users/[A-Za-z]|-Users-[A-Za-z]' 2>/dev/null || true)
-  if [ -n "$home_hits" ]; then
-    printf '%s\n' "$home_hits"; echo "hardcoded home path in tracked file(s) above"; rc=1
-  fi
-  return "$rc"
-}
+# shellcheck source=_lib/gauntlet-lint.sh
+. "$ROOT/scripts/_lib/gauntlet-lint.sh"
+# shellcheck source=_lib/gauntlet-pass.sh
+. "$ROOT/scripts/_lib/gauntlet-pass.sh"
+# The pass cache (GH #735) keys on the tree a clean checkout starts from; read before any layer runs.
+start_tree=$(gauntlet_pass_start)
 
 # The test files the layer runs, in glob order. Kept apart from run_hook_tests so
 # tests/scripts/test-run-gauntlet-wiring.sh can check the globs without running
@@ -149,6 +131,8 @@ run_hook_tests() {
   # PyYAML is resolved via the real $HOME's user site-packages, so replacing
   # HOME wholesale has far more blast radius than this one write path needs.
   local JOURNAL_TMP
+  # A fixture gauntlet that a test runs must not write the operator's pass cache.
+  export GAUNTLET_PASS_CACHE=0
   JOURNAL_TMP="$(mktemp -d)"
   trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$JOURNAL_TMP"' RETURN
   export MH_GATE_JOURNAL_PATH="$JOURNAL_TMP/gate-decisions.jsonl"
@@ -197,7 +181,7 @@ p1="" p2=""
 if [ -z "$shard" ] || [ "${shard%/*}" -eq 1 ]; then
   # check-observer-contract.sh (GH #443): the mh module stays a turn.complete observer.
   { run_validate && bash scripts/check-observer-contract.sh "$ROOT"; } >"$LOG/validate" 2>&1 & p1=$!
-  run_lint >"$LOG/lint" 2>&1 & p2=$!
+  git ls-files | run_lint >"$LOG/lint" 2>&1 & p2=$!
 fi
 run_hook_tests >"$LOG/tests" 2>&1 & p3=$!
 
@@ -218,6 +202,7 @@ report lint "$p2"
 report tests "$p3"
 if [ "$fail" -eq 0 ]; then
   echo "gauntlet: all layers passed"
+  gauntlet_pass_record "$fail" "$shard" "$start_tree"
 else
   echo "gauntlet: FAILED (full logs kept at $LOG)" >&2
   stray_procs_report  # before the lists: the last line stays the failing: list (GH #387)

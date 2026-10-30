@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-gauntlet-lock.sh — GH #158: scripts/_lib/gauntlet-lock.sh queues pre-push gauntlets so
+# test-gauntlet-lock.sh — GH #158: scripts/_lib/gauntlet-lock.sh queues full gauntlets so
 # only one runs per machine (timing rows fail when several run at once). Each case runs the
 # library in its own `bash -c` process, so every case has its own $$, against a throwaway lock
 # dir. Fail-open by design: a wait that outlasts GAUNTLET_LOCK_WAIT_SECS proceeds with a message.

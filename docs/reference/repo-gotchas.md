@@ -6,20 +6,32 @@
 
 `claude plugin validate . --strict` is the primary gate. `scripts/run-gauntlet.sh` runs three
 layers in parallel: plugin-validate, lint (shell, Python, JSON, whole-tree home-path ban), and
-every test under `tests/`. pre-push runs the gauntlet; pre-commit runs the fast subset (syntax,
+every test under `tests/`. pre-commit runs the fast subset (syntax,
 shellcheck on staged `.sh`, JSON parse, the home-path ban, harness-audit CRIT only, and when a gate
 is staged, `scripts/gate-canary.sh` against the index copy of `hooks/gates/`).
 
+Pushes no longer run the full gauntlet (GH #735: one PR ran it 3-5 times a day, minutes each plus
+queue time). pre-push runs the gauntlet's lint layer (`scripts/_lib/gauntlet-lint.sh`) on the files
+the pushed commit changed since `develop` (else since the remote's old sha, else all), read from the
+commit, not the working tree: no tests, no queue, seconds. `MH_PREPUSH_FULL=1` runs the old path (queue
+plus full gauntlet). The full gauntlet runs in `scripts/merge-pr.sh` and `scripts/sync-pr-head.sh`,
+under the queue, on the exact tree they push and merge, before the push. A full (unsharded) run where
+every layer passed on a checkout identical to HEAD, at start and end, writes
+`~/.cache/mh/gauntlet-pass/<HEAD^{tree}>` (`scripts/_lib/gauntlet-pass.sh`); those two scripts skip
+the run on a hit and say so. `GAUNTLET_PASS_CACHE=0` neither reads nor writes it. So a red test now
+shows at merge time, not at push time: run `bash scripts/run-gauntlet.sh` on a clean tree before asking
+for review when the change is risky, and the cached pass makes the merge-time run free if the tree
+does not change.
+
 The gauntlet's timing rows ("finishes inside 4 s / 8 s") fail when several gauntlets share the
-machine (GH #158: four parallel builders pushed load to 15-20 and failed seven pushes). pre-push
-therefore takes a per-user lock (`scripts/_lib/gauntlet-lock.sh`, default
+machine (GH #158: four parallel builders pushed load to 15-20 and failed seven pushes). Every full
+gauntlet run by `merge-pr.sh`, `sync-pr-head.sh` or `MH_PREPUSH_FULL=1` therefore takes a per-user lock (`scripts/_lib/gauntlet-lock.sh`, default
 `~/.cache/mh/gauntlet.lock`) and waits its turn, up to 30 minutes, then runs anyway with a message
 (it orders work; it is never a gate). A lock whose owner is gone is reclaimed; a child of the holder
 skips the queue so a test that runs the hook cannot deadlock the gauntlet. Load from other apps and
-non-mh sessions is not covered. Builders still build in parallel; only their pushes queue. If
-`core.hooksPath` is an absolute path to the main checkout, a push from any worktree runs that
-checkout's hook, so the lock applies only once that checkout has the new `git-hooks/pre-push`
-(update it after this lands); a relative path uses each worktree's own hook.
+non-mh sessions is not covered. Builders still build and push in parallel; only full gauntlets queue.
+If `core.hooksPath` is an absolute path to the main checkout, a push from any worktree runs that
+checkout's hook; a relative path uses each worktree's own hook.
 
 Under `set -o pipefail`, never pipe a writer into a reader that may stop early: `echo "$out" | grep
 -q PAT` fails on a match whenever grep exits before bash's line-by-line writes finish (SIGPIPE, rc
@@ -221,7 +233,7 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   transcript text. Both sides journal to a temp file under a temp HOME: earlier hand-built replays
   that did not isolate it left 268k session-less rows in the real journal. The fuzz is a few fixed
   rewrites; the real-shell oracle and a validator's own generator below still apply. It runs at
-  the lowest CPU priority (`renice 19`) and never takes the pre-push gauntlet's queue: a 28-min
+  the lowest CPU priority (`renice 19`) and never takes the gauntlet's queue: a 28-min
   replay holding the queue kept every push waiting (2026-10-27).
 
 - **Acceptance:** 0 commands that `develop` denies and the branch allows, apart from a category

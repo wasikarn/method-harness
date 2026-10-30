@@ -17,7 +17,7 @@
 # Exit: 0 no diffs, 1 diffs, 2 usage error or refusal.
 # Both sides write their journal rows to a temp file (MH_GATE_JOURNAL_PATH) under a temp HOME, so
 # the operator's real gate journal is never touched; the temp dir is deleted at exit through tests/_lib/tmp_delete.py.
-# It runs at the lowest CPU priority and never takes the pre-push gauntlet's queue: holding it, a
+# It runs at the lowest CPU priority and never takes the gauntlet's queue: holding it, a
 # 28-min replay kept every push waiting (2026-10-27).
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

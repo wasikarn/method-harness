@@ -19,6 +19,9 @@ trap _cleanup_trash EXIT
 FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-overlap.XXXXXX") || exit 1
 track_trash "$FIXTURE"
 export GAUNTLET_LOCK_DIR="$FIXTURE/gauntlet.lock"
+# The overlap check runs before either layer; the full path's stub gauntlet marks "allowed" (the fixture's
+# manifests are not JSON, so the fast lint would refuse them). One case below runs the fast layer.
+export MH_PREPUSH_FULL=1
 BARE="$FIXTURE/origin.git" CLONE="$FIXTURE/clone"
 ZERO=0000000000000000000000000000000000000000
 g() { git -C "$CLONE" -c user.name=t -c user.email=t@example.com "$@"; }
@@ -83,6 +86,12 @@ head=$(branch clean b.txt)
 out=$(push_hook "$head" "$ZERO"); rc=$?
 ok=1; [ "$rc" -eq 0 ] && [[ $out == *"stub gauntlet ran"* ]] && ok=0
 check "new branch with no overlap: allowed, gauntlet runs" "$ok"
+
+# GH #735 fast layer: lint only what the branch changed since develop (b.txt), not the fixture's invalid
+# JSON manifests, which a whole-tree lint would refuse.
+out=$(MH_PREPUSH_FULL='' push_hook "$head" "$ZERO"); rc=$?
+ok=1; [ "$rc" -eq 0 ] && [[ $out == *"linting 1 changed file(s)"* && $out != *"stub gauntlet ran"* ]] && ok=0
+check "fast layer on a new branch: lints the one file it changed since develop, no gauntlet" "$ok"
 
 head=$(branch bump .claude-plugin/plugin.json .claude-plugin/marketplace.json b.txt)
 out=$(push_hook "$head" "$ZERO"); rc=$?

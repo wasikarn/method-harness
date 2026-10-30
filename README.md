@@ -130,7 +130,7 @@ pointer: `docs/reference/codex-integration-map.md`.
 bash skills/meta/harness-audit/scripts/audit.sh   # the real structural gate
 bash scripts/run-gauntlet.sh                       # validate + lint + every test under tests/
 claude plugin validate . --strict                  # manifest shape only
-git config core.hooksPath git-hooks   # relative path; pre-commit = fast gate, pre-push = gauntlet
+git config core.hooksPath git-hooks   # relative path; pre-commit = fast gate, pre-push = lint of pushed files (merge-pr.sh runs the gauntlet)
 ```
 
 Repo map and gotchas: `CLAUDE.md`. Design: `docs/reference/operating-model.md`. Frozen history:
