@@ -3641,4 +3641,48 @@ done
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
+# GH #741: a python/node stage that reads its script from a heredoc and pipes its stdout into a shell reading
+# stdin hands that shell code the gate never sees (print("git reset --hard") | bash), so it denies whatever the
+# body prints. A pipe into anything else, or a heredoc python only reads, keeps the GH #681 reading.
+for _c in $'python3 - <<\'EOF\' | bash\nprint("git reset --hard")\nEOF' \
+  $'python3 - <<\'EOF\' | sh\nprint("ls")\nEOF' $'python3 <<EOF | dash\nprint("ls")\nEOF' \
+  $'node - <<\'EOF\' | zsh\nconsole.log("ls")\nEOF' $'nodejs <<\'EOF\' | ksh\nconsole.log("ls")\nEOF' \
+  $'cat <<\'EOF\' | python3 - | bash\nprint("ls")\nEOF' $'python3 - <<\'EOF\' | tee out.log | bash\nprint("ls")\nEOF' \
+  $'python3 -u - <<\'EOF\' | sudo bash -s\nprint("ls")\nEOF' $'git status; python3 - <<\'EOF\' 2>/dev/null | sh\nprint("ls")\nEOF' \
+  $'x=$(python3 - <<\'EOF\' | sh\nprint("ls")\nEOF\n)' $'echo "`node - <<\'EOF\' | bash\nconsole.log(1)\nEOF\n`"'; do
+  test_deny "$IRRECOVERABLE" "GH #741 interpreter heredoc piped to a shell: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+for _c in $'python3 - <<\'EOF\'\nprint("bash")\nEOF' $'python3 - <<\'EOF\' | grep bash\nprint("bash")\nEOF' \
+  $'node - <<\'EOF\' | sort\nconsole.log("sh")\nEOF' $'python3 - <<\'EOF\' | bash x.sh\nprint("ls")\nEOF' \
+  $'cat <<\'EOF\' | bash\nls\nEOF' $'python3 - <<\'EOF\'\nprint(1)\nEOF\necho ok | sh -c cat'; do
+  test_allow "$IRRECOVERABLE" "GH #741 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# GH #741: the process-API scan (GH #608 -c bodies, GH #681 heredoc scripts) also reads asyncio's
+# create_subprocess_shell/exec, the argv-list exec/spawn forms whose first literal is the path (execvp("git",
+# ["git", ...])), and getattr/importlib.import_module/__import__ next to a process-module name.
+for _p in 'import asyncio; asyncio.run(asyncio.create_subprocess_shell("git reset --hard"))' \
+  'import asyncio; asyncio.run(asyncio.create_subprocess_exec("git", "reset", "--hard"))' \
+  'import os; os.execvp("git", ["git", "reset", "--hard"])' 'import os; os.execv("/usr/bin/git", ["git", "reset", "--hard"])' \
+  'import os; os.spawnlp(os.P_WAIT, "git", "git", "reset", "--hard")' \
+  'import os; os.posix_spawnp("git", ["git", "reset", "--hard"], os.environ)' \
+  'import os; getattr(os, "sys" + "tem")("git reset --hard")' \
+  'import importlib; importlib.import_module("os").__dict__["sys" + "tem"]("git reset --hard")' \
+  '__import__("os").__dict__["sys" + "tem"]("git reset --hard")'; do
+  test_deny "$IRRECOVERABLE" "GH #741 python -c: $_p" "$(bash_payload "python3 -c '$_p'")"
+  test_deny "$IRRECOVERABLE" "GH #741 python heredoc: $_p" "$(bash_payload "python3 - <<'EOF'"$'\n'"${_p//; /$'\n'}"$'\nEOF')"
+done
+for _p in 'import asyncio; print("create_subprocess_shell is async")' 'import os; os.execvp("ls", ["ls", "-l"])' \
+  'import subprocess; subprocess.run(["echo", "rm", "-rf", "build"])' 'import os; print(getattr(os, "sep"), "done")' \
+  'import importlib; importlib.import_module("json"); print("git reset --hard")'; do
+  test_allow "$IRRECOVERABLE" "GH #741 control python -c: $_p" "$(bash_payload "python3 -c '$_p'")"
+  test_allow "$IRRECOVERABLE" "GH #741 control python heredoc: $_p" "$(bash_payload "python3 - <<'EOF'"$'\n'"${_p//; /$'\n'}"$'\nEOF')"
+done
+# GH #741: trash-whole-tree also reads every dotfile of home (~/.*) and a quoted braced home glob ("${HOME}/"*).
+for _c in 'trash ~/.*' 'trash "${HOME}/"*' 'trash $HOME/.*' 'trash "$HOME"/.*' 'trash ./.*' 'gio trash ~/.*'; do
+  test_deny "$IRRECOVERABLE" "GH #741 trash whole tree: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 'trash "${HOME}/"*.log' 'trash ./.cache'; do
+  test_allow "$IRRECOVERABLE" "GH #741 trash control: $_c" "$(bash_payload "$_c")"
+done
+
 gates_summary

@@ -3,7 +3,7 @@
 set -uo pipefail
 
 # Fast path: skip the python3 cold-start when no deny can match. Every deny in
-# irrecoverable.py dispatches on an argv0 in the case list below (trash covers trash-put and gio trash); wrappers never
+# irrecoverable.py but one (GH #741, deferred below) dispatches on an argv0 in the case list below (trash covers trash-put and gio trash); wrappers never
 # hide it. Quote/backslash stripping exposes r""m -> rm, the whitespace-collapsed
 # variant a backslash-newline split argv0, and any bare $ or backtick may be a
 # zero-width splice (gi$(true)t) so it defers to python on its own. False
@@ -41,6 +41,11 @@ fi
 # defers to python; a "." inside a word (done. next, ./x.sh) stays on the fast path.
 case "$_norm" in
   *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
+esac
+# GH #741: the one deny with no argv0 in the list: a python/node heredoc script piped into a shell denies whatever
+# it prints, so a heredoc and a pipe on a command naming python or node defer to python.
+case "$_norm" in
+  *python*|*node*) case "$_norm" in *'<<'*'|'*|*'|'*'<<'*) _has_subst=1 ;; esac ;;
 esac
 case "$_norm$_norm_nows" in
   *rm*|*find*|*git*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python

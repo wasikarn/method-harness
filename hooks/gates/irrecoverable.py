@@ -235,6 +235,7 @@ _SQL_HEREDOC_DROP = [False]
 _KEPT_BODY_ENDS = []
 _INTERP_HEREDOC_BODIES = []  # GH #681: quoted bodies python/node reads as its script, scanned like a -c body
 _HEREDOC_UNMATCHED = [False]  # the top-level strip, unsure, never found a delimiter (see _KEPT_MARK)
+_INTERP_PIPED_SHELL = [False]  # GH #741: the top-level strip met a python/node heredoc script piped into a shell
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -463,6 +464,40 @@ class _HeredocLine:
             self.stages[(k, "py")] = [_reads_stdin_interp(self.line[a:b]) for a, b in st]
         py = self.stages[(k, "py")]
         return py[j], any(py[j + 1:])
+
+    def interp_to_shell(self, pos):
+        # GH #741: the first stage from the heredoc's on that runs python/node reading its script on stdin
+        # pipes into a shell reading stdin (python3 - <<'EOF' | bash, cat <<EOF | node - | sh): that shell
+        # runs whatever the script prints, which the gate never sees.
+        self.piped_shell(pos)
+        self.stdin_interp(pos)
+        k, j, st, _ = self._stage(pos)
+        py, shell = self.stages[(k, "py")], self.stages[(k, "sh")]
+        p = next((i for i in range(j, len(st)) if py[i]), None)
+        return p is not None and shell[p + 1]
+
+def _interp_to_shell_framed(line, pos, views):
+    # GH #741: a $( or backtick is no separator to _pieces, so x=$(python3 - <<'EOF' | sh is read again from
+    # the nearest ( or ` before the heredoc, as _heredoc_feeds_sql_client does (views: one parse per opener).
+    if "(" not in views:  # computed once per line: every lookup below is O(log n)
+        views["("] = [k for k, ch in enumerate(line) if ch in "(`"]
+        views["|"] = line.rfind("|")
+        views["py"] = [m.start() for m in re.finditer(r"python|node", line)]
+    op, py = views["("], views["py"]
+    k = bisect.bisect_left(op, pos) - 1
+    o = op[k] + 1 if k >= 0 else 0
+    if not o or views["|"] < pos:  # no pipe after the heredoc: nothing to re-read
+        return False
+    # ... nor with no python/node word inside the frame before the heredoc (keeps a line of `<<A (` linear)
+    k = bisect.bisect_left(py, pos) - 1
+    if k < 0 or py[k] < o:
+        return False
+    if o not in views:
+        _HEREDOC_SCAN_BUDGET[0] -= len(line) - o
+        if _HEREDOC_SCAN_BUDGET[0] < 0:
+            return True
+        views[o] = _HeredocLine(line[o:])
+    return views[o].interp_to_shell(pos - o)
 
 def _heredoc_feeds_sql_client(ctx, openers, views, pos):
     # Whether the heredoc opened at ctx.line[pos] is read by a SQL client: its own pipe stage or one
@@ -704,7 +739,7 @@ def _strip_heredocs(cmd, ends=None):
         framed = "(" in stack or "`" in stack  # the heredoc sits in $( or a backtick (read only while sure)
         if not ms:
             continue
-        ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
+        ctx, views, has_client, line_sql, py_views = _HeredocLine(line), {}, _may_name_client(line), None, {}
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
         for n_m, m in enumerate(ms):
@@ -720,6 +755,9 @@ def _strip_heredocs(cmd, ends=None):
             py_own, py_down = ctx.stdin_interp(m.start()) if (
                 ends is not None and quoted and ("python" in line or "node" in line)) else (False, False)
             py_data = py_own and sure and not framed and not ctx.piped_shell(m.start())
+            if ends is not None and not _INTERP_PIPED_SHELL[0] and ("python" in line or "node" in line) and (
+                    ctx.interp_to_shell(m.start()) or _interp_to_shell_framed(line, m.start(), py_views)):
+                _INTERP_PIPED_SHELL[0] = True
             sql_code, code = code, code and not py_data
             body_start, found, expands, early = i, False, False, False
             while i < len(lines):
@@ -2592,6 +2630,9 @@ if _KEPT_BODY_ENDS:
         deny("a heredoc body the gate reads as commands leaves a quote open - confirm with user first")
 if _HEREDOC_UNMATCHED[0]:
     deny("a heredoc the gate reads unsure has no closing delimiter it can find - confirm with user first")
+if _INTERP_PIPED_SHELL[0]:  # GH #741: structural, as above: the shell runs code the gate cannot read
+    deny("a python/node heredoc script pipes its output into a shell, which runs commands the gate cannot see - "
+         "write the commands out, or save the output to a file and read it first", rule="interp-pipe-shell")
 
 def _sql_stdin_drop(c):
     # SQL a client reads on stdin drops or truncates: a heredoc body it reads (_SQL_HEREDOC_DROP), a
@@ -3112,14 +3153,19 @@ _SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (Fals
 # is not read, so print("rm -rf is denied") stays allowed. API deletes (shutil.rmtree, fs.rmSync) are unseen.
 _INTERP_BODY_FLAGS = {"python": ("-c",), "perl": ("-e", "-E"), "ruby": ("-e",), "node": ("-e", "--eval", "-p", "--print")}
 _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)[\d.]*|(node)(?:js)?")
+# GH #741: asyncio's create_subprocess_shell/exec, posix_spawn(p), and a process module reached by name
+# (getattr(os, ...), importlib.import_module("os"), __import__("subprocess")), where the call is built at run time.
+_PROC_BY_NAME = (r"|\b(?:create_subprocess_(?:shell|exec)|posix_spawnp?)\b|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b"
+                 r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']")
 _INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
-                             r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`")
+                             r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`"
+                             + _PROC_BY_NAME)
 # GH #681: a whole python/node heredoc script is often a docs edit whose prose says spawn, exec or system and
 # holds markdown backticks (no API in python/node), so it is read only when it names a module or calls a
 # function that runs a process.
 _PYNODE_PROC_RE = re.compile(r"\b(?:subprocess|child_process|execSync|execFileSync|execFile|spawnSync|getoutput|"
                              r"getstatusoutput|check_output|check_call|Popen|pty)\b"
-                             r"|\b(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?)\s*\(")
+                             r"|\b(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?)\s*\(" + _PROC_BY_NAME)
 _INTERP_LIT_RE = re.compile("'''(?:.|\\n)*?'''|\"\"\"(?:.|\\n)*?\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`[^`]*`"
                             r"|\bqx\s*([{(\[<|/!])|%x\s*([{(\[<|/!])")
 _INTERP_CLOSE = {"{": "}", "(": ")", "[": "]", "<": ">"}
@@ -3145,6 +3191,15 @@ def _interp_body(argv0, rest):
         if not t.startswith("-"):
             return None  # a script file: its code is unseen
     return None
+
+def _emit_run(run, out):
+    if len(run) > 1:
+        out.append(" ".join(run))
+    # GH #741: exec*/spawn*/posix_spawn* take the program path, then its argv (execvp("git", ["git", "reset",
+    # "--hard"]), execv("/usr/bin/git", ["git", ...])): when the second literal is the first one's name, the
+    # argv from it on is read too. Only then, so subprocess.run(["echo", "rm", "-rf", "x"]) stays an echo.
+    if len(run) > 2 and run[0].rsplit("/", 1)[-1] == run[1] and run[1]:
+        out.append(" ".join(run[1:]))
 
 def _interp_commands(body):
     # The command lines a process-API body may run: each literal, and each comma-joined run of literals.
@@ -3173,11 +3228,9 @@ def _interp_commands(body):
         if run and re.fullmatch(r"[\s\[\](){}]*,[\s\[\](){}]*", body[lits[k - 1][1]:a]):
             run.append(text)
         else:
-            if len(run) > 1:
-                out.append(" ".join(run))
+            _emit_run(run, out)
             run = [text]
-    if len(run) > 1:
-        out.append(" ".join(run))
+    _emit_run(run, out)
     return out
 
 def _unwrap_shell(argv0, rest):
@@ -4052,8 +4105,9 @@ _ROOT_OR_HOME = ("/", "/*", "/.", "~", "~/", "~/*", "~/.")
 # a path that normalises to / or to this machine's home (taken from the environment at run time).
 # `${HOME}` (and `${HOME:-}`, `${HOME%/}`, ...) is blanked to a substitution before the rules read it,
 # so a placeholder target is matched against the raw text of a chmod's own arguments (the text after
-# `chmod` up to its statement's end), never against another statement's `echo ${HOME}`.
-_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?=[\s;&|)<>]|$)")
+# `chmod` up to its statement's end), never against another statement's `echo ${HOME}`. GH #741: a glob or
+# `/` after the closing quote still names home ("${HOME}/"*, "${HOME}"/.*), as it does inside the quotes.
+_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?:(?<=/[\"'])[./*]+|/[./*]*)?(?=[\s;&|)<>]|$)")
 _CHMOD_ARGS_RAW_RE = re.compile(r"(?<![\w.-])g?chmod(?![\w.-])([^;&|\n]*)")
 def _root_or_home_word(rest):
     words, cur = [], []
@@ -4091,8 +4145,8 @@ _PWD_SUBST_WORDS = ("$(pwd)", "`pwd`")
 def _trash_norm(w):
     # The tree itself or everything in it: quotes removed, then each trailing /, /. or /* (~/*, "$HOME"/, ../).
     w = w.replace('"', "").replace("'", "")
-    while w.endswith(("/", "/.", "/*")) and w != "/":
-        w = w[:-1] if w.endswith("/") else w[:-2]
+    while w.endswith(("/", "/.", "/*", "/.*")) and w != "/":  # GH #741: /.* is every dotfile in it
+        w = w[:-1] if w.endswith("/") else w[:-3] if w.endswith("/.*") else w[:-2]
     return w
 
 def _trash_whole_tree(rest):
