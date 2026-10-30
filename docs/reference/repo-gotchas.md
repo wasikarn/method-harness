@@ -101,7 +101,7 @@ commit and one push running zero gates. Verify with `test -d "$(git config core.
 There is no CI (GitHub Actions removed 2026-10-03), so a broken `core.hooksPath` means the gauntlet
 never runs at all and nothing server-side notices. Run the verify command above after any rename.
 An absolute path to another checkout's `git-hooks` (seen twice 2026-10-27, cause unknown) made every
-worktree run that checkout's stale hooks; pre-commit and pre-push now warn and `exec` the work tree's own copy (GH #743).
+worktree run that checkout's stale hooks; pre-commit and pre-push now warn and `exec` the work tree's own copy (GH #743); this heals only once the checkout the path points at has that code.
 A cloud session's fresh clone starts with no `core.hooksPath`; the project SessionStart hook
 (`.claude/hooks/session-start.sh`) sets it to `git-hooks` when it is unset, and leaves a value
 already set alone.

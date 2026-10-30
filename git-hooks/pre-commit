@@ -3,7 +3,7 @@
 # Run this work tree's own copy instead; exec keeps the args and stdin (pre-push ref lines).
 if [ -z "${MH_HOOK_REEXEC:-}" ] && _mh_top=$(git rev-parse --show-toplevel 2>/dev/null) \
   && [ -x "$_mh_top/git-hooks/${0##*/}" ]; then
-  _mh_here=$(cd -P "$(dirname "$0")" && pwd -P); _mh_own=$(cd -P "$_mh_top/git-hooks" && pwd -P)
+  _mh_here=$(CDPATH='' cd -P "$(dirname "$0")" && pwd -P); _mh_own=$(cd -P "$_mh_top/git-hooks" && pwd -P)
   if [ "$_mh_here" != "$_mh_own" ]; then
     echo "${0##*/}: core.hooksPath is '$(git config core.hooksPath)', not this work tree's; running $_mh_own/${0##*/}. Fix: git config core.hooksPath git-hooks" >&2
     MH_HOOK_REEXEC=1 exec "$_mh_own/${0##*/}" "$@"
