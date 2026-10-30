@@ -1144,6 +1144,43 @@ for _c in $'python3 - <<\'EOF\'\nprint("it\'s")\n# don\'t\nEOF' $'python3 - <<\'
   $'diff <(cat <<\'EOF\'\nwe never rm -rf build\nEOF\n) f'; do
   test_allow "$IRRECOVERABLE" "GH #668 round 3 control: $(printf '%s' "$_c" | head -2 | tail -1)" "$(bash_payload "$_c"$'\necho "$PWD"')"
 done
+# GH #681 (python/node shape): a quoted heredoc a python/node stage reads as its script (operand `-` or none, or
+# piped from cat) is scanned like a -c body and stripped as data, so its quotes never pair past the delimiter.
+for _c in $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\',\'push\',\'--force\'])\nEOF' \
+  $'python3 <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\',\'push\',\'--force\'])\nEOF' \
+  $'cat <<\'EOF\' | python3 -\nimport subprocess\nsubprocess.run([\'git\',\'push\',\'--force\'])\nEOF' \
+  $'node - <<\'EOF\'\nrequire(\'child_process\').execSync(\'git push --force\')\nEOF' \
+  $'cat <<\'EOF\' | node -\nrequire(\'child_process\').execSync(\'git push --force\')\nEOF' \
+  $'python3 - <<\'EOF\'\nprint("it\'s")\nx = \'\nEOF\nrm -rf build\n#\'' \
+  $'python3 -c \'import os,sys;os.system(sys.stdin.read())\' <<\'EOF\'\nrm -rf x\nEOF' \
+  $'node -e "require(\'child_process\').execSync(require(\'fs\').readFileSync(0,\'utf8\'))" <<\'EOF\'\nrm -rf x\nEOF' \
+  $'python3 run.py <<\'EOF\'\nrm -rf x\nEOF' $'python3 -V; bash <<\'EOF\'\nrm -rf x\nEOF' \
+  $'python3 <<EOF\n$(rm -rf x)\nEOF' $'bash -s <<\'EOF\'\nrm -rf x\nEOF' $'bash <<\'EOF\'\ngit push --force\nEOF' \
+  $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\', \'push\', \'--force\', \'-m\', "it\'s"])\nEOF' \
+  $'python3 - <<\'EOF\'\nfrom os import system\nsystem("git push --force")\nEOF' \
+  $'node - <<\'EOF\'\nconst { spawnSync } = require("node:child_process")\nspawnSync("git", ["push", "--force"])\nEOF'; do
+  test_deny "$IRRECOVERABLE" "GH #681 python/node heredoc: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+for _c in $'python3 - <<\'EOF\'\nx=\'\'\'it\'s\'\'\'\nprint(x)\nEOF' $'python3 <<\'EOF\'\n# don\'t\nprint("rm -rf build")\nEOF' \
+  $'node - <<\'EOF\'\nconsole.log("it\'s")\nEOF' $'cat <<\'EOF\' | python3 -\nprint("it\'s")\nEOF' \
+  $'python3 - <<\'EOF\'\nprint("never git push --force")\nEOF' \
+  $'python3 - <<\'EOF\'\nimport subprocess\nprint("Don\'t use it", \'"\')\nsubprocess.run([\'ls\'])\nEOF' \
+  $'python3 - <<\'EOF\'\nopen("x.md", "w").write("run `git restore f` to undo")\nEOF' \
+  $'python3 - <<\'EOF\'\nopen("x.md", "w").write("a subagent may spawn work; git push --force is denied")\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #681 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c"$'\ngit status')"
+done
+# trash of a whole tree (/, ~, ., *, an empty word, $HOME, $PWD) denies; any other operand, a variable too, is allowed.
+for _c in 'trash ~' 'trash ""' 'trash .' 'trash *' 'trash /' 'trash ~/' 'trash ./' 'trash ..' 'trash ../..' \
+  'trash $HOME' 'trash ${HOME}' 'trash "$HOME"' 'trash $PWD' 'trash $(pwd)' "trash $HOME" "trash $HOME/" \
+  'trash-put /' 'gio trash ~' 'sudo trash ~/' 'trash -v .' 'trash build/x .' \
+  'trash ~/*' 'trash /*' 'trash "$PWD/"' 'trash $HOME/' 'trash "$HOME"/*' 'trash ~/.' 'trash ../' 'trash .*' \
+  'trash "$HOME/"' 'trash $HOME/*' 'trash $(pwd)/' 'trash "$(pwd)"/'; do
+  test_deny "$IRRECOVERABLE" "trash whole tree: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'trash "$X"' 'trash "${X:?}"' 'trash $TMPDIR/x' 'trash build/out.txt' 'trash ./build' 'trash "$HOME/tmp/x"' \
+  'trash $(pwd)/build' 'echo trash ~' 'gio info ~' 'trash' 'trash ~/foo' 'trash .gitignore' 'trash "$(pwd)/build"'; do
+  test_allow "$IRRECOVERABLE" "trash control: $_c" "$(bash_payload "$_c")"
+done
 _huge_cmd="$(python3 -c 'print("cat <<EOF\n" + "x" * 2100000 + "\nEOF")')"
 _timed_case 'GH #668: a 2.1 MB command denies on length before the heredoc scan' 2 "$_huge_cmd"
 # GH #668 round 4: shapes the scan does not model turn it unsure, so nothing more is stripped: a \ in the
@@ -2093,8 +2130,10 @@ test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into { cd; bash; } with
   "$(bash_payload "$(printf "{ cd /srv/app; bash; } <<'EOF'\ngit push --force origin develop\nEOF")")"
 test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into zsh-5.9 is code" \
   "$(bash_payload "$(printf "zsh-5.9 <<'EOF'\nrm -rf ~\nEOF")")"
+# GH #681: python reads the body as python, so a bare shell line in it is a syntax error, not a delete; the
+# process-API scan is what reads it now.
 test_deny  "$IRRECOVERABLE" "GH #559 review 4: a heredoc into python3.12 - is code" \
-  "$(bash_payload "$(printf "python3.12 - <<'EOF'\nrm -rf ~\nEOF")")"
+  "$(bash_payload "$(printf "python3.12 - <<'EOF'\nimport os\nos.system('rm -rf ~')\nEOF")")"
 test_deny  "$IRRECOVERABLE" "GH #559 review 4: a backtick is no quote to psql before DROP TABLE" \
   "$(bash_payload "$(printf "psql db <<'SQL'\nSELECT 1 \`; DROP TABLE t; -- \`\nSQL")")"
 test_deny  "$IRRECOVERABLE" "GH #559 review 4: a [bracket] identifier with an apostrophe before DROP TABLE into sqlite3" \

@@ -142,6 +142,9 @@ already set alone.
   missing directory (a plain `mktemp -d` falls back on macOS), and `set -u` does not catch an
   empty variable, so a test hands such a path to `tmp_delete.py` or `track_trash`, never to
   `trash` (`tests/scripts/test-trash-empty-guard-lint.sh`).
+  The gate denies a `trash`/`trash-put`/`gio trash` operand that is literally a whole tree (`/`, `~`,
+  `.`, `..`, `*`, `""`, `$HOME`, `$PWD`, `$(pwd)`, the home path, each with any trailing `/`, `/.` or `/*`, and `.*`) but allows any other variable, so
+  guard one yourself: `trash "${X:?}"`.
 - **Never `--no-verify`.** Enforced by `gate:bash:irrecoverable`.
 - **Stage by name.** Never `git add -A` or `git add .` outside a mid-merge state. Enforced by
   `gate:bash:irrecoverable`.
@@ -261,7 +264,9 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   sample commands; delete the id to enforce once they hold no false positive. The list is source, not an
   env var, so a project `settings.json` cannot shadow an enforced rule. A structural deny (length cap,
   unparsable text, budget, depth) takes no id: returning from it would run the code it guards. A rule
-  that denies commands from a replay of real transcripts ships shadow, not enforcing.
+  that denies commands from a replay of real transcripts ships shadow, not enforcing. One deliberate
+  exception: `trash-whole-tree` (PR #739) shipped enforcing at the operator's call, because both of its
+  replay hits (`trash *` and `trash "$HOME" ...`) were whole-tree trashes, not false positives.
 - **Oracle:** run the real shells (the system `/bin/sh`, bash 3.2, a current bash, dash, zsh, ksh)
   with argv-logging stubs, never one shell or argv0-based shell guessing: whether `{fd}>` is a
   redirect depends on the binary and version (GH #219).
@@ -286,4 +291,4 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   also hide the statements after it (the guard's walk ran across `;` to the last `git`).
 
 Per-issue measurements (GH #245, #246, #248, #273, #274, #276, #307, #317, #318, #320, #322, #327,
-#336, #339, #340, #344, #349, #375, #382, #469): [`gate-heuristic-history.md`](gate-heuristic-history.md).
+#336, #339, #340, #344, #349, #375, #382, #469, #681): [`gate-heuristic-history.md`](gate-heuristic-history.md).
