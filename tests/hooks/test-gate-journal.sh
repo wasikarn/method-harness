@@ -259,6 +259,23 @@ SH_BAD="$WORK/shadow-bad"; shadow_copy "$SH_BAD" '"rm-fr"'
 ok=1; [ "$(shadow_drift "$SH_BAD/irrecoverable.py")" = "rm-fr" ] && ok=0
 check "mutation proof: a SHADOW_RULES id with no call site is reported" "$ok"
 
+# Same for _VIEW_ENFORCED (GH #309): a renamed rule id would put the view back to shadow with no test failing.
+enforced_drift() { # enforced_drift <irrecoverable.py> -> _VIEW_ENFORCED rule ids with no rule="<id>" call site
+  python3 -c '
+import re, sys
+src = open(sys.argv[1]).read()
+block = re.search(r"^_VIEW_ENFORCED = \{\"brace-view\": frozenset\(\{(.*?)\}\)\}$", src, re.M | re.S).group(1)
+ids = set(re.findall(r"\"([^\"]+)\"", block))
+print(" ".join(sorted(ids - set(re.findall(r"rule=\"([^\"]+)\"", src)))))' "$1"
+}
+ok=1; [ -z "$(enforced_drift "$ROOT/hooks/gates/irrecoverable.py")" ] && ok=0
+check "every _VIEW_ENFORCED id names a rule= call site" "$ok"
+EN_BAD="$WORK/enforced-bad.py"
+python3 -c 'import sys; s = open(sys.argv[1]).read(); open(sys.argv[2], "w").write(s.replace("\"rm-no-preserve-root\",", "\"rm-no-preserve-roots\",", 1))' \
+  "$ROOT/hooks/gates/irrecoverable.py" "$EN_BAD"
+ok=1; [ "$(enforced_drift "$EN_BAD")" = "rm-no-preserve-roots" ] && ok=0
+check "mutation proof: a _VIEW_ENFORCED id with no call site is reported" "$ok"
+
 # --- Case 7: GH #336's views (another reading of the command) carry a rule id of their own. With the
 # view shadowed, a deny found only in that reading is journaled under the view's id and allowed, even
 # though the rule it matched (rm-rf) enforces; the plain command still denies. ---
