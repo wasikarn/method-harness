@@ -1530,7 +1530,7 @@ def _deny_nested_spawn():
     if _ONLY_RULE[0] and not _ONLY_RULE_PASS_ON[0]:
         raise _ViewStop
     if _ONLY_RULE_PASS_ON[0]:
-        return  # the enforced view pass reads rm's rules only: no spawn scan, so no spawn-scan budget (review 8)
+        return  # the enforced view pass reads only the _VIEW_ENFORCED rules: no spawn scan, so no spawn-scan budget (review 8)
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1607,10 +1607,12 @@ _VIEW = [None]
 class _ViewStop(Exception):
     pass
 
-# GH #661: the rules a shadowed view still enforces. brace-view stays shadow for every other rule (GH #337),
-# but rm's own rules must read the words bash builds: `rm --{r,f} b` is `rm --r --f b`, and no token
-# reading keeps such a word whole (`--{r,} b` loses its `}`).
-_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root"})}
+# The rules a shadowed view still enforces; brace-view stays shadow for every other rule (GH #337). These rules
+# must read the words bash builds, and no token reading keeps such a word whole (`--{r,} b` loses its `}`):
+# rm's own (GH #661: `rm --{r,f} b` is `rm --r --f b`) and push's overwrite rules, send-pack included (GH #309:
+# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`).
+_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root",
+                                           "git-push-force", "git-push-mirror", "git-push-delete-protected"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
@@ -5798,7 +5800,7 @@ def _enforced_pass(text):
     # Another rule's deny passes on (_ONLY_RULE_PASS_ON) so the enforced rule later in the same window still
     # runs; code written to stop at a deny may then fail, which only skips that window. The first pass marked
     # the view's word windows seen, so they are cleared to be queued again.
-    # The pass reads rm's rules only, so it runs no spawn scan (_scan_body, _deny_nested_spawn): that scan's
+    # The pass reads only the _VIEW_ENFORCED rules, so it runs no spawn scan (_scan_body, _deny_nested_spawn): that scan's
     # budget, spent a second time on the expanded text, denied large legal subagent bodies, let one costly
     # expansion hide an rm, or ran the gate near the hook timeout (reviews 4-8). A spawn is the main reading's.
     _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0] = _VIEW_ENFORCED[_VIEW[0]], True

@@ -129,7 +129,6 @@ done
 for _c in \
   'git add src/{a,b}.py' \
   'git add {README.md,LICENSE}' \
-  'git push --for{ce-with-lease,} origin main' \
   'git push origin feat/{a,b}' \
   'rm src/{a,b}.txt' \
   'cp x.{txt,bak}' \
@@ -155,7 +154,7 @@ for _c in \
   'echo ${x,y}' ; do
   test_allow "$IRRECOVERABLE" "GH #309 control: a brace that expands to nothing destructive: $_c" "$(bash_payload "$_c")"
 done
-_timed_case "GH #309: 3000 braced words before a brace-hidden force flag are read inside the hook timeout (brace-view shadow: allowed)" 0 \
+_timed_case "GH #309: 3000 braced words before a brace-hidden force flag are denied inside the hook timeout" 2 \
   "$(python3 -c "print('echo ' + 'a{b,c}d ' * 3000 + '; git push --fo{rce,rce} origin main')")"
 _timed_case "GH #309: 20000 nested brace pairs before a force reset are denied inside the hook timeout" 2 \
   "$(python3 -c "print('{' * 20000 + 'x' + '}' * 20000 + '; git reset --hard')")"
@@ -280,10 +279,6 @@ fi
 # for the literal '{ ., }' reading, so its stdout is not empty; it is the same bypass as 'git add {..,}'.)
 for _c in \
   'fi{nd,nd} /tmp/x -delete' \
-  'git push --fo{rce,rce} origin main' \
-  'git push --forc{e,e-with-lease} origin main' \
-  'git push "--fo"{rce,} origin main' \
-  'git push --forc{e..e} origin main' \
   'git restore -S --wor{ktree,} file.txt' \
   'git branch --del{ete,ete} --forc{e,e} main' \
   'git add {..,}' \
@@ -296,35 +291,19 @@ for _c in \
   'git {,add} -A' \
   'git a{dd,dd} .' \
   'git -C . a{dd,dd} .' \
-  'git pu{sh,} --force origin main' \
   'git rest{ore,ore} .' \
   'git br{anch,anch} -D main' \
   'fi{"nd",} /tmp -delete' \
   'git {,"reset"} --hard' \
   'git -C . {,"reset"} --hard' \
   'git {,"clean"} -fd' \
-  'git {,"push"} --force origin main' \
-  "git {,'push'} --force origin main" \
   "bash -c 'git {,\"reset\"} --hard'" \
-  'git push --fo{r,}{ce,} origin main' \
-  'git push --fo{r{ce,x},} origin main' \
-  'git push "--"{x,force} origin main' \
-  "git push \$'--'{x,force} origin main" \
-  'git push origin main {--forc,x}"e"' \
-  'git push \--fo{rce,} origin main' \
-  $'git push --fo{rce,\\\n} origin main' \
-  'git push --forc{e..e..1} origin main' \
   'echo {x,#$}; git {,"reset"} --hard' \
   $'# {x,y}\'\ngit {,"reset"} --hard' \
-  '{$(:),git} push --force origin main' \
   '{f,"x y"}ind . -delete' \
   '{,git} reset --hard' \
-  '{,git} push --force origin main' \
-  'env {,git} push --force origin main' \
-  '{,git} push origin +main' \
   'git {{,},reset} --hard' \
   '{A=1}},git} reset --hard' \
-  '{A=1}},git} push --force origin main' \
   '{A="x y",git} reset --hard' \
   "{A='x y',git} reset --hard" \
   'f{ind,x\ y} /tmp/x -delete' \
@@ -337,7 +316,7 @@ for _c in \
   _would336 deny brace-view "$_c"
 done
 # GH #661: rm's own rules (rm-rf, rm-recursive, rm-no-preserve-root) enforce in brace-view: bash runs the
-# rm these shapes build. Every other rule there stays shadow (GH #337).
+# rm these shapes build. The push rules enforce there too (below); every other rule stays shadow (GH #337).
 for _c in \
   'r{m,m} -rf /tmp/x' \
   'r{"m",} -rf /tmp/x' \
@@ -363,6 +342,33 @@ for _c in \
   'echo x\;#; r{m,} -rf /tmp/x' \
   "r{m,<('\\')} -rf /tmp/x" ; do  # escaped blanks and quotes here too: the fast path must reach python
   test_deny "$IRRECOVERABLE" "GH #661: a brace-built rm -rf denies through brace-view: $_c" "$(bash_payload "$_c")"
+done
+# GH #309 push slice: git-push-force, git-push-mirror and git-push-delete-protected enforce in brace-view
+# too, so a brace-built forced push denies. --for{ce-with-lease,} also carries --force-with-lease: git
+# rejects its ambiguous --for, the gate denies it anyway.
+for _c in \
+  'git push --fo{rce,rce} origin main' \
+  'git push --forc{e,e-with-lease} origin main' \
+  'git push "--fo"{rce,} origin main' \
+  'git push --forc{e..e} origin main' \
+  'git pu{sh,} --force origin main' \
+  'git {,"push"} --force origin main' \
+  "git {,'push'} --force origin main" \
+  'git push --fo{r,}{ce,} origin main' \
+  'git push --fo{r{ce,x},} origin main' \
+  'git push "--"{x,force} origin main' \
+  "git push \$'--'{x,force} origin main" \
+  'git push origin main {--forc,x}"e"' \
+  'git push \--fo{rce,} origin main' \
+  $'git push --fo{rce,\\\n} origin main' \
+  'git push --forc{e..e..1} origin main' \
+  '{$(:),git} push --force origin main' \
+  '{,git} push --force origin main' \
+  'env {,git} push --force origin main' \
+  '{,git} push origin +main' \
+  '{A=1}},git} push --force origin main' \
+  'git push --for{ce-with-lease,} origin main' ; do
+  test_deny "$IRRECOVERABLE" "GH #309: a brace-built forced push denies through brace-view: $_c" "$(bash_payload "$_c")"
 done
 # The .sh fast path hands a command to python only when brace-route.awk sees an expanding group, so the
 # awk must see every shape _bracex expands: enumerate each string of { } , x . up to 7 characters (97,655; plus
