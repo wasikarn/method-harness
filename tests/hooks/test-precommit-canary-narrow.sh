@@ -3,8 +3,9 @@
 # Extracts the loop from git-hooks/pre-commit and evals it against a fake index.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 idx="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$idx"' EXIT
+trap 'tmp_delete "$idx"' EXIT
 mkdir -p "$idx/hooks/gates"
 touch "$idx/hooks/gates/irrecoverable.sh" "$idx/hooks/gates/secret-scan.sh" "$idx/hooks/gates/_silent_fastpath.sh" "$idx/hooks/gates/new-gate.sh"
 body=$(sed -n '/^  only=()/,/^  done <<</p' "$ROOT/git-hooks/pre-commit")

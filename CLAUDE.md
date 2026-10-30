@@ -51,7 +51,7 @@ vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-l
 
 - **Keep `core.hooksPath` relative** (`git config core.hooksPath git-hooks`): an absolute path silently runs zero hooks after a rename; verify `test -d "$(git config core.hooksPath)"`.
 - **Home paths:** `$HOME` or `~` in every committed file, never `/Users/<name>` or the bare account name; frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`, `CHANGELOG.md`) skip style sweeps, never this.
-- **Use `trash` (a test's own temp dir: `tests/_lib/tmp_delete.py`) and stage by name;** `gate:bash:irrecoverable` denies `rm -rf`, `--no-verify`, and `git add -A`/`.` outside a merge.
+- **Use `trash` (a test's own temp dir: `scripts/_lib/tmp_delete.py`) and stage by name;** `gate:bash:irrecoverable` denies `rm -rf`, `--no-verify`, and `git add -A`/`.` outside a merge.
 - **Same-version edits are no-ops:** `claude plugin update` copies nothing until the version changes, which `merge-pr.sh` does on every merge (a local test install needs its own uncommitted bump); re-verify a same-session edit by `Read`ing the repo path, never `Skill(<name>)`.
 - **Bare `grep` is Claude Code's shell-snapshot shim** (it reformats output): use `/usr/bin/grep` or `awk` for counts.
 

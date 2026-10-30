@@ -12,13 +12,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 GUARD="$ROOT/hooks/gates/codex-setup-guard.sh"
 
 pass=0
 fail=0
 
 FIXTURE=$(mktemp -d)
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FIXTURE"' EXIT
+trap 'tmp_delete "$FIXTURE"' EXIT
 export MH_GATE_JOURNAL_PATH="$FIXTURE/gate-decisions.jsonl"
 
 payload_skill() { # payload_skill <skill> <args>

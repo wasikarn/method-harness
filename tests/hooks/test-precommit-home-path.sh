@@ -6,10 +6,11 @@
 set -u
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 HOOK="$ROOT/git-hooks/pre-commit"
 d="$(mktemp -d)"
 [ -n "$d" ] && [ -d "$d" ] || { echo "FAIL: mktemp -d failed"; exit 1; }
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$d"' EXIT
+trap 'tmp_delete "$d"' EXIT
 helper=$(/usr/bin/grep -E '^staged_z\(\) ' "$HOOK")
 body=$(sed -n '/^# 4\. hardcoded home paths/,/^done < <(/p' "$HOOK")
 [ -n "$helper" ] && [ -n "$body" ] || { echo "FAIL: step 4 or staged_z not found in git-hooks/pre-commit"; exit 1; }

@@ -11,6 +11,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 SCRIPT="$ROOT/hooks/session/doctrine-bootstrap.sh"
 
 pass=0
@@ -65,7 +66,7 @@ done
 [[ "$hardcoded" == "0" ]] && ok=1 || ok=0
 assert "no real gate name is hardcoded in the script's code (found $hardcoded)" "$ok"
 
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fixture" "$noop_bin"
+tmp_delete "$fixture" "$noop_bin"
 
 echo
 echo "doctrine-bootstrap: $pass passed, $fail failed"

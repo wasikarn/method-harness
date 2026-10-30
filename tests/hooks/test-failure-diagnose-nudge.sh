@@ -7,6 +7,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 SENSOR="$ROOT/hooks/sensors/failure-diagnose-nudge.sh"
 
 pass=0
@@ -35,7 +36,7 @@ posttoolusefailure_payload() {
 }
 
 STATE_DIR=$(mktemp -d)
-trap '[ -n "$STATE_DIR" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$STATE_DIR"' EXIT
+trap '[ -n "$STATE_DIR" ] && tmp_delete "$STATE_DIR"' EXIT
 STATE="$STATE_DIR/state.json"
 
 # --- a non-PostToolUseFailure-shaped payload never nudges, regardless of
@@ -90,7 +91,7 @@ else
 fi
 
 # --- cap enforcement: same command failing repeatedly stops nudging after CAP=1 ---
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$STATE"
+tmp_delete "$STATE"
 nudge_count=0
 for _ in 1 2 3 4 5; do
   out=$(posttoolusefailure_payload "flaky-cmd --retry" "Command failed" | bash "$SENSOR" "$STATE")

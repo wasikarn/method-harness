@@ -36,12 +36,9 @@ EXTRA_TRASH=()
 # needed for the common case at all.
 _HARNESS_ROOT=$(mktemp -d)
 
-# tmp_delete <path>...: permanent delete of this test's own temp paths through
-# tests/_lib/tmp_delete.py (refuses anything outside a temp root; GH #724). The python3
-# is captured now, at source time, because some tests later put a python3 stub first on PATH.
-_HARNESS_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_HARNESS_PY="$(command -v python3)"
-tmp_delete() { "$_HARNESS_PY" "$_HARNESS_LIB/tmp_delete.py" "$@"; }
+# tmp_delete <path>...: permanent delete of this test's own temp paths, from
+# scripts/_lib/tmp-delete.sh (python3 captured at source time; GH #724, #729).
+. "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/_lib/tmp-delete.sh"
 
 # track_trash <path>: register <path> for cleanup at _cleanup_trash time.
 # Filters empty unconditionally. For a caller's own mktemp/mkdir calls that

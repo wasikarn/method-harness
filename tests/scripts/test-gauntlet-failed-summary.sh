@@ -7,11 +7,12 @@
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 GAUNTLET="$ROOT/scripts/run-gauntlet.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && tmp_delete "$1"; return 0; }
 
 echo "=== gauntlet names failing test files (GH #387) ==="
 
