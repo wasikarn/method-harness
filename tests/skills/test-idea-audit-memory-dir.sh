@@ -9,6 +9,7 @@ set -uo pipefail
 # A pre-push hook env has GIT_DIR set and would hijack the sandbox git init/worktree below.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 SKILL="$ROOT/skills/workflow/idea-audit/SKILL.md"
 RESOLVER="$ROOT/scripts/_lib/memory-dir.py"
 fail=0
@@ -29,7 +30,7 @@ fi
 
 # 2. Script check: a linked worktree resolves to the main checkout's store.
 TMP="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP"' EXIT
+trap 'tmp_delete "$TMP"' EXIT
 TMP="$(cd "$TMP" && pwd -P)"
 git init -q "$TMP/main"
 git -C "$TMP/main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init

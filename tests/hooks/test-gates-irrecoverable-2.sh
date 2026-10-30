@@ -1249,7 +1249,7 @@ else
   fail=$((fail + 1))
 fi
 
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$MERGE_FIX" "$NOMERGE_FIX" || true
+tmp_delete "$MERGE_FIX" "$NOMERGE_FIX"
 test_deny "$IRRECOVERABLE" "subagent: claude -p hi via Bash denied" \
   "$(bash_agent_payload 'claude -p hi' fork)"
 test_deny "$IRRECOVERABLE" "subagent: claude --worktree x denied (new flag in the ported nested-spawn deny)" \
@@ -1410,7 +1410,7 @@ else
   fail=$((fail + 1))
 fi
 rm -f "$_errf"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSPY_RTG_DIR" || true
+tmp_delete "$MISSPY_RTG_DIR"
 
 echo "=== GNU tr stays quiet (cloud audit 2026-10-23: an unescaped trailing backslash in tr -d warned on every Bash call) ==="
 _trdir=$(mktemp -d "${TMPDIR:-/tmp}/kbg-gnutr.XXXXXX")
@@ -1423,7 +1423,7 @@ else
   echo "  ❌ the gate wrote to stderr on a plain command: $_trerr" >&2
   fail=$((fail + 1))
 fi
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$_trdir" || true
+tmp_delete "$_trdir"
 
 echo "=== same damage, other git verbs (2026-10-23 bypass sweep after the cloud audit) ==="
 for c in 'git push --mirror' 'git push origin --mirror' 'git push --prune origin' \
@@ -1610,7 +1610,7 @@ rm -f "$_errf"
 # irrecoverable fails closed (exit 2) and subagent-git-guard fails open (exit 0), each with its own message.
 MISSRUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/kbg-missrun.XXXXXX")
 cp "$ROOT"/hooks/gates/*.sh "$ROOT"/hooks/gates/*.py "$MISSRUN_DIR"/
-[ -e "$MISSRUN_DIR/_run.py" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSRUN_DIR/_run.py"
+[ -e "$MISSRUN_DIR/_run.py" ] && tmp_delete "$MISSRUN_DIR/_run.py"
 _errf="$MISSRUN_DIR/err"
 _out=$(bash_payload 'rm -rf /tmp/x' | bash "$MISSRUN_DIR/irrecoverable.sh" 2>"$_errf"); _rc=$?
 if [ "$_rc" -eq 2 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py missing' "$_errf"; then
@@ -1624,7 +1624,7 @@ if [ "$_rc" -eq 0 ] && [ -z "$_out" ] && /usr/bin/grep -q '\[mh:gate\].*_run.py 
 else
   echo "  ❌ missing _run.py: subagent-git-guard expected exit 0 + [mh:gate] _run.py message, got rc=$_rc stdout='$_out' stderr: $(cat "$_errf")" >&2; fail=$((fail + 1))
 fi
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$MISSRUN_DIR"
+tmp_delete "$MISSRUN_DIR"
 
 # GH #184/#185/#194/#195/#196: fail closed when the command is syntactically ambiguous (nested or
 # mixed substitutions, a quoted ")" inside "$(", a "case" inside "$(", brace tokens, eval of a
@@ -3617,5 +3617,8 @@ for _c in 'git push -f origin a:feat b:main' 'git push origin +HEAD:production' 
   'git push --force-with-lease origin feat' 'sudo git push -f origin HEAD:feat' 'git send-pack -f origin HEAD:feat'; do
   test_deny "$IRRECOVERABLE" "force-push v3 deny: $_c" "$(bash_payload "$_c")"
 done
+
+# The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
+tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
 gates_summary

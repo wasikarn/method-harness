@@ -8,6 +8,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 SCRIPT="$ROOT/skills/meta/learn/scripts/find-transcript.sh"
 
 pass=0
@@ -16,7 +17,7 @@ ok()  { pass=$((pass + 1)); echo "PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL: $1" >&2; }
 
 FAKE_HOME=$(mktemp -d)
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FAKE_HOME"' EXIT
+trap 'tmp_delete "$FAKE_HOME"' EXIT
 CWD="/fake/project"
 SLUG="${CWD//\//-}"
 DIR="$FAKE_HOME/.claude/projects/$SLUG"
@@ -131,7 +132,7 @@ if [ "$(echo "$out" | awk '{print $1}')" = "$DIR/$MOVED_ID.jsonl" ]; then
 else
   bad "expected the cwd folder copy, got '$out'"
 fi
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$DIR/$MOVED_ID.jsonl"
+tmp_delete "$DIR/$MOVED_ID.jsonl"
 
 # the same id in two other folders is ambiguous: fail loud and list both
 TWIN_ID="66666666-6666-6666-6666-666666666666"
