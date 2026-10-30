@@ -6,8 +6,9 @@
 # develop's version moved 48 times in six hours and each open PR had to re-merge and re-bump after
 # every one (#618 took five rounds).
 #
-# When the head already contains origin/develop and ships a version above it, it runs the gauntlet on it
-# (step 3) and prints the head, pushing nothing. Otherwise, in a temporary worktree at the head:
+# When the head already contains origin/develop and ships a version above it, it refuses unless the head
+# is origin/<branch>'s tip, runs the gauntlet on it (step 3), posts the status (step 5) and prints the
+# head, pushing nothing. Otherwise, in a temporary worktree at the head:
 #   1. merge origin/develop (if the head lacks it). A manifest conflict takes develop's side only when
 #      the branch changed nothing in that manifest but its version line (the conflict is the version
 #      bump next to another line); a manifest the branch edited otherwise, or any other conflict,
@@ -21,6 +22,8 @@
 #   4. push to origin/<branch>, leased on <head>, with merge-pr.sh's SSH keepalive; a branch that is no
 #      longer exactly <head> (someone pushed or rewound it) is refused. A push that exits non-zero but
 #      landed (ls-remote) still counts.
+#   5. post the mh/gauntlet success status on the pushed head (GH #742); a failed post exits non-zero
+#      and prints no sha. Without gh it says no status was posted and goes on.
 # Prints the new head sha on stdout; everything else goes to stderr. The caller fetches origin first.
 # Both commits keep a PR's review verdict (merge-pr.sh check_review): the version commit changes only the
 # manifests' version value, and since GH #629 a merge keeps it only as a plain two-parent merge whose
@@ -84,6 +87,17 @@ if [ "$behind" -eq 0 ] && [ "$head_ver" = "$target" ] && [ "$(version_of "$head"
   synced=1
 fi
 
+# post_status <sha>: the mh/gauntlet status on a sha origin has (GH #742). Without gh (a cloud session)
+# there is no API to post it with: say so (once branch protection requires mh/gauntlet, an MCP merge of
+# that sha is refused).
+post_status() {
+  if command -v gh >/dev/null; then
+    gauntlet_status_post sync-pr-head "$1" || exit 1
+  else
+    echo "sync-pr-head: no gh, so no mh/gauntlet status was posted on $1." >&2
+  fi
+}
+
 wt=$(mktemp -d "${TMPDIR:-/tmp}/sync-pr-head.XXXXXX") || { echo "sync-pr-head: mktemp -d failed." >&2; exit 1; }
 cleanup() {
   git worktree remove --force "$wt" >/dev/null 2>&1 || true
@@ -95,7 +109,16 @@ git worktree add -q --detach "$wt" "$head" >&2
 
 if [ "$synced" -eq 1 ]; then
   # Nothing to push, but the author's own push ran only a lint (GH #735): the merge still needs a gauntlet.
+  # The head must be origin's branch tip (the status and the MCP merge both need it there); checked first
+  # so an unpushed head does not cost a full gauntlet.
+  line=$(git ls-remote origin "refs/heads/$branch") || { echo "sync-pr-head: git ls-remote origin failed." >&2; exit 1; }
+  have=${line%%[[:space:]]*}
+  if [ "$have" != "$head" ]; then
+    echo "sync-pr-head: origin/$branch is not $head (origin has ${have:-no such branch}): the head was not pushed, or the branch moved. Push it (or fetch the new head) and run sync-pr-head.sh again." >&2
+    exit 1
+  fi
   (cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $head; fix it, commit, push, and get a new review." >&2; exit 1; }
+  post_status "$head"
   echo "$head"
   exit 0
 fi
@@ -155,4 +178,5 @@ if [ "${line%%[[:space:]]*}" != "$new" ]; then
   exit 1
 fi
 [ "$rc" -eq 0 ] || echo "sync-pr-head: git push exited $rc but origin has $new; going on." >&2
+post_status "$new"
 echo "$new"

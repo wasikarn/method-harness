@@ -25,7 +25,22 @@ export TMPDIR="$ROOT_DIR"
 # The gauntlet lock and pass cache stay in the sandbox (the gauntlet's own test layer exports
 # GAUNTLET_PASS_CACHE=0; these cases want the cache on).
 export GAUNTLET_LOCK_DIR="$ROOT_DIR/gauntlet.lock" GAUNTLET_PASS_DIR="$ROOT_DIR/pass" GAUNTLET_PASS_CACHE=1
-unset MH_GAUNTLET_LOCK_OWNER STUB_GAUNTLET_FAIL
+unset MH_GAUNTLET_LOCK_OWNER STUB_GAUNTLET_FAIL STUB_STATUS_FAIL
+# gh: only the mh/gauntlet status post (GH #742) reaches it; it logs each call to $STUB_DIR/gh.log and
+# fails when STUB_STATUS_FAIL is set, or with a 422 when the case's origin ($STUB_ORIGIN) lacks the sha
+# (a status posted before the push). Never touches GitHub.
+mkdir -p "$ROOT_DIR/bin"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "gh $*" >>"$STUB_DIR/gh.log"' \
+  '[ -z "${STUB_STATUS_FAIL:-}" ] || { echo "HTTP 403" >&2; exit 1; }' \
+  'for a in "$@"; do case "$a" in */statuses/*) sha=${a##*/} ;; esac; done' \
+  'git --git-dir="$STUB_ORIGIN" cat-file -e "$sha^{commit}" 2>/dev/null || { echo "HTTP 422: No commit found for SHA: $sha" >&2; exit 1; }' \
+  >"$ROOT_DIR/bin/gh"
+chmod +x "$ROOT_DIR/bin/gh"; export PATH="$ROOT_DIR/bin:$PATH"
+# statuses <sha>: the status posts logged for <sha> (success, mh/gauntlet, naming its tree).
+statuses() {
+  [ -f "$STUB_DIR/gh.log" ] || { echo 0; return; }
+  /usr/bin/grep -cxF "gh api --method POST repos/{owner}/{repo}/statuses/$1 -f state=success -f context=mh/gauntlet -f description=full gauntlet passed on tree $(git -C "$L" rev-parse "$1^{tree}")" "$STUB_DIR/gh.log"
+}
 # The fixture's full gauntlet: prints to stdout, counts its runs in $STUB_DIR/gauntlet.n, records the tree
 # it ran on and what origin's feat/x held then, and fails when STUB_GAUNTLET_FAIL is set.
 GAUNTLET_STUB='#!/usr/bin/env bash
@@ -52,7 +67,7 @@ ver() { awk -F'"' '/"version"/ && !s { print $4; s = 1 }' "$1"; }
 setup() {
   local d w
   d=$(mktemp -d "$ROOT_DIR/case.XXXXXX") || exit 1
-  O="$d/origin.git"; w="$d/seed"; L="$d/local"; export STUB_DIR="$d"
+  O="$d/origin.git"; w="$d/seed"; L="$d/local"; export STUB_DIR="$d" STUB_ORIGIN="$d/origin.git"
   git init -q --bare -b develop "$O"
   git init -q -b develop "$w"
   manifests "$w" 1.0.5; echo a >"$w/a.txt"
@@ -207,6 +222,59 @@ if [ "$rc" -eq 0 ] && [ "$out" = "$HEAD_SHA" ] && [ "$(gauntlets)" = "$n0" ] && 
 else bad "cache hit: rc=$rc out='$out' runs=$(gauntlets)/$n0 err=$err"; fi
 GAUNTLET_PASS_CACHE=0 run_sync feat/x "$HEAD_SHA"
 if [ "$rc" -eq 0 ] && [ "$(gauntlets)" = $((n0 + 1)) ]; then ok "GAUNTLET_PASS_CACHE=0 runs it despite the cached pass"; else bad "opt-out: runs=$(gauntlets)/$n0"; fi
+
+# 5e. GH #742: mh/gauntlet success on the head after a green run and after a cached pass, none after a
+#     red run; a failed post exits non-zero and prints no sha.
+setup none
+run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -eq 0 ] && [ "$(statuses "$out")" = 1 ] && [ "$(wc -l <"$STUB_DIR/gh.log")" -eq 1 ]; then
+  ok "behind, green: one mh/gauntlet success status on the pushed head"
+else bad "status green: rc=$rc out='$out' log=$(cat "$STUB_DIR/gh.log" 2>&1)"; fi
+new=$out; : >"$STUB_DIR/gh.log"
+git -C "$L" fetch -q origin
+# A pass dir of its own: trees repeat across cases, and a shared entry would skip later red runs.
+mkdir -p "$STUB_DIR/pass"; date >"$STUB_DIR/pass/$(git -C "$L" rev-parse "$new^{tree}")"
+GAUNTLET_PASS_DIR="$STUB_DIR/pass" run_sync feat/x "$new"
+if [ "$rc" -eq 0 ] && [ "$out" = "$new" ] && /usr/bin/grep -q 'already passed on tree' <<<"$err" && [ "$(statuses "$new")" = 1 ]; then
+  ok "already synced, cached pass: the status is posted on the head"
+else bad "status cached: rc=$rc out='$out' log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
+setup none
+STUB_GAUNTLET_FAIL=1 run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -ne 0 ] && [ ! -s "$STUB_DIR/gh.log" ]; then ok "red gauntlet: no status posted"; else bad "status red: rc=$rc log=$(cat "$STUB_DIR/gh.log" 2>&1)"; fi
+setup none
+STUB_STATUS_FAIL=1 run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'could not post the mh/gauntlet status' <<<"$err"; then
+  ok "a failed status post exits non-zero and prints no sha to merge"
+else bad "status fail: rc=$rc out='$out' err=$err"; fi
+
+# 5f. already synced, but origin's branch is not that head (never pushed there): refused before any
+#     status, naming the cause.
+setup none
+w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b develop "$O" "$w/c"; git -C "$w/c" checkout -q -b other
+manifests "$w/c" 1.0.7; commit "$w/c" "synced"; git -C "$w/c" push -q origin other
+git -C "$L" fetch -q origin; other=$(git -C "$L" rev-parse origin/other)
+n0=$(gauntlets)
+# Cache off: case 5c cached this same tree, and a hit would skip the gauntlet in either order.
+GAUNTLET_PASS_CACHE=0 run_sync feat/x "$other"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'the head was not pushed' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ] && [ "$(gauntlets)" = "$n0" ]; then
+  ok "already synced, head not on origin's branch: refused before the gauntlet, no status, says the head was not pushed"
+else bad "unpushed head: rc=$rc out='$out' runs=$(gauntlets)/$n0 log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
+
+# 5g. no gh on PATH (a cloud session): the sync still pushes and prints the head, says no status was
+#     posted. NOGH links every PATH tool but gh, so neither the stub nor a real gh is reachable.
+NOGH="$ROOT_DIR/nogh"; mkdir -p "$NOGH"
+IFS=: read -r -a path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+  for f in "$d"/*; do
+    b=${f##*/}
+    [ "$b" != gh ] && [ -x "$f" ] && [ ! -e "$NOGH/$b" ] && ln -s "$f" "$NOGH/$b"
+  done
+done
+setup none
+PATH="$NOGH" run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(remote_head)" = "$out" ] && /usr/bin/grep -q 'no gh, so no mh/gauntlet status was posted' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ]; then
+  ok "no gh: pushed and printed the head, said no status was posted"
+else bad "no gh: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
 # 5d. behind develop, red gauntlet on the merged tree: nothing is pushed, nothing printed.
 setup none
