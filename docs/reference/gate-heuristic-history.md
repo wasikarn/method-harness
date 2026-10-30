@@ -176,7 +176,8 @@ with `-o`, or to a URL remote.
 
 Measured 2026-10-30 against origin/develop f5b96442: a replay of all 1,451 push commands in a 51,447-command
 transcript pool gave 0 deny->allow and 13 allow->deny, every one a `--force-with-lease origin <branch>` push
-with no `src:dst` (the lease tightening, shipped enforcing at the operator's call, repo-gotchas.md).
+with no `src:dst` to a `claude/...` branch (the lease tightening's cost: a dst with no `:` can't be proven
+unprotected; shipped enforcing, repo-gotchas.md).
 `gate-differential.sh --replay 1500` (corpus 1,852): 0 exit or journal diffs, 8 stderr-only diffs from the
 reworded deny message. Role-confusion probes against real git 2.56 (`-C ~user`, remote `.`/`..`/a relative
 dir, ref-normalised dsts, `@` srcs, lease values) found no protected ref moved. Residue: the dst check is by
