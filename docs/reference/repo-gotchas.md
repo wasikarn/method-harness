@@ -18,7 +18,10 @@ plus full gauntlet). The full gauntlet runs in `scripts/merge-pr.sh` and `script
 under the queue, on the exact tree they push and merge, before the push. A full (unsharded) run where
 every layer passed on a checkout identical to HEAD, at start and end, writes
 `~/.cache/mh/gauntlet-pass/<HEAD^{tree}>` (`scripts/_lib/gauntlet-pass.sh`); those two scripts skip
-the run on a hit and say so. `GAUNTLET_PASS_CACHE=0` neither reads nor writes it. So a red test now
+the run on a hit and say so. `GAUNTLET_PASS_CACHE=0` neither reads nor writes it. After a green or cached
+pass, once origin has the sha, both post the GitHub commit status `mh/gauntlet` = `success` on it
+(GH #742; needs `gh`, a failed post stops the merge). Any repo-scoped token can post one, so it is an
+honest-agent signal, not a security boundary. So a red test now
 shows at merge time, not at push time: run `bash scripts/run-gauntlet.sh` on a clean tree before asking
 for review when the change is risky, and the cached pass makes the merge-time run free if the tree
 does not change.

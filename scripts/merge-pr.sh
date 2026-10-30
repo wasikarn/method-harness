@@ -22,7 +22,7 @@
 # and version checks and never takes the lock, syncs, pushes or merges: a head that lacks origin/develop
 # or a version above it is refused with the scripts/sync-pr-head.sh command to run first, and so is a
 # head whose tree has no cached full-gauntlet pass (GH #735; GAUNTLET_PASS_CACHE=0 always refuses). On a pass it
-# prints the head; merge it pinned to that sha (expectedHeadSha) right away. Before this mode, cloud
+# posts the mh/gauntlet status when gh is on PATH (GH #742) and prints the head; merge it pinned to that sha (expectedHeadSha) right away. Before this mode, cloud
 # sessions retyped these checks by hand for every merge (#633, #644, #648).
 set -euo pipefail
 
@@ -484,6 +484,12 @@ if [ "$verify" = 1 ]; then
   if ! gauntlet_pass_has "$tree"; then
     die "no full-gauntlet pass is cached for $head's tree $tree in $(gauntlet_pass_dir)${GAUNTLET_PASS_CACHE:+ (GAUNTLET_PASS_CACHE=$GAUNTLET_PASS_CACHE)}; run scripts/sync-pr-head.sh <head branch> $head (it runs the gauntlet), or bash scripts/run-gauntlet.sh on a clean checkout of $head, then --verify again."
   fi
+  # GH #742: post mh/gauntlet when this session has gh; a cloud session has none and says so.
+  if command -v gh >/dev/null; then
+    gauntlet_status_post merge-pr "$head" || exit 1
+  else
+    echo "merge-pr: no gh, so no mh/gauntlet status was posted on $head; once branch protection requires mh/gauntlet, an MCP merge of this head is refused (merge from a machine with gh instead)." >&2
+  fi
   echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE, full gauntlet passed on its tree); merge it pinned to that sha now, and verify again if develop moves first." >&2
   echo "$head"
   exit 0
@@ -526,5 +532,7 @@ if [ "$now" != "develop" ]; then
   die "PR $pr base changed to '$now' while waiting; not merging."
 fi
 
+# origin has $head now, and run_gauntlet_here passed on it (GH #742).
+gauntlet_status_post merge-pr "$head" || exit 1
 gh pr merge "$pr" --merge --match-head-commit "$head"
 gh pr view "$pr" --json mergeCommit -q .mergeCommit.oid
