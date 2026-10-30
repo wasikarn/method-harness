@@ -2001,7 +2001,7 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None
 
-def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
+def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param):
     # The substitution that starts at s[i] (a backtick, "$(", "${", or an unquoted "<(" / ">("):
     # (placeholder, index just past it), its command body appended to `bodies`. None when s[i]
     # starts none, or its closer is missing.
@@ -2016,8 +2016,9 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth):
         j = _close_bracket(s, i + 2, "(", ")", depth_work_used, comments=True)
         if j is None:
             return None
-        # GH #713: the prepass leaves newlines inside "..." alone, but in a $(...) body they separate commands
-        bodies.append(_newlines_to_seps(s[i + 2:j - 1]) if in_dquote else s[i + 2:j - 1])
+        # GH #713: the prepass leaves newlines inside "..." alone, but in a $(...) body they separate commands.
+        # GH #726: a ${...} word is read quote-blind, so its "..." is unseen there: split in every word.
+        bodies.append(_newlines_to_seps(s[i + 2:j - 1]) if in_dquote or in_param else s[i + 2:j - 1])
         return PH, j
     if c == "$" and nxt == "{":
         # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
@@ -2180,7 +2181,7 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
                 last_escaped = False
                 continue
         if c in "`$<>":
-            sub = _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth)
+            sub = _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param)
             if sub:
                 out.append(sub[0])
                 i = sub[1]
