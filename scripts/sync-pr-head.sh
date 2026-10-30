@@ -84,6 +84,16 @@ if [ "$behind" -eq 0 ] && [ "$head_ver" = "$target" ] && [ "$(version_of "$head"
   synced=1
 fi
 
+# post_status <sha>: the mh/gauntlet status on a sha origin has (GH #742). Without gh (a cloud session)
+# there is no API to post it with: say so; merge-pr.sh --verify's cached-pass check stays the gate.
+post_status() {
+  if command -v gh >/dev/null; then
+    gauntlet_status_post sync-pr-head "$1" || exit 1
+  else
+    echo "sync-pr-head: no gh, so no mh/gauntlet status was posted on $1." >&2
+  fi
+}
+
 wt=$(mktemp -d "${TMPDIR:-/tmp}/sync-pr-head.XXXXXX") || { echo "sync-pr-head: mktemp -d failed." >&2; exit 1; }
 cleanup() {
   git worktree remove --force "$wt" >/dev/null 2>&1 || true
@@ -96,6 +106,7 @@ git worktree add -q --detach "$wt" "$head" >&2
 if [ "$synced" -eq 1 ]; then
   # Nothing to push, but the author's own push ran only a lint (GH #735): the merge still needs a gauntlet.
   (cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $head; fix it, commit, push, and get a new review." >&2; exit 1; }
+  post_status "$head"
   echo "$head"
   exit 0
 fi
@@ -155,4 +166,5 @@ if [ "${line%%[[:space:]]*}" != "$new" ]; then
   exit 1
 fi
 [ "$rc" -eq 0 ] || echo "sync-pr-head: git push exited $rc but origin has $new; going on." >&2
+post_status "$new"
 echo "$new"

@@ -484,6 +484,7 @@ if [ "$verify" = 1 ]; then
   if ! gauntlet_pass_has "$tree"; then
     die "no full-gauntlet pass is cached for $head's tree $tree in $(gauntlet_pass_dir)${GAUNTLET_PASS_CACHE:+ (GAUNTLET_PASS_CACHE=$GAUNTLET_PASS_CACHE)}; run scripts/sync-pr-head.sh <head branch> $head (it runs the gauntlet), or bash scripts/run-gauntlet.sh on a clean checkout of $head, then --verify again."
   fi
+  # No gh here, so no mh/gauntlet status (GH #742): a cloud MCP merge relies on this cached-pass check.
   echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE, full gauntlet passed on its tree); merge it pinned to that sha now, and verify again if develop moves first." >&2
   echo "$head"
   exit 0
@@ -526,5 +527,7 @@ if [ "$now" != "develop" ]; then
   die "PR $pr base changed to '$now' while waiting; not merging."
 fi
 
+# origin has $head now, and run_gauntlet_here passed on it (GH #742).
+gauntlet_status_post merge-pr "$head" || exit 1
 gh pr merge "$pr" --merge --match-head-commit "$head"
 gh pr view "$pr" --json mergeCommit -q .mergeCommit.oid

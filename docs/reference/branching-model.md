@@ -68,7 +68,9 @@ refuses on any change. It:
 6. runs the full gauntlet (`scripts/run-gauntlet.sh`, under the gauntlet queue) on that exact clean
    tree, or skips it when a pass is cached for the tree (GH #735), then pushes that sha to the PR
    branch when origin does not have it yet (an earlier run pushed it, or an older PR is already up to
-   date and above develop). A red gauntlet refuses before any push and leaves the commit on the local
+   date and above develop). Before the merge call it posts the commit status `mh/gauntlet` =
+   `success` on that sha, naming its tree (GH #742), so branch protection can require it; a failed
+   post stops the run. A red gauntlet posts none, refuses before any push and leaves the commit on the local
    branch: fix, commit, rerun (a fix commit that touches more than the manifests needs a new review
    verdict). If the tree changed while the gauntlet ran, it refuses. The push keeps `-o
    ServerAliveInterval=10 -o ServerAliveCountMax=30` on the ssh command (GitHub dropped an idle
@@ -114,7 +116,9 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
    the cloud path's only full gauntlet (GH #735; a push only lints). When the head lacks
    `origin/develop` or a version above it, it merges develop and bumps in a temporary worktree; either
    way it runs the full gauntlet on the tree that merges (a cached pass skips it), then pushes leased
-   on the head when it made a commit. A PR from a fork
+   on the head when it made a commit. With `gh` on PATH it then posts `mh/gauntlet` = `success` on
+   the sha it prints (GH #742; a failed post exits non-zero); without `gh` it says it posted none, and
+   an MCP merge cannot post one either, so step 3's cached-pass check stays the gate. A PR from a fork
    (its head repository is not this one) cannot be synced this way, since the sync pushes to a branch
    of `origin`: merge develop into it and bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,

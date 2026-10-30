@@ -39,6 +39,7 @@ mkdir -p "$STUB/hooks"
 #   just before the merge); `pr merge` refuses unless --match-head-commit equals origin's feat/x, or when
 #   STUB_MERGE_REFUSE is set; `api --paginate .../comments` applies the script's own --jq to
 #   STUB_COMMENTS_JSON (STUB_COMMENTS_JSON2 from the second read on; STUB_API_FAIL fails it).
+#   `api --method POST .../statuses/<sha>` (the mh/gauntlet status, GH #742) fails when STUB_STATUS_FAIL is set.
 cat >"$STUB/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$STUB_LOG"
@@ -59,6 +60,7 @@ case "$*" in
     json="$STUB_COMMENTS_JSON"; if [ "$n" -gt 1 ]; then json="${STUB_COMMENTS_JSON2-$STUB_COMMENTS_JSON}"; fi
     q=""; prev=""; for a in "$@"; do [ "$prev" = "--jq" ] && q="$a"; prev="$a"; done
     printf '%s' "$json" | jq -r "$q" ;;
+  *"/statuses/"*) [ -z "${STUB_STATUS_FAIL:-}" ] || { echo "HTTP 403" >&2; exit 1; } ;;
   *) exit 2 ;;
 esac
 EOF
@@ -305,6 +307,34 @@ mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$F
 run
 merges "cache for another tree"
 if [ "$(gauntlets)" = 1 ]; then ok "a pass for the pre-sync tree does not skip the gauntlet on the merged tree"; else bad "stale cache: $(gauntlets) gauntlets"; fi
+
+# 3c. GH #742: the mh/gauntlet success status goes on the merged head, after the push and before the merge,
+#     for a green run and for a cached pass; a red gauntlet posts none; a failed post stops the merge.
+# status_then_merge <label>: one success status on origin's head naming its tree, and it comes before the merge.
+status_then_merge() {
+  local tip tree; tip=$(remote_tip feat/x); tree=$(git --git-dir="$F/origin.git" rev-parse "$tip^{tree}")
+  if [ "$(/usr/bin/grep -c '/statuses/' "$F/calls.log")" = 1 ] &&
+    /usr/bin/grep -qxF "gh api --method POST repos/{owner}/{repo}/statuses/$tip -f state=success -f context=mh/gauntlet -f description=full gauntlet passed on tree $tree" "$F/calls.log" &&
+    [ "$(/usr/bin/grep -nE '/statuses/|^gh pr merge' "$F/calls.log" | cut -d: -f1 | tr '\n' ' ')" = "$(/usr/bin/grep -n '/statuses/' "$F/calls.log" | cut -d: -f1) $(/usr/bin/grep -n '^gh pr merge' "$F/calls.log" | cut -d: -f1) " ]; then
+    ok "$1 posts mh/gauntlet success on the merged head, before the merge"
+  else bad "$1 status calls: $(cat "$F/calls.log")"; fi
+}
+setup; on develop "peer 1.1.2" set_ver 1.1.2
+run
+merges "status after green"
+status_then_merge "green gauntlet"
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$(remote_tip feat/x)^{tree}")"
+run
+merges "status after cached pass"
+status_then_merge "cached pass"
+setup; on develop "peer 1.1.2" set_ver 1.1.2
+STUB_GAUNTLET_FAIL=1 run
+refuses "status after red" "the gauntlet failed on"
+if ! /usr/bin/grep -q '/statuses/' "$F/calls.log"; then ok "a red gauntlet posts no status"; else bad "red gauntlet posted: $(cat "$F/calls.log")"; fi
+setup; on develop "peer 1.1.2" set_ver 1.1.2
+STUB_STATUS_FAIL=1 run
+refuses "failed status post" "could not post the mh/gauntlet status"
 
 # 3b. versions order per number: develop at 1.1.99 is cut to 1.1.100, not 1.1.910.
 setup 1.1.99; on develop "peer" append c.txt peer
