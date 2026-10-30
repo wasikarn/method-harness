@@ -18,7 +18,10 @@ plus full gauntlet). The full gauntlet runs in `scripts/merge-pr.sh` and `script
 under the queue, on the exact tree they push and merge, before the push. A full (unsharded) run where
 every layer passed on a checkout identical to HEAD, at start and end, writes
 `~/.cache/mh/gauntlet-pass/<HEAD^{tree}>` (`scripts/_lib/gauntlet-pass.sh`); those two scripts skip
-the run on a hit and say so. `GAUNTLET_PASS_CACHE=0` neither reads nor writes it. So a red test now
+the run on a hit and say so. `GAUNTLET_PASS_CACHE=0` neither reads nor writes it. After a green or cached
+pass, once origin has the sha, both post the GitHub commit status `mh/gauntlet` = `success` on it
+(GH #742; needs `gh`, a failed post stops the merge). Any repo-scoped token can post one, so it is an
+honest-agent signal, not a security boundary. So a red test now
 shows at merge time, not at push time: run `bash scripts/run-gauntlet.sh` on a clean tree before asking
 for review when the change is risky, and the cached pass makes the merge-time run free if the tree
 does not change.
@@ -264,9 +267,13 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   sample commands; delete the id to enforce once they hold no false positive. The list is source, not an
   env var, so a project `settings.json` cannot shadow an enforced rule. A structural deny (length cap,
   unparsable text, budget, depth) takes no id: returning from it would run the code it guards. A rule
-  that denies commands from a replay of real transcripts ships shadow, not enforcing. One deliberate
-  exception: `trash-whole-tree` (PR #739) shipped enforcing at the operator's call, because both of its
-  replay hits (`trash *` and `trash "$HOME" ...`) were whole-tree trashes, not false positives.
+  that denies commands from a replay of real transcripts ships shadow, not enforcing. Deliberate
+  exceptions, each at the operator's call: `trash-whole-tree` (PR #739), because both of its replay hits
+  (`trash *` and `trash "$HOME" ...`) were whole-tree trashes, not false positives; and `git-push-force`
+  counting a lease as forced (PR #745, operator decision 2026-10-27: deny a lease push to a protected
+  branch). Its 13 replay hits were lease pushes to `claude/...` branches with no `src:dst`. Those are
+  denied as a cost of spec v3, not by the operator's decision: config can redirect a refspec with no `:`
+  (`remote.<r>.push`), so the gate can't prove that dst unprotected. Write `HEAD:<branch>` instead.
 - **Oracle:** run the real shells (the system `/bin/sh`, bash 3.2, a current bash, dash, zsh, ksh)
   with argv-logging stubs, never one shell or argv0-based shell guessing: whether `{fd}>` is a
   redirect depends on the binary and version (GH #219).

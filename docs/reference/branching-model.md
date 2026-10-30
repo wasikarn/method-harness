@@ -68,7 +68,9 @@ refuses on any change. It:
 6. runs the full gauntlet (`scripts/run-gauntlet.sh`, under the gauntlet queue) on that exact clean
    tree, or skips it when a pass is cached for the tree (GH #735), then pushes that sha to the PR
    branch when origin does not have it yet (an earlier run pushed it, or an older PR is already up to
-   date and above develop). A red gauntlet refuses before any push and leaves the commit on the local
+   date and above develop). Before the merge call it posts the commit status `mh/gauntlet` =
+   `success` on that sha, naming its tree (GH #742), so branch protection can require it; a failed
+   post stops the run. A red gauntlet posts none, refuses before any push and leaves the commit on the local
    branch: fix, commit, rerun (a fix commit that touches more than the manifests needs a new review
    verdict). If the tree changed while the gauntlet ran, it refuses. The push keeps `-o
    ServerAliveInterval=10 -o ServerAliveCountMax=30` on the ssh command (GitHub dropped an idle
@@ -114,14 +116,18 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
    the cloud path's only full gauntlet (GH #735; a push only lints). When the head lacks
    `origin/develop` or a version above it, it merges develop and bumps in a temporary worktree; either
    way it runs the full gauntlet on the tree that merges (a cached pass skips it), then pushes leased
-   on the head when it made a commit. A PR from a fork
+   on the head when it made a commit. With `gh` on PATH it then posts `mh/gauntlet` = `success` on
+   the sha it prints (GH #742; a failed post exits non-zero); without `gh` it says it posted none. A PR from a fork
    (its head repository is not this one) cannot be synced this way, since the sync pushes to a branch
    of `origin`: merge develop into it and bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,
-   review (same verdict parser), ancestry and version checks, never a gh call, lock, sync, push or
-   merge. It also refuses unless a full-gauntlet pass is cached for the head's tree (GH #735: step 2
-   writes it, or `bash scripts/run-gauntlet.sh` on a clean checkout of that head, in the same
-   session's `~/.cache`). It prints the head on a pass, and on a head that is not synced or has no
+   review (same verdict parser), ancestry and version checks, never a lock, sync, push or merge. It
+   also refuses unless a full-gauntlet pass is cached for the head's tree (GH #735: step 2 writes it,
+   or `bash scripts/run-gauntlet.sh` on a clean checkout of that head, in the same session's
+   `~/.cache`). On a pass it posts the `mh/gauntlet` status when `gh` is on PATH (a failed post exits
+   non-zero), else it says it posted none. Once branch protection requires `mh/gauntlet` (below),
+   an MCP-only merge from a session without `gh` is refused: turning that check on stops cloud
+   MCP-only merges, so merge such a PR from a machine with `gh`. It prints the head on a pass, and on a head that is not synced or has no
    cached pass it names the command to run;
 4. read the PR once more with the MCP tools and confirm its base is still `develop` and its head is
    still that sha (`--verify` only knows the values it was given; the `gh` path re-reads the base
@@ -129,6 +135,14 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
    away. If develop moved first, go back to step 2.
 There is no load wait and no merge lock in this mode: a cloud container runs nothing else, and the
 lock is per machine.
+
+**`mh/gauntlet` branch protection (operator's step, not yet applied; GH #742).** The scripts above
+post the commit status `mh/gauntlet` = `success` on a head only after a green or cached full gauntlet.
+To make GitHub refuse every merge path without it (web button, bare `gh pr merge`, MCP), the
+operator sets two things in develop's branch protection: the required status check context
+`mh/gauntlet`, and "Require branches to be up to date before merging" (so the checked head is the
+merged tree). The status is an honest-agent signal: any token with repo scope can post it, so it is
+not a security boundary.
 
 The checks and the lock are local-only. The script narrows the gap; it does not close it: a merge made
 outside the script costs a retry round, a push to `develop` from another clone between the last check

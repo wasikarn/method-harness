@@ -461,11 +461,12 @@ test_deny "$IRRECOVERABLE" "baseline: plain --hard with no splice still denies (
 test_deny "$IRRECOVERABLE" "baseline: plain --amend with no splice still denies (unaffected by the fix)" \
   "$(bash_payload 'git commit --amend -m x')"
 
-test_allow "$IRRECOVERABLE" "git push --force-with-lease (safe variant)" \
+# Force-push spec v3: a lease is forced, so these deny (no src:dst; develop and the main lease ref are protected).
+test_deny  "$IRRECOVERABLE" "git push --force-with-lease origin develop (lease to protected)" \
   "$(bash_payload 'git push --force-with-lease origin develop')"
-test_allow "$IRRECOVERABLE" "git push --force-with-lease with refspec (still safe)" \
+test_deny  "$IRRECOVERABLE" "git push --force-with-lease=main:12345 origin develop (lease to protected)" \
   "$(bash_payload 'git push --force-with-lease=main:12345 origin develop')"
-test_allow "$IRRECOVERABLE" "git push --force-with-lease --force-if-includes (safest variant)" \
+test_deny  "$IRRECOVERABLE" "git push --force-with-lease --force-if-includes origin develop (lease to protected)" \
   "$(bash_payload 'git push --force-with-lease --force-if-includes origin develop')"
 test_allow "$IRRECOVERABLE" "git push normal (no force)" \
   "$(bash_payload 'git push origin develop')"
