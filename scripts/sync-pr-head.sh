@@ -6,8 +6,8 @@
 # develop's version moved 48 times in six hours and each open PR had to re-merge and re-bump after
 # every one (#618 took five rounds).
 #
-# When the head already contains origin/develop and ships a version above it, it prints the head and
-# changes nothing. Otherwise, in a temporary worktree at the head:
+# When the head already contains origin/develop and ships a version above it, it runs the gauntlet on it
+# (step 3) and prints the head, pushing nothing. Otherwise, in a temporary worktree at the head:
 #   1. merge origin/develop (if the head lacks it). A manifest conflict takes develop's side only when
 #      the branch changed nothing in that manifest but its version line (the conflict is the version
 #      bump next to another line); a manifest the branch edited otherwise, or any other conflict,
@@ -15,9 +15,12 @@
 #      whole file would silently drop the branch's edit (PR #644 review).
 #   2. set both manifests to the head's own version when it is above develop's (a deliberate bump,
 #      say a minor one), else develop's + 1, in one manifest-only commit.
-#   3. push to origin/<branch>, leased on <head>, with merge-pr.sh's SSH keepalive. The pre-push
-#      gauntlet runs on the exact tree that merges; a branch that is no longer exactly <head> (someone
-#      pushed or rewound it) is refused. A push that exits non-zero but landed (ls-remote) still counts.
+#   3. run the full gauntlet on that exact tree, under the gauntlet lock, unless a pass is cached for it
+#      (scripts/_lib/gauntlet-pass.sh; GAUNTLET_PASS_CACHE=0 forces the run). Since GH #735 a push runs
+#      only a fast lint, so this is the gate on the tree that merges; a red gauntlet pushes nothing.
+#   4. push to origin/<branch>, leased on <head>, with merge-pr.sh's SSH keepalive; a branch that is no
+#      longer exactly <head> (someone pushed or rewound it) is refused. A push that exits non-zero but
+#      landed (ls-remote) still counts.
 # Prints the new head sha on stdout; everything else goes to stderr. The caller fetches origin first.
 # Both commits keep a PR's review verdict (merge-pr.sh check_review): the version commit changes only the
 # manifests' version value, and since GH #629 a merge keeps it only as a plain two-parent merge whose
@@ -25,6 +28,12 @@
 # value, which is the one step 1 makes.
 # Bash 3.2.
 set -euo pipefail
+
+HERE="$(cd -P "$(dirname "$0")" && pwd)"
+# shellcheck source=_lib/gauntlet-lock.sh
+. "$HERE/_lib/gauntlet-lock.sh"
+# shellcheck source=_lib/gauntlet-pass.sh
+. "$HERE/_lib/gauntlet-pass.sh"
 
 branch="${1:-}" head="${2:-}"
 if [ -z "$branch" ] || [ -z "$head" ]; then
@@ -70,9 +79,9 @@ if [ "$behind" -gt 1 ]; then
   echo "sync-pr-head: ancestry check failed (rc=$behind); is $head fetched?" >&2
   exit 1
 fi
+synced=0
 if [ "$behind" -eq 0 ] && [ "$head_ver" = "$target" ] && [ "$(version_of "$head" "$MJ")" = "$target" ]; then
-  echo "$head"
-  exit 0
+  synced=1
 fi
 
 wt=$(mktemp -d "${TMPDIR:-/tmp}/sync-pr-head.XXXXXX") || { echo "sync-pr-head: mktemp -d failed." >&2; exit 1; }
@@ -83,6 +92,13 @@ cleanup() {
 }
 trap cleanup EXIT
 git worktree add -q --detach "$wt" "$head" >&2
+
+if [ "$synced" -eq 1 ]; then
+  # Nothing to push, but the author's own push ran only a lint (GH #735): the merge still needs a gauntlet.
+  (cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $head; fix it, commit, push, and get a new review." >&2; exit 1; }
+  echo "$head"
+  exit 0
+fi
 
 if [ "$behind" -eq 1 ]; then
   if ! git -C "$wt" merge -q --no-edit -m "Merge origin/develop into $branch" origin/develop >&2; then
@@ -127,14 +143,15 @@ if ! git -C "$wt" diff --quiet -- "$PJ" "$MJ"; then
 fi
 
 new=$(git -C "$wt" rev-parse HEAD)
-# git opens the SSH connection before the pre-push hook, so it idles through the whole gauntlet and
-# GitHub drops it (exit 141); the same keepalive as merge-pr.sh's push_head.
+(cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $new (the merge of origin/develop and the version bump), so nothing was pushed; fix it on the branch, push, and get a new review." >&2; exit 1; }
+# The keepalive dates from the pre-push hook running the whole gauntlet while the SSH connection idled
+# (exit 141); the same as merge-pr.sh's push_head, cheap, for a hook run with MH_PREPUSH_FULL=1.
 ssh_cmd="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand || echo "${GIT_SSH:-ssh}")} -o ServerAliveInterval=10 -o ServerAliveCountMax=30"
 rc=0
 GIT_SSH_COMMAND="$ssh_cmd" git -C "$wt" push --force-with-lease="refs/heads/$branch:$head" origin "HEAD:refs/heads/$branch" >&2 || rc=$?
 line=$(git ls-remote origin "refs/heads/$branch") || { echo "sync-pr-head: git ls-remote origin failed after the push (rc=$rc)." >&2; exit 1; }
 if [ "${line%%[[:space:]]*}" != "$new" ]; then
-  echo "sync-pr-head: push to origin/$branch failed (rc=$rc): either the branch is no longer at $head (fetch and run sync-pr-head.sh on the new head) or the pre-push gauntlet failed (fix, commit, push, and get a new review)." >&2
+  echo "sync-pr-head: push to origin/$branch failed (rc=$rc): either the branch is no longer at $head (fetch and run sync-pr-head.sh on the new head) or the pre-push lint failed (fix, commit, push, and get a new review)." >&2
   exit 1
 fi
 [ "$rc" -eq 0 ] || echo "sync-pr-head: git push exited $rc but origin has $new; going on." >&2

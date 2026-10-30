@@ -3529,6 +3529,22 @@ _timed_case 'GH #713: 10000 $(echo #) words are read in bounded time' 0 \
 _timed_case 'GH #713: 5000 "${ echo a; }" funsubs are read in bounded time' 0 \
   "echo $(printf '"${ echo a; }" %.0s' $(seq 5000))"
 
+# GH #726: the same $(...) inside a ${...} word with "..." around the ${...} or inside the word: the word is read
+# quote-blind, so #713's newline split (done only inside "...") never ran. bash 5.3 runs @V@ in each.
+_p726=("echo \"\${x:-\$( : # )'$_N@V@$_N: # '$_N)}\"" "echo \${x:-\"\$( : # )'$_N@V@$_N: # '$_N)\"}"
+  "z=\"\${x:+\$(: #)'$_N@V@$_N#'$_N)}\"" "echo \"a\${x#\$( : # )'$_N@V@$_N: # '$_N)}b\""
+  "echo \${x/\"\$(: #)'$_N@V@$_N#'$_N)\"/y}" "echo \"\${x:-\${x:-\$( : # )'$_N@V@$_N: # '$_N)}}\""
+  "echo \"\${x:-\$(: #)'$_N@V@$_N#'$_N)}\"")
+for _v in 'rm -rf ~/x' 'git push --force origin main'; do
+  for _t in "${_p726[@]}"; do
+    _c=${_t//@V@/"$_v"}
+    test_deny "$IRRECOVERABLE" "GH #726: $_c" "$(bash_payload "$_c")"
+  done
+done
+for _c in "echo \"\${x:-\$(ls # list$_N)}\"" "echo \${x:-\"\$(date$_N)\"}" "echo \"\${x:-\$(echo a$_N echo b)}\""; do
+  test_allow "$IRRECOVERABLE" "GH #726 control: $_c" "$(bash_payload "$_c")"
+done
+
 # GH #674: a shell reads its commands on stdin behind a wrapper, with its own wrapper options, or with its own
 # -o NAME / +o NAME pairs; the echo feeding it may sit behind a wrapper or an assignment too.
 for _c674 in "echo 'rm -rf b' | command -p sh" "echo 'rm -rf b' | time -p sh" "echo 'rm -rf b' | bash -o pipefail" \

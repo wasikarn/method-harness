@@ -2,9 +2,10 @@
 # test-sync-pr-head.sh — scripts/sync-pr-head.sh, the no-gh sync a cloud session runs before
 # `merge-pr.sh --verify`, so branches never bump the version: it merges origin/develop into a PR head (manifest conflicts take develop's side,
 # any other conflict refuses), sets both manifests to develop's version + 1 (or the head's own when it
-# is higher), pushes to the PR branch and prints the new head. Real git: a bare origin, a develop that
-# moved on, and a feature branch per case. Case 1 wires hooks that print to stdout (the real pre-push
-# does), which must not reach the sha the script prints.
+# is higher), runs the full gauntlet on that tree (GH #735: the push only lints), pushes to the PR branch
+# and prints the new head. Real git: a bare origin, a develop that moved on, and a feature branch per
+# case; the committed scripts/run-gauntlet.sh is a recorder that prints to stdout. Case 1 wires hooks
+# that print to stdout (the real pre-push does), which must not reach the sha the script prints either.
 set -uo pipefail
 # A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
@@ -21,6 +22,18 @@ safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1
 ROOT_DIR="$(mktemp -d)"
 [ -n "$ROOT_DIR" ] && [ -d "$ROOT_DIR" ] || { echo "mktemp -d failed" >&2; exit 1; }
 export TMPDIR="$ROOT_DIR"
+# The gauntlet lock and pass cache stay in the sandbox (the gauntlet's own test layer exports
+# GAUNTLET_PASS_CACHE=0; these cases want the cache on).
+export GAUNTLET_LOCK_DIR="$ROOT_DIR/gauntlet.lock" GAUNTLET_PASS_DIR="$ROOT_DIR/pass" GAUNTLET_PASS_CACHE=1
+unset MH_GAUNTLET_LOCK_OWNER STUB_GAUNTLET_FAIL
+# The fixture's full gauntlet: prints to stdout, counts its runs in $STUB_DIR/gauntlet.n, records the tree
+# it ran on and what origin's feat/x held then, and fails when STUB_GAUNTLET_FAIL is set.
+GAUNTLET_STUB='#!/usr/bin/env bash
+echo "stub gauntlet ran"
+n=0; [ ! -f "$STUB_DIR/gauntlet.n" ] || n=$(cat "$STUB_DIR/gauntlet.n"); echo $((n + 1)) >"$STUB_DIR/gauntlet.n"
+echo "head=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr "\n" " ")origin=$(git ls-remote origin refs/heads/feat/x | cut -f1) lock=$(cat "$GAUNTLET_LOCK_DIR/pid")" >>"$STUB_DIR/gauntlet.log"
+[ -z "${STUB_GAUNTLET_FAIL:-}" ] || exit 1'
+gauntlets() { if [ -f "$STUB_DIR/gauntlet.n" ]; then cat "$STUB_DIR/gauntlet.n"; else echo 0; fi; }
 
 # manifests <dir> <version>: write both manifests the way the real ones are laid out (the version is
 # not the only key, and marketplace.json nests it in the plugin entry).
@@ -39,10 +52,12 @@ ver() { awk -F'"' '/"version"/ && !s { print $4; s = 1 }' "$1"; }
 setup() {
   local d w
   d=$(mktemp -d "$ROOT_DIR/case.XXXXXX") || exit 1
-  O="$d/origin.git"; w="$d/seed"; L="$d/local"
+  O="$d/origin.git"; w="$d/seed"; L="$d/local"; export STUB_DIR="$d"
   git init -q --bare -b develop "$O"
   git init -q -b develop "$w"
-  manifests "$w" 1.0.5; echo a >"$w/a.txt"; commit "$w" base
+  manifests "$w" 1.0.5; echo a >"$w/a.txt"
+  mkdir -p "$w/scripts"; printf '%s\n' "$GAUNTLET_STUB" >"$w/scripts/run-gauntlet.sh"
+  commit "$w" base
   git -C "$w" remote add origin "$O"; git -C "$w" push -q origin develop
   git -C "$w" checkout -q -b feat/x
   echo b >"$w/b.txt"
@@ -93,6 +108,11 @@ if /usr/bin/grep -q 'pre-push hook says hi' <<<"$err" && ! /usr/bin/grep -q 'hoo
   ok "behind: the hooks ran, and their output went to stderr, not stdout"
 else bad "behind: hook output: out='$out' err='$err'"; fi
 new=$out
+if [ "$(gauntlets)" = 1 ] && /usr/bin/grep -qE "^head=$new dirty=origin=$HEAD_SHA lock=[0-9]+\$" "$STUB_DIR/gauntlet.log" \
+  && /usr/bin/grep -q 'stub gauntlet ran' <<<"$err" && ! /usr/bin/grep -q 'stub gauntlet ran' <<<"$out"; then
+  ok "behind: the full gauntlet ran once, under the lock, on the clean pushed tree, before the push, output on stderr"
+else bad "behind: gauntlet: $(cat "$STUB_DIR/gauntlet.log" 2>&1) out='$out'"; fi
+if [ ! -e "$GAUNTLET_LOCK_DIR" ] && [ ! -d "$GAUNTLET_PASS_DIR" ]; then ok "behind: the gauntlet lock is released; no cache entry from the script itself"; else bad "behind: lock or pass dir left"; fi
 if [ "$rc" -eq 0 ] && [ -n "$new" ] && [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] && [ "$(remote_head)" = "$new" ]; then
   ok "behind: exit 0, one line on stdout, and it is the pushed head"
 else bad "behind: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
@@ -161,7 +181,7 @@ if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'a.txt' <<<"$err" && [ "
   ok "conflict outside the manifests: refused, names a.txt, branch and worktrees untouched"
 else bad "other conflict: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
-# 5. already synced (contains develop, ships 1.0.7): prints the head, pushes nothing.
+# 5. already synced (contains develop, ships 1.0.7): runs the gauntlet on it, prints the head, pushes nothing.
 setup none
 w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b develop "$O" "$w/c"; git -C "$w/c" checkout -q -b feat/x
 manifests "$w/c" 1.0.7; commit "$w/c" "synced"; git -C "$w/c" push -q -f origin feat/x
@@ -170,6 +190,30 @@ run_sync feat/x "$HEAD_SHA"
 if [ "$rc" -eq 0 ] && [ "$out" = "$HEAD_SHA" ] && [ "$(remote_head)" = "$HEAD_SHA" ] && worktrees_clean; then
   ok "already synced: prints the head unchanged, no push, no worktree"
 else bad "synced: rc=$rc out='$out' err=$err"; fi
+if [ "$(gauntlets)" = 1 ] && /usr/bin/grep -q "^head=$HEAD_SHA " "$STUB_DIR/gauntlet.log"; then
+  ok "already synced: the full gauntlet still runs on the head (its push only linted it)"
+else bad "synced: gauntlet: $(cat "$STUB_DIR/gauntlet.log" 2>&1)"; fi
+# 5b. ...a red gauntlet there refuses, prints nothing.
+STUB_GAUNTLET_FAIL=1 run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'the gauntlet failed on' <<<"$err" && worktrees_clean; then
+  ok "already synced, red gauntlet: refused, nothing on stdout"
+else bad "synced red: rc=$rc out='$out' err=$err"; fi
+# 5c. ...and a pass cached for its tree skips the run and says so.
+mkdir -p "$GAUNTLET_PASS_DIR"; date >"$GAUNTLET_PASS_DIR/$(git -C "$L" rev-parse "$HEAD_SHA^{tree}")"
+n0=$(gauntlets)
+run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -eq 0 ] && [ "$out" = "$HEAD_SHA" ] && [ "$(gauntlets)" = "$n0" ] && /usr/bin/grep -q 'already passed on tree' <<<"$err"; then
+  ok "a pass cached for the tree skips the gauntlet and says so on stderr"
+else bad "cache hit: rc=$rc out='$out' runs=$(gauntlets)/$n0 err=$err"; fi
+GAUNTLET_PASS_CACHE=0 run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -eq 0 ] && [ "$(gauntlets)" = $((n0 + 1)) ]; then ok "GAUNTLET_PASS_CACHE=0 runs it despite the cached pass"; else bad "opt-out: runs=$(gauntlets)/$n0"; fi
+
+# 5d. behind develop, red gauntlet on the merged tree: nothing is pushed, nothing printed.
+setup none
+STUB_GAUNTLET_FAIL=1 run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && [ "$(remote_head)" = "$HEAD_SHA" ] && /usr/bin/grep -q 'the gauntlet failed on' <<<"$err" && worktrees_clean; then
+  ok "behind, red gauntlet: refused before the push, branch untouched"
+else bad "behind red: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
 # 6. contains develop but ships develop's version: one bump commit, no merge commit.
 setup none
