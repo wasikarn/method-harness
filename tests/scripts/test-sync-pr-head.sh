@@ -253,10 +253,27 @@ setup none
 w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b develop "$O" "$w/c"; git -C "$w/c" checkout -q -b other
 manifests "$w/c" 1.0.7; commit "$w/c" "synced"; git -C "$w/c" push -q origin other
 git -C "$L" fetch -q origin; other=$(git -C "$L" rev-parse origin/other)
+n0=$(gauntlets)
 run_sync feat/x "$other"
-if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'the head was not pushed' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ]; then
-  ok "already synced, head not on origin's branch: refused, no status, says the head was not pushed"
-else bad "unpushed head: rc=$rc out='$out' log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'the head was not pushed' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ] && [ "$(gauntlets)" = "$n0" ]; then
+  ok "already synced, head not on origin's branch: refused before the gauntlet, no status, says the head was not pushed"
+else bad "unpushed head: rc=$rc out='$out' runs=$(gauntlets)/$n0 log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
+
+# 5g. no gh on PATH (a cloud session): the sync still pushes and prints the head, says no status was
+#     posted. NOGH links every PATH tool but gh, so neither the stub nor a real gh is reachable.
+NOGH="$ROOT_DIR/nogh"; mkdir -p "$NOGH"
+IFS=: read -r -a path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+  for f in "$d"/*; do
+    b=${f##*/}
+    [ "$b" != gh ] && [ -x "$f" ] && [ ! -e "$NOGH/$b" ] && ln -s "$f" "$NOGH/$b"
+  done
+done
+setup none
+PATH="$NOGH" run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(remote_head)" = "$out" ] && /usr/bin/grep -q 'no gh, so no mh/gauntlet status was posted' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ]; then
+  ok "no gh: pushed and printed the head, said no status was posted"
+else bad "no gh: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 
 # 5d. behind develop, red gauntlet on the merged tree: nothing is pushed, nothing printed.
 setup none
