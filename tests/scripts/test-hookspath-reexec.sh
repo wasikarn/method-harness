@@ -37,7 +37,7 @@ g "$A" add git-hooks
 g "$A" commit -q --no-verify -m init
 g "$A" worktree add -q "$B" -b other
 own_b="$B/git-hooks"
-# Rows 2 and 4 pass trivially without the block, so they also require it in both stubs.
+# Rows 3 and 4 pass trivially without the block, so they also require it in both stubs.
 # shellcheck disable=SC2034 # read inside check's eval strings
 guard='/usr/bin/grep -q MH_HOOK_REEXEC=1 "$A/git-hooks/pre-commit" && /usr/bin/grep -q MH_HOOK_REEXEC=1 "$A/git-hooks/pre-push"'
 
@@ -49,14 +49,14 @@ check '[ "$(cut -d" " -f1 "$T/ran")" = "$own_b" ]' "pre-commit: work tree's own 
 check '[ "$(wc -l < "$T/ran")" -eq 1 ]' "pre-commit: hook body ran exactly once"
 check '/usr/bin/grep -q "core.hooksPath is .$A/git-hooks.*git config core.hooksPath git-hooks" "$T/err"' "pre-commit: warning names the configured path and the fix"
 
-# Row 3: pre-push via the other checkout's path, run from B: stdin ref lines reach B's hook intact.
+# Row 2: pre-push via the other checkout's path, run from B: stdin ref lines reach B's hook intact.
 : > "$T/ran"
 refs="refs/heads/other 1111111111111111111111111111111111111111 refs/heads/other 0000000000000000000000000000000000000000"
 (cd "$B" && printf '%s\n' "$refs" | "$A/git-hooks/pre-push" origin url 2> "$T/err")
 check '[ "$(cat "$T/ran")" = "$own_b $refs" ]' "pre-push: own hook ran and got the ref lines intact"
 check '/usr/bin/grep -q "git config core.hooksPath git-hooks" "$T/err"' "pre-push: warning printed"
 
-# Row 2: relative core.hooksPath: no warning, no re-exec.
+# Row 3: relative core.hooksPath: no warning, no re-exec.
 g "$A" config core.hooksPath git-hooks
 : > "$T/ran"
 g "$B" commit -q --allow-empty -m y 2> "$T/err" < /dev/null
