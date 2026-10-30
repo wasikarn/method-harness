@@ -17,8 +17,8 @@ hooks/gates/_*                    full
 .claude/*                         full
 
 # The planner itself.
-scripts/gauntlet-plan.sh          medium tests/scripts/test-gauntlet-plan.sh tests/scripts/test-gauntlet-levels.sh
-scripts/gauntlet-rules.txt        medium tests/scripts/test-gauntlet-plan.sh tests/scripts/test-gauntlet-levels.sh
+scripts/gauntlet-plan.sh          medium tests/scripts/test-gauntlet-plan.sh tests/scripts/test-gauntlet-levels.sh tests/scripts/test-merge-pr.sh
+scripts/gauntlet-rules.txt        medium tests/scripts/test-gauntlet-plan.sh tests/scripts/test-gauntlet-levels.sh tests/scripts/test-merge-pr.sh
 
 # Gates: the gate's own suite plus the cross-gate suites that drive it.
 hooks/gates/brace-route.awk                 medium tests/hooks/test-gates-other.sh tests/hooks/test-precommit-canary-narrow.sh
@@ -58,6 +58,7 @@ scripts/gate-differential.sh      medium tests/scripts/test-gate-differential.sh
 skills/*                          medium tests/evals/test*.sh
 agents/*                          medium tests/evals/test*.sh tests/scripts/test-eval-fold.sh
 evals/*                           medium tests/evals/test*.sh tests/scripts/test-eval-fold.sh
+evals/ideate-run/*                medium tests/skills/test-ideate-critic-default.sh
 skills/*/ste-lint/*               medium tests/skills/test-ste-lint.sh
 skills/*/cost-report/*            medium tests/skills/test-cost-report.sh tests/hooks/test-session-stop.sh
 skills/*/gate-report/*            medium tests/skills/test-gate-report.sh tests/skills/test-skill-usage-report.sh

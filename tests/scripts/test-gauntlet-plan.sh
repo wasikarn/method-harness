@@ -58,6 +58,16 @@ out=$(plan tests/scripts/test-merge-pr.sh tests/scripts/test-gone-forever.sh)
 if [ "$(tests_of "$out")" = tests/scripts/test-merge-pr.sh ]; then ok "a changed test file selects itself, a deleted one nothing"
 else bad "SELF: $out"; fi
 
+# Files a test reads outside its own area: the ideate-run graders, and the plan, which test-merge-pr.sh's
+# miss-log rows run.
+out=$(plan evals/ideate-run/graders/x.md)
+if has_test "$out" tests/skills/test-ideate-critic-default.sh; then ok "an ideate-run eval change selects test-ideate-critic-default.sh"
+else bad "ideate-run: $out"; fi
+for f in scripts/gauntlet-plan.sh scripts/gauntlet-rules.txt; do
+  out=$(plan "$f")
+  if has_test "$out" tests/scripts/test-merge-pr.sh; then ok "$f selects test-merge-pr.sh"; else bad "$f: $out"; fi
+done
+
 # The <base> form diffs <base>...HEAD in a git repo, with its own rules file at the top.
 source "$ROOT/tests/_lib/harness.sh"
 trap _cleanup_trash EXIT

@@ -441,8 +441,9 @@ run_gauntlet_here() {
   [ "$(git rev-parse HEAD)" = "$head" ] || die "HEAD moved off $head before the gauntlet; run merge-pr.sh again."
   local out rc=0 cached=0
   if gauntlet_pass_has "$(git rev-parse 'HEAD^{tree}')"; then cached=1; fi
-  # The output still streams to stderr; the copy is for the miss log's failing: line.
-  out=$(gauntlet_full merge-pr 2>&1 | tee /dev/stderr) || rc=$?
+  # The output still streams to stderr; the copy is for the miss log's failing: line. -a: without it,
+  # Linux reopens a regular-file stderr truncated and wipes what was written before.
+  out=$(gauntlet_full merge-pr 2>&1 | tee -a /dev/stderr) || rc=$?
   # A cached pass ran nothing, so it says nothing about what a plan would have missed.
   [ "$cached" = 1 ] || miss_log_row "$out"
   [ "$rc" = 0 ] || die "the gauntlet failed on $head; fix it, commit, and run merge-pr.sh again (a fix commit needs a new review verdict)."
@@ -460,9 +461,11 @@ miss_log_row() {
     echo "merge-pr: gauntlet-plan.sh failed, so no miss-log row for $head." >&2
     return 0
   fi
-  mkdir -p "$(dirname "$log")" && python3 -c '
+  # The output goes on stdin: a red run's can pass 1 MB, more than one argv string may carry.
+  mkdir -p "$(dirname "$log")" && printf '%s\n' "$1" | python3 -c '
 import json, sys, time
-pr, head, plan, out = sys.argv[1:5]
+pr, head, plan = sys.argv[1:4]
+out = sys.stdin.read()
 lines = plan.splitlines()
 level = next((l[7:] for l in lines if l.startswith("level: ")), "unknown")
 sel = [l[6:] for l in lines if l.startswith("test: ")]
@@ -470,7 +473,7 @@ failing = ([l[8:].split() for l in out.splitlines() if l.startswith("failing:")]
 print(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pr": pr, "head": head,
                   "level": level, "selected": sel, "failing": failing,
                   "miss": level != "full" and any(f not in sel for f in failing)}))
-' "$pr" "$head" "$plan" "$1" >>"$log" || echo "merge-pr: could not append the miss-log row to $log; merging goes on." >&2
+' "$pr" "$head" "$plan" >>"$log" || echo "merge-pr: could not append the miss-log row to $log; merging goes on." >&2
   return 0
 }
 
