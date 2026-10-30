@@ -37,6 +37,45 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
     journal(GATE_ID, None, "deny", None)
     sys.exit(2)
 
+# Force-push spec v3 (2026-10-30): the one allowed force push is a WHOLE command, read before any view,
+# rewrite or tokenizing, that is a single plain `git [-C path] push [opts] <remote> <src:dst>...` over an
+# alphabet with no shell meaning (no quote, $, `, \, ; & | < > ( ) { } [ ] * ? ! # ^ , tab or double blank),
+# so the text is git's argv. The path, remote, lease ref, src and dst never start with '-', so an option
+# can't fill the remote slot (`push -f --mirror HEAD:feat`: git reads --mirror and a repository HEAD:feat). An explicit src:dst ignores remote.<r>.push, push.default
+# and branch merge config, and mirror config refuses it. It skips only the force-push denies (git-push-force,
+# the ambiguity push arm, a -c remote.<r>.push "+" pair), and only when no dst or lease ref is protected.
+_FP_L = r"[A-Za-z0-9._/][A-Za-z0-9._/-]*(?::[0-9a-f]{4,40})?"
+_FP_STRICT_RE = re.compile(
+    r"git(?: -C [A-Za-z0-9._/~][A-Za-z0-9._/~-]*)? push"
+    r"(?: (?:-[fuqvn]+|--force|--force-if-includes|--force-with-lease(?:=" + _FP_L + r")?|--set-upstream|--quiet"
+    r"|--verbose|--dry-run|--atomic|--porcelain|--progress|--no-progress))*"
+    r" [A-Za-z0-9._][A-Za-z0-9._-]*(?: \+?[A-Za-z0-9._/@][A-Za-z0-9._/@-]*:[A-Za-z0-9._/][A-Za-z0-9._/-]*)+")
+
+def _fp_protected(ref):
+    ref = ref.lower()
+    for p in ("refs/heads/", "heads/"):
+        if ref.startswith(p):
+            ref = ref[len(p):]
+            break
+    return ref in ("main", "master", "develop", "production", "staging") or ref.startswith("release/")
+
+def _fp_allowed(raw):
+    if not isinstance(raw, str):
+        return False
+    raw = raw.strip(" \t\n")
+    if not _FP_STRICT_RE.fullmatch(raw):
+        return False
+    words = raw.split(" ")
+    refs = [w.split("=", 1)[1].split(":", 1)[0] for w in words if w.startswith("--force-with-lease=")]
+    # The remote is the first word after push that is not an option; every word after it is a src:dst.
+    i = 4 if words[1] == "-C" else 2  # past `git [-C P] push`; the path may itself be "push"
+    while words[i].startswith("-"):
+        i += 1
+    refs += [w.split(":", 1)[1] for w in words[i + 1:]]
+    return not any(_fp_protected(r) for r in refs)
+
+_FORCE_PUSH_OK = _fp_allowed(d["tool_input"].get("command"))
+
 SQ = chr(39)
 DQ = chr(34)  # GH #697: _dequoted decodes $'..' before the heredoc pass
 _ANSI_C_QUOTE_RE = re.compile(r"\$" + SQ + r"((?:[^" + SQ + r"\\]|\\.)*)" + SQ)
@@ -2838,7 +2877,8 @@ class _AmbigVerb:
                     first.setdefault(sm.group(1), sm.end())
                 if first and not self.narrow:
                     return True
-                if any(_AMBIG_NARROW_AFTER.get(v, _AMBIG_ANY).search(seg, e) for v, e in first.items()):
+                if any(_AMBIG_NARROW_AFTER.get(v, _AMBIG_ANY).search(seg, e) for v, e in first.items()
+                       if not (v == "push" and _FORCE_PUSH_OK)):
                     return True
             elif not self.narrow:
                 return True
@@ -3849,7 +3889,7 @@ def _git_cfg_risk(key, val, sub):
     if key.startswith("remote.") and key.endswith(".mirror") and (unseen or val.lower() not in _GIT_FALSE) and sub in ("push", None):
         return "git-push-mirror"
     if key.startswith("remote.") and key.endswith(".push") and (unseen or val.startswith("+")) and sub in ("push", None):
-        return "git-push-force"
+        return None if _FORCE_PUSH_OK else "git-push-force"
     if key == "clean.requireforce" and (unseen or val.lower() in _GIT_FALSE) and sub in ("clean", None):
         return "git-clean-force"
     if key in ("gc.pruneexpire", "gc.reflogexpire", "gc.reflogexpireunreachable") and now and sub in ("gc", None):
@@ -5245,13 +5285,15 @@ def _check_window(_wi, w):
             scan = [t.replace(PH, "") for t in scan_raw]
 
             for sub in _candidates(sub, KNOWN_GIT_SUBS):
-                if sub == "push" and any(
-                    t in ("-f", "--force") or (t.startswith("--force") and not t.startswith(("--force-with-lease", "--force-if-includes")))
+                # Spec v3: a lease (--force-with-lease[=..], --force-if-includes) counts as forced too, so
+                # _FORCE_PUSH_OK (the strict whole-command shape, no protected dst) is its only allow.
+                if sub == "push" and not _FORCE_PUSH_OK and any(
+                    t.startswith("--force")
                     or (t.startswith("-") and not t.startswith("--") and "f" in t)
                     or t.startswith("+")  # "+refspec" force-pushes without a -f/--force flag
                     for t in scan
                 ):
-                    deny("git push --force overwrites remote history — needs explicit user approval (use --force-with-lease for the safe variant)", rule="git-push-force")
+                    deny("git push --force overwrites remote history — needs explicit user approval (allowed only as one plain `git push [opts] <remote> <src:dst>` to a non-protected branch)", rule="git-push-force")
                 # `git config core.hooksPath X` / --unset disables pre-commit and
                 # pre-push (same bypass class as --no-verify). The documented
                 # wiring value `git-hooks` stays allowed.
