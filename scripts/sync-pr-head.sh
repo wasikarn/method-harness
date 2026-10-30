@@ -108,8 +108,9 @@ if [ "$synced" -eq 1 ]; then
   # Nothing to push, but the author's own push ran only a lint (GH #735): the merge still needs a gauntlet.
   (cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $head; fix it, commit, push, and get a new review." >&2; exit 1; }
   line=$(git ls-remote origin "refs/heads/$branch") || { echo "sync-pr-head: git ls-remote origin failed." >&2; exit 1; }
-  if [ "${line%%[[:space:]]*}" != "$head" ]; then
-    echo "sync-pr-head: origin/$branch is not $head (origin has ${line%%[[:space:]]*}): the head was not pushed, or the branch moved. Push it (or fetch the new head) and run sync-pr-head.sh again." >&2
+  have=${line%%[[:space:]]*}
+  if [ "$have" != "$head" ]; then
+    echo "sync-pr-head: origin/$branch is not $head (origin has ${have:-no such branch}): the head was not pushed, or the branch moved. Push it (or fetch the new head) and run sync-pr-head.sh again." >&2
     exit 1
   fi
   post_status "$head"

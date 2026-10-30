@@ -22,7 +22,7 @@
 # and version checks and never takes the lock, syncs, pushes or merges: a head that lacks origin/develop
 # or a version above it is refused with the scripts/sync-pr-head.sh command to run first, and so is a
 # head whose tree has no cached full-gauntlet pass (GH #735; GAUNTLET_PASS_CACHE=0 always refuses). On a pass it
-# prints the head; merge it pinned to that sha (expectedHeadSha) right away. Before this mode, cloud
+# posts the mh/gauntlet status when gh is on PATH (GH #742) and prints the head; merge it pinned to that sha (expectedHeadSha) right away. Before this mode, cloud
 # sessions retyped these checks by hand for every merge (#633, #644, #648).
 set -euo pipefail
 
