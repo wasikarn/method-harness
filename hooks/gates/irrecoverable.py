@@ -50,8 +50,9 @@ _FP_STRICT_RE = re.compile(
     r"(?P<opts>(?: (?:-[fuqvn]+|--force|--force-if-includes|--force-with-lease(?:=" + _FP_LEASE_REF + r")?"
     r"|--set-upstream|--quiet|--verbose|--dry-run|--atomic|--porcelain|--progress|--no-progress))*)"
     r" [A-Za-z0-9._][A-Za-z0-9._-]*(?P<refs>(?: \+?[A-Za-z0-9._/@][A-Za-z0-9._/@-]*:[A-Za-z0-9._/][A-Za-z0-9._/-]*)+)")
-# The operator's force-push list (2026-10-27). The delete-protect checks (_protected_ref, git branch -D) keep
-# develop's main/master/develop: widening them is a separate policy change.
+# The operator's force-push list (2026-10-27), plus any release/* branch (_fp_protected). The delete-protect checks
+# (_protected_ref and its callers such as update-ref -d, and git branch -D) keep the older main/master/develop
+# list: widening them is a separate policy change.
 _FP_PROTECTED = ("main", "master", "develop", "production", "staging")
 
 def _fp_protected(ref):
