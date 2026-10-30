@@ -19,7 +19,7 @@
 # A full, clean, passing run records a pass for its tree (scripts/_lib/gauntlet-pass.sh, GH #735).
 # Run by scripts/merge-pr.sh and scripts/sync-pr-head.sh before they push, and by git-hooks/pre-push only
 # with MH_PREPUSH_FULL=1 (a plain push runs the lint layer on the changed files). harness-audit runs in
-# pre-commit, not here.
+# pre-commit, not in a full run.
 # --level low|medium --plan <base> (GH #749) runs the level scripts/gauntlet-plan.sh <base> picks, before a
 # PR: low lints the changed files; medium adds validate, harness-audit and only the planned tests. A level
 # below the plan's is refused. Such a run never records a pass; merges still run the full gauntlet.

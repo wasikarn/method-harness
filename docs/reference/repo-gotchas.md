@@ -28,8 +28,9 @@ does not change.
 
 Gauntlet levels (GH #749): `low` is the lint a push already runs; `medium` adds validate,
 harness-audit and only the tests the change can reach; `full` is the whole gauntlet. Before a PR or
-after a validator fix, `bash scripts/run-gauntlet.sh --level medium --plan develop` asks
-`scripts/gauntlet-plan.sh develop` for the level and tests of the committed changes since `develop`.
+after a validator fix, `bash scripts/run-gauntlet.sh --level medium --plan origin/develop` asks
+`scripts/gauntlet-plan.sh origin/develop` for the level and tests of the committed changes since then
+(uncommitted edits are not planned).
 The plan maps each changed path through `scripts/gauntlet-rules.txt` (`<glob> <level> [tests...]`;
 every matching rule counts, `SELF` is the changed test file itself). A path no rule matches, and shared
 code (`tests/_lib/`, `scripts/_lib/`, `run-gauntlet.sh`, `git-hooks/`, `hooks/*.json`, `hooks/gates/_*`),

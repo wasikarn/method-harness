@@ -14,7 +14,7 @@ Enforcement layers, weakest to strongest:
 - `git-hooks/pre-push` refuses a direct push whose remote ref is `refs/heads/develop`, before
   anything else runs — local, defense-in-depth, one manual retry if a stdin ref line is malformed.
   Then it lints only the pushed files (GH #735); the full gauntlet runs at merge time (below).
-  Before opening a PR, `bash scripts/run-gauntlet.sh --level medium --plan develop` runs the tests the
+  Before opening a PR, `bash scripts/run-gauntlet.sh --level medium --plan origin/develop` runs the tests the
   change can reach (GH #749, levels in `repo-gotchas.md`); it never stands in for the merge-time run.
   It also refuses to *create* a branch that changes a file (not the manifests) `develop` changed since
   the branch point, listing those commits: merge `develop`, check none already makes the change, push
