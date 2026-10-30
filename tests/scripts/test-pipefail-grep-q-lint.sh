@@ -16,6 +16,7 @@
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 SCAN="$ROOT/tests/_lib/pipe_into_grep_q.py"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
@@ -47,7 +48,7 @@ fi
 
 probe=$(mktemp -d)
 [ -n "$probe" ] && [ -d "$probe" ] || { echo "  FAIL: mktemp -d failed, probe rows cannot run" >&2; exit 1; }
-trap '[ -n "$probe" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$probe"' EXIT
+trap '[ -n "$probe" ] && tmp_delete "$probe"' EXIT
 # scan FILE: the scanner's stdout; its rc lands in the caller's $?.
 scan() { python3 -I "$SCAN" "$1" 2>"$probe/err"; }
 hit_lines() { /usr/bin/grep -v '^EXEMPT ' | sed -n 's/^[^:]*:\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ $//'; }

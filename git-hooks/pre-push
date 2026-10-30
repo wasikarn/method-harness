@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# GH #743: core.hooksPath once pointed at another checkout's absolute git-hooks, so a stale hook ran.
+# Run this work tree's own copy instead; exec keeps the args and stdin (pre-push ref lines).
+if [ -z "${MH_HOOK_REEXEC:-}" ] && _mh_top=$(git rev-parse --show-toplevel) \
+  && [ -x "$_mh_top/git-hooks/${0##*/}" ]; then
+  _mh_here=$(CDPATH='' cd -P "$(dirname "$0")" && pwd -P); _mh_own=$(cd -P "$_mh_top/git-hooks" && pwd -P)
+  if [ "$_mh_here" != "$_mh_own" ]; then
+    echo "${0##*/}: core.hooksPath is '$(git config core.hooksPath)', not this work tree's; running $_mh_own/${0##*/}. Fix: git config core.hooksPath git-hooks" >&2
+    MH_HOOK_REEXEC=1 exec "$_mh_own/${0##*/}" "$@"
+  fi
+fi
 # pre-push — refuse a direct push to refs/heads/develop (PR-only, branch
 # protection, docs/reference/branching-model.md, is the real enforcement; this is local defense-in-depth so a
 # rejection is instant instead of a round-trip to GitHub), refuse a new branch that overlaps develop, then
@@ -74,6 +84,7 @@ if [ -n "$_remote" ] && [ "${#_new_heads[@]}" -gt 0 ]; then
 fi
 
 HOOK_DIR="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HOOK_DIR/../scripts/_lib/tmp-delete.sh"
 if [ "${MH_PREPUSH_FULL:-}" != 1 ]; then
   # Fast layer: lint each pushed commit's changed files, as they are in that commit (not the working
   # tree). The libraries live beside this hook (not under $ROOT) so a fixture repo still works.
@@ -83,7 +94,7 @@ if [ "${MH_PREPUSH_FULL:-}" != 1 ]; then
   # remote's old sha, else every file: a superset of what the push changes.
   [ -n "$_dev" ] || _dev=$(git rev-parse --verify -q "refs/remotes/$_remote/develop^{commit}") || _dev=""
   _lint_rc=0 _tmp=""
-  trap '[ -z "$_tmp" ] || python3 "$HOOK_DIR/../tests/_lib/tmp_delete.py" "$_tmp"' EXIT
+  trap '[ -z "$_tmp" ] || tmp_delete "$_tmp"' EXIT
   for _i in "${!_push_shas[@]}"; do
     git cat-file -e "${_push_shas[$_i]}" || { echo "pre-push: ${_push_shas[$_i]} is not an object here; refusing." >&2; exit 1; }
     _sha=$(git rev-parse --verify -q "${_push_shas[$_i]}^{commit}") || continue  # a tag of a non-commit: nothing to lint
@@ -103,7 +114,7 @@ if [ "${MH_PREPUSH_FULL:-}" != 1 ]; then
     echo "pre-push: linting $(printf '%s\n' "$_files" | wc -l | tr -d ' ') changed file(s) in ${_sha:0:12} (MH_PREPUSH_FULL=1 runs the full gauntlet)"
     ( cd "$_tmp" && printf '%s\n' "$_files" | run_lint ) || _lint_rc=1
     # A refused cleanup (tmp_delete's Linux root is /tmp only) leaks a temp dir; it must not fail the push.
-    python3 "$HOOK_DIR/../tests/_lib/tmp_delete.py" "$_tmp" || echo "pre-push: left the temp copy $_tmp behind (see above)." >&2
+    tmp_delete "$_tmp" || echo "pre-push: left the temp copy $_tmp behind (see above)." >&2
     _tmp=""
   done
   [ "$_lint_rc" -eq 0 ] || { echo "pre-push: lint failed on the files above; fix them and push again." >&2; exit 1; }

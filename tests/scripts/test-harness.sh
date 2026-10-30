@@ -53,7 +53,7 @@ fi
 # must delete nothing -- the actual incident this guards against is
 # `trash ""` deleting the process's cwd. Run it from a fresh cwd and check
 # that cwd is still there afterwards.
-TD="$ROOT/tests/_lib/tmp_delete.py"
+TD="$ROOT/scripts/_lib/tmp_delete.py"
 CWD3=$(mktemp -d)
 ROOT_LOG3=$(mktemp)
 (cd "$CWD3" && bash -c "

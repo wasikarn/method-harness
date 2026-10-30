@@ -13,11 +13,12 @@ unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_SSH_COMMAND GIT_SSH
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HERE/../../scripts/_lib/tmp-delete.sh"
 SCRIPT="$HERE/../../scripts/sync-pr-head.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && tmp_delete "$1"; return 0; }
 
 ROOT_DIR="$(mktemp -d)"
 [ -n "$ROOT_DIR" ] && [ -d "$ROOT_DIR" ] || { echo "mktemp -d failed" >&2; exit 1; }

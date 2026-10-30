@@ -35,6 +35,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 REPORT_JS="$ROOT/skills/meta/cost-report/scripts/cost-report-dedup.js"
 SKILL_MD="$ROOT/skills/meta/cost-report/SKILL.md"
 
@@ -88,7 +89,7 @@ rc=$?
 total=$(printf '%s' "$out" | /usr/bin/grep '^total:' | /usr/bin/grep -oE '\$[0-9.]+' | tr -d '$')
 [[ "$rc" == "0" && "$total" == "7.0000" ]] && ok=1 || ok=0
 assert "legacy streamless row (\$5) + post-fix orchestrator row (\$7, same session+model) dedup to the NEWER row only, not summed (got total=\$${total:-?}, want \$7.0000)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Positive case: two DIFFERENT streams for the same session+model must NOT
 # collide — orchestrator and subagent are genuinely separate spend and both
@@ -105,7 +106,7 @@ rc=$?
 total=$(printf '%s' "$out" | /usr/bin/grep '^total:' | /usr/bin/grep -oE '\$[0-9.]+' | tr -d '$')
 [[ "$rc" == "0" && "$total" == "5.0000" ]] && ok=1 || ok=0
 assert "orchestrator + subagent rows (same session+model, DIFFERENT stream) both survive dedup and sum (got total=\$${total:-?}, want \$5.0000)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Adversarial case (2026-08-07, agent_type breakdown): two subagent rows, same
 # session+model+stream, DIFFERENT agent_type. Must NOT collide — a mh:code-reviewer
@@ -128,7 +129,7 @@ total=$(printf '%s' "$out" | /usr/bin/grep '^total:' | /usr/bin/grep -oE '\$[0-9
   && /usr/bin/grep -q 'mh:code-reviewer' <<<"$out" \
   && /usr/bin/grep -q 'Explore' <<<"$out" && ok=1 || ok=0
 assert "two subagent rows (same session+model+stream, DIFFERENT agent_type) both survive dedup, sum to \$10, and appear in the By agent type section (got total=\$${total:-?})" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Regression (found live, 2026-08-07, running this exact report against real
 # production data): the report's `by()` helper groups over the FULL `latest` array
@@ -161,7 +162,7 @@ agent_section=$(printf '%s' "$out" | awk '/=== By agent type/{f=1;next} /^$/{f=0
   && /usr/bin/grep -qE '\b7 tok  Explore$' <<<"$agent_section" \
   && [[ "$(printf '%s\n' "$agent_section" | /usr/bin/grep -oE '\(unknown\)|Explore' | tr '\n' ' ')" == "(unknown) Explore " ]] && ok=1 || ok=0
 assert "By agent type shows the typed subagent row's \$2.0000 and the untyped subagent row as its own \$3.0000 (unknown) line, never the orchestrator's \$1000, with a tok column, ranked by cost desc ((unknown) \$3 above Explore \$2 despite reverse insertion order)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Era notes (2026-09-07): a row without dedup_usage was summed per JSONL line, so its
 # cost is inflated too, not just turns/tokens — the note must say so, or a reader
@@ -182,7 +183,7 @@ rc=$?
   && /usr/bin/grep -q '^note: 1 of 3 rows predate dedup_usage.*turns, tokens, and cost run ~2.4x high' <<<"$out" \
   && /usr/bin/grep -q '^note: 1 of 3 rows predate usage_pick.*output_tokens (and cost) run ~39% low' <<<"$out" && ok=1 || ok=0
 assert "era notes: the pre-dedup row's note names cost as inflated, the first-line row gets the output-low note, and the modern row triggers neither (1 of 3 each)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Third era note (deep-audit F7, 2026-09-25): a pre-#162 row with real cache-write
 # tokens but no cache_write_tokens_1h field at all must be flagged as likely
@@ -200,7 +201,7 @@ rc=$?
 [[ "$rc" == "0" ]] \
   && /usr/bin/grep -q '^note: 1 of 2 rows predate the 1h/5m cache-write split' <<<"$out" && ok=1 || ok=0
 assert "third era note fires once for the pre-#162 row with real cache writes, not for the post-#162 zero-1h row" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Fourth era note (issue #163, mh:blind-spot-hunter follow-up on #162): a
 # claude-opus-5-5 row from before 1.1.116 carries the wrong (Opus 5) rate
@@ -221,7 +222,7 @@ rc=$?
 [[ "$rc" == "0" ]] \
   && /usr/bin/grep -q '^note: 1 of 4 rows are claude-opus-5-5 from before the missing rate-table branch' <<<"$out" && ok=1 || ok=0
 assert "fourth era note fires once for the pre-1.1.116 opus-5-5 row only, not the fixed opus-5-5 row, the pre-1.1.116 sonnet row, or the version-less row (1.1.9 < 1.1.116 compared numerically, not lexically)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # MH_COSTS_FILE override (2026-09-07): evals run in a fresh HOME and can only plant a
 # fixture in the workspace, so the env path must win over the HOME default. HOME points
@@ -235,7 +236,7 @@ rc=$?
 total=$(printf '%s' "$out" | /usr/bin/grep '^total:' | /usr/bin/grep -oE '\$[0-9.]+' | tr -d '$')
 [[ "$rc" == "0" && "$total" == "1.0000" ]] && ok=1 || ok=0
 assert "MH_COSTS_FILE overrides the HOME default (got total=\$${total:-?} from a HOME with no log)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Modern-only data prints no era note at all.
 fake_home=$(mktemp -d)
@@ -248,7 +249,7 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 [[ "$rc" == "0" ]] && ! /usr/bin/grep -q '^note:' <<<"$out" && ok=1 || ok=0
 assert "modern-only data prints no era note" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Handoff cost (restored 2026-09-20): rows carrying verify_per_return render the section
 # (returns per orchestrator turn, then one combined "all subagents" median/p90/count line,
@@ -271,7 +272,7 @@ hv_section=$(printf '%s' "$out" | awk '/=== Handoff cost/{f=1;next} /^$/{f=0} f'
   && /usr/bin/grep -qE '300 med +500 p90 +3 returns  all subagents$' <<<"$hv_section" \
   && ! /usr/bin/grep -qi 'untagged\|(unknown)' <<<"$hv_section" && ok=1 || ok=0
 assert "Handoff cost section: returns/turn 0.30, all-subagents med 300 p90 500 over 3 returns; legacy row without verify_per_return skipped, total still \$6" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Restored fields don't duplicate or corrupt existing rows: a plain row with no
 # verify_per_return still dedups/sums exactly as before the restore (no Handoff section
@@ -287,7 +288,7 @@ rc=$?
 total=$(printf '%s' "$out" | /usr/bin/grep '^total:' | /usr/bin/grep -oE '\$[0-9.]+' | tr -d '$')
 [[ "$rc" == "0" && "$total" == "1.5000" ]] && ! /usr/bin/grep -q '=== Handoff cost' <<<"$out" && ok=1 || ok=0
 assert "row without verify_per_return: no Handoff section, total unaffected by the restored fields (got total=\$${total:-?})" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # (2026-09-21) jq_failed sentinel rows: cost-tracker.sh emits {error:"jq_failed"} when its
 # jq pass dies. The report used to push a sentinel-only session as a $0 row and count it
@@ -306,7 +307,7 @@ rc=$?
   && /usr/bin/grep -q '^warning: 2 jq_failed sentinel rows for session deadbeef' <<<"$out" \
   && /usr/bin/grep -q '^total:     \$0.0000  (0 sessions)' <<<"$out" && ok=1 || ok=0
 assert "sentinel-only session prints one warning (count 2, id prefix) and is not counted as a \$0 session (0 sessions)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # (2026-09-21) returns per orchestrator turn: a zero-return orchestrator row (returns:0,
 # verify_per_return:[] -- the shape the H8 negative test proves cost-tracker emits) must
@@ -322,7 +323,7 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 [[ "$rc" == "0" ]] && /usr/bin/grep -q 'returns per orchestrator turn: 0.10  (2 returns / 20 turns)' <<<"$out" && ok=1 || ok=0
 assert "returns per orchestrator turn counts a zero-return orchestrator row's turns in the denominator (2/20 = 0.10)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Missing file: the script itself reports the tracker as not set up (exit 0), so the
 # skill body need not pre-check the path — the eval clean case relies on this message.
@@ -331,7 +332,7 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 rc=$?
 [[ "$rc" == "0" ]] && /usr/bin/grep -q '^Cost tracker not set up:' <<<"$out" && ok=1 || ok=0
 assert "missing costs.jsonl prints the 'Cost tracker not set up' line and exits 0" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # CSV export column (deep-audit finding, 2026-09-25, issue #162): the 1h/5m cache-write
 # split cost-tracker.sh now writes must reach the CSV, not just the raw JSONL, or the
@@ -351,7 +352,7 @@ row="$(printf '%s\n' "$out" | tail -1)"
   && /usr/bin/grep -q 'cache_write_tokens_1h' <<<"$header" \
   && /usr/bin/grep -q ',100,900,' <<<"$row" && ok=1 || ok=0
 assert "csv mode's header and row both carry cache_write_tokens_1h (100 5m, 900 1h)" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Ledger cross-check (GH #334): cost-ledger.jsonl, written by hooks/mod/cost-ledger.ts beside
 # costs.jsonl, holds Claude Code's own cumulative ledger (`usd`) per main-loop turn. The report
@@ -387,7 +388,7 @@ line=$(printf '%s\n' "$out" | /usr/bin/grep '^ledger cross-check:')
 assert "cross-check recomputes the ledger from the usd sequence across a reload and a reset (\$11), against the deduped transcript total (\$8) (got: ${line:-none})" "$ok"
 /usr/bin/grep -q '^warning: 1 cost-ledger error rows' <<<"$out" && ok=1 || ok=0
 assert "a cost-ledger error row is left out of the ledger total and counted in a warning line" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Data absent: no cost-ledger.jsonl beside costs.jsonl (modules off, an older CLI, no turn yet)
 # must say so, not print zero or crash. A ledger file holding only error rows is the same.
@@ -407,7 +408,7 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 line=$(printf '%s\n' "$out" | /usr/bin/grep '^ledger cross-check:')
 [[ "$line" == 'ledger cross-check: no ledger data'* ]] && ok=1 || ok=0
 assert "a cost-ledger.jsonl with only error rows also reads 'no ledger data' (got: ${line:-none})" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Partial: led-p has both sides, led-t only transcript rows (ended before the module loaded),
 # led-l only ledger rows (Stop never ran). Only led-p is compared ($5 vs $6); the others are
@@ -428,7 +429,7 @@ rc=$?
 line=$(printf '%s\n' "$out" | /usr/bin/grep '^ledger cross-check:')
 [[ "$rc" == "0" && "$line" == 'ledger cross-check: transcript $5.0000 vs ledger $6.0000 over 1 sessions; unattributed $1.0000 (16.7% of ledger); left out: 1 transcript-only, 1 ledger-only' ]] && ok=1 || ok=0
 assert "partial data compares only sessions on both sides and counts the rest (got: ${line:-none})" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # A `usd` that is not a finite number (null is what JSON.stringify writes for NaN/Infinity; "",
 # a numeric string, a missing key) is skipped and counted, never read as $0. As $0 it is a reset,
@@ -454,7 +455,7 @@ line=$(printf '%s\n' "$out" | /usr/bin/grep '^ledger cross-check:')
 assert "a null, empty, string or missing usd is skipped, not read as a \$0 reset (\$1.50, not \$2.50) (got: ${line:-none})" "$ok"
 /usr/bin/grep -q '^warning: 4 cost-ledger rows with no finite usd were skipped' <<<"$out" && ok=1 || ok=0
 assert "the skipped non-finite usd rows are counted in a warning line" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 # Load markers (GH #444): the module writes one `loaded` row per session (per module load) to
 # cost-ledger.jsonl, so a session with spend and no marker ran with modules off. The rate counts
@@ -489,7 +490,7 @@ out=$(HOME="$fake_home" node "$REPORT_JS" 2>&1)
 line=$(printf '%s\n' "$out" | /usr/bin/grep '^module loaded:')
 [[ "$line" == 'module loaded: no load marker'* ]] && ok=1 || ok=0
 assert "no load marker prints 'module loaded: no load marker' (got: ${line:-none})" "$ok"
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$fake_home"
+tmp_delete "$fake_home"
 
 echo ""
 total_t=$((pass + fail))

@@ -6,8 +6,9 @@
 # 165+ deny/ask assertions -- run standalone (this file's own header
 # invites it), it would otherwise silently append rows to the operator's
 # real ~/.local/share/kbg/metrics/gate-decisions.jsonl.
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 _JOURNAL_TMP="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$_JOURNAL_TMP"' EXIT
+trap 'tmp_delete "$_JOURNAL_TMP"' EXIT
 export MH_GATE_JOURNAL_PATH="$_JOURNAL_TMP/gate-decisions.jsonl"
 IRRECOVERABLE="$ROOT/hooks/gates/irrecoverable.sh"
 TASK_COMPLETE="$ROOT/hooks/gates/task-complete-separation.sh"

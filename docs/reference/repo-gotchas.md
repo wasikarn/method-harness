@@ -26,6 +26,22 @@ shows at merge time, not at push time: run `bash scripts/run-gauntlet.sh` on a c
 for review when the change is risky, and the cached pass makes the merge-time run free if the tree
 does not change.
 
+Gauntlet levels (GH #749): `low` is the lint a push already runs; `medium` adds validate,
+harness-audit and only the tests the change can reach; `full` is the whole gauntlet. Before a PR or
+after a validator fix, `bash scripts/run-gauntlet.sh --level medium --plan origin/develop` asks
+`scripts/gauntlet-plan.sh origin/develop` for the level and tests of the committed changes since then
+(uncommitted edits are not planned).
+The plan maps each changed path through `scripts/gauntlet-rules.txt` (`<glob> <level> [tests...]`;
+every matching rule counts, `SELF` is the changed test file itself). A path no rule matches, and shared
+code (`tests/_lib/`, `scripts/_lib/`, `run-gauntlet.sh`, `git-hooks/`, `hooks/*.json`, `hooks/gates/_*`),
+gives `full`; the highest level wins. A `--level` below the plan's is refused, a higher one runs. Only a
+full unsharded run records a pass, so merges stay `full`. A sourced helper can hide a dependency from a
+file-based map, so on each merge-time run (not a cached pass) `merge-pr.sh` appends one JSON row to
+`~/.cache/mh/gauntlet-miss.jsonl` (`GAUNTLET_MISS_LOG`): the plan's level and tests, the gauntlet's
+`failing:` files, and `miss` = a failing file outside the tests while the plan was below full. If
+misses show up, tighten the rules. The merge-time plan includes the version bump, so it is never below
+`medium` (the manifests map there).
+
 The gauntlet's timing rows ("finishes inside 4 s / 8 s") fail when several gauntlets share the
 machine (GH #158: four parallel builders pushed load to 15-20 and failed seven pushes). Every full
 gauntlet run by `merge-pr.sh`, `sync-pr-head.sh` or `MH_PREPUSH_FULL=1` therefore takes a per-user lock (`scripts/_lib/gauntlet-lock.sh`, default
@@ -103,6 +119,9 @@ path no longer exists, it runs no hooks. Confirmed 2026-08-26 when renaming this
 commit and one push running zero gates. Verify with `test -d "$(git config core.hooksPath)"`.
 There is no CI (GitHub Actions removed 2026-10-03), so a broken `core.hooksPath` means the gauntlet
 never runs at all and nothing server-side notices. Run the verify command above after any rename.
+An absolute path to another checkout's `git-hooks` (seen twice 2026-10-27, cause unknown) made every
+worktree run that checkout's stale hooks; pre-commit and pre-push now warn and `exec` the work tree's
+own copy (GH #743). This heals only once the checkout the path points at has that code.
 A cloud session's fresh clone starts with no `core.hooksPath`; the project SessionStart hook
 (`.claude/hooks/session-start.sh`) sets it to `git-hooks` when it is unset, and leaves a value
 already set alone.
@@ -117,8 +136,10 @@ already set alone.
   reported clean while 29 hits sat in exactly those dirs.
 - **Never `rm -rf`; delete by tier.** `gate:bash:irrecoverable` denies `rm -rf` in every tier.
   1. *Temp paths a test or script made itself* (a `mktemp` dir, or a file inside one): delete
-     for good with `tests/_lib/tmp_delete.py` (`tmp_delete` once `tests/_lib/harness.sh` is
-     sourced; `track_trash`/`_cleanup_trash` use it). It refuses an empty argument, `/`, the home
+     for good with `tmp_delete`, from `scripts/_lib/tmp-delete.sh` (`tests/_lib/harness.sh`
+     sources it; `track_trash`/`_cleanup_trash` use it). It captures `python3` at source time, so
+     a `python3` stub a test later puts on PATH can't skip cleanup (GH #729), and runs
+     `scripts/_lib/tmp_delete.py`, which refuses an empty argument, `/`, the home
      or an ancestor, the system temp dir itself, and any path not strictly under a temp root, and
      it removes a symlink, never its target (`tests/scripts/test-tmp-delete.sh`). Routing these
      through `trash` put ~20k items a day into `~/.Trash` and kept Finder busy (GH #724).
@@ -140,7 +161,7 @@ already set alone.
   Validate the argument is non-empty before any `trash` call: an empty glob result once trashed
   the whole repo. A template `mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX"` prints "" when TMPDIR names a
   missing directory (a plain `mktemp -d` falls back on macOS), and `set -u` does not catch an
-  empty variable, so a test hands such a path to `tmp_delete.py` or `track_trash`, never to
+  empty variable, so a test hands such a path to `tmp_delete` or `track_trash`, never to
   `trash` (`tests/scripts/test-trash-empty-guard-lint.sh`).
   The gate denies a `trash`/`trash-put`/`gio trash` operand that is literally a whole tree (`/`, `~`,
   `.`, `..`, `*`, `""`, `$HOME`, `$PWD`, `$(pwd)`, the home path, each with any trailing `/`, `/.` or `/*`, and `.*`) but allows any other variable, so

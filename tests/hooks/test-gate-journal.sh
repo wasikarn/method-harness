@@ -18,8 +18,9 @@ set -uo pipefail
 unset MH_GATE_JOURNAL_PATH
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 WORK=$(mktemp -d)
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$WORK"' EXIT
+trap 'tmp_delete "$WORK"' EXIT
 
 pass=0
 fail=0

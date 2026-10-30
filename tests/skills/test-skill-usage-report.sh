@@ -7,6 +7,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 REPORT_PY="$ROOT/skills/meta/gate-report/scripts/skill-usage.py"
 SKILL_MD="$ROOT/skills/meta/gate-report/SKILL.md"
 
@@ -28,7 +29,7 @@ has() { grep -qF -- "$1" <<<"$2" && echo 1 || echo 0; }
 [[ -f "$REPORT_PY" ]] || { echo "FATAL: $REPORT_PY not found" >&2; exit 1; }
 
 TMPDIR_TEST="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMPDIR_TEST"' EXIT
+trap 'tmp_delete "$TMPDIR_TEST"' EXIT
 
 echo "=== skill-usage report ==="
 

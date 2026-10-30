@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-tmp-delete.sh — tests/_lib/tmp_delete.py, the permanent delete for a test's own temp
+# test-tmp-delete.sh — scripts/_lib/tmp_delete.py, the permanent delete for a test's own temp
 # paths (GH #724). Every refusal must exit nonzero, say why on stderr and delete nothing; a
 # path under the temp root is deleted. Some refusal probes name real dirs (the home, /tmp,
 # the temp dir itself), so every refusal case runs the helper's main() with shutil.rmtree and
@@ -7,7 +7,7 @@
 # the positive and symlink cases, which touch nothing outside $T, run the real helper.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
-TD="$HERE/../_lib/tmp_delete.py"
+TD="$HERE/../../scripts/_lib/tmp_delete.py"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
@@ -42,7 +42,7 @@ refused() {
   fi
 }
 
-echo "=== tests/_lib/tmp_delete.py ==="
+echo "=== scripts/_lib/tmp_delete.py ==="
 
 mkdir -p "$T/keep"
 python3 -c "$NODELETE" "$TD" "$T/keep"; rc=$?
@@ -89,6 +89,14 @@ mkdir -p "$T/dir/a/b"; : > "$T/dir/a/b/f"; : > "$T/file"
 python3 "$TD" "$T/dir" "$T/file"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$T/dir" ] && [ ! -e "$T/file" ] \
   && ok "a nested dir and a file under the temp root are deleted" || bad "positive delete: rc=$rc"
+
+# scripts/_lib/tmp-delete.sh captures python3 at source time (GH #729): a python3 stub put first
+# on PATH afterwards (some tests do) must not turn the cleanup into a silent no-op.
+mkdir -p "$T/stub" "$T/kept"; printf '#!/bin/sh\nexit 0\n' > "$T/stub/python3"; chmod +x "$T/stub/python3"
+bash -c '. "$1/../../scripts/_lib/tmp-delete.sh"; PATH="$2:$PATH"; tmp_delete "$3"' _ "$HERE" "$T/stub" "$T/kept"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$T/kept" ] \
+  && ok "tmp_delete uses the python3 captured at source time, not a later PATH stub" \
+  || bad "a python3 stub on PATH after sourcing skipped the delete: rc=$rc"
 
 echo "=== Summary: $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]
