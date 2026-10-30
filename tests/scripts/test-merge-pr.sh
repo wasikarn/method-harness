@@ -39,7 +39,8 @@ mkdir -p "$STUB/hooks"
 #   just before the merge); `pr merge` refuses unless --match-head-commit equals origin's feat/x, or when
 #   STUB_MERGE_REFUSE is set; `api --paginate .../comments` applies the script's own --jq to
 #   STUB_COMMENTS_JSON (STUB_COMMENTS_JSON2 from the second read on; STUB_API_FAIL fails it).
-#   `api --method POST .../statuses/<sha>` (the mh/gauntlet status, GH #742) fails when STUB_STATUS_FAIL is set.
+#   `api --method POST .../statuses/<sha>` (the mh/gauntlet status, GH #742) fails when STUB_STATUS_FAIL is
+#   set, and with a 422 when origin lacks <sha> (GitHub's answer to a status posted before the push).
 cat >"$STUB/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$STUB_LOG"
@@ -60,7 +61,11 @@ case "$*" in
     json="$STUB_COMMENTS_JSON"; if [ "$n" -gt 1 ]; then json="${STUB_COMMENTS_JSON2-$STUB_COMMENTS_JSON}"; fi
     q=""; prev=""; for a in "$@"; do [ "$prev" = "--jq" ] && q="$a"; prev="$a"; done
     printf '%s' "$json" | jq -r "$q" ;;
-  *"/statuses/"*) [ -z "${STUB_STATUS_FAIL:-}" ] || { echo "HTTP 403" >&2; exit 1; } ;;
+  *"/statuses/"*)
+    [ -z "${STUB_STATUS_FAIL:-}" ] || { echo "HTTP 403" >&2; exit 1; }
+    for a in "$@"; do case "$a" in */statuses/*) sha=${a##*/} ;; esac; done
+    git --git-dir="$STUB_ORIGIN" cat-file -e "$sha^{commit}" 2>/dev/null ||
+      { echo "HTTP 422: No commit found for SHA: $sha" >&2; exit 1; } ;;
   *) exit 2 ;;
 esac
 EOF
@@ -136,6 +141,15 @@ git commit -qam peer-during-gauntlet
 git push -q origin develop
 EOF
 chmod +x "$STUB/gh" "$STUB/uptime" "$STUB/hooks/pre-push" "$STUB/hooks/pre-commit"
+# NOGH: $STUB and PATH without any gh, for --verify in a session that has none (a cloud session).
+NOGH="$T/nogh"; mkdir -p "$NOGH"
+IFS=: read -r -a path_dirs <<<"$STUB:$PATH"
+for d in "${path_dirs[@]}"; do
+  for f in "$d"/*; do
+    b=${f##*/}
+    [ "$b" != gh ] && [ -x "$f" ] && [ ! -e "$NOGH/$b" ] && ln -s "$f" "$NOGH/$b"
+  done
+done
 
 PLUGIN=.claude-plugin/plugin.json
 MARKET=.claude-plugin/marketplace.json
@@ -373,6 +387,7 @@ untouched "manifest conflict beyond the version"
 setup
 STUB_GAUNTLET_PEER=1 run
 merges "develop moved during the gauntlet"
+status_then_merge "develop moved during the gauntlet (one status, on the final head)"
 if [ "$(pushes)" = 2 ] && [ "$(gauntlets)" = 2 ] && /usr/bin/grep -q "round 2 of 3" <<<"$out"; then ok "a second round synced, ran the gauntlet and pushed again"; else bad "rounds: $(gauntlets) gauntlets, $(pushes) pushes: $out"; fi
 if [ "$(ver_of "$F/work/$PLUGIN")" = "1.1.3" ] && w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then
   ok "the second round cut above the peer's 1.1.2"
@@ -647,6 +662,8 @@ refuses "a MERGE in an indented fence" "is FIX FIRST"
 #     so a load wait or a lock take in verify mode would refuse or touch the lock.
 #     GH #735: --verify also needs a full-gauntlet pass cached for the head's tree. vrun seeds one in
 #     $F/pass unless NO_PASS is set; PASS_CACHE sets GAUNTLET_PASS_CACHE (default 1).
+#     GH #742: vrun runs with no gh on PATH (NOGH) unless GH is set; then the stub gh is there and a pass
+#     posts the mh/gauntlet status.
 vrun() {
   local t
   [ -d "$F/work" ] || work
@@ -655,7 +672,8 @@ vrun() {
   if [ -z "${NO_PASS:-}" ] && t=$(git --git-dir="$F/origin.git" rev-parse -q --verify "$1^{tree}"); then
     mkdir -p "$F/pass"; date >"$F/pass/$t"
   fi
-  out=$(cd "$F/work" && PATH="$STUB:$PATH" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
+  local p="$NOGH"; [ -z "${GH:-}" ] || p="$STUB:$PATH"
+  out=$(cd "$F/work" && PATH="$p" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
     STUB_LOAD=9.99 MERGE_PR_LOAD_MAX=4 MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
     GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
     bash "$SCRIPT" --verify 451 "$1" "$2" "$3" 2>"$F/verify.err")
@@ -681,6 +699,19 @@ tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
 vrun "$tip" develop "$F/comments.json"
 if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ]; then ok "--verify passes a synced head and prints only it on stdout"; else bad "--verify pass rc=$rc out='$out' err=$err"; fi
 no_side_effects "--verify pass"
+if /usr/bin/grep -q "no gh, so no mh/gauntlet status was posted on $tip" <<<"$err" && /usr/bin/grep -q "an MCP merge of this head is refused" <<<"$err"; then
+  ok "--verify without gh says it posted no status and that a required check refuses an MCP merge"
+else bad "--verify no-gh note: $err"; fi
+# GH #742: with gh, a pass posts mh/gauntlet success on the head (its tree named), and a failed post exits
+# non-zero with nothing on stdout.
+GH=1 vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ] && [ "$(cat "$F/calls.log")" = "gh api --method POST repos/{owner}/{repo}/statuses/$tip -f state=success -f context=mh/gauntlet -f description=full gauntlet passed on tree $(git --git-dir="$F/origin.git" rev-parse "$tip^{tree}")" ]; then
+  ok "--verify with gh posts mh/gauntlet success on the head, its only gh call"
+else bad "--verify with gh: rc=$rc out='$out' calls=$(cat "$F/calls.log") err=$err"; fi
+GH=1 STUB_STATUS_FAIL=1 vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify with gh: a failed status post exits non-zero, no sha on stdout" "could not post the mh/gauntlet status"
+PASS_CACHE=0 GH=1 vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -ne 0 ] && [ ! -s "$F/calls.log" ]; then ok "--verify with gh posts nothing without a cached pass"; else bad "--verify no pass posted: $(cat "$F/calls.log")"; fi
 # a version bump commit after the reviewed sha keeps the review.
 setup; on feat/x "bump" set_ver 1.1.2
 tip=$(remote_tip feat/x); verdict "MERGE @ $FEATURE" >"$F/comments.json"

@@ -70,7 +70,8 @@ gauntlet_full() {
 
 # gauntlet_status_post <who> <sha>: after a green or cached gauntlet on <sha>, and once origin has <sha>,
 # post the GitHub commit status mh/gauntlet=success on it (GH #742), so branch protection can require it.
-# Needs gh (a cloud session without it merges through `merge-pr.sh --verify` + MCP, which posts nothing).
+# Needs gh: without it nothing posts the status, so once branch protection requires mh/gauntlet a cloud
+# MCP-only merge is refused; merge from a machine with gh then.
 # Any token with repo scope can post one: an honest-agent gate, not a security boundary.
 gauntlet_status_post() {
   local who=$1 sha=$2 tree

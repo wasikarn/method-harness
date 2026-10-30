@@ -484,7 +484,12 @@ if [ "$verify" = 1 ]; then
   if ! gauntlet_pass_has "$tree"; then
     die "no full-gauntlet pass is cached for $head's tree $tree in $(gauntlet_pass_dir)${GAUNTLET_PASS_CACHE:+ (GAUNTLET_PASS_CACHE=$GAUNTLET_PASS_CACHE)}; run scripts/sync-pr-head.sh <head branch> $head (it runs the gauntlet), or bash scripts/run-gauntlet.sh on a clean checkout of $head, then --verify again."
   fi
-  # No gh here, so no mh/gauntlet status (GH #742): a cloud MCP merge relies on this cached-pass check.
+  # GH #742: post mh/gauntlet when this session has gh; a cloud session has none and says so.
+  if command -v gh >/dev/null; then
+    gauntlet_status_post merge-pr "$head" || exit 1
+  else
+    echo "merge-pr: no gh, so no mh/gauntlet status was posted on $head; once branch protection requires mh/gauntlet, an MCP merge of this head is refused (merge from a machine with gh instead)." >&2
+  fi
   echo "merge-pr: PR $pr passes at $head (base develop, contains origin/develop, version above it, review MERGE, full gauntlet passed on its tree); merge it pinned to that sha now, and verify again if develop moves first." >&2
   echo "$head"
   exit 0

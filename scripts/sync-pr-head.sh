@@ -85,7 +85,8 @@ if [ "$behind" -eq 0 ] && [ "$head_ver" = "$target" ] && [ "$(version_of "$head"
 fi
 
 # post_status <sha>: the mh/gauntlet status on a sha origin has (GH #742). Without gh (a cloud session)
-# there is no API to post it with: say so; merge-pr.sh --verify's cached-pass check stays the gate.
+# there is no API to post it with: say so (once branch protection requires mh/gauntlet, an MCP merge of
+# that sha is refused).
 post_status() {
   if command -v gh >/dev/null; then
     gauntlet_status_post sync-pr-head "$1" || exit 1
@@ -106,6 +107,11 @@ git worktree add -q --detach "$wt" "$head" >&2
 if [ "$synced" -eq 1 ]; then
   # Nothing to push, but the author's own push ran only a lint (GH #735): the merge still needs a gauntlet.
   (cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $head; fix it, commit, push, and get a new review." >&2; exit 1; }
+  line=$(git ls-remote origin "refs/heads/$branch") || { echo "sync-pr-head: git ls-remote origin failed." >&2; exit 1; }
+  if [ "${line%%[[:space:]]*}" != "$head" ]; then
+    echo "sync-pr-head: origin/$branch is not $head (origin has ${line%%[[:space:]]*}): the head was not pushed, or the branch moved. Push it (or fetch the new head) and run sync-pr-head.sh again." >&2
+    exit 1
+  fi
   post_status "$head"
   echo "$head"
   exit 0

@@ -27,10 +27,14 @@ export TMPDIR="$ROOT_DIR"
 export GAUNTLET_LOCK_DIR="$ROOT_DIR/gauntlet.lock" GAUNTLET_PASS_DIR="$ROOT_DIR/pass" GAUNTLET_PASS_CACHE=1
 unset MH_GAUNTLET_LOCK_OWNER STUB_GAUNTLET_FAIL STUB_STATUS_FAIL
 # gh: only the mh/gauntlet status post (GH #742) reaches it; it logs each call to $STUB_DIR/gh.log and
-# fails when STUB_STATUS_FAIL is set. Never touches GitHub.
+# fails when STUB_STATUS_FAIL is set, or with a 422 when the case's origin ($STUB_ORIGIN) lacks the sha
+# (a status posted before the push). Never touches GitHub.
 mkdir -p "$ROOT_DIR/bin"
 printf '%s\n' '#!/usr/bin/env bash' 'echo "gh $*" >>"$STUB_DIR/gh.log"' \
-  '[ -z "${STUB_STATUS_FAIL:-}" ] || { echo "HTTP 403" >&2; exit 1; }' >"$ROOT_DIR/bin/gh"
+  '[ -z "${STUB_STATUS_FAIL:-}" ] || { echo "HTTP 403" >&2; exit 1; }' \
+  'for a in "$@"; do case "$a" in */statuses/*) sha=${a##*/} ;; esac; done' \
+  'git --git-dir="$STUB_ORIGIN" cat-file -e "$sha^{commit}" 2>/dev/null || { echo "HTTP 422: No commit found for SHA: $sha" >&2; exit 1; }' \
+  >"$ROOT_DIR/bin/gh"
 chmod +x "$ROOT_DIR/bin/gh"; export PATH="$ROOT_DIR/bin:$PATH"
 # statuses <sha>: the status posts logged for <sha> (success, mh/gauntlet, naming its tree).
 statuses() {
@@ -63,7 +67,7 @@ ver() { awk -F'"' '/"version"/ && !s { print $4; s = 1 }' "$1"; }
 setup() {
   local d w
   d=$(mktemp -d "$ROOT_DIR/case.XXXXXX") || exit 1
-  O="$d/origin.git"; w="$d/seed"; L="$d/local"; export STUB_DIR="$d"
+  O="$d/origin.git"; w="$d/seed"; L="$d/local"; export STUB_DIR="$d" STUB_ORIGIN="$d/origin.git"
   git init -q --bare -b develop "$O"
   git init -q -b develop "$w"
   manifests "$w" 1.0.5; echo a >"$w/a.txt"
@@ -242,6 +246,17 @@ STUB_STATUS_FAIL=1 run_sync feat/x "$HEAD_SHA"
 if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'could not post the mh/gauntlet status' <<<"$err"; then
   ok "a failed status post exits non-zero and prints no sha to merge"
 else bad "status fail: rc=$rc out='$out' err=$err"; fi
+
+# 5f. already synced, but origin's branch is not that head (never pushed there): refused before any
+#     status, naming the cause.
+setup none
+w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b develop "$O" "$w/c"; git -C "$w/c" checkout -q -b other
+manifests "$w/c" 1.0.7; commit "$w/c" "synced"; git -C "$w/c" push -q origin other
+git -C "$L" fetch -q origin; other=$(git -C "$L" rev-parse origin/other)
+run_sync feat/x "$other"
+if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'the head was not pushed' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ]; then
+  ok "already synced, head not on origin's branch: refused, no status, says the head was not pushed"
+else bad "unpushed head: rc=$rc out='$out' log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
 
 # 5d. behind develop, red gauntlet on the merged tree: nothing is pushed, nothing printed.
 setup none
