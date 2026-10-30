@@ -155,7 +155,7 @@ now 3 s. The second-parse body joins the substitution pass only when a `$` or ba
 or an escape (`` eval echo '`git' 'stash`' ``), since a copied span is one the raw scan already read. Residue, which `develop` also allows: a substitution that expands to nothing
 before the word (`eval $(true) g\\\it stash`, like `$(true) git stash`) and a third parse level.
 
-## irrecoverable.py: one strict force-push exception (spec v3, 2026-10-30)
+## irrecoverable.py: one strict force-push exception (PR #745, 2026-10-30)
 
 The operator asked to allow a force push unless its destination is protected (main, master, develop,
 production, staging, `release/*`), a lease push to a protected branch included. Two earlier designs parsed
@@ -173,6 +173,15 @@ send-pack, delete-protected and every other rule still run. Tightened: a lease (
 `--force-if-includes`) now counts as forced, so the strict shape is its only allow (four develop allow rows
 to `origin develop` flip to deny). Accepted over-deny: anything chained, piped, redirected, quoted, wrapped,
 with `-o`, or to a URL remote.
+
+Measured 2026-10-30 against origin/develop f5b96442: a replay of all 1,451 push commands in a 51,447-command
+transcript pool gave 0 deny->allow and 13 allow->deny, every one a `--force-with-lease origin <branch>` push
+with no `src:dst` (the lease tightening, shipped enforcing at the operator's call, repo-gotchas.md).
+`gate-differential.sh --replay 1500` (corpus 1,852): 0 exit or journal diffs, 8 stderr-only diffs from the
+reworded deny message. Role-confusion probes against real git 2.56 (`-C ~user`, remote `.`/`..`/a relative
+dir, ref-normalised dsts, `@` srcs, lease values) found no protected ref moved. Residue: the dst check is by
+name, so a remote-side symref under `refs/heads/` (`trunk -> main`) lets `-f origin HEAD:trunk` move main;
+GitHub and GitLab don't host those.
 
 ## irrecoverable.py: python/node heredoc scripts and trash of a whole tree (GH #681)
 

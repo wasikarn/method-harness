@@ -208,12 +208,16 @@ test_deny  "$IRRECOVERABLE" "git reset --h (1-char abbreviated --hard, was silen
   "$(bash_payload 'git reset --h')"
 test_deny  "$IRRECOVERABLE" "git clean --f (1-char abbreviated --force, was silently ALLOWed)" \
   "$(bash_payload 'git clean --f')"
+# Spec v3 (PR #745): a lease is forced, and with no src:dst it is denied. This row
+# was an allow control below until leases started counting as forced.
+test_deny  "$IRRECOVERABLE" "git push --force-with-lease origin develop denied (spec v3: a lease is forced; no src:dst)" \
+  "$(bash_payload 'git push --force-with-lease origin develop')"
 # Dangerous-direction control: the abbreviation helper must not itself start
 # denying git's own already-documented noisy neighbors (an ambiguous prefix
 # these long forms don't uniquely resolve to, or a flag never named in the
 # specific per-call-site long_forms list).
-test_deny  "$IRRECOVERABLE" "git push --force-with-lease origin develop denied (spec v3: a lease is forced; no src:dst)" \
-  "$(bash_payload 'git push --force-with-lease origin develop')"
+test_allow "$IRRECOVERABLE" "git push -u origin HEAD:feat still allowed (-u is not a --force prefix)" \
+  "$(bash_payload 'git push -u origin HEAD:feat')"
 test_allow "$IRRECOVERABLE" "git diff --find-renames still allowed (unrelated long flag, not a --force/--hard/--amend prefix)" \
   "$(bash_payload 'git diff --find-renames')"
 # --- fail-closed internal-error backstop: a payload that makes the

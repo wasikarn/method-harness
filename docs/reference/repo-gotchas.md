@@ -261,9 +261,11 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   sample commands; delete the id to enforce once they hold no false positive. The list is source, not an
   env var, so a project `settings.json` cannot shadow an enforced rule. A structural deny (length cap,
   unparsable text, budget, depth) takes no id: returning from it would run the code it guards. A rule
-  that denies commands from a replay of real transcripts ships shadow, not enforcing. One deliberate
-  exception: `trash-whole-tree` (PR #739) shipped enforcing at the operator's call, because both of its
-  replay hits (`trash *` and `trash "$HOME" ...`) were whole-tree trashes, not false positives.
+  that denies commands from a replay of real transcripts ships shadow, not enforcing. Deliberate
+  exceptions, each at the operator's call: `trash-whole-tree` (PR #739), because both of its replay hits
+  (`trash *` and `trash "$HOME" ...`) were whole-tree trashes, not false positives; and `git-push-force`
+  counting a lease as forced (PR #745, operator decision 2026-10-27), whose 13 replay hits were all lease
+  pushes with no `src:dst`, the shape the operator chose to deny.
 - **Oracle:** run the real shells (the system `/bin/sh`, bash 3.2, a current bash, dash, zsh, ksh)
   with argv-logging stubs, never one shell or argv0-based shell guessing: whether `{fd}>` is a
   redirect depends on the binary and version (GH #219).
