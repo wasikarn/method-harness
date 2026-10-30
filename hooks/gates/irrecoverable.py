@@ -1611,8 +1611,9 @@ class _ViewStop(Exception):
 
 # GH #661: the rules a shadowed view still enforces. brace-view stays shadow for every other rule (GH #337),
 # but rm's own rules must read the words bash builds: `rm --{r,f} b` is `rm --r --f b`, and no token
-# reading keeps such a word whole (`--{r,} b` loses its `}`).
-_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root"})}
+# reading keeps such a word whole (`--{r,} b` loses its `}`). GH #309: push's force rules likewise (`push --{force,force}`).
+_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root",
+                                           "git-push-force", "git-push-mirror", "git-push-delete-protected"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:

@@ -3198,6 +3198,16 @@ test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U ./build\"\$(dat
   "$(bash_payload 'echo {a,b}; f{ind,ind} . -name x -delete; sudo -u $U ./build"$(date +%s)" -r out')"
 test_allow "$IRRECOVERABLE" "GH #661 control: decoy; sudo -u \$U python\"\$(echo 3)\" -m compileall -r 2 {a,b}" \
   "$(bash_payload 'fi{nd,nd} x -delete; sudo -u $U python"$(echo 3)" -m compileall -r 2 {a,b}')"
+
+# GH #309: push's force, mirror and protected-delete rules read the brace-expanded words too (`--{force,force}`).
+test_deny  "$IRRECOVERABLE" "GH #309: git push --{force,force} origin main" "$(bash_payload 'git push --{force,force} origin main')"
+test_deny  "$IRRECOVERABLE" "GH #309: git push -{f,f} origin main" "$(bash_payload 'git push -{f,f} origin main')"
+test_deny  "$IRRECOVERABLE" "GH #309: git push --fo{rce,rce} origin HEAD:feat" "$(bash_payload 'git push --fo{rce,rce} origin HEAD:feat')"
+test_deny  "$IRRECOVERABLE" "GH #309: git push origin +{main,main}:main" "$(bash_payload 'git push origin +{main,main}:main')"
+test_deny  "$IRRECOVERABLE" "GH #309: git push --{mirror,mirror} origin" "$(bash_payload 'git push --{mirror,mirror} origin')"
+test_deny  "$IRRECOVERABLE" "GH #309: git push origin :{main,main}" "$(bash_payload 'git push origin :{main,main}')"
+test_deny  "$IRRECOVERABLE" "GH #309: echo {a,b}; git push --{force,force} origin main" "$(bash_payload 'echo {a,b}; git push --{force,force} origin main')"
+test_allow "$IRRECOVERABLE" "GH #309 control: git push origin HEAD:{feat1,feat2}" "$(bash_payload 'git push origin HEAD:{feat1,feat2}')"
 # the enforced pass runs no spawn scan: a subagent body the main reading fits is not denied as a spawn
 test_allow "$IRRECOVERABLE" "GH #661 control: subagent bash -c with 800 statements, then echo {a,b}" \
   "$(bash_agent_payload "bash -c '$(printf 'true; %.0s' $(seq 800))true'; echo {a,b}" fork)"
