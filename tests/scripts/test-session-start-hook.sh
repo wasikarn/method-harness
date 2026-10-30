@@ -14,6 +14,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OB
 unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HERE/../../scripts/_lib/tmp-delete.sh"
 HOOK="${SESSION_START_HOOK:-$HERE/../../.claude/hooks/session-start.sh}"
 BASH_BIN="$(command -v bash)"
 # The interpreter itself, not a pyenv/asdf shim that needs its own tools on PATH.
@@ -21,7 +22,7 @@ PY_BIN="$(python3 -c 'import sys; print(sys.executable)')"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && tmp_delete "$1"; return 0; }
 
 ROOT_DIR="$(mktemp -d)"
 [ -n "$ROOT_DIR" ] && [ -d "$ROOT_DIR" ] || { echo "mktemp -d failed" >&2; exit 1; }

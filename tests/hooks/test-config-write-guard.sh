@@ -4,6 +4,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 GUARD="$ROOT/hooks/gates/config-write-guard.sh"
 
 pass=0
@@ -33,7 +34,7 @@ check() { # check <desc> <ok:0|1>
 echo "=== config-write-guard gate ==="
 
 FIXTURE=$(mktemp -d)
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FIXTURE"' EXIT
+trap 'tmp_delete "$FIXTURE"' EXIT
 # Isolate the gate-verdict journal (hooks/gates/_journal.py) from this file's
 # ask-case assertions -- run standalone (this file's own header invites it),
 # it would otherwise silently append rows to the operator's real

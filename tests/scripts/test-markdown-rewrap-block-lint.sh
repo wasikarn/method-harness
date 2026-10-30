@@ -18,6 +18,7 @@
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
@@ -123,7 +124,7 @@ echo "=== no rewrapped Markdown line opens a block mid-paragraph ==="
 
 probe=$(mktemp -d)
 [ -n "$probe" ] && [ -d "$probe" ] || { echo "  FAIL: mktemp -d failed, probe rows cannot run" >&2; exit 1; }
-trap '[ -n "$probe" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$probe"' EXIT
+trap '[ -n "$probe" ] && tmp_delete "$probe"' EXIT
 cat > "$probe/bad.md" <<'EOF'
 when the writer never writes to the fd holding it (`true | grep -q 1`, `cat 2>
 >(grep -q y)`: whether it writes there is the program's run-time behaviour

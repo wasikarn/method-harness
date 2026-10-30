@@ -19,6 +19,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OB
 
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 LIB="$ROOT/scripts/_lib/hook-common.sh"
 
 pass=0; fail=0
@@ -34,7 +35,7 @@ cleanup() {
   for t in "${EXTRA_TRASH[@]:-}"; do
     [ -n "$t" ] && targets+=("$t")
   done
-  [ "${#targets[@]}" -gt 0 ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "${targets[@]}"
+  [ "${#targets[@]}" -gt 0 ] && tmp_delete "${targets[@]}"
   return 0
 }
 trap cleanup EXIT

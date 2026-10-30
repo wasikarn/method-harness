@@ -8,13 +8,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 HOOK="$ROOT/hooks/session/skill-usage-telemetry.sh"
 
 pass=0
 fail=0
 
 TMP_HOME="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP_HOME"' EXIT
+trap 'tmp_delete "$TMP_HOME"' EXIT
 LOG_FILE="$TMP_HOME/.local/share/kbg/metrics/skill-usage.jsonl"
 
 run_hook() {

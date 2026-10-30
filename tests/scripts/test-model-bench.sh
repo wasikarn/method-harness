@@ -8,6 +8,7 @@
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 DIFF_PY="$ROOT/skills/meta/model-bench/scripts/model-bench-diff.py"
 FIXTURES="$HERE/fixtures/model-bench"
 pass=0; fail=0
@@ -247,7 +248,7 @@ if os.path.isdir(root):
             print(os.path.join(root, d))
 " | while IFS= read -r stray; do trash "$stray" 2>/dev/null; done
 
-python3 "$ROOT/tests/_lib/tmp_delete.py" "$STUB_DIR" "$CLAUDE_STUB_LOG"
+tmp_delete "$STUB_DIR" "$CLAUDE_STUB_LOG"
 
 echo "model-bench.sh self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

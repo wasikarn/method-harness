@@ -11,6 +11,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 root="$(pwd)"
+. "$root/scripts/_lib/tmp-delete.sh"
 
 agent="" run=0 runs=2 jobs=1 keep=0 extra=()
 while [ $# -gt 0 ]; do
@@ -33,7 +34,7 @@ tmp="$(mktemp -d)" || exit 1
 if [ "$keep" -eq 1 ]; then
   echo "eval-fold: kept temp dir: $tmp"
 else
-  trap 'python3 "$root/tests/_lib/tmp_delete.py" "$tmp"' EXIT
+  trap 'tmp_delete "$tmp"' EXIT
 fi
 allow="$(python3 scripts/_lib/eval-fold.py build "$root" "$agent" "$tmp")" || exit 1
 

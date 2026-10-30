@@ -9,6 +9,7 @@ set -uo pipefail
 # (GH #234, tests/scripts/test-git-env-unset-lint.sh). run-gauntlet.sh does the same unset.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HERE/../../scripts/_lib/tmp-delete.sh"
 TARGET="$HERE/test-isolated-checkout-dispatch.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
@@ -17,7 +18,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 echo "=== test git-identity leak under a poisoned GIT_DIR ==="
 
 DECOY="$(mktemp -d)" || { echo "FAIL: mktemp -d failed" >&2; exit 1; }
-cleanup() { [ -n "${DECOY:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$DECOY"; }
+cleanup() { [ -n "${DECOY:-}" ] && tmp_delete "$DECOY"; }
 trap cleanup EXIT
 
 ( cd "$DECOY" && git init -q -b decoy . ) >/dev/null 2>&1

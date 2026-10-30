@@ -24,7 +24,8 @@ Enforcement layers, weakest to strongest:
   `docs/adr/0004-operator-authorized-routine-self-launch.md`, `status: proposed`, is where that
   threat model is actually being worked through; mh has no self-launch path shipped today).
 - GitHub branch protection on `develop` (PR required, `enforce_admins`, live-applied 2026-09-28;
-  required status checks removed 2026-10-03 along with GitHub Actions) enforces the PR flow only; a single-maintainer repo means
+  required status checks removed 2026-10-03 along with GitHub Actions; the `mh/gauntlet` check and
+  "up to date" added 2026-10-30, GH #742) enforces the PR flow and a gauntlet-pass status; a single-maintainer repo means
   `required_pull_request_reviews.required_approving_review_count` stays at **0** (GitHub refuses to
   let a PR author approve their own PR, so any higher count would make every PR permanently
   unmergeable with only one account) — merging still requires nothing more than a write-access
@@ -136,17 +137,16 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
 There is no load wait and no merge lock in this mode: a cloud container runs nothing else, and the
 lock is per machine.
 
-**`mh/gauntlet` branch protection (operator's step, not yet applied; GH #742).** The scripts above
+**`mh/gauntlet` branch protection (applied 2026-10-30; GH #742).** The scripts above
 post the commit status `mh/gauntlet` = `success` on a head only after a green or cached full gauntlet.
-To make GitHub refuse every merge path without it (web button, bare `gh pr merge`, MCP), the
-operator sets two things in develop's branch protection: the required status check context
-`mh/gauntlet`, and "Require branches to be up to date before merging" (so the checked head is the
-merged tree). The status is an honest-agent signal: any token with repo scope can post it, so it is
-not a security boundary.
+Develop's branch protection requires the status check context `mh/gauntlet` and "Require branches
+to be up to date before merging", so GitHub refuses every merge path without it (web button, bare
+`gh pr merge`, MCP) and the checked head is the merged tree. The status is an honest-agent signal:
+any token with repo scope can post it, so it is not a security boundary.
 
-The checks and the lock are local-only. The script narrows the gap; it does not close it: a merge made
-outside the script costs a retry round, a push to `develop` from another clone between the last check
-and the merge can still race, and nothing stops a merge made outside the script. The script's own `gh pr merge` call runs inside the script, so
+The checks and the lock are local-only. A merge made outside the script is refused unless its head
+already carries the status (or someone posts one by hand), and one that lands moves develop, which
+costs the script a retry round. The script's own `gh pr merge` call runs inside the script, so
 `gate:bash:irrecoverable`'s ask on that command does not see it.
 
 The former `git worktree add -b` deny predates this and was removed in the v1.0.0 rebuild;

@@ -16,11 +16,12 @@
 #   --fuzz-seed S   add seeded mutations of the corpus
 # Exit: 0 no diffs, 1 diffs, 2 usage error or refusal.
 # Both sides write their journal rows to a temp file (MH_GATE_JOURNAL_PATH) under a temp HOME, so
-# the operator's real gate journal is never touched; the temp dir is deleted at exit through tests/_lib/tmp_delete.py.
+# the operator's real gate journal is never touched; the temp dir is deleted at exit through scripts/_lib/tmp_delete.py.
 # It runs at the lowest CPU priority and never takes the gauntlet's queue: holding it, a
 # 28-min replay kept every push waiting (2026-10-27).
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 usage() { sed -n '5,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 cases="" replay=0 slug="" seed=""
@@ -61,7 +62,7 @@ renice -n 19 -p $$ >/dev/null
 
 tmp=$(mktemp -d) || exit 2
 [ -n "$tmp" ] && [ -d "$tmp" ] || { echo "gate-differential: mktemp failed" >&2; exit 2; }
-cleanup() { [ -n "$tmp" ] && [ -d "$tmp" ] && python3 "$ROOT/tests/_lib/tmp_delete.py" "$tmp"; }
+cleanup() { [ -n "$tmp" ] && [ -d "$tmp" ] && tmp_delete "$tmp"; }
 trap cleanup EXIT
 
 if [ ! -d "$old" ]; then
