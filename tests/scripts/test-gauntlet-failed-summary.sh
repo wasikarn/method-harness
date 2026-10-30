@@ -26,6 +26,7 @@ else
   printf 'exit 0\n' >"$FIX/test-green.sh"
   printf 'echo "  ✅ fine row"\necho "  ❌ GH #307 allow shape finishes inside 8 s (rc 124)"\necho "=== 1 passed, 1 failed ==="\nexit 1\n' >"$FIX/test-red.sh"
   out=$(bash -c "
+    . '$ROOT/scripts/_lib/tmp-delete.sh'
     $BODY
     hook_test_files() { printf '%s\n' '$FIX/test-green.sh' '$FIX/test-red.sh'; }
     run_hook_tests
@@ -97,6 +98,7 @@ fi
 FIX=$(mktemp -d)
 printf 'echo "  ✅ PASS: rejects FAIL one"\necho "  ✅ PASS: rejects FAIL two"\necho "  ✅ PASS: rejects FAIL three"\necho "  ❌ real regression row"\nexit 1\n' >"$FIX/test-red.sh"
 out2=$(bash -c "
+  . '$ROOT/scripts/_lib/tmp-delete.sh'
   $BODY
   hook_test_files() { printf '%s\n' '$FIX/test-red.sh'; }
   run_hook_tests

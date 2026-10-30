@@ -90,5 +90,13 @@ python3 "$TD" "$T/dir" "$T/file"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$T/dir" ] && [ ! -e "$T/file" ] \
   && ok "a nested dir and a file under the temp root are deleted" || bad "positive delete: rc=$rc"
 
+# scripts/_lib/tmp-delete.sh captures python3 at source time (GH #729): a python3 stub put first
+# on PATH afterwards (some tests do) must not turn the cleanup into a silent no-op.
+mkdir -p "$T/stub" "$T/kept"; printf '#!/bin/sh\nexit 0\n' > "$T/stub/python3"; chmod +x "$T/stub/python3"
+bash -c '. "$1/../../scripts/_lib/tmp-delete.sh"; PATH="$2:$PATH"; tmp_delete "$3"' _ "$HERE" "$T/stub" "$T/kept"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$T/kept" ] \
+  && ok "tmp_delete uses the python3 captured at source time, not a later PATH stub" \
+  || bad "a python3 stub on PATH after sourcing skipped the delete: rc=$rc"
+
 echo "=== Summary: $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]

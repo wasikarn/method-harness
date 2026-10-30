@@ -14,7 +14,7 @@ pre-commit: staged lint, home-path ban, audit, 4096-byte cap on `docs/METHODOLOG
 pre-push: lint of the pushed files only (GH #735; `MH_PREPUSH_FULL=1` runs the gauntlet). The full
 gauntlet runs in `scripts/merge-pr.sh` and `scripts/sync-pr-head.sh`, on the exact tree they merge;
 a clean passing run is cached by tree hash. There is no CI, so these local gates are the only ones;
-branch protection requires a PR, no status checks. Detail: `docs/reference/repo-gotchas.md`.
+branch protection requires a PR and the `mh/gauntlet` status on an up-to-date head (GH #742). Detail: `docs/reference/repo-gotchas.md`.
 
 ## Composer-not-creator
 

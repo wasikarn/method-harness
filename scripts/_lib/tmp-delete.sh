@@ -5,4 +5,4 @@
 # python3 stub first on PATH, which would otherwise skip the cleanup and leak (GH #729).
 _TMP_DELETE_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _TMP_DELETE_PY="$(command -v python3)"
-tmp_delete() { "$_TMP_DELETE_PY" "$_TMP_DELETE_LIB/tmp_delete.py" "$@"; }
+tmp_delete() { "${_TMP_DELETE_PY:?tmp-delete.sh: python3 was not on PATH when this file was sourced}" "$_TMP_DELETE_LIB/tmp_delete.py" "$@"; }
