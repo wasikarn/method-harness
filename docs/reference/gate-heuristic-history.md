@@ -154,3 +154,22 @@ also fixed a develop timeout: `eval ` + 2 million backticks + a late `"$(git sta
 now 3 s. The second-parse body joins the substitution pass only when a `$` or backtick came out of a quote
 or an escape (`` eval echo '`git' 'stash`' ``), since a copied span is one the raw scan already read. Residue, which `develop` also allows: a substitution that expands to nothing
 before the word (`eval $(true) g\\\it stash`, like `$(true) git stash`) and a third parse level.
+
+## irrecoverable.py: one strict force-push exception (spec v3, 2026-10-30)
+
+The operator asked to allow a force push unless its destination is protected (main, master, develop,
+production, staging, `release/*`), a lease push to a protected branch included. Two earlier designs parsed
+the shell to find the push's destinations, and a fresh validator broke each round with a new shell-parse gap
+(value-taking options, xargs, a split at the first `:`, a redirect before `-f`, `--repo=`, `<<<`, an
+assignment before xargs). This one parses nothing: `_FORCE_PUSH_OK` is a `re.fullmatch` of the raw command
+(outer blanks trimmed) against `git( -C P)? push( O)* R( S)+`, single blanks, an alphabet with no shell
+meaning, a fixed option list, a remote name (no URL) and explicit `src:dst` refspecs. The path, remote,
+lease ref, src and dst never start with `-`, so an option can't fill the remote slot (`push -f --mirror
+HEAD:feat` is git's `--mirror` and a repository `HEAD:feat`). An explicit `src:dst` ignores
+`remote.<r>.push`, `push.default` and branch merge config, and mirror config refuses it (measured, git 2.56).
+A dst or `--force-with-lease=<ref>` is protected after dropping `refs/heads/` or `heads/`, any case. The
+flag skips only git-push-force, the ambiguity check's push arm and a `-c remote.<r>.push=+...` pair; mirror,
+send-pack, delete-protected and every other rule still run. Tightened: a lease (`--force-with-lease[=..]`,
+`--force-if-includes`) now counts as forced, so the strict shape is its only allow (four develop allow rows
+to `origin develop` flip to deny). Accepted over-deny: anything chained, piped, redirected, quoted, wrapped,
+with `-o`, or to a URL remote.

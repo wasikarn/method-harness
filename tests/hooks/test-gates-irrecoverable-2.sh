@@ -212,7 +212,7 @@ test_deny  "$IRRECOVERABLE" "git clean --f (1-char abbreviated --force, was sile
 # denying git's own already-documented noisy neighbors (an ambiguous prefix
 # these long forms don't uniquely resolve to, or a flag never named in the
 # specific per-call-site long_forms list).
-test_allow "$IRRECOVERABLE" "git push --force-with-lease still allowed (prefix helper is call-site-scoped, not global)" \
+test_deny  "$IRRECOVERABLE" "git push --force-with-lease origin develop denied (spec v3: a lease is forced; no src:dst)" \
   "$(bash_payload 'git push --force-with-lease origin develop')"
 test_allow "$IRRECOVERABLE" "git diff --find-renames still allowed (unrelated long flag, not a --force/--hard/--amend prefix)" \
   "$(bash_payload 'git diff --find-renames')"
@@ -1843,7 +1843,7 @@ import re, sys
 # The module runs the gate at import, so exec only the regex definitions (from _AMBIG_UNIT to _ambiguous).
 src = open(sys.argv[1]).read()
 block = src[src.index("_AMBIG_UNIT = "):src.index("def _ambiguous(")]
-ns = {"re": re}; exec(block, ns)
+ns = {"re": re, "_FORCE_PUSH_OK": False}; exec(block, ns)  # the strict-force-push flag is set at the top of the module
 r = ns["_AMBIG_NARROW_VERB_RE"]
 hit = all(r.search(c) for c in ("git push origin main -fu", "git push -uf origin main", "git push origin main -f"))
 miss = not any(r.search(c) for c in ("git push -u origin main", "git push origin main -u"))
@@ -3533,6 +3533,46 @@ for _c674 in "echo 'ls' | timeout 5 sh" "echo 'rm -rf b' | bash -o pipefail x.sh
   "echo 'rm -rf b' | sh x.sh 2>/dev/null" "echo 'rm -rf b' | sudo -u bob cat" "echo 'rm -rf b' | nice grep rm" \
   "echo 'rm -rf b' | env -i bash -c ls" "printf 'ls\n' | nice sh"; do
   test_allow "$IRRECOVERABLE" "GH #674 control: $_c674" "$(bash_payload "$_c674")"
+done
+
+# Force-push spec v3: the WHOLE command, as one plain `git [-C P] push [opts] <remote> <src:dst>...` with no
+# protected dst or lease ref, is the one allowed force push. Leases count as forced everywhere else.
+for _c in 'git push -f origin HEAD:feat' 'git push --force origin HEAD:feat' 'git push origin +HEAD:feat' \
+  'git push -f origin feat:refs/heads/feat' 'git push -fu origin HEAD:feat' 'git push -fq origin HEAD:feat' \
+  'git push -fv origin HEAD:feat' 'git push -fn origin HEAD:feat' 'git push -f -u -q -v -n origin HEAD:feat' \
+  'git push --force --set-upstream origin HEAD:feat' 'git push --force --quiet origin HEAD:feat' \
+  'git push --force --verbose origin HEAD:feat' 'git push --force --dry-run origin HEAD:feat' \
+  'git push --force --atomic origin HEAD:feat' 'git push --force --porcelain origin HEAD:feat' \
+  'git push --force --progress origin HEAD:feat' 'git push --force --no-progress origin HEAD:feat' \
+  'git push --force-with-lease origin HEAD:feat' 'git push --force-if-includes --force-with-lease origin HEAD:feat' \
+  'git push --force-with-lease=feat origin HEAD:feat' 'git push --force-with-lease=feat:abc1234 origin HEAD:feat' \
+  'git push --force-with-lease=refs/heads/feat:0123456789abcdef0123456789abcdef01234567 origin HEAD:feat' \
+  'git -C ~/x push -f origin HEAD:feat' 'git -C ../repo push -f origin HEAD:feat' 'git -C push push -f origin HEAD:feat' \
+  'git push -f origin a:feat-a +b:feat-b c:refs/heads/feat-c' 'git push -f upstream v1.2@x:feature/main' \
+  'git push -f origin HEAD:mainline' 'git push -f origin HEAD:release' '  git push -f origin HEAD:feat  '; do
+  test_allow "$IRRECOVERABLE" "force-push v3 strict allow: $_c" "$(bash_payload "$_c")"
+done
+for _d in main master develop production staging release/1.0 Main MASTER Develop refs/heads/main heads/develop \
+  Refs/Heads/Staging RELEASE/x refs/heads/release/2; do
+  test_deny "$IRRECOVERABLE" "force-push v3: protected dst $_d" "$(bash_payload "git push -f origin HEAD:$_d")"
+done
+for _c in 'git push -f origin a:feat b:main' 'git push origin +HEAD:production' 'git push --force-with-lease origin HEAD:main' \
+  'git push --force-with-lease=main origin HEAD:feat' 'git push --force-with-lease=refs/heads/main:abc1234 origin HEAD:feat' \
+  'git push --force-with-lease=Release/9:abcd origin HEAD:feat' 'git push --force-with-lease=main:abc origin HEAD:feat' \
+  'git push -f origin a:b:feat' 'git push 2>&1 -f origin HEAD:feat' 'git push -f origin HEAD:feat &>/dev/null' \
+  'git push -f origin HEAD:feat <<< x' 'git push --repo=origin -f HEAD:feat' 'echo HEAD:feat | xargs git push -f origin' \
+  'legit=1 xargs git push -f origin HEAD:feat' 'git push --force-with-lease origin :/msg:main' \
+  'git push --recurse-submodules=on-demand -f origin HEAD:feat' 'git push -fo ci.skip origin HEAD:feat' \
+  'git push -f -o ci.skip origin HEAD:feat' 'git push --m -f origin HEAD:feat' 'git push -f git@github.com:o/r.git HEAD:feat' \
+  'git push -f https://github.com/o/r HEAD:feat' 'cd $(mktemp -d) && git push -f origin HEAD:feat' \
+  'git push> x -f origin HEAD:feat' 'git push -f origin HEAD:feat && echo ok' 'git push  -f origin HEAD:feat' \
+  $'git push\t-f origin HEAD:feat' $'git push -f origin HEAD:feat\necho ok' 'git push -f origin "HEAD:feat"' \
+  "git push -f origin 'HEAD:feat'" 'git push -f --mirror HEAD:feat' 'git push -f --all origin:feat' \
+  'git push --force -u HEAD:feat' 'git -c remote.origin.push=+HEAD:main push -f origin HEAD:feat' \
+  'git push --force-with-lease origin develop' 'git push --force-with-lease=main:12345 origin develop' \
+  'git push --force-with-lease --force-if-includes origin develop' 'git push --force-if-includes origin feat' \
+  'git push --force-with-lease origin feat' 'sudo git push -f origin HEAD:feat' 'git send-pack -f origin HEAD:feat'; do
+  test_deny "$IRRECOVERABLE" "force-push v3 deny: $_c" "$(bash_payload "$_c")"
 done
 
 gates_summary

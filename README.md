@@ -46,7 +46,7 @@ One clause per gate; full scope and exceptions: `docs/reference/operating-model.
 
 | gate | effect |
 |---|---|
-| `gate:bash:irrecoverable` | denies irrecoverable commands (`rm -rf`, `push --force`, `reset --hard`, `--no-verify`, and more) |
+| `gate:bash:irrecoverable` | denies irrecoverable commands (`rm -rf`, `push --force` except one plain `git push <remote> <src:dst>` to a non-protected branch, `reset --hard`, `--no-verify`, and more) |
 | `gate:bash:subagent-git-guard` | denies `git stash`/`reset`/`clean` from a dispatched subagent |
 | `gate:agent:subagent-spawn-guard` | denies a subagent spawning its own reviewer/validator |
 | `gate:task:complete-separation` | denies a subagent marking its own task complete |
