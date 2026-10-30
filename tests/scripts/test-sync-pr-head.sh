@@ -254,7 +254,8 @@ w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b develop "$O" "$w/c"; git -C
 manifests "$w/c" 1.0.7; commit "$w/c" "synced"; git -C "$w/c" push -q origin other
 git -C "$L" fetch -q origin; other=$(git -C "$L" rev-parse origin/other)
 n0=$(gauntlets)
-run_sync feat/x "$other"
+# Cache off: case 5c cached this same tree, and a hit would skip the gauntlet in either order.
+GAUNTLET_PASS_CACHE=0 run_sync feat/x "$other"
 if [ "$rc" -ne 0 ] && [ -z "$out" ] && /usr/bin/grep -q 'the head was not pushed' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ] && [ "$(gauntlets)" = "$n0" ]; then
   ok "already synced, head not on origin's branch: refused before the gauntlet, no status, says the head was not pushed"
 else bad "unpushed head: rc=$rc out='$out' runs=$(gauntlets)/$n0 log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
