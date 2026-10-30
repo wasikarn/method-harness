@@ -115,7 +115,13 @@ n=0; [ ! -f "$STUB_DIR/gauntlet.n" ] || n=$(cat "$STUB_DIR/gauntlet.n"); n=$((n 
   if [ -d "$MERGE_PR_LOCK_DIR" ]; then echo "mergelock=held"; else echo "mergelock=free"; fi
   echo "shard=${GAUNTLET_SHARD-}"
 } >>"$STUB_DIR/gauntlet.log"
-[ -z "${STUB_GAUNTLET_FAIL:-}" ] || { echo "gauntlet: red" >&2; exit 1; }
+if [ -n "${STUB_GAUNTLET_FAIL:-}" ]; then
+  echo "gauntlet: red" >&2
+  # STUB_BIG: ~1.3 MB of failing output first, more than one argv string may carry (GH #749).
+  [ -z "${STUB_BIG:-}" ] || { head -c 1300000 /dev/zero | tr '\0' x | fold -w 100; echo; } >&2
+  [ -z "${STUB_FAILING:-}" ] || echo "failing: $STUB_FAILING" >&2
+  exit 1
+fi
 [ -z "${STUB_GAUNTLET_DIRTY:-}" ] || echo edit >>b.txt
 [ -z "${STUB_GAUNTLET_COMMIT:-}" ] || git commit -q --allow-empty -m "made during the gauntlet"
 if [ -n "${STUB_GAUNTLET_PEER:-}" ] && [ "$n" -eq 1 ]; then
@@ -223,7 +229,7 @@ run() {
     STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict "MERGE @ $(remote_tip feat/x)")}" \
     MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX="${LOAD_MAX-4}" MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
     GAUNTLET_LOCK_DIR="$F/gauntlet.lock" GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
-    GAUNTLET_SHARD="${SHARD-}" bash "$SCRIPT" 451 2>&1)
+    GAUNTLET_MISS_LOG="${MISS_LOG-$F/miss.jsonl}" GAUNTLET_SHARD="${SHARD-}" bash "$SCRIPT" 451 2>>"${ERRFILE:-/dev/stdout}")
   rc=$?
 }
 merged() { /usr/bin/grep -q '^gh pr merge' "$F/calls.log"; }
@@ -322,6 +328,67 @@ mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$F
 run
 merges "cache for another tree"
 if [ "$(gauntlets)" = 1 ]; then ok "a pass for the pre-sync tree does not skip the gauntlet on the merged tree"; else bad "stale cache: $(gauntlets) gauntlets"; fi
+
+# 3b. GH #749: each merge-time gauntlet run appends one miss-log row: the plan scripts/gauntlet-plan.sh
+#     gives the change against develop (from the checkout's own rules), the gauntlet's failing: files, and
+#     miss = a failing file outside the plan's tests below full. A cached pass ran nothing: no row. A log
+#     that cannot be written never stops the merge. GAUNTLET_MISS_LOG keeps every case off ~/.cache/mh.
+# rules_on_develop: develop gains a rules file mapping b.txt (the feature's file) to medium + tests/b.sh.
+rules_on_develop() {
+  git -C "$F/seed" checkout -q develop
+  mkdir -p "$F/seed/tests"; echo t >"$F/seed/tests/b.sh"; echo t >"$F/seed/tests/other.sh"
+  printf 'b.txt medium tests/b.sh\n.claude-plugin/* medium\n' >"$F/seed/scripts/gauntlet-rules.txt"
+  git -C "$F/seed" add scripts/gauntlet-rules.txt tests/b.sh tests/other.sh
+  git -C "$F/seed" commit -qm rules
+  git -C "$F/seed" push -q origin develop
+}
+rows() { if [ -f "$F/miss.jsonl" ]; then wc -l <"$F/miss.jsonl" | tr -d ' '; else echo 0; fi; }
+row() { jq -c "$1" "$F/miss.jsonl"; }
+setup; rules_on_develop
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/other.sh" run
+refuses "red gauntlet, failing outside the plan" "the gauntlet failed on"
+if [ "$(rows)" = 1 ] && [ "$(row '[.pr, .head, .level, .selected, .failing, .miss]')" = "[\"451\",\"$(w rev-parse HEAD)\",\"medium\",[\"tests/b.sh\"],[\"tests/other.sh\"],true]" ]; then
+  ok "a red run writes one row with miss=true when a failing file is outside the medium plan"
+else bad "miss row ($(rows) rows): $(cat "$F/miss.jsonl" 2>&1)"; fi
+# A red run's output can pass 1 MB: one argv string that size fails to exec (macOS ARG_MAX is 1 MB in all,
+# Linux caps one argument at 128 KB), so the row must not ride in argv.
+setup; rules_on_develop
+STUB_BIG=1 STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/other.sh" run
+if [ "$(rows)" = 1 ] && [ "$(row '[.failing, .miss]')" = '[["tests/other.sh"],true]' ]; then ok "a red run with over 1 MB of output still writes its row"
+else bad "big-output row ($(rows) rows): $(printf '%s\n' "$out" | /usr/bin/grep -v '^x*$' | tail -n 5)"; fi
+# stderr as a regular file: the copy of the gauntlet's output must append to it, not reopen it truncated
+# (`tee /dev/stderr` does on Linux, wiping what merge-pr.sh printed before the gauntlet).
+setup; rules_on_develop
+echo "before merge-pr" >"$F/err.log"
+ERRFILE="$F/err.log" STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/other.sh" run
+if [ "$(head -n 1 "$F/err.log")" = "before merge-pr" ] && /usr/bin/grep -q '^merge-pr: running the full gauntlet on' "$F/err.log" \
+   && /usr/bin/grep -q '^failing: tests/other.sh' "$F/err.log" && /usr/bin/grep -q 'the gauntlet failed on' "$F/err.log"; then
+  ok "a regular-file stderr keeps what was there before, the gauntlet's output and the verdict"
+else bad "stderr file: $(head -c 300 "$F/err.log" | od -c | head -n 3)"; fi
+setup; rules_on_develop
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/b.sh" run
+if [ "$(rows)" = 1 ] && [ "$(row '[.failing, .miss]')" = '[["tests/b.sh"],false]' ]; then ok "a failing file inside the plan gives miss=false"
+else bad "in-plan row: $(cat "$F/miss.jsonl" 2>&1)"; fi
+setup; rules_on_develop
+run
+merges "green run with a miss log"
+if [ "$(rows)" = 1 ] && [ "$(row '[.level, .failing, .miss]')" = '["medium",[],false]' ]; then ok "a green run writes one row, nothing failing, no miss"
+else bad "green row: $(cat "$F/miss.jsonl" 2>&1)"; fi
+setup
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/other.sh" run
+if [ "$(rows)" = 0 ] && /usr/bin/grep -q 'gauntlet-plan.sh failed' <<<"$out" && /usr/bin/grep -q 'the gauntlet failed on' <<<"$out"; then
+  ok "no rules file: no row, a note, and the run's own verdict stands"
+else bad "no-rules row: $(rows) rows: $out"; fi
+setup 1.1.99; rules_on_develop; on feat/x "self-bump" set_ver 1.1.100
+git -C "$F/seed" checkout -q feat/x; git -C "$F/seed" pull -q --no-rebase --no-edit origin develop; git -C "$F/seed" push -q origin feat/x; git -C "$F/seed" checkout -q develop
+mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$(remote_tip feat/x)^{tree}")"
+run
+if [ "$(gauntlets)" = 0 ] && [ "$(rows)" = 0 ]; then ok "a cached pass writes no row"; else bad "cached: $(gauntlets) gauntlets, $(rows) rows"; fi
+setup; rules_on_develop
+MISS_LOG=/dev/null/miss.jsonl run
+merges "unwritable miss log"
+if /usr/bin/grep -q 'could not append the miss-log row' <<<"$out"; then ok "an unwritable miss log prints a note and the merge goes on"
+else bad "unwritable log: $out"; fi
 
 # 3c. GH #742: the mh/gauntlet success status goes on the merged head, after the push and before the merge,
 #     for a green run and for a cached pass; a red gauntlet posts none; a failed post stops the merge.

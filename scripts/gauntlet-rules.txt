@@ -1,0 +1,100 @@
+# gauntlet-rules.txt: which gauntlet level and tests a changed path needs (GH #749).
+# Read by scripts/gauntlet-plan.sh. One rule per line:  <path pattern> <level> [test pattern...]
+# Levels: low (lint only), medium (validate, audit, lint and the listed tests), full (everything).
+# Patterns are bash `case` globs, where `*` also matches `/`: `hooks/gates/*` covers every file below.
+# Every rule that matches a path counts: the path gets the highest of their levels and all their tests.
+# SELF in a test list stands for the changed path itself (a changed test file runs itself).
+# A path no rule matches gives full, and the plan takes the highest level over all changed paths.
+# Tests come from the real layout: the files under tests/ that read or run the changed file.
+
+# Shared code: any test may source it, so a file-based mapping cannot see who depends on it.
+tests/_lib/*                      full
+scripts/_lib/*                    full
+scripts/run-gauntlet.sh           full
+git-hooks/*                       full
+hooks/*.json                      full
+hooks/gates/_*                    full
+.claude/*                         full
+
+# The planner itself.
+scripts/gauntlet-plan.sh          medium tests/scripts/test-gauntlet-plan.sh tests/scripts/test-gauntlet-levels.sh tests/scripts/test-merge-pr.sh
+scripts/gauntlet-rules.txt        medium tests/scripts/test-gauntlet-plan.sh tests/scripts/test-gauntlet-levels.sh tests/scripts/test-merge-pr.sh
+
+# Gates: the gate's own suite plus the cross-gate suites that drive it.
+hooks/gates/brace-route.awk                 medium tests/hooks/test-gates-other.sh tests/hooks/test-precommit-canary-narrow.sh
+hooks/gates/irrecoverable.*                 medium tests/hooks/test-gates*.sh tests/hooks/test-gate-canary.sh tests/hooks/test-gate-journal.sh tests/hooks/test-codex-setup-guard.sh tests/hooks/test-precommit-canary-narrow.sh tests/hooks/test-subagent-git-guard.sh tests/scripts/test-gate-differential.sh tests/skills/test-gate-report.sh tests/skills/harness-audit/test*.sh
+hooks/gates/subagent-git-guard.*            medium tests/hooks/test-subagent-git-guard.sh tests/hooks/test-gates-irrecoverable-2.sh tests/hooks/test-gate-canary.sh tests/hooks/test-quotemask.sh tests/hooks/test-test-integrity.sh tests/scripts/test-gauntlet-trash-preflight.sh tests/skills/test-gate-report.sh
+hooks/gates/secret-scan.*                   medium tests/hooks/test-secret-scan.sh tests/hooks/test-bash-output-redact.sh tests/hooks/test-gate-canary.sh tests/hooks/test-gate-journal.sh tests/hooks/test-precommit-canary-narrow.sh tests/scripts/test-gate-differential.sh tests/skills/test-gate-report.sh
+hooks/gates/config-write-guard.*            medium tests/hooks/test-config-write-guard.sh tests/hooks/test-codex-setup-guard.sh tests/hooks/test-gate-canary.sh tests/hooks/test-gate-journal.sh
+hooks/gates/codex-setup-guard.*             medium tests/hooks/test-codex-setup-guard.sh tests/hooks/test-doctrine-bootstrap.sh
+hooks/gates/test-integrity.*                medium tests/hooks/test-test-integrity.sh tests/hooks/test-gate-canary.sh tests/hooks/test-gate-journal.sh tests/hooks/test-quotemask.sh tests/skills/test-gate-report.sh
+hooks/gates/subagent-verdict-gate.*         medium tests/hooks/test-subagent-verdict-gate.sh tests/hooks/test-gate-journal.sh
+hooks/gates/subagent-spawn-guard.*          medium tests/hooks/test-gates-irrecoverable-2.sh tests/hooks/test-doctrine-bootstrap.sh
+hooks/gates/routine-trigger-guard.*         medium tests/hooks/test-gates-irrecoverable-2.sh
+hooks/gates/task-complete-separation.*      medium tests/hooks/test-gates-irrecoverable-2.sh tests/hooks/test-gate-canary.sh
+
+# Sensors, session and stop hooks, the mod.
+hooks/sensors/bash-output-redact.*          medium tests/hooks/test-bash-output-redact.sh
+hooks/sensors/codex-quota-*                 medium tests/hooks/test-codex-quota.sh
+hooks/sensors/failure-diagnose-nudge.*      medium tests/hooks/test-failure-diagnose-nudge.sh
+hooks/sensors/fragments-*                   medium tests/hooks/test-fragments-*.sh tests/scripts/test-hook-common.sh tests/scripts/test-hook-payload.sh tests/scripts/test-pipefail-grep-q-lint.sh
+hooks/session/fragments-surface.sh          medium tests/hooks/test-fragments-*.sh tests/scripts/test-hook-common.sh tests/scripts/test-hook-payload.sh
+hooks/session/doctrine-bootstrap.sh         medium tests/hooks/test-doctrine-bootstrap.sh tests/hooks/test-memory-health-nudge.sh
+hooks/session/memory-health-nudge.sh        medium tests/hooks/test-memory-health-nudge.sh
+hooks/session/skill-usage-telemetry.sh      medium tests/hooks/test-skill-usage-telemetry.sh
+hooks/stop/cost-tracker.sh                  medium tests/hooks/test-cost-tracker.sh tests/hooks/test-session-stop.sh tests/skills/test-cost-report.sh tests/evals/test-eval-cases.sh
+hooks/stop/memory-audit-commit.sh           medium tests/hooks/test-memory-audit-commit.sh tests/hooks/test-memory-health-nudge.sh tests/hooks/test-session-stop.sh
+hooks/mod/*                                 medium tests/hooks/test-cost-ledger-module.sh tests/scripts/test-observer-contract.sh tests/skills/test-cost-report.sh
+
+# Top-level scripts.
+scripts/merge-pr.sh               medium tests/scripts/test-merge-pr.sh tests/scripts/test-sync-pr-head.sh tests/scripts/test-gauntlet-pass-cache.sh
+scripts/sync-pr-head.sh           medium tests/scripts/test-sync-pr-head.sh tests/scripts/test-merge-pr.sh tests/scripts/test-gauntlet-pass-cache.sh tests/scripts/test-pre-push-develop-overlap.sh
+scripts/check-observer-contract.sh medium tests/scripts/test-observer-contract.sh
+scripts/eval-fold.sh              medium tests/scripts/test-eval-fold.sh
+scripts/gate-canary.sh            medium tests/hooks/test-gate-canary.sh tests/hooks/test-secret-scan.sh
+scripts/gate-differential.sh      medium tests/scripts/test-gate-differential.sh
+
+# Skills and agents: the skill's own tests plus the eval checks; the audit runs at medium anyway.
+skills/*                          medium tests/evals/test*.sh
+agents/*                          medium tests/evals/test*.sh tests/scripts/test-eval-fold.sh
+evals/*                           medium tests/evals/test*.sh tests/scripts/test-eval-fold.sh
+evals/ideate-run/*                medium tests/skills/test-ideate-critic-default.sh
+skills/*/ste-lint/*               medium tests/skills/test-ste-lint.sh
+skills/*/cost-report/*            medium tests/skills/test-cost-report.sh tests/hooks/test-session-stop.sh
+skills/*/gate-report/*            medium tests/skills/test-gate-report.sh tests/skills/test-skill-usage-report.sh
+skills/*/harness-audit/*          medium tests/skills/harness-audit/test*.sh
+skills/*/learn/*                  medium tests/skills/learn/test*.sh tests/scripts/test-transcript-user-turns.sh tests/skills/test-idea-audit-memory-dir.sh
+skills/*/memory-lint/*            medium tests/skills/memory-lint/test_*.py tests/hooks/test-memory-health-nudge.sh
+skills/*/model-bench/*            medium tests/scripts/test-model-bench.sh
+skills/*/compliance-audit/*       medium tests/skills/test-compliance-audit-*.sh tests/skills/test-check-verdict-drift.sh
+skills/*/deep-audit/*             medium tests/skills/test-deep-audit-*.sh tests/skills/test-check-verdict-drift.sh tests/skills/test-weighted-score.sh
+skills/*/idea-audit/*             medium tests/skills/test-idea-audit-*.sh tests/skills/test-check-verdict-drift.sh
+skills/*/ideate/*                 medium tests/skills/test-ideate-*.sh
+
+# Tests: a changed test file runs itself; a fixture runs the suite that reads it.
+tests/hooks/test*.sh              medium SELF
+tests/scripts/test*.sh            medium SELF
+tests/skills/test*.sh             medium SELF
+tests/evals/test*.sh              medium SELF
+tests/skills/harness-audit/*      medium tests/skills/harness-audit/test*.sh
+tests/skills/learn/*              medium tests/skills/learn/test*.sh
+tests/skills/memory-lint/*        medium tests/skills/memory-lint/test_*.py
+tests/hooks/quotemask_drift.py    medium tests/hooks/test-quotemask.sh
+tests/hooks/fixtures/irrecoverable-*      medium tests/hooks/test-gates-other.sh tests/hooks/test-gates*.sh
+tests/hooks/fixtures/subagent-git-guard-* medium tests/hooks/test-subagent-git-guard.sh
+tests/scripts/fixtures/model-bench/*        medium tests/scripts/test-model-bench.sh
+tests/scripts/fixtures/observer-contract/*  medium tests/scripts/test-observer-contract.sh
+tests/mods/*                      medium tests/hooks/test-cost-ledger-module.sh
+
+# The manifests: every merge bumps them, so they stay below full; validate and the audit check them.
+.claude-plugin/*                  medium
+
+# Docs and prose. A few docs are read by a test; the rest lint only.
+docs/METHODOLOGY.md               medium tests/skills/test-ste-lint.sh
+docs/reference/operating-model.md medium tests/evals/test-eval-cases.sh tests/evals/test-eval-subjects-doc.sh
+docs/reference/spawn-brief.md     medium tests/scripts/test-isolated-checkout-dispatch.sh
+README.md                         medium tests/evals/test-eval-cases.sh
+docs/*                            low
+*.md                              low
+LICENSE                           low
+NOTICE                            low

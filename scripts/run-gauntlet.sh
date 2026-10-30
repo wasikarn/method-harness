@@ -19,7 +19,10 @@
 # A full, clean, passing run records a pass for its tree (scripts/_lib/gauntlet-pass.sh, GH #735).
 # Run by scripts/merge-pr.sh and scripts/sync-pr-head.sh before they push, and by git-hooks/pre-push only
 # with MH_PREPUSH_FULL=1 (a plain push runs the lint layer on the changed files). harness-audit runs in
-# pre-commit, not here.
+# pre-commit, not in a full run.
+# --level low|medium --plan <base> (GH #749) runs the level scripts/gauntlet-plan.sh <base> picks, before a
+# PR: low lints the changed files; medium adds validate, harness-audit and only the planned tests. A level
+# below the plan's is refused. Such a run never records a pass; merges still run the full gauntlet.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
@@ -46,6 +49,28 @@ check_shard() {
   return 1
 }
 check_shard || exit 2
+level=full plan="" plan_tests=""
+while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || set -- "$1" ""
+  case "$1" in
+    --level) level=$2 ;;
+    --plan) plan=$(bash "$ROOT/scripts/gauntlet-plan.sh" "$2") || exit 2 ;;
+    *) echo "gauntlet: usage: run-gauntlet.sh [--level low|medium|full --plan <base>], got '$1'" >&2; exit 2 ;;
+  esac
+  shift 2
+done
+case "$level" in
+  full) ;;
+  low | medium) [ -n "$plan" ] || { echo "gauntlet: --level $level needs --plan <base>" >&2; exit 2; } ;;
+  *) echo "gauntlet: --level must be low, medium or full, got '$level'" >&2; exit 2 ;;
+esac
+case "$(printf '%s\n' "$plan" | sed -n 's/^level: //p'):$level" in
+  full:low | full:medium | medium:low)
+    echo "gauntlet: --level $level is below the plan's level, refused (a higher level is fine):" >&2
+    printf '%s\n' "$plan" | /usr/bin/grep -E '^(level|reason):' >&2
+    exit 2 ;;
+esac
+[ "$level" = full ] || plan_tests=$(printf '%s\n' "$plan" | sed -n 's/^test: //p')
 # Tests reset their state with `trash ... || true`, so without trash a row reads the last row's
 # leftovers and can pass unchecked (cloud audit 2026-10-23, F4). Stop before any test runs.
 command -v trash >/dev/null 2>&1 || { echo "gauntlet: trash not found on PATH (macOS: brew install trash; Linux: pip install trash-cli), refusing to run tests that reset state with it" >&2; exit 2; }
@@ -88,6 +113,7 @@ run_validate() {
 . "$ROOT/scripts/_lib/gauntlet-pass.sh"
 # The pass cache (GH #735) keys on the tree a clean checkout starts from; read before any layer runs.
 start_tree=$(gauntlet_pass_start)
+[ "$level" = full ] || start_tree=""  # only a full run records a pass (GH #749)
 
 # The test files the layer runs, in glob order. Kept apart from run_hook_tests so
 # tests/scripts/test-run-gauntlet-wiring.sh can check the globs without running
@@ -116,6 +142,8 @@ hook_test_files() {
   fi
   return 0
 }
+# --level medium runs only the plan's tests (GH #749).
+if [ "$level" = medium ]; then hook_test_files() { printf '%s\n' "$plan_tests"; }; fi
 
 run_hook_tests() {
   local rc=0 t
@@ -178,19 +206,29 @@ run_hook_tests() {
 . "$ROOT/scripts/_lib/stray-procs.sh"
 stray_procs_report
 
+p3="" p4=""
 p1="" p2=""
-if [ -z "$shard" ] || [ "${shard%/*}" -eq 1 ]; then
-  # check-observer-contract.sh (GH #443): the mh module stays a turn.complete observer.
-  { run_validate && bash scripts/check-observer-contract.sh "$ROOT"; } >"$LOG/validate" 2>&1 & p1=$!
-  git ls-files | run_lint >"$LOG/lint" 2>&1 & p2=$!
+if [ "$level" != full ]; then
+  printf '%s\n' "$plan" | sed -n 's/^changed: //p' | run_lint >"$LOG/lint" 2>&1 & p2=$!
+  if [ "$level" = medium ]; then
+    { run_validate && bash scripts/check-observer-contract.sh "$ROOT"; } >"$LOG/validate" 2>&1 & p1=$!
+    bash skills/meta/harness-audit/scripts/audit.sh . >"$LOG/audit" 2>&1 & p4=$!
+    [ -z "$plan_tests" ] || { run_hook_tests >"$LOG/tests" 2>&1 & p3=$!; }
+  fi
+else
+  if [ -z "$shard" ] || [ "${shard%/*}" -eq 1 ]; then
+    # check-observer-contract.sh (GH #443): the mh module stays a turn.complete observer.
+    { run_validate && bash scripts/check-observer-contract.sh "$ROOT"; } >"$LOG/validate" 2>&1 & p1=$!
+    git ls-files | run_lint >"$LOG/lint" 2>&1 & p2=$!
+  fi
+  run_hook_tests >"$LOG/tests" 2>&1 & p3=$!
 fi
-run_hook_tests >"$LOG/tests" 2>&1 & p3=$!
 
 fail=0
 report() {
   local name="$1" pid="$2"
   if [ -z "$pid" ]; then
-    echo "SKIP  $name (runs in shard 1, this is shard $shard)"
+    echo "SKIP  $name${shard:+ (runs in shard 1, this is shard $shard)}"
   elif wait "$pid"; then
     echo "PASS  $name"
   else
@@ -201,6 +239,7 @@ report() {
 report validate "$p1"
 report lint "$p2"
 report tests "$p3"
+[ "$level" != medium ] || report audit "$p4"
 if [ "$fail" -eq 0 ]; then
   echo "gauntlet: all layers passed"
   gauntlet_pass_record "$fail" "$shard" "$start_tree"
