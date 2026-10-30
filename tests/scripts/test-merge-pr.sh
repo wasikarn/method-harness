@@ -11,11 +11,12 @@
 # are stubbed; never touches GitHub.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HERE/../../scripts/_lib/tmp-delete.sh"
 SCRIPT="$HERE/../../scripts/merge-pr.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && tmp_delete "$1"; return 0; }
 
 # The fixture's git must not read the operator's config (hooks, signing) or a caller's lock state.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1

@@ -7,6 +7,7 @@ set -uo pipefail
 # (GH #234, tests/scripts/test-git-env-unset-lint.sh). run-gauntlet.sh does the same unset.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 SCRIPT="$ROOT/skills/design/ste-lint/scripts/ste-lint.py"
 FAIL=0
 
@@ -14,7 +15,7 @@ python3 "$SCRIPT" --selftest || { echo "FAIL: ste-lint.py selftest"; FAIL=1; }
 
 TMP="$(mktemp -d)"
 OUTSIDE="$TMP-outside.md"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE"' EXIT
+trap 'tmp_delete "$TMP" "$OUTSIDE"' EXIT
 (
   cd "$TMP" || exit 1
   git init -q
@@ -108,7 +109,7 @@ assert lines == [1], lines
 ) || FAIL=1
 
 TMP2="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2"' EXIT
+trap 'tmp_delete "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2"' EXIT
 (
   cd "$TMP2" || exit 1
 
@@ -159,7 +160,7 @@ trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" 
 ) || FAIL=1
 
 TMP3="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3"' EXIT
+trap 'tmp_delete "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3"' EXIT
 (
   # Running outside a git repository entirely is a tool error (exit 2),
   # never an uncaught traceback (deep-audit finding: repo_root() propagated
@@ -171,7 +172,7 @@ trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" 
 ) || FAIL=1
 
 TMP4="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" "$TMP4"' EXIT
+trap 'tmp_delete "$TMP" "$OUTSIDE" "$OUTSIDE-dir" "$TMP2" "$TMP3" "$TMP4"' EXIT
 (
   # --no-advisory hides advisory lines but keeps confirmed ones and the exit code;
   # a long sentence's echoed excerpt is capped so a directory scan stays readable.

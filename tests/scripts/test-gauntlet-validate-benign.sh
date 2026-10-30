@@ -7,11 +7,12 @@
 # plays each scenario; the real CLI is never run.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HERE/../../scripts/_lib/tmp-delete.sh"
 GAUNTLET="$HERE/../../scripts/run-gauntlet.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
-safe_tmp_delete() { [ -n "${1:-}" ] && python3 "$HERE/../_lib/tmp_delete.py" "$1"; return 0; }
+safe_tmp_delete() { [ -n "${1:-}" ] && tmp_delete "$1"; return 0; }
 
 echo "=== run_validate tolerates only the plugin-root CLAUDE.md warning ==="
 BODY=$(sed -n '/^validate_strict_tolerant()/,/^}/p;/^run_validate()/,/^}/p' "$GAUNTLET")

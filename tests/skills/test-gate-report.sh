@@ -8,6 +8,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 REPORT_PY="$ROOT/skills/meta/gate-report/scripts/gate-report.py"
 SKILL_MD="$ROOT/skills/meta/gate-report/SKILL.md"
 
@@ -29,7 +30,7 @@ assert() {
 [[ -f "$SKILL_MD" ]] || { echo "FATAL: $SKILL_MD not found — the skill moved without updating this test" >&2; exit 1; }
 
 TMPDIR_TEST="$(mktemp -d)"
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMPDIR_TEST"' EXIT
+trap 'tmp_delete "$TMPDIR_TEST"' EXIT
 
 echo "=== gate-report ==="
 

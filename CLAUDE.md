@@ -14,7 +14,7 @@ pre-commit: staged lint, home-path ban, audit, 4096-byte cap on `docs/METHODOLOG
 pre-push: lint of the pushed files only (GH #735; `MH_PREPUSH_FULL=1` runs the gauntlet). The full
 gauntlet runs in `scripts/merge-pr.sh` and `scripts/sync-pr-head.sh`, on the exact tree they merge;
 a clean passing run is cached by tree hash. There is no CI, so these local gates are the only ones;
-branch protection requires a PR, no status checks. Detail: `docs/reference/repo-gotchas.md`.
+branch protection requires a PR and the `mh/gauntlet` status on an up-to-date head (GH #742). Detail: `docs/reference/repo-gotchas.md`.
 
 ## Composer-not-creator
 
@@ -51,7 +51,7 @@ vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-l
 
 - **Keep `core.hooksPath` relative** (`git config core.hooksPath git-hooks`): an absolute path silently runs zero hooks after a rename; verify `test -d "$(git config core.hooksPath)"`.
 - **Home paths:** `$HOME` or `~` in every committed file, never `/Users/<name>` or the bare account name; frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`, `CHANGELOG.md`) skip style sweeps, never this.
-- **Use `trash` (a test's own temp dir: `tests/_lib/tmp_delete.py`) and stage by name;** `gate:bash:irrecoverable` denies `rm -rf`, `--no-verify`, and `git add -A`/`.` outside a merge.
+- **Use `trash` (a test's own temp dir: `scripts/_lib/tmp_delete.py`) and stage by name;** `gate:bash:irrecoverable` denies `rm -rf`, `--no-verify`, and `git add -A`/`.` outside a merge.
 - **Same-version edits are no-ops:** `claude plugin update` copies nothing until the version changes, which `merge-pr.sh` does on every merge (a local test install needs its own uncommitted bump); re-verify a same-session edit by `Read`ing the repo path, never `Skill(<name>)`.
 - **Bare `grep` is Claude Code's shell-snapshot shim** (it reformats output): use `/usr/bin/grep` or `awk` for counts.
 

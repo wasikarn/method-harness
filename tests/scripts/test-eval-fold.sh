@@ -7,13 +7,14 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 LIB="$ROOT/scripts/_lib/eval-fold.py"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 TMP="$(mktemp -d)" || exit 1
 [ -n "$TMP" ] || { echo "test-eval-fold: mktemp gave an empty path" >&2; exit 1; }
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$TMP"' EXIT
+trap 'tmp_delete "$TMP"' EXIT
 
 echo "=== eval-fold self-test ==="
 
@@ -222,7 +223,7 @@ if bash "$ROOT/scripts/eval-fold.sh" blind-spot-hunter --keep >"$TMP/dry.out" 2>
   /usr/bin/grep -q 'example' "$TMP/dry.out" && ok "dry run labels the printed commands as examples" || bad "dry run: no example label"
   kept_dir=$(sed -n 's/^eval-fold: kept temp dir: //p' "$TMP/dry.out")
   if [ -n "$kept_dir" ] && [ -d "$kept_dir/folded/skills/fold/blind-spot-hunter" ]; then
-    ok "--keep leaves the temp dir"; python3 "$ROOT/tests/_lib/tmp_delete.py" "$kept_dir"
+    ok "--keep leaves the temp dir"; tmp_delete "$kept_dir"
   else
     bad "--keep: no kept temp dir reported: $(cat "$TMP/dry.out")"
   fi

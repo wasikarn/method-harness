@@ -19,6 +19,7 @@
 # every case including prompt.md-only ones (no case.yaml to scaffold).
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HERE/../../scripts/_lib/tmp-delete.sh"
 EVALS="$HERE/../../evals"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
@@ -27,7 +28,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
 command -v python3 >/dev/null || { echo "python3 required" >&2; exit 1; }
 command -v node >/dev/null || { echo "node required (validates regex graders against the real JS engine)" >&2; exit 1; }
 TMP=$(mktemp -d)
-trap 'python3 "$HERE/../_lib/tmp_delete.py" "$TMP"' EXIT
+trap 'tmp_delete "$TMP"' EXIT
 
 # Cases whose prompt deliberately does not name a subagent_type/skill: they prove
 # the agent/skill must NOT be dispatched for an out-of-scope or misrouted ask.

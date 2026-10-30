@@ -11,6 +11,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 GATE="$ROOT/hooks/gates/secret-scan.sh"
 
 pass=0
@@ -43,7 +44,7 @@ echo "=== secret-scan gate ==="
 
 FIXTURE=$(mktemp -d)
 NOSIBLING=$(mktemp -d)
-trap 'python3 "$ROOT/tests/_lib/tmp_delete.py" "$FIXTURE" "$NOSIBLING"' EXIT
+trap 'tmp_delete "$FIXTURE" "$NOSIBLING"' EXIT
 export MH_GATE_JOURNAL_PATH="$FIXTURE/gate-decisions.jsonl"
 
 asks() { # asks <content> -- the gate's stdout for a Write of <content>

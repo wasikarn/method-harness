@@ -16,6 +16,7 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
+. "$HERE/../../../scripts/_lib/tmp-delete.sh"
 AUDIT="$HERE/../../../skills/meta/harness-audit/scripts/audit.sh"
 FIX="$HERE/known-bad"
 # shellcheck source=../../../scripts/_lib/codex-state-path.sh
@@ -169,7 +170,7 @@ expect_silent 70 check-70-good-clean-root
 # the same helper the check itself uses, under a throwaway MH_CODEX_DATA_DIR
 # so this never touches the real, shared ~/.claude/plugins/data/.
 CODEX_TMP=$(mktemp -d)
-trap 'python3 "$HERE/../../_lib/tmp_delete.py" "$CODEX_TMP"' EXIT
+trap 'tmp_delete "$CODEX_TMP"' EXIT
 setup_codex_state() {
   local fixture="$1" gate="$2" path
   export MH_CODEX_DATA_DIR="$CODEX_TMP/$fixture"

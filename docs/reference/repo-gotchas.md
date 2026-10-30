@@ -135,8 +135,10 @@ already set alone.
   reported clean while 29 hits sat in exactly those dirs.
 - **Never `rm -rf`; delete by tier.** `gate:bash:irrecoverable` denies `rm -rf` in every tier.
   1. *Temp paths a test or script made itself* (a `mktemp` dir, or a file inside one): delete
-     for good with `tests/_lib/tmp_delete.py` (`tmp_delete` once `tests/_lib/harness.sh` is
-     sourced; `track_trash`/`_cleanup_trash` use it). It refuses an empty argument, `/`, the home
+     for good with `tmp_delete`, from `scripts/_lib/tmp-delete.sh` (`tests/_lib/harness.sh`
+     sources it; `track_trash`/`_cleanup_trash` use it). It captures `python3` at source time, so
+     a `python3` stub a test later puts on PATH can't skip cleanup (GH #729), and runs
+     `scripts/_lib/tmp_delete.py`, which refuses an empty argument, `/`, the home
      or an ancestor, the system temp dir itself, and any path not strictly under a temp root, and
      it removes a symlink, never its target (`tests/scripts/test-tmp-delete.sh`). Routing these
      through `trash` put ~20k items a day into `~/.Trash` and kept Finder busy (GH #724).
@@ -158,7 +160,7 @@ already set alone.
   Validate the argument is non-empty before any `trash` call: an empty glob result once trashed
   the whole repo. A template `mktemp -d "${TMPDIR:-/tmp}/x.XXXXXX"` prints "" when TMPDIR names a
   missing directory (a plain `mktemp -d` falls back on macOS), and `set -u` does not catch an
-  empty variable, so a test hands such a path to `tmp_delete.py` or `track_trash`, never to
+  empty variable, so a test hands such a path to `tmp_delete` or `track_trash`, never to
   `trash` (`tests/scripts/test-trash-empty-guard-lint.sh`).
   The gate denies a `trash`/`trash-put`/`gio trash` operand that is literally a whole tree (`/`, `~`,
   `.`, `..`, `*`, `""`, `$HOME`, `$PWD`, `$(pwd)`, the home path, each with any trailing `/`, `/.` or `/*`, and `.*`) but allows any other variable, so
