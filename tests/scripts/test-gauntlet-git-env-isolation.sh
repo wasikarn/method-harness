@@ -36,7 +36,8 @@ if [ -z "$UNSET_LINE" ]; then
   bad "run-gauntlet.sh has no 'unset GIT_...' isolation line"
 else
   unset_line_no=$(/usr/bin/grep -n '^unset GIT_' "$GAUNTLET" | head -1 | cut -d: -f1)
-  invoke_line_no=$(/usr/bin/grep -n '^run_hook_tests >' "$GAUNTLET" | head -1 | cut -d: -f1)
+  # Unanchored: since GH #749 the launch sits inside the --level branches.
+  invoke_line_no=$(/usr/bin/grep -n 'run_hook_tests >"\$LOG/tests"' "$GAUNTLET" | head -1 | cut -d: -f1)
   if [ -n "$invoke_line_no" ] && [ "$unset_line_no" -lt "$invoke_line_no" ]; then
     ok "GIT_* unset happens before run_hook_tests is launched"
   else
