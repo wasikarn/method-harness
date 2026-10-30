@@ -173,3 +173,18 @@ send-pack, delete-protected and every other rule still run. Tightened: a lease (
 `--force-if-includes`) now counts as forced, so the strict shape is its only allow (four develop allow rows
 to `origin develop` flip to deny). Accepted over-deny: anything chained, piped, redirected, quoted, wrapped,
 with `-o`, or to a URL remote.
+
+## irrecoverable.py: python/node heredoc scripts and trash of a whole tree (GH #681)
+
+A quoted heredoc that python/node reads as its script (`python3 - <<'EOF'`, `python3 <<'EOF'`, `cat <<'EOF' |
+node -`) was kept as shell text: an apostrophe in it (`x='''it's'''`) failed the tokenizer, and the process-API
+scan a `python3 -c` body gets never ran (`subprocess.run(['git','push','--force'])` was allowed). It is now
+scanned like a `-c` body, and read by its own stage it is stripped as data (a shell downstream, `| bash`, keeps
+the old reading). Two narrowings came from the replay: the scan runs only when the script names a process
+module or calls one (`_PYNODE_PROC_RE`; prose saying spawn or exec, and markdown backticks, made 187 docs edits
+deny), and a literal the tokenizer cannot read is read again with its quotes blanked before it denies.
+Targeted replay of every own-project command with a python/node heredoc or a trash word (3,751 of 51,426):
+169 change. 157 deny to allow, all python/node file-edit bodies (146 tokenize or ambiguous-syntax denies, and
+10 rule hits on prose read as shell, each checked by hand: none calls a process API); 12 allow to deny: 2 real
+`trash *` / `trash "$HOME" ...`, the rest scripts whose process-API literals name a git verb (mostly gate tests). Padded 137-140 KB python heredocs:
+0.17-0.24 s (develop 0.25-0.35 s).
