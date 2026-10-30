@@ -12,7 +12,7 @@
 # refuses a PR with no fresh review verdict (see check_review).
 # Run it from the PR's own checkout, on its branch, with a clean tree: it commits there and pushes.
 # One run can span a gauntlet plus lock waits (> 10 min), so start it in the background.
-# Bash 3.2. Env: GAUNTLET_PASS_DIR, GAUNTLET_PASS_CACHE, MERGE_PR_LOAD_MAX (default: the online core count, 4 if getconf cannot tell), MERGE_PR_LOAD_WAIT_SECS (900),
+# Bash 3.2. Env: GAUNTLET_PASS_DIR, GAUNTLET_PASS_CACHE, GAUNTLET_MISS_LOG (GH #749), MERGE_PR_LOAD_MAX (default: the online core count, 4 if getconf cannot tell), MERGE_PR_LOAD_WAIT_SECS (900),
 # MERGE_PR_LOCK_DIR ($HOME/.cache/mh/merge-pr.lock), MERGE_PR_LOCK_WAIT_SECS (3600).
 #
 # merge-pr.sh --verify <PR> <head sha> <base branch> <comments.json> — the same checks without gh, for a
@@ -439,8 +439,39 @@ require_unchanged_after_gauntlet() {
 # edited the tree during a gauntlet, or never ran one. A pass cached for this tree skips the run.
 run_gauntlet_here() {
   [ "$(git rev-parse HEAD)" = "$head" ] || die "HEAD moved off $head before the gauntlet; run merge-pr.sh again."
-  gauntlet_full merge-pr || die "the gauntlet failed on $head; fix it, commit, and run merge-pr.sh again (a fix commit needs a new review verdict)."
+  local out rc=0 cached=0
+  if gauntlet_pass_has "$(git rev-parse 'HEAD^{tree}')"; then cached=1; fi
+  # The output still streams to stderr; the copy is for the miss log's failing: line.
+  out=$(gauntlet_full merge-pr 2>&1 | tee /dev/stderr) || rc=$?
+  # A cached pass ran nothing, so it says nothing about what a plan would have missed.
+  [ "$cached" = 1 ] || miss_log_row "$out"
+  [ "$rc" = 0 ] || die "the gauntlet failed on $head; fix it, commit, and run merge-pr.sh again (a fix commit needs a new review verdict)."
   require_unchanged_after_gauntlet
+}
+
+# miss_log_row <gauntlet output> (GH #749): append one JSON row to $GAUNTLET_MISS_LOG (default
+# ~/.cache/mh/gauntlet-miss.jsonl): the PR, the head, the level and tests scripts/gauntlet-plan.sh picks for
+# this change against develop, the files on the gauntlet's failing: line, and miss = a failing file outside
+# those tests while the plan was below full. A rate well above 0 means the rules need tightening. A log or
+# plan problem prints a note and never stops the merge.
+miss_log_row() {
+  local log="${GAUNTLET_MISS_LOG:-$HOME/.cache/mh/gauntlet-miss.jsonl}" plan
+  if ! plan=$(bash "$HERE/gauntlet-plan.sh" "$dev"); then
+    echo "merge-pr: gauntlet-plan.sh failed, so no miss-log row for $head." >&2
+    return 0
+  fi
+  mkdir -p "$(dirname "$log")" && python3 -c '
+import json, sys, time
+pr, head, plan, out = sys.argv[1:5]
+lines = plan.splitlines()
+level = next((l[7:] for l in lines if l.startswith("level: ")), "unknown")
+sel = [l[6:] for l in lines if l.startswith("test: ")]
+failing = ([l[8:].split() for l in out.splitlines() if l.startswith("failing:")] or [[]])[-1]
+print(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pr": pr, "head": head,
+                  "level": level, "selected": sel, "failing": failing,
+                  "miss": level != "full" and any(f not in sel for f in failing)}))
+' "$pr" "$head" "$plan" "$1" >>"$log" || echo "merge-pr: could not append the miss-log row to $log; merging goes on." >&2
+  return 0
 }
 
 # push_head: push $head, the sha the gauntlet passed, to the PR branch and wait until GitHub shows it as

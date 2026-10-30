@@ -26,6 +26,21 @@ shows at merge time, not at push time: run `bash scripts/run-gauntlet.sh` on a c
 for review when the change is risky, and the cached pass makes the merge-time run free if the tree
 does not change.
 
+Gauntlet levels (GH #749): `low` is the lint a push already runs; `medium` adds validate,
+harness-audit and only the tests the change can reach; `full` is the whole gauntlet. Before a PR or
+after a validator fix, `bash scripts/run-gauntlet.sh --level medium --plan develop` asks
+`scripts/gauntlet-plan.sh develop` for the level and tests of the committed changes since `develop`.
+The plan maps each changed path through `scripts/gauntlet-rules.txt` (`<glob> <level> [tests...]`;
+every matching rule counts, `SELF` is the changed test file itself). A path no rule matches, and shared
+code (`tests/_lib/`, `scripts/_lib/`, `run-gauntlet.sh`, `git-hooks/`, `hooks/*.json`, `hooks/gates/_*`),
+gives `full`; the highest level wins. A `--level` below the plan's is refused, a higher one runs. Only a
+full unsharded run records a pass, so merges stay `full`. A sourced helper can hide a dependency from a
+file-based map, so on each merge-time run (not a cached pass) `merge-pr.sh` appends one JSON row to
+`~/.cache/mh/gauntlet-miss.jsonl` (`GAUNTLET_MISS_LOG`): the plan's level and tests, the gauntlet's
+`failing:` files, and `miss` = a failing file outside the tests while the plan was below full. If
+misses show up, tighten the rules. The merge-time plan includes the version bump, so it is never below
+`medium` (the manifests map there).
+
 The gauntlet's timing rows ("finishes inside 4 s / 8 s") fail when several gauntlets share the
 machine (GH #158: four parallel builders pushed load to 15-20 and failed seven pushes). Every full
 gauntlet run by `merge-pr.sh`, `sync-pr-head.sh` or `MH_PREPUSH_FULL=1` therefore takes a per-user lock (`scripts/_lib/gauntlet-lock.sh`, default

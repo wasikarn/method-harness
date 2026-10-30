@@ -14,6 +14,8 @@ Enforcement layers, weakest to strongest:
 - `git-hooks/pre-push` refuses a direct push whose remote ref is `refs/heads/develop`, before
   anything else runs — local, defense-in-depth, one manual retry if a stdin ref line is malformed.
   Then it lints only the pushed files (GH #735); the full gauntlet runs at merge time (below).
+  Before opening a PR, `bash scripts/run-gauntlet.sh --level medium --plan develop` runs the tests the
+  change can reach (GH #749, levels in `repo-gotchas.md`); it never stands in for the merge-time run.
   It also refuses to *create* a branch that changes a file (not the manifests) `develop` changed since
   the branch point, listing those commits: merge `develop`, check none already makes the change, push
   again (84c57d69 had fixed what #613's first branch re-fixed). Parallel open PRs are not checked.
@@ -72,7 +74,9 @@ refuses on any change. It:
    `success` on that sha, naming its tree (GH #742), so branch protection can require it; a failed
    post stops the run. A red gauntlet posts none, refuses before any push and leaves the commit on the local
    branch: fix, commit, rerun (a fix commit that touches more than the manifests needs a new review
-   verdict). If the tree changed while the gauntlet ran, it refuses. The push keeps `-o
+   verdict). If the tree changed while the gauntlet ran, it refuses. Each run that is not a cached
+   pass appends a miss-log row (GH #749: the medium plan beside the full result) to
+   `~/.cache/mh/gauntlet-miss.jsonl`; a log failure only prints a note. The push keeps `-o
    ServerAliveInterval=10 -o ServerAliveCountMax=30` on the ssh command (GitHub dropped an idle
    connection during a hook-run gauntlet, exit 141), checks the push by `git ls-remote`, not the exit
    code, and waits for GitHub to show the new head;
