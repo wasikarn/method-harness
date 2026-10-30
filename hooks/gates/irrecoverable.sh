@@ -44,7 +44,7 @@ case "$_norm" in
 esac
 # GH #741: the one deny with no argv0 in the list: a python/node heredoc script piped into a shell denies whatever
 # it prints, so a heredoc and a pipe on a command naming python or node defer to python.
-case "$_norm" in
+case "$_norm$_norm_nows" in
   *python*|*node*) case "$_norm" in *'<<'*'|'*|*'|'*'<<'*) _has_subst=1 ;; esac ;;
 esac
 case "$_norm$_norm_nows" in
