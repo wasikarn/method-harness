@@ -22,8 +22,8 @@ g() { git -C "$R" "$@"; }
 
 mkdir -p "$R/scripts/_lib" "$R/tests/_lib" "$R/tests/scripts" "$R/skills/meta/harness-audit/scripts" "$R/src"
 cp "$ROOT/scripts/run-gauntlet.sh" "$ROOT/scripts/gauntlet-plan.sh" "$R/scripts/"
-for f in gauntlet-lint.sh gauntlet-pass.sh stray-procs.sh lint-files.py; do cp "$ROOT/scripts/_lib/$f" "$R/scripts/_lib/"; done
-for f in pipe_into_grep_q.py tmp_delete.py; do cp "$ROOT/tests/_lib/$f" "$R/tests/_lib/"; done
+for f in gauntlet-lint.sh gauntlet-pass.sh stray-procs.sh lint-files.py tmp-delete.sh tmp_delete.py; do cp "$ROOT/scripts/_lib/$f" "$R/scripts/_lib/"; done
+cp "$ROOT/tests/_lib/pipe_into_grep_q.py" "$R/tests/_lib/"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$R/scripts/check-observer-contract.sh"
 printf '#!/usr/bin/env bash\necho audit >>"$LEVELS_MARK/ran"\n' >"$R/skills/meta/harness-audit/scripts/audit.sh"
 for t in a b; do printf '#!/usr/bin/env bash\necho %s >>"$LEVELS_MARK/ran"\n' "$t" >"$R/tests/scripts/test-$t.sh"; done
