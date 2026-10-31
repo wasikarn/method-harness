@@ -25,7 +25,8 @@ DEFAULT_JUDGE = "haiku"
 # typo (`sonnett` passes).
 MODEL_FAMILY_RE = re.compile(r"haiku|sonnet|opus|fable", re.IGNORECASE)
 # eval-changed.sh prints rows inside a `bash -c '...'` line, so a case or model is limited to
-# characters that cannot quote, expand or traverse there (a case is one evals/ dir name).
+# characters that cannot quote, expand or traverse there (a case is one evals/ dir name). The
+# line's --allow-tools value comes from prompt.md frontmatter and is not checked here.
 CASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:-]*")
 
@@ -49,10 +50,10 @@ def load(path):
             if len(fields) != 3 or not all(x.strip() for x in fields):
                 raise ValueError(f"{path}:{n}: want case<TAB>model<TAB>reason, got {line!r}")
             case, model, reason = (x.strip() for x in fields)
-            if not CASE_RE.fullmatch(case) or ".." in case:
+            if not CASE_RE.fullmatch(case):
                 raise ValueError(f"{path}:{n}: {case!r} is not an evals/ case dir name")
             if not MODEL_RE.fullmatch(model):
-                raise ValueError(f"{path}:{n}: {case}: model {model!r} has characters a model id never has")
+                raise ValueError(f"{path}:{n}: {case}: model {model!r} has characters this sidecar does not allow ([, /, spaces, shell syntax)")
             if case in rows:
                 raise ValueError(f"{path}:{n}: {case} is listed twice")
             family = MODEL_FAMILY_RE.search(model)

@@ -121,7 +121,7 @@ def compare(path_a, path_b, label_a, label_b, judge_models=None):
         if "casesTotal" in agg:
             cases_totals.append(agg["casesTotal"])
         else:
-            n = len(data.get("cases", []))
+            n = len(data.get("cases") or [])
             warnings.append(f"{label}: 'casesTotal' missing from result file — using len(cases)={n} instead")
             cases_totals.append(n)
 
@@ -177,8 +177,8 @@ def compare(path_a, path_b, label_a, label_b, judge_models=None):
         print("\n".join(lines))
         return 0
 
-    cases_a = {c["name"]: c for c in data_a.get("cases", [])}
-    cases_b = {c["name"]: c for c in data_b.get("cases", [])}
+    cases_a = {c["name"]: c for c in data_a.get("cases") or []}
+    cases_b = {c["name"]: c for c in data_b.get("cases") or []}
     common = sorted(set(cases_a) & set(cases_b))
     only_a = sorted(set(cases_a) - set(cases_b))
     only_b = sorted(set(cases_b) - set(cases_a))
