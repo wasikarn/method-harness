@@ -5699,12 +5699,29 @@ def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
 
+_ASSIGN_WORD_RE = re.compile(r"[A-Za-z_]\w*\+?=")
+_ASSIGN_LEAD = frozenset({"export", "local", "declare", "typeset", "readonly", "then", "do", "else", "!", "{", "time"})
+
+def _in_assignment_value(text, mask, k, seps):
+    # True when offset k sits in the value of a NAME= / NAME+= word in assignment position (statement start, after
+    # other assignments or a declaration builtin): bash does not split an assignment's value (GH #767 review 2:
+    # `CMD=$(echo 'sudo rm -rf x')` stores text). `env X=$(..)` and `rm --opt=$(..)` are arguments, and do split.
+    i = k
+    while i > 0 and (mask[i - 1] or text[i - 1] not in " \t\n;&|("):
+        i -= 1
+    if not _ASSIGN_WORD_RE.match(text, i):
+        return False
+    n = bisect.bisect_left(seps, i)  # seps: the offsets of ; & | ( and newlines in text, made once per text
+    j = seps[n - 1] + 1 if n else 0
+    return all(w in _ASSIGN_LEAD or _ASSIGN_WORD_RE.match(w) for w in text[j:i].split())
+
 def _literal_subst_split(text):
     # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
     # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
     # a word (after an unescaped blank or a separator), or whose output starts with a blank; each output word is escaped whole, so it
     # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
     mask = _quote_mask(text)
+    seps = [m.start() for m in re.finditer(r"[;&|(\n]", text)]
     def sub(e):
         # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
         if mask[e.start()]:
@@ -5727,7 +5744,7 @@ def _literal_subst_split(text):
         esc = lambda w: re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w)
         if not glued:
             return " ".join(esc(w) for w in out.split())
-        if not re.search(r"\s", out):
+        if not re.search(r"\s", out) or _in_assignment_value(text, mask, k, seps):
             return e.group(0)
         first, rest = ("", out) if out[:1].isspace() else (out.split(None, 1) + [""])[:2]
         return esc(first) + " " + " ".join(esc(w) for w in rest.split())
