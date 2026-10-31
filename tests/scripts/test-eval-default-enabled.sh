@@ -8,6 +8,7 @@ set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
 LIB_SRC="$ROOT/scripts/_lib/eval-default-enabled.sh"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
@@ -300,6 +301,26 @@ trap -p RETURN INT TERM HUP
 [[ "$out" != *"_restore_default_enabled"* ]] && ok "no _restore_default_enabled trap remains registered after a normal return" \
   || bad "a trap leaked into the caller's shell after return (trap -p: $out)"
 rm -rf "$sandbox"
+
+# --- a Ctrl-C that lands while the restore itself runs must not leave defaultEnabled true. A
+# terminal Ctrl-C reaches the whole process group, the restore's python3 child included, so a
+# python3 shim first on PATH sends itself SIGINT on the restore call only (its program holds
+# "could not restore") before handing off to the real one. Before the fix this left true with
+# no warning, 3/3, from a double Ctrl-C ~20 ms apart (attacker repro, 2026-10-31) ---
+sandbox="$(new_sandbox '{"defaultEnabled": false}')"
+mkdir -p "$sandbox/bin"
+printf '#!/usr/bin/env bash\ncase "$*" in *"could not restore"*) kill -INT $$ ;; esac\nexec %q "$@"\n' "$(command -v python3)" >"$sandbox/bin/python3"
+chmod +x "$sandbox/bin/python3"
+# SIGINT reset to default first: a backgrounded test run starts with it ignored, which would make
+# the shim's kill a no-op with or without the fix.
+PATH="$sandbox/bin:$PATH" "$(command -v python3)" -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' bash -c "
+source '$sandbox/scripts/_lib/eval-default-enabled.sh'
+with_default_enabled_true true
+" >/dev/null 2>&1
+after=$(cat "$sandbox/.claude-plugin/plugin.json")
+[[ "$after" == *'"defaultEnabled": false'* ]] && ok "restores false when SIGINT hits the restore's own python3" \
+  || bad "a SIGINT during the restore left defaultEnabled true (got: $after)"
+tmp_delete "$sandbox"
 
 echo
 echo "=== Summary: $pass passed, $fail failed ==="
