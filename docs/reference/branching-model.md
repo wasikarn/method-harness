@@ -46,6 +46,14 @@ Enforcement layers, weakest to strongest:
 at merge time** (2026-10-25: while each PR bumped itself, every peer merge re-conflicted every open PR
 on the two manifest lines, and #581 took about six re-sync and gauntlet cycles to land).
 
+The agent runs the merge itself; the operator only confirms. `.claude/settings.json` has `ask` rules
+for `bash scripts/merge-pr.sh` and the `Fresh-context review: MERGE` comment, so each shows a
+permission prompt naming the PR. Send both as one command (`gh pr comment <N> --body "..." && bash
+scripts/merge-pr.sh <N>`) for a single prompt. Do not ask with `AskUserQuestion` instead: the
+auto-mode classifier strips tool results, so it never sees that answer and blocks the merge as
+self-approval, while a content-matching `ask` rule prompts before the classifier runs
+(code.claude.com/docs/en/permission-modes, checked 2026-10-31).
+
 Run it from the PR's own checkout, on its branch, with a clean tree (untracked files count), and
 start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. Do not edit that
 checkout while it runs; it re-checks the tree after each wait and before and after its push, and
