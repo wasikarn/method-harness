@@ -2918,8 +2918,10 @@ def _ambiguous(c):
 
 _ambig = _ambiguous(cmd)
 def _deny_ambiguous():
-    if _VIEW[0] == "brace-view":
-        return  # the raw text was checked above; this deny would end the view before any rule ran (other views keep ending on it)
+    if _VIEW[0]:
+        # The raw text was checked above. In a view this rule-less deny only ends the view before any rule ran,
+        # so a brace anywhere in the command hid `git${IFS}reset --hard` from ifs-split (GH #718).
+        return
     deny("ambiguous shell syntax (" + _ambig[0] + ") next to an irrecoverable verb - confirm with user first")
 # The verb is looked for in three views: the raw text, the text with line continuations joined, and the
 # text with quotes and backslashes dropped, so '"git" push' and 'r\m' cannot hide it (GH #255).
@@ -5673,9 +5675,18 @@ def _psub_eval(e):
         words = words[1:]
     return "eval " + " ".join(words)
 
-def _literal_subst_words(e):
-    words = (e.group(1) or e.group(2) or "").split()
-    return " ".join(words[1:] if words[:1] == ["--"] else words)
+def _literal_subst_words(e, mask):
+    # What echo/printf prints, as the shell then reads it (GH #718): unquoted, the output is split into words
+    # (`$(echo ' -rf')` is the word -rf) and each stays one literal word; inside "..." it is one escaped string.
+    text = e.group(1) or e.group(2) or ""
+    try:
+        words = shlex.split(text)
+    except ValueError:
+        words = text.split()
+    out = " ".join(words[1:] if words[:1] == ["--"] else words)
+    if e.start() and mask[e.start() - 1]:  # the $( itself reads as unquoted (_quote_mask); what precedes it does not
+        return re.sub(r'(["\\$`])', r"\\\1", out)
+    return " ".join(shlex.quote(w) for w in out.split())
 
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
@@ -5687,7 +5698,9 @@ def _subst_literals(text):
         for quoted in (True, False):
             v = text
             for _ in range(3):  # inside out: `${X:-${Y:--rf}}`, `$(echo $(echo -rf))`
-                w = _default_subst(_LITERAL_SUBST_RE.sub(_literal_subst_words, _PSUB_SCRIPT_RE.sub(_psub_eval, v)), quoted)
+                p = _PSUB_SCRIPT_RE.sub(_psub_eval, v)
+                mask = _quote_mask(p) if _LITERAL_SUBST_RE.search(p) else None
+                w = _default_subst(_LITERAL_SUBST_RE.sub(lambda e: _literal_subst_words(e, mask), p) if mask else p, quoted)
                 if w == v:
                     break
                 v = w

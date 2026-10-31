@@ -3631,4 +3631,21 @@ done
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
+# GH #718: a view no longer stops on the brace-token ambiguity the main reading already checked, and a literal
+# substitution's unquoted output is split into words as the shell does.
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}reset --hard' "$(bash_payload 'echo {a,b}; git${IFS}reset --hard')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}clean${IFS}-fdx' "$(bash_payload 'echo {a,b}; git${IFS}clean${IFS}-fdx')"
+test_deny  "$IRRECOVERABLE" 'GH #718: mkdir -p {a,b}; git${IFS}reset${IFS}--hard' "$(bash_payload 'mkdir -p {a,b}; git${IFS}reset${IFS}--hard')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b} && git${IFS}reset${IFS}--hard' "$(bash_payload 'echo {a,b} && git${IFS}reset${IFS}--hard')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}checkout${IFS}--${IFS}.' "$(bash_payload 'echo {a,b}; git${IFS}checkout${IFS}--${IFS}.')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}stash${IFS}drop' "$(bash_payload 'echo {a,b}; git${IFS}stash${IFS}drop')"
+test_deny  "$IRRECOVERABLE" 'GH #718: rm $(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm $(echo '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #718: rm `echo '"'"' -rf'"'"'` b' "$(bash_payload 'rm `echo '"'"' -rf'"'"'` b')"
+test_deny  "$IRRECOVERABLE" 'GH #718: rm $(printf -- '"'"' -rf'"'"') b' "$(bash_payload 'rm $(printf -- '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #718: subagent: echo {a,b}; git${IFS}reset --hard' "$(bash_agent_payload 'echo {a,b}; git${IFS}reset --hard' fork)"
+test_allow "$IRRECOVERABLE" 'GH #718 control: echo {a,b}; git${IFS}status' "$(bash_payload 'echo {a,b}; git${IFS}status')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: echo {a,b}; git${IFS}reset --soft HEAD~1' "$(bash_payload 'echo {a,b}; git${IFS}reset --soft HEAD~1')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git commit -m "$(echo "don'"'"'t rm -rf /")"' "$(bash_payload 'git commit -m "$(echo "don'"'"'t rm -rf /")"')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git commit -m "$(printf '"'"'%s'"'"' '"'"'fix: rm -rf docs'"'"')"' "$(bash_payload 'git commit -m "$(printf '"'"'%s'"'"' '"'"'fix: rm -rf docs'"'"')"')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: rm -f $(echo '"'"'*.log'"'"')' "$(bash_payload 'rm -f $(echo '"'"'*.log'"'"')')"
 gates_summary
