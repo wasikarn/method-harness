@@ -3648,4 +3648,13 @@ test_allow "$IRRECOVERABLE" 'GH #718 control: echo {a,b}; git${IFS}reset --soft 
 test_allow "$IRRECOVERABLE" 'GH #718 control: git commit -m "$(echo "don'"'"'t rm -rf /")"' "$(bash_payload 'git commit -m "$(echo "don'"'"'t rm -rf /")"')"
 test_allow "$IRRECOVERABLE" 'GH #718 control: git commit -m "$(printf '"'"'%s'"'"' '"'"'fix: rm -rf docs'"'"')"' "$(bash_payload 'git commit -m "$(printf '"'"'%s'"'"' '"'"'fix: rm -rf docs'"'"')"')"
 test_allow "$IRRECOVERABLE" 'GH #718 control: rm -f $(echo '"'"'*.log'"'"')' "$(bash_payload 'rm -f $(echo '"'"'*.log'"'"')')"
+# GH #718: brace-view enforces git's discard rules: a brace inside the git words was read only there.
+test_deny  "$IRRECOVERABLE" 'GH #718: git reset --{hard,hard}' "$(bash_payload 'git reset --{hard,hard}')"
+test_deny  "$IRRECOVERABLE" 'GH #718: git${IFS}reset --{hard,hard}' "$(bash_payload 'git${IFS}reset --{hard,hard}')"
+test_deny  "$IRRECOVERABLE" 'GH #718: git${IFS}clean -{f,d}' "$(bash_payload 'git${IFS}clean -{f,d}')"
+test_deny  "$IRRECOVERABLE" 'GH #718: git${IFS}{reset,reset} --hard' "$(bash_payload 'git${IFS}{reset,reset} --hard')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git restore --staged {a,b}.txt' "$(bash_payload 'git restore --staged {a,b}.txt')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git stash push -- {a,b}.txt' "$(bash_payload 'git stash push -- {a,b}.txt')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git rm --cached {a,b}.txt' "$(bash_payload 'git rm --cached {a,b}.txt')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git log --oneline {main,develop}' "$(bash_payload 'git log --oneline {main,develop}')"
 gates_summary

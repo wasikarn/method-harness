@@ -455,12 +455,13 @@ fi
 # awk now bounds its own work, so a long f-string/dict heredoc with no expanding group stays on the fast path.
 test_allow "$IRRECOVERABLE" "GH #309: a 2 KB python heredoc with braces and a mixed-quote line (no group expands) stays allowed" \
   "$(bash_payload "$(python3 -c "print(\"python3 - <<'PY'\\n\" + \"\".join(f\"x{i} = {{'a': {i}}}\\n\" for i in range(120)) + \"v[:1] in '\\\"\\\\''\\nPY\")")")"
-# _deny_ambiguous returns inside brace-view only: any other view (ifs-split enforces) still ends on it.
-if /usr/bin/grep -qE '_VIEW\[0\] == "brace-view"' "$ROOT/hooks/gates/irrecoverable.py"; then
-  echo "  ✅ GH #309: _deny_ambiguous skips only the brace-view view"
+# _deny_ambiguous returns inside every view (GH #718): the main reading checked the raw text, and in a view this
+# rule-less deny only ends the reading, so a brace anywhere hid `git${IFS}reset --hard` from ifs-split.
+if awk '/^def _deny_ambiguous\(\):/{getline; print; exit}' "$ROOT/hooks/gates/irrecoverable.py" | /usr/bin/grep -qx '    if _VIEW\[0\]:'; then
+  echo "  ✅ GH #718: _deny_ambiguous skips every view"
   pass=$((pass + 1))
 else
-  echo "  ❌ GH #309: _deny_ambiguous must return only inside brace-view" >&2
+  echo "  ❌ GH #718: _deny_ambiguous must return inside every view" >&2
   fail=$((fail + 1))
 fi
 # A structural deny takes no id, so it enforces even while brace-view is shadowed: a raw noncharacter

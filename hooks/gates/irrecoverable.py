@@ -1610,9 +1610,14 @@ class _ViewStop(Exception):
 # The rules a shadowed view still enforces; brace-view stays shadow for every other rule (GH #337). These rules
 # must read the words bash builds, and no token reading keeps such a word whole (`--{r,} b` loses its `}`):
 # rm's own (GH #661: `rm --{r,f} b` is `rm --r --f b`) and push's overwrite rules, send-pack included (GH #309:
-# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`).
-_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root",
-                                           "git-push-force", "git-push-mirror", "git-push-delete-protected"})}
+# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`), and git's discard rules (GH #718: `git reset --{hard,hard}`
+# was read only here, and allowed).
+_VIEW_ENFORCED = {"brace-view": frozenset({
+    "rm-rf", "rm-recursive", "rm-no-preserve-root",
+    "git-push-force", "git-push-mirror", "git-push-delete-protected",
+    "git-reset-hard", "git-clean-force", "git-checkout-discard", "git-restore", "git-stash-drop", "git-switch-force",
+    "git-checkout-index-force", "git-read-tree-reset", "git-branch-force-delete", "git-branch-force-move-protected",
+    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
