@@ -23,16 +23,16 @@ mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/agents" "$R/skills/x/performa
 cp "$ROOT/scripts/eval-changed.sh" "$R/scripts/"
 cp "$ROOT/scripts/_lib/eval-default-enabled.sh" "$R/scripts/_lib/"
 printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$R/.claude-plugin/plugin.json"
-# The real perf-* cases: their dir prefix is not their tag, the bug this test was written for.
-for p in "$ROOT"/evals/*/prompt.md; do
-  d="$R/evals/$(basename "$(dirname "$p")")"; mkdir -p "$d"; cp "$p" "$d/"
-done
 case_md() { mkdir -p "$R/evals/$1"; printf -- '---\nname: %s\ntags: [%s]\nallowed_tools: [%s]\n---\nprompt\n' "$1" "$2" "$3" >"$R/evals/$1/prompt.md"; }
+# Mirrors evals/perf-*: the dir prefix is not the tag, the bug this test was written for.
+case_md perf-a "performance-optimizer, planted" "Bash, Read, Write"
+case_md perf-b "performance-optimizer, clean" "Edit, Skill"
+case_md backend-architect-a "backend-architect, planted" "Agent, Grep"
 case_md zz-agent-a "zz-agent, clean" "Read"
 case_md other-b "other, zz-agent" "Bash"       # zz-agent is not the first tag: still selected
 case_md zz-agent-decoy "zz-other" "Write"      # dir prefix matches, tag does not: not selected
 echo a >"$R/agents/zz-agent.md"; echo a >"$R/agents/backend-architect.md"; echo a >"$R/skills/x/performance-optimizer/SKILL.md"
-git -C "$R" init -q && git -C "$R" add -A && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init || { echo "test-eval-changed: fixture commit failed" >&2; exit 1; }
+git -C "$R" init -q && git -C "$R" add agents evals scripts skills .claude-plugin &&git -C "$R" -c user.name=t -c user.email=t@t commit -qm init || { echo "test-eval-changed: fixture commit failed" >&2; exit 1; }
 echo b >>"$R/agents/zz-agent.md"; echo b >>"$R/agents/backend-architect.md"; echo b >>"$R/skills/x/performance-optimizer/SKILL.md"
 
 cat >"$R/bin/claude" <<'SH'
@@ -49,16 +49,16 @@ PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" --run >"$TMP/run.out" 2>"$
 line() { /usr/bin/grep -- "--tag $1 " "$EC_LOG"; }
 
 l=$(line performance-optimizer)
-[[ "$l" == *"--allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write"* ]] \
+[[ "$l" == *"--allow-tools Bash,Edit,Read,Skill,Write" ]] \
   && ok "performance-optimizer: perf-* cases' allowed_tools reach --allow-tools" || bad "performance-optimizer allow-tools wrong: '$l'"
 [[ "$l" == enabled=true* ]] && ok "performance-optimizer: runs with defaultEnabled true" || bad "performance-optimizer not wrapped: '$l'"
 
 l=$(line backend-architect)
-[[ "$l" == *"--allow-tools Agent,Bash,Glob,Grep,Read"* ]] && ok "backend-architect: allow-tools union" || bad "backend-architect allow-tools wrong: '$l'"
+[[ "$l" == *"--allow-tools Agent,Grep" ]] && ok "backend-architect: allow-tools union" || bad "backend-architect allow-tools wrong: '$l'"
 [[ "$l" == enabled=true* ]] && ok "backend-architect: runs with defaultEnabled true" || bad "backend-architect not wrapped: '$l'"
 
 l=$(line zz-agent)
-[[ "$l" == *"--allow-tools Bash,Read" || "$l" == *"--allow-tools Bash,Read "* ]] \
+[[ "$l" == *"--allow-tools Bash,Read" ]] \
   && ok "zz-agent: any-tag match in, prefix-only decoy out" || bad "zz-agent allow-tools wrong: '$l'"
 [[ "$l" == enabled=false* ]] && ok "zz-agent: not wrapped" || bad "zz-agent wrapped unexpectedly: '$l'"
 

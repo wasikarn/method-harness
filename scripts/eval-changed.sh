@@ -65,7 +65,11 @@ print(','.join(sorted(tools)))
   [[ "$needs_plugin" == *" $tag "* ]] && wrap=1
   if [ "$run" -eq 1 ]; then
     echo "== $tag =="
-    if [ "$wrap" -eq 1 ]; then with_default_enabled_true "${cmd[@]}"; else "${cmd[@]}"; fi
+    if [ "$wrap" -eq 1 ]; then
+      with_default_enabled_true "${cmd[@]}"
+    else
+      "${cmd[@]}"
+    fi
   elif [ "$wrap" -eq 1 ]; then
     # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
     printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${cmd[*]}"
