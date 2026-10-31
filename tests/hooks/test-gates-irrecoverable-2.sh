@@ -3432,9 +3432,11 @@ _timed_case 'GH #693: a ${x:-$(rm -rf ~/x)} target after 9000 padding words deni
   "echo $(printf '${x:-$(date)} %.0s' $(seq 9000)) \${x:-\$(rm -rf ~/x)}"
 _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
   "echo $(printf '${x:-a %.0s' $(seq 20000))"
-# each nested funsub level appends its body blanked, not raw, so nested text is not read once per level
-_timed_case 'GH #693: 12 nested funsubs around 124 KB of words are read in bounded time' 0 \
-  "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 15500))$(printf '; }%.0s' $(seq 12))"
+# each nested funsub level appends its body blanked, not raw, so nested text is not read once per level.
+# GH #761: timed against one funsub around the same words, not a fixed 4 s (blanked ~2.7x, raw ~6.1x).
+_timed_ratio_case 'GH #693: 12 nested funsubs around 62 KB of words run within the hook timeout and 4x one funsub' 0 4 \
+  "echo \${ echo $(printf "'a}' x; %.0s" $(seq 7750)); }" \
+  "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 7750))$(printf '; }%.0s' $(seq 12))"
 
 # GH #702: the ${...} closer counted every "{" and ignored quotes, escapes and nested $(...)/backtick, so it
 # ended the word before bash (a "}" in a nested substitution) or after it (a "\{", a bare "{"), and a "#"
@@ -3670,6 +3672,24 @@ for _c in 'git push -f origin a:feat b:main' 'git push origin +HEAD:production' 
   test_deny "$IRRECOVERABLE" "force-push v3 deny: $_c" "$(bash_payload "$_c")"
 done
 
+# GH #750: the Bash tool sources the user's shell snapshot, so oh-my-zsh's git-plugin push aliases and
+# functions run `git push`. Each is read as its git push text; none gets the strict force-push allow.
+for _c in 'gp -f' 'gpf' 'ggp -f' 'gpu --force' \
+  'gp -f origin main' 'gpd -f origin main' 'gpf origin feat' 'gpf! origin feat' 'gpsup -f' 'gpsupf' \
+  'gpv -f origin main' 'gpoat -f' 'gpod -f origin x' 'ggpush -f' 'gpu -f main' 'ggf' 'ggf feat' 'ggfl feat' \
+  'ggp --force main' 'gp origin +HEAD:main' 'gp --mirror origin' 'gpod main' 'gp origin :develop' \
+  'sudo gp -f origin main' 'env gp -f origin main' "sh -c 'gpf! origin feat'" 'echo x && gp -f origin main' \
+  '"gp" -f origin main' 'gp -f origin HEAD:feat' 'ggp -f origin HEAD:feat' \
+  'ggpnp -f' 'grename main foo' 'grename develop x' 'echo x; grename Master y' 'grename feat -f' \
+  'g push -f origin main' 'g push origin :main' 'g push --mirror origin' 'echo x && g reset --hard' 'sudo g clean -fd' \
+  'g>/dev/null push -f origin main' 'g<x push -f origin main' 'g&>/dev/null push -f origin main' 'x;g>&2 push -f origin main'; do
+  test_deny "$IRRECOVERABLE" "GH #750 push alias: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'gp' 'gp origin feat' 'gpu' 'ggp' 'ggp feat' 'gpsup' 'gpd origin main' 'gpv' 'ggpush' 'gpoat' \
+  'gpod feat' 'gpg --verify x.sig' 'echo gp -f' 'git push origin HEAD:feat' \
+  'ggpnp' 'ggpnp feat' 'grename feat x' 'grename' 'g status' 'g push origin feat' 'echo g push -f' 'ls -g'; do
+  test_allow "$IRRECOVERABLE" "GH #750 push alias control: $_c" "$(bash_payload "$_c")"
+done
 echo ""
 echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
 MH_IRR_DEADLINE_SECS=0.001 test_ask_says "$IRRECOVERABLE" "forced deadline expiry on an allowed candidate command asks, reason says time" \
@@ -3692,5 +3712,95 @@ else echo "  ❌ deadline/onFailure contract broken" >&2; fail=$((fail + 1)); fi
 
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
+
+# GH #718: a view no longer stops on the brace-token ambiguity the main reading already checked, and a literal
+# substitution's unquoted output is split into words as the shell does.
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}reset --hard' "$(bash_payload 'echo {a,b}; git${IFS}reset --hard')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}clean${IFS}-fdx' "$(bash_payload 'echo {a,b}; git${IFS}clean${IFS}-fdx')"
+test_deny  "$IRRECOVERABLE" 'GH #718: mkdir -p {a,b}; git${IFS}reset${IFS}--hard' "$(bash_payload 'mkdir -p {a,b}; git${IFS}reset${IFS}--hard')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b} && git${IFS}reset${IFS}--hard' "$(bash_payload 'echo {a,b} && git${IFS}reset${IFS}--hard')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}checkout${IFS}--${IFS}.' "$(bash_payload 'echo {a,b}; git${IFS}checkout${IFS}--${IFS}.')"
+test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}stash${IFS}drop' "$(bash_payload 'echo {a,b}; git${IFS}stash${IFS}drop')"
+test_deny  "$IRRECOVERABLE" 'GH #718: rm $(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm $(echo '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #718: rm `echo '"'"' -rf'"'"'` b' "$(bash_payload 'rm `echo '"'"' -rf'"'"'` b')"
+test_deny  "$IRRECOVERABLE" 'GH #718: rm $(printf -- '"'"' -rf'"'"') b' "$(bash_payload 'rm $(printf -- '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #718: subagent: echo {a,b}; git${IFS}reset --hard' "$(bash_agent_payload 'echo {a,b}; git${IFS}reset --hard' fork)"
+test_allow "$IRRECOVERABLE" 'GH #718 control: echo {a,b}; git${IFS}status' "$(bash_payload 'echo {a,b}; git${IFS}status')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: echo {a,b}; git${IFS}reset --soft HEAD~1' "$(bash_payload 'echo {a,b}; git${IFS}reset --soft HEAD~1')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git commit -m "$(echo "don'"'"'t rm -rf /")"' "$(bash_payload 'git commit -m "$(echo "don'"'"'t rm -rf /")"')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git commit -m "$(printf '"'"'%s'"'"' '"'"'fix: rm -rf docs'"'"')"' "$(bash_payload 'git commit -m "$(printf '"'"'%s'"'"' '"'"'fix: rm -rf docs'"'"')"')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: rm -f $(echo '"'"'*.log'"'"')' "$(bash_payload 'rm -f $(echo '"'"'*.log'"'"')')"
+# GH #718: brace-view enforces git's discard rules: a brace inside the git words was read only there.
+test_deny  "$IRRECOVERABLE" 'GH #718: git reset --{hard,hard}' "$(bash_payload 'git reset --{hard,hard}')"
+test_deny  "$IRRECOVERABLE" 'GH #718: git${IFS}reset --{hard,hard}' "$(bash_payload 'git${IFS}reset --{hard,hard}')"
+test_deny  "$IRRECOVERABLE" 'GH #718: git${IFS}clean -{f,d}' "$(bash_payload 'git${IFS}clean -{f,d}')"
+test_deny  "$IRRECOVERABLE" 'GH #718: git${IFS}{reset,reset} --hard' "$(bash_payload 'git${IFS}{reset,reset} --hard')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git restore --staged {a,b}.txt' "$(bash_payload 'git restore --staged {a,b}.txt')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git stash push -- {a,b}.txt' "$(bash_payload 'git stash push -- {a,b}.txt')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git rm --cached {a,b}.txt' "$(bash_payload 'git rm --cached {a,b}.txt')"
+test_allow "$IRRECOVERABLE" 'GH #718 control: git log --oneline {main,develop}' "$(bash_payload 'git log --oneline {main,develop}')"
+# GH #718 review: bash still expands ~, braces and globs in echo's own arguments, so they stay bare in the output.
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash $(echo ~/{.,x})' "$(bash_payload 'trash $(echo ~/{.,x})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash $(echo /{,})' "$(bash_payload 'trash $(echo /{,})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash `echo ~/{.,.}`' "$(bash_payload 'trash `echo ~/{.,.}`')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash $(printf '"'"'%s '"'"' ~/{.,x})' "$(bash_payload 'trash $(printf '"'"'%s '"'"' ~/{.,x})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: chmod 777 $(echo ~/{.,.})' "$(bash_payload 'chmod 777 $(echo ~/{.,.})')"
+test_allow "$IRRECOVERABLE" 'GH #718 review control: echo $(echo '"'"'x; rm -rf /'"'"')' "$(bash_payload 'echo $(echo '"'"'x; rm -rf /'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review control: rm -f $(echo build/*.o)' "$(bash_payload 'rm -f $(echo build/*.o)')"
+test_allow "$IRRECOVERABLE" 'GH #718 review control: trash $(echo build/{a,b})' "$(bash_payload 'trash $(echo build/{a,b})')"
+# GH #718 review 2: echo's arguments keep develop's plain rewrite; the word-split copy is additive and escaped.
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: trash $(echo ~/{.,\'"'"'})' "$(bash_payload 'trash $(echo ~/{.,\'"'"'})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: trash $(echo ~/{.,x\;})' "$(bash_payload 'trash $(echo ~/{.,x\;})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: eval $(echo trash ~/{.,x}\;)' "$(bash_payload 'eval $(echo trash ~/{.,x}\;)')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: git checkout $(echo '"'"'-- .'"'"')' "$(bash_payload 'git checkout $(echo '"'"'-- .'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo '"'"''"'"'$(echo '"'"'a;rm -rf /'"'"')' "$(bash_payload 'echo '"'"''"'"'$(echo '"'"'a;rm -rf /'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo '"'"'x'"'"'$(echo '"'"'&& git push -f'"'"')' "$(bash_payload 'echo '"'"'x'"'"'$(echo '"'"'&& git push -f'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo foo\ $(echo '"'"'a;git reset --hard'"'"')' "$(bash_payload 'echo foo\ $(echo '"'"'a;git reset --hard'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: trash $(echo '"'"'~/{.,x}'"'"')' "$(bash_payload 'trash $(echo '"'"'~/{.,x}'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo "x $(echo '"'"' -rf'"'"')"' "$(bash_payload 'echo "x $(echo '"'"' -rf'"'"')"')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 3 control: a $(...) inside '"'"'...'"'"' is data to the split copy' "$(bash_payload 'echo '"'"'see $(echo "'"'"'") && git reset --hard '"'"'"\'"'"'')"
+# GH #769/#770: Monitor and context-mode's ctx_execute tools run shell too; the gate judges it like Bash.
+_CTX=mcp__plugin_context-mode_context-mode__ctx
+test_deny  "$IRRECOVERABLE" "GH #769: Monitor rm -rf" '{"tool_name":"Monitor","tool_input":{"command":"rm -rf /tmp/x"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor ws payload" '{"tool_name":"Monitor","tool_input":{"ws":"ws://localhost:1/rm"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor harmless" '{"tool_name":"Monitor","tool_input":{"command":"tail -f log | grep rm"}}'
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute shell rm -rf" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute javascript holding rm -rf text" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"javascript\",\"code\":\"console.log('rm -rf /')\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute_file shell rm -rf" "{\"tool_name\":\"${_CTX}_execute_file\",\"tool_input\":{\"path\":\"a.log\",\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute one harmless, one rm -rf" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"label\":\"a\",\"command\":\"ls\"},{\"label\":\"b\",\"command\":\"rm -rf /tmp/x\"}],\"queries\":[\"rm -rf\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute heredoc opener cannot hide the next command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"cat <<EOF\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute all harmless (rm only in queries)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}],\"queries\":[\"rm -rf\"]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute missing code field" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute non-command entries do not crash" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":5},null,7,{\"label\":\"rm\"}]}}"
+# context-mode's coerceCommandsArray runs these shapes too: a string item, a bare string, a JSON-array string.
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute string item" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[\"ls\",\"rm -rf /tmp/x\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a JSON-array string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"[{\\\"label\\\":\\\"a\\\",\\\"command\\\":\\\"rm -rf /tmp/x\\\"}]\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute harmless bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"git status\"}}"
+# Each command is judged with the outer payload's fields, so a subagent's nested claude spawn is still denied.
+test_deny  "$IRRECOVERABLE" "GH #770: subagent ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"agent_id\":\"a1\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"claude -p hi\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: main-session ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"claude -p hi\"}]}}"
+# A batch that outruns the time budget asks for the rest instead of allowing it.
+# The first command is always judged; a bad budget value falls back to the 4 s default, never crashes or disables it.
+export MH_GATE_BATCH_BUDGET_S=0
+test_ask_says "$IRRECOVERABLE" "GH #770: ctx_batch_execute over its time budget asks" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"rm -rf /tmp/x\"}]}}" "time budget"
+test_deny  "$IRRECOVERABLE" "GH #770: budget 0 still judges the first command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"rm -rf /tmp/x\"},{\"command\":\"ls\"}]}}"
+for _bv in abc nan inf -1 4s; do
+  export MH_GATE_BATCH_BUDGET_S="$_bv"
+  test_deny  "$IRRECOVERABLE" "GH #770: budget '$_bv' uses the default (rm -rf denied)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
+  test_allow "$IRRECOVERABLE" "GH #770: budget '$_bv' uses the default (git status allowed)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}]}}"
+done
+unset MH_GATE_BATCH_BUDGET_S
+# GH #769/#770: the coverage itself lives in hooks.json's matcher (the gate reads tool_input.command for any tool).
+if python3 -c '
+import json, sys
+names = {"Bash", "Monitor"} | {"mcp__plugin_context-mode_context-mode__ctx_" + t for t in ("execute", "execute_file", "batch_execute")}
+hooks = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
+m = [e["matcher"] for e in hooks if any("gates/irrecoverable.sh" in h.get("command", "") for h in e["hooks"])]
+sys.exit(not (len(m) == 1 and names <= set(m[0].split("|"))))' "$ROOT/hooks/hooks.json"; then
+  echo "  ✅ hooks.json: irrecoverable.sh matcher covers Bash, Monitor and the three ctx tools"; pass=$((pass + 1))
+else
+  echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
+fi
 
 gates_summary

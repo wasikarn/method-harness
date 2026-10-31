@@ -76,6 +76,67 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
     journal(GATE_ID, None, "deny", None)
     sys.exit(2)
 
+# GH #769/#770: Monitor carries tool_input.command like Bash (a "ws" Monitor has none); context-mode's
+# ctx_execute(_file) runs tool_input.code as shell only for language "shell"; ctx_batch_execute runs each
+# commands[].command, judged one per run so one command can't hide the next (an open heredoc); the strictest wins.
+# Each run gets the outer payload (agent_id, cwd, tool_name) with only tool_input swapped; having no "commands",
+# it takes the plain path below.
+_tn = str(d.get("tool_name") or "")
+_ti = d["tool_input"]
+if _tn.endswith(("__ctx_execute", "__ctx_execute_file")):
+    _ti["command"] = _ti.get("code", "") if _ti.get("language") == "shell" else ""
+elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
+    import subprocess, time
+    # Mirrors context-mode 1.0.169's coerceCommandsArray (src/server.ts): a non-blank string is JSON-parsed
+    # if it gives a list, else lifted to [str]; a string item is its own command.
+    _cmds = _ti["commands"]
+    if isinstance(_cmds, str) and _cmds.strip():
+        try:
+            _p = json.loads(_cmds)
+        except Exception:
+            _p = None
+        _cmds = _p if isinstance(_p, list) else [_cmds]
+    _ask = ""
+    _t0 = time.monotonic()
+    # 4 s of the hook's 8 s timeout. MH_GATE_BATCH_BUDGET_S (tests) only shortens it; a value that is not a
+    # finite number >= 0 falls back to 4. The first command is always judged, so a budget of 0 checks just that one.
+    # A batch padded past the budget turns a later command's deny into an ask, never an allow.
+    _budget = 4.0
+    _bv = os.environ.get("MH_GATE_BATCH_BUDGET_S")
+    if _bv:
+        try:
+            _b = float(_bv)
+        except ValueError:
+            _b = -1.0
+        if 0 <= _b < float("inf"):  # NaN fails both compares
+            _budget = min(_b, 4.0)
+            if _b > 4.0:
+                print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is over 4; using 4 s".format(_bv), file=sys.stderr)
+        else:
+            print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is not a number >= 0; using 4 s".format(_bv), file=sys.stderr)
+    _n = 0
+    for _c in (_cmds if isinstance(_cmds, list) else []):
+        _c = _c if isinstance(_c, str) else _c.get("command") if isinstance(_c, dict) else None
+        if not isinstance(_c, str):
+            continue
+        _n += 1
+        if _n > 1 and time.monotonic() - _t0 > _budget:
+            _reason = ("[mh:gate] ctx_batch_execute: the gate's %gs time budget ran out before every command was "
+                       "checked; confirm the batch, or split it into smaller batches" % _budget)
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                                     "permissionDecisionReason": _reason}}))
+            journal(GATE_ID, _tn, "ask", d.get("session_id"))  # structural, no rule id (repo-gotchas.md)
+            sys.exit(0)
+        _sub = dict(d, tool_input={"command": _c})
+        _r = subprocess.run([sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"), "irrecoverable"],
+                            input=json.dumps(_sub), capture_output=True, text=True)
+        sys.stderr.write(_r.stderr)
+        if _r.returncode != 0:
+            sys.exit(2)  # a deny, or a crash: fail closed
+        _ask = _ask or _r.stdout
+    sys.stdout.write(_ask)
+    sys.exit(0)
+
 # Force-push spec v3 (2026-10-30): the one allowed force push is a WHOLE command, read before any view,
 # rewrite or tokenizing, that is a single plain `git [-C path] push [opts] <remote> <src:dst>...` over an
 # alphabet with no shell meaning (no quote, $, `, \, ; & | < > ( ) { } [ ] * ? ! # ^ , tab or double blank),
@@ -1650,9 +1711,14 @@ class _ViewStop(Exception):
 # The rules a shadowed view still enforces; brace-view stays shadow for every other rule (GH #337). These rules
 # must read the words bash builds, and no token reading keeps such a word whole (`--{r,} b` loses its `}`):
 # rm's own (GH #661: `rm --{r,f} b` is `rm --r --f b`) and push's overwrite rules, send-pack included (GH #309:
-# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`).
-_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root",
-                                           "git-push-force", "git-push-mirror", "git-push-delete-protected"})}
+# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`), and git's discard rules (GH #718: `git reset --{hard,hard}`
+# was read only here, and allowed).
+_VIEW_ENFORCED = {"brace-view": frozenset({
+    "rm-rf", "rm-recursive", "rm-no-preserve-root",
+    "git-push-force", "git-push-mirror", "git-push-delete-protected",
+    "git-reset-hard", "git-clean-force", "git-checkout-discard", "git-restore", "git-stash-drop", "git-switch-force",
+    "git-checkout-index-force", "git-read-tree-reset", "git-branch-force-delete", "git-branch-force-move-protected",
+    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
@@ -2961,8 +3027,10 @@ def _ambiguous(c):
 
 _ambig = _ambiguous(cmd)
 def _deny_ambiguous():
-    if _VIEW[0] == "brace-view":
-        return  # the raw text was checked above; this deny would end the view before any rule ran (other views keep ending on it)
+    if _VIEW[0]:
+        # The raw text was checked above. In a view this rule-less deny only ends the view before any rule ran,
+        # so a brace anywhere in the command hid `git${IFS}reset --hard` from ifs-split (GH #718).
+        return
     deny("ambiguous shell syntax (" + _ambig[0] + ") next to an irrecoverable verb - confirm with user first")
 # The verb is looked for in three views: the raw text, the text with line continuations joined, and the
 # text with quotes and backslashes dropped, so '"git" push' and 'r\m' cannot hide it (GH #255).
@@ -3622,6 +3690,24 @@ KNOWN_GIT_SUBS = ("push", "reset", "clean", "restore", "checkout", "switch", "br
                   "read-tree", "checkout-index", "worktree", "reflog", "gc", "prune", "update-ref")
 
 _DELETE_PROTECTED = ("main", "master", "develop")
+
+# GH #750 (operator decision 2026-10-31): the Bash tool sources the user's shell snapshot, so oh-my-zsh's git
+# plugin push aliases and functions are live command words. A command word from this fixed list is read as the
+# git push it runs, the user's words appended; PH stands for $(git_current_branch). gpoat runs `git push origin
+# --all && git push origin --tags`: only the second takes the user's words. The strict force-push allow
+# (_FORCE_PUSH_OK) reads the raw text, so a forced alias push never gets it. A user's own alias is not covered.
+# Review of PR #774: `g` is the plugin's `alias g='git'`, so every git rule reads it; ggpnp pulls, then runs ggp
+# with the same words; grename OLD NEW runs `git push origin :OLD`, a remote delete (_check_window builds it).
+_SHELL_PUSH_ALIASES = {
+    "g": [], "ggpnp": ["push", "origin"],
+    "gp": ["push"], "gpd": ["push", "--dry-run"], "gpf!": ["push", "--force"],
+    "gpf": ["push", "--force-with-lease", "--force-if-includes"],
+    "gpsup": ["push", "--set-upstream", "origin", PH],
+    "gpsupf": ["push", "--set-upstream", "origin", PH, "--force-with-lease", "--force-if-includes"],
+    "gpv": ["push", "--verbose"], "gpoat": ["push", "origin", "--tags"], "gpod": ["push", "origin", "--delete"],
+    "ggpush": ["push", "origin", PH], "gpu": ["push", "upstream"],
+    "ggf": ["push", "--force", "origin"], "ggfl": ["push", "--force-with-lease", "origin"], "ggp": ["push", "origin"],
+}
 
 def _protected_ref(name):
     # main/master/develop as the last path part, any case: "origin/main", "refs/heads/Develop".
@@ -5055,6 +5141,12 @@ def _check_window(_wi, w):
             argv0, o = basename(rest[i]), i + 1
 
     rest = rest[o:]
+    if argv0 in _SHELL_PUSH_ALIASES:  # GH #750: after the wrappers, so `sudo gp -f` reads as a git push too
+        argv0, rest = "git", _SHELL_PUSH_ALIASES[argv0] + rest
+    elif argv0 == "grename" and rest:  # its second push takes NEW as one word: `grename x -f` force-pushes
+        _WDEPTH[len(windows)] = _cur_depth
+        windows.append(["git", "push", "--set-upstream", "origin"] + rest[1:2])
+        argv0, rest = "git", ["push", "origin", ":" + rest[0]]
 
     _unwrap_shell(argv0.replace(PH, ""), rest)  # `s$(true)h -c` is still sh
     _ib = _interp_body(argv0.replace(PH, ""), rest)  # GH #608
@@ -5732,6 +5824,25 @@ def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
 
+def _literal_subst_split(text):
+    # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
+    # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
+    # a word (after a blank or a separator, so not `''$(..)` or `"$(..)"`); each output word is escaped whole, so it
+    # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
+    mask = _quote_mask(text)
+    def sub(e):
+        # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
+        if mask[e.start()] or (e.start() and text[e.start() - 1] not in " \t\n;&|("):
+            return e.group(0)
+        raw = e.group(1) or e.group(2) or ""
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            return e.group(0)
+        out = " ".join(words[1:] if words[:1] == ["--"] else words).split()
+        return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
+    return _LITERAL_SUBST_RE.sub(sub, text)
+
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
 
@@ -5746,6 +5857,10 @@ def _subst_literals(text):
                 if w == v:
                     break
                 v = w
+            if v != text and v not in out:
+                out.append(v)
+        if ("'" in text or '"' in text or "\\" in text) and _LITERAL_SUBST_RE.search(text):
+            v = _literal_subst_split(text)
             if v != text and v not in out:
                 out.append(v)
     return out

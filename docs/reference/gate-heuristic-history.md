@@ -88,7 +88,7 @@ refused as too dense, as `command rtk proxy ` x 200 already was.
 GH #336 added `mkfs`, `chmod-world` (777 / a+rwx with -R or on / or ~), `rm-no-preserve-root` and two
 views, each a second reading of the whole command checked by every rule: `ifs-split` ($IFS read as a
 blank) and `var-verb` (`$NAME` read back where the command assigns NAME a plain value). A view runs
-after the command passed, up to 20 KB, and a structural deny inside one only ends that view. Two exceptions (GH #309): `brace-view` is read up to the main gate's 150 KB cap, and `_deny_ambiguous` returns inside it (a guard-position brace such as `{,git} reset --hard` would otherwise end the view before any rule ran). GH #661: rm's own rules (`rm-rf`, `rm-recursive`, `rm-no-preserve-root`) enforce inside `brace-view` (`_VIEW_ENFORCED`), since no token reading keeps a word such as `--{r,} b` whole. GH #309 (push slice) adds `git-push-force` (send-pack too), `git-push-mirror` and `git-push-delete-protected`, so `git push --{force,force} origin main` denies; `gate-differential.sh --replay 3000` against develop: 0 diffs. Every other rule there stays shadow. GH #690: bash expands braces before `$IFS` splitting and command substitution, so `brace-view` also reads its expanded text with the `ifs-split` and `subst-literal` rewrites applied (`r{m,m}${IFS}-rf b`, `rm $(echo --{r,f}) b`), under the same enforcement. Replay of
+after the command passed, up to 20 KB, and a structural deny inside one only ends that view. Two exceptions (GH #309): `brace-view` is read up to the main gate's 150 KB cap, and `_deny_ambiguous` returns inside it (a guard-position brace such as `{,git} reset --hard` would otherwise end the view before any rule ran). GH #661: rm's own rules (`rm-rf`, `rm-recursive`, `rm-no-preserve-root`) enforce inside `brace-view` (`_VIEW_ENFORCED`), since no token reading keeps a word such as `--{r,} b` whole. GH #309 (push slice) adds `git-push-force` (send-pack too), `git-push-mirror` and `git-push-delete-protected`, so `git push --{force,force} origin main` denies; `gate-differential.sh --replay 3000` against develop: 0 diffs. Every other rule there stays shadow. GH #690: bash expands braces before `$IFS` splitting and command substitution, so `brace-view` also reads its expanded text with the `ifs-split` and `subst-literal` rewrites applied (`r{m,m}${IFS}-rf b`, `rm $(echo --{r,f}) b`), under the same enforcement. GH #718: git's discard rules (reset --hard, clean -f, checkout/restore/switch discards, stash drop, branch -D, rm -f, worktree remove -f, reflog/update-ref/read-tree) enforce inside `brace-view` too (`git reset --{hard,hard}` was read only there), and every view skips the brace-token ambiguity, which in a view only ended the reading (`echo {a,b}; git${IFS}reset --hard`). Replay of
 55,000 real commands with every new rule shadowed: 0 verdict diffs against develop; 0 hits for the
 first four, 1 for `var-verb` (a real `git -C $R checkout -- <file>`, a discard develop misses, GH #375), 63
 `opaque-var-verb` asks and 98 `source-file` asks. Those three ship shadow. Residue: zsh does not split
@@ -210,3 +210,22 @@ reading wins), so the directory may be quoted, a variable or a substitution (its
 statement). Still asked: any second word
 (`source .venv/bin/activate x.sh`), `activate.sh`, `xbin/activate`, a bare `source activate` (old conda,
 found on PATH). The rule stays shadow.
+
+## irrecoverable.py: shell push aliases (GH #750)
+
+The gate read `git push` by its literal words, while the Bash tool sources the user's shell snapshot, so
+oh-my-zsh's git plugin aliases ran a forced push unseen (`gp -f`, `gpf`, `ggp -f`, `gpu --force` were allowed
+on develop 83604e12). Operator decision 2026-10-31: a fixed list, no general alias model. `_SHELL_PUSH_ALIASES`
+holds the plugin's push words (11 aliases, the functions `ggf`, `ggfl`, `ggp`, `ggpnp`) and `g` (`alias
+g='git'`), each mapped to the git words it runs, `$(git_current_branch)` as PH; `grename OLD NEW` is read as
+its two pushes, `git push origin :OLD` and `git push --set-upstream origin NEW`. The expansions were checked
+against the plugin source (master, 2026-10-31) with bash and an argv-logging git stub. The command word is
+expanded after the wrapper walk, so every git rule applies with its own rule id; the fast path routes a `gp`,
+`ggf` or `grename` substring, or a `g` word in command position (a glued redirection too: `g>/dev/null push`),
+to python. `gate-differential.sh
+--fuzz-seed 750` against develop: 0 diffs in 568 cases (no transcript replay: built in a cloud session).
+Accepted over-denies: the strict force-push allow reads the raw text, so a forced alias push never gets it
+(`gp -f origin HEAD:feat` denies: write the `git push` form); and a wrapped or quoted alias (`sudo gp -f`,
+`"gp" -f`), which no shell expands, denies too. Not covered: a user's own alias or function, the plugin's
+`git-svn-dcommit-push` (a plain push to `svntrunk`), and its non-push git aliases (`grhh` is `git reset
+--hard`, `gbD` is `git branch -D`, `gpristine`, `gwip`), which their literal forms deny.

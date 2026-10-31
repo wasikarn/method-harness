@@ -3,7 +3,8 @@
 set -uo pipefail
 
 # Fast path: skip the python3 cold-start when no deny can match. Every deny in
-# irrecoverable.py dispatches on an argv0 in the case list below (trash covers trash-put and gio trash); wrappers never
+# irrecoverable.py dispatches on an argv0 in the case list below (trash covers trash-put and gio trash; gp and ggf
+# cover the shell push aliases, GH #750); wrappers never
 # hide it. Quote/backslash stripping exposes r""m -> rm, the whitespace-collapsed
 # variant a backslash-newline split argv0, and any bare $ or backtick may be a
 # zero-width splice (gi$(true)t) so it defers to python on its own. False
@@ -39,11 +40,14 @@ fi
 # GH #592: `.` is source's other spelling. A "." word in command position (after a blank, the JSON key's
 # ":", a separator or a case arm's ")"), ended by a blank or a glued redirection (.<in x.sh, .&>f x.sh),
 # defers to python; a "." inside a word (done. next, ./x.sh) stays on the fast path.
+# GH #750: so does a "g" word there, glued redirection included, oh-my-zsh's `alias g='git'` (ls -g, a g inside
+# a word stay fast).
 case "$_norm" in
   *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
+  *[[:space:]:\;\&\|\(\)\{]g[[:space:]\<\>\&]*) _has_subst=1 ;;
 esac
 case "$_norm$_norm_nows" in
-  *rm*|*find*|*git*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
+  *rm*|*find*|*git*|*gp*|*ggf*|*grename*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
   *) [ "$_has_subst" -eq 1 ] || exit 0 ;;                          # no destructive token possible -> allow (unless obfuscated)
 esac
 
