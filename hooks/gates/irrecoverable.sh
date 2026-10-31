@@ -40,11 +40,13 @@ fi
 # GH #592: `.` is source's other spelling. A "." word in command position (after a blank, the JSON key's
 # ":", a separator or a case arm's ")"), ended by a blank or a glued redirection (.<in x.sh, .&>f x.sh),
 # defers to python; a "." inside a word (done. next, ./x.sh) stays on the fast path.
+# GH #750: so does a "g" word there, oh-my-zsh's `alias g='git'` (ls -g, a g inside a word stay fast).
 case "$_norm" in
   *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
+  *[[:space:]:\;\&\|\(\)\{]g[[:space:]]*) _has_subst=1 ;;
 esac
 case "$_norm$_norm_nows" in
-  *rm*|*find*|*git*|*gp*|*ggf*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
+  *rm*|*find*|*git*|*gp*|*ggf*|*grename*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
   *) [ "$_has_subst" -eq 1 ] || exit 0 ;;                          # no destructive token possible -> allow (unless obfuscated)
 esac
 
