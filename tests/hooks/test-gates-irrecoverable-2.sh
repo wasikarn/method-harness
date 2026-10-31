@@ -3641,4 +3641,19 @@ done
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
+# GH #769/#770: Monitor and context-mode's ctx_execute tools run shell too; the gate judges it like Bash.
+_CTX=mcp__plugin_context-mode_context-mode__ctx
+test_deny  "$IRRECOVERABLE" "GH #769: Monitor rm -rf" '{"tool_name":"Monitor","tool_input":{"command":"rm -rf /tmp/x"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor ws payload" '{"tool_name":"Monitor","tool_input":{"ws":"ws://localhost:1/rm"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor harmless" '{"tool_name":"Monitor","tool_input":{"command":"tail -f log | grep rm"}}'
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute shell rm -rf" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute javascript holding rm -rf text" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"javascript\",\"code\":\"console.log('rm -rf /')\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute_file shell rm -rf" "{\"tool_name\":\"${_CTX}_execute_file\",\"tool_input\":{\"path\":\"a.log\",\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute one harmless, one rm -rf" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"label\":\"a\",\"command\":\"ls\"},{\"label\":\"b\",\"command\":\"rm -rf /tmp/x\"}],\"queries\":[\"rm -rf\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute heredoc opener cannot hide the next command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"cat <<EOF\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute all harmless (rm only in queries)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}],\"queries\":[\"rm -rf\"]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute missing code field" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute bad commands entries" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[\"rm\",{\"command\":5},null]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands not a list" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"rm -rf /\"}}"
+
 gates_summary

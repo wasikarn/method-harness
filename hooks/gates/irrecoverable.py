@@ -37,6 +37,31 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
     journal(GATE_ID, None, "deny", None)
     sys.exit(2)
 
+# GH #769/#770: Monitor carries tool_input.command like Bash (a "ws" Monitor has none); context-mode's
+# ctx_execute(_file) runs tool_input.code as shell only for language "shell"; ctx_batch_execute runs each
+# commands[].command, judged one per run so one command can't hide the next (an open heredoc); the strictest wins.
+_tn = str(d.get("tool_name") or "")
+_ti = d["tool_input"]
+if _tn.endswith(("__ctx_execute", "__ctx_execute_file")):
+    _ti["command"] = _ti.get("code", "") if _ti.get("language") == "shell" else ""
+elif _tn.endswith("__ctx_batch_execute"):
+    import subprocess
+    _ask = ""
+    _cmds = _ti.get("commands")
+    for _c in (_cmds if isinstance(_cmds, list) else []):
+        _c = _c.get("command") if isinstance(_c, dict) else None
+        if not isinstance(_c, str):
+            continue
+        _r = subprocess.run([sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"), "irrecoverable"],
+                            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": _c}, "session_id": d.get("session_id")}),
+                            capture_output=True, text=True)
+        sys.stderr.write(_r.stderr)
+        if _r.returncode != 0:
+            sys.exit(2)  # a deny, or a crash: fail closed
+        _ask = _ask or _r.stdout
+    sys.stdout.write(_ask)
+    sys.exit(0)
+
 # Force-push spec v3 (2026-10-30): the one allowed force push is a WHOLE command, read before any view,
 # rewrite or tokenizing, that is a single plain `git [-C path] push [opts] <remote> <src:dst>...` over an
 # alphabet with no shell meaning (no quote, $, `, \, ; & | < > ( ) { } [ ] * ? ! # ^ , tab or double blank),
