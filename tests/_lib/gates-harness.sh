@@ -308,6 +308,54 @@ _timed_case() {  # <name> <expected rc> <command>
   fi
 }
 
+_ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
+
+# GH #761: a cost that must not grow with some factor (nesting depth) is checked against a baseline of
+# the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
+# python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
+# only skews the ratio, so a timing miss is measured once more before it fails (a wrong rc fails at once,
+# as it does not depend on timing). The command must also finish under the gate's hook timeout (read from
+# hooks/hooks.json), past which the hook allows: a slowdown both runs share keeps the ratio.
+_timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
+  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil jerr seen=""
+  # a trial run, not `command -v`: a jq on PATH that cannot run (a wrong-architecture binary), or some other
+  # program named jq, does not print 3 for 1+2
+  if [ "$(jq -n '1+2' 2>/dev/null)" != 3 ]; then
+    echo "  ❌ $name: jq is missing, will not run or is not jq, so the irrecoverable.sh timeout cannot be read from hooks/hooks.json" >&2
+    fail=$((fail + 1)); return
+  fi
+  # stderr apart from the value, so a jq warning on a good read cannot end up in the ceiling
+  if ! ceil=$(jq -r '[.. | objects | select((.command? // "") | test("gates/irrecoverable\\.sh")) | .timeout]
+    | if length == 1 and (.[0] | type) == "number" then .[0] else empty end' "$ROOT/hooks/hooks.json" 2>"$_ERRF"); then
+    jerr=$(head -1 "$_ERRF")
+    echo "  ❌ $name: jq could not read the irrecoverable.sh timeout from hooks/hooks.json (${jerr:-jq printed no error})" >&2
+    fail=$((fail + 1)); return
+  fi
+  if [ -z "$ceil" ]; then
+    echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return
+  fi
+  for try in 1 2; do
+    t0=$(_ratio_now)
+    bash_payload "$base" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; brc=$?
+    t1=$(_ratio_now)
+    bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; rc=$?
+    t2=$(_ratio_now)
+    read -r ratio secs ok < <(python3 -c 'import sys
+a, b, c, m, cap = map(float, sys.argv[1:]); r = (c - b) / max(b - a, 0.01)
+print("%.2f %.2f %d" % (r, c - b, r <= m and c - b < cap))' "$t0" "$t1" "$t2" "$max" "$ceil")
+    ratio=${ratio:-?} secs=${secs:-?} ok=${ok:-0}
+    seen="$seen${seen:+, then }rc=$rc (baseline rc=$brc) in ${secs}s at ${ratio}x"
+    [[ "$rc" == "$want" && "$brc" == "$want" ]] || break
+    [[ "$ok" == 1 ]] && break
+  done
+  if [[ "$rc" == "$want" && "$brc" == "$want" && "$ok" == 1 ]]; then
+    echo "  ✅ $name (rc=$rc in ${secs}s, ${ratio}x the baseline)"; pass=$((pass + 1))
+  else
+    echo "  ❌ $name: expected rc=$want under ${ceil}s and within ${max}x the baseline, got $seen" >&2
+    fail=$((fail + 1))
+  fi
+}
+
 # 100 -C globals: used by GH #255 rows in test-gates-irrecoverable-2.sh and eval rows in test-gates-other.sh.
 _many_c=$(printf -- '-C . %.0s' $(seq 100))
 
