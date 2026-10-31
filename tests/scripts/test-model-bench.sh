@@ -140,6 +140,17 @@ out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a f
 /usr/bin/grep -qF 'expected:' <<<"$out" \
   && bad "per-eval judge: undeclared cases' judge mismatch marked expected" \
   || ok "per-eval judge: undeclared cases keep the bare judgeModel WARN"
+out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a sonnet-rerun --label-b opus-run \
+  "$FIXTURES/judge-override-sonnet.json" "$FIXTURES/judge-override-opus.json" 2>&1)
+/usr/bin/grep -qF 'expected:' <<<"$out" \
+  && bad "per-eval judge: marked expected against a non-haiku judge (only haiku history is expected)" \
+  || ok "per-eval judge: declared judge vs a non-haiku judge keeps the bare WARN"
+out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS.missing" --label-a haiku-history --label-b sonnet-rerun \
+  "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
+status=$?
+[ "$status" -ne 0 ] && /usr/bin/grep -qF 'no such file' <<<"$out" \
+  && ok "per-eval judge: an explicit --judge-models path that does not exist is an error" \
+  || bad "per-eval judge: missing explicit --judge-models path accepted (exit $status)"
 printf '# no rows\n' > "$TMP_MODELS"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
   "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)

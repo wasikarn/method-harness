@@ -22,12 +22,12 @@ python3 "$PY" check >/dev/null 2>&1 \
   || bad "real evals/judge-models.tsv fails check: $(python3 "$PY" check 2>&1)"
 
 out=$(python3 "$PY" for-tag performance-optimizer 2>&1)
-[ "$out" = "$(printf 'perf-regression-routing\tsonnet')" ] \
-  && ok "for-tag performance-optimizer: perf-regression-routing judged by sonnet" \
+[ "$out" = "$(printf 'perf-regression-routing\tsonnet\tBash,Read,Write,Edit,Grep,Glob,Agent,Skill')" ] \
+  && ok "for-tag performance-optimizer: perf-regression-routing judged by sonnet, with its own allowed_tools" \
   || bad "for-tag performance-optimizer: got '$out'"
 
 out=$(python3 "$PY" for-tag clean 2>&1)
-[ "$out" = "$(printf 'perf-regression-routing\tsonnet')" ] \
+[ "$out" = "$(printf 'perf-regression-routing\tsonnet\tBash,Read,Write,Edit,Grep,Glob,Agent,Skill')" ] \
   && ok "for-tag clean: a non-first tag matches too (the CLI's --tag matches any tag)" \
   || bad "for-tag clean: got '$out'"
 
@@ -58,7 +58,7 @@ python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 \
   && ok "check accepts comments, blank lines and a valid row" \
   || bad "check refuses a valid fixture sidecar"
 out=$(python3 "$PY" for-tag demo --evals "$TMP/evals" 2>&1)
-[ "$out" = "$(printf 'demo-case\tsonnet')" ] \
+[ "$out" = "$(printf 'demo-case\tsonnet\t')" ] \
   && ok "for-tag reads the --evals dir's sidecar" \
   || bad "for-tag --evals: got '$out'"
 
