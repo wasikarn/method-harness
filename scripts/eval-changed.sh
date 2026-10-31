@@ -56,20 +56,20 @@ print(','.join(sorted(tools)))
   [ -n "$allow" ] && cmd+=(--allow-tools "$allow")
   if [ "$run" -eq 1 ]; then
     echo "== $tag =="
-    "${cmd[@]}"
+    "${cmd[@]}" </dev/null
   else
     printf '%q ' "${cmd[@]}"; echo
   fi
   # GH #510: a case in evals/judge-models.tsv gets its own run under its judge; the tag run
   # above still judges it with haiku, and that score of it is not the one to read.
   overrides=$(python3 scripts/_lib/eval_judge_models.py for-tag "$tag") || exit 1
-  while IFS=$'\t' read -r case model; do
+  while IFS=$'\t' read -r case model case_allow; do
     [ -n "$case" ] || continue
     jcmd=(claude plugin eval . --scaffold --case "$case" --judge-model "$model" --runs 1 --no-publish)
-    [ -n "$allow" ] && jcmd+=(--allow-tools "$allow")
+    [ -n "$case_allow" ] && jcmd+=(--allow-tools "$case_allow")
     if [ "$run" -eq 1 ]; then
       echo "== $tag: $case, judged by $model (evals/judge-models.tsv) =="
-      "${jcmd[@]}"
+      "${jcmd[@]}" </dev/null
     else
       echo "# $case: judged by $model (evals/judge-models.tsv); read its score from this run"
       printf '%q ' "${jcmd[@]}"; echo

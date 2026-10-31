@@ -6,7 +6,9 @@ strict (no judge key), so a case that needs another judge is listed in this side
 one `case<TAB>model<TAB>reason` row per case, `#` comments and blank lines skipped.
 
   eval_judge_models.py check [--evals DIR]        exit 1 on a malformed row or unknown case
-  eval_judge_models.py for-tag TAG [--evals DIR]  print `case<TAB>model` for TAG's overrides
+  eval_judge_models.py for-tag TAG [--evals DIR]  print `case<TAB>model<TAB>allowed_tools` for
+                                                  TAG's overrides (the case's own tools, comma-joined,
+                                                  for --allow-tools; empty when it lists none)
 
 Imported by skills/meta/model-bench/scripts/model-bench-diff.py (load()).
 """
@@ -48,15 +50,15 @@ def load(path):
     return rows
 
 
-def case_tags(evals_dir, case):
-    """The `tags: [...]` list in the case's prompt.md frontmatter (empty if none)."""
+def frontmatter_list(evals_dir, case, key):
+    """The `<key>: [...]` list in the case's prompt.md frontmatter (empty if none)."""
     try:
         text = open(os.path.join(evals_dir, case, "prompt.md")).read()
     except OSError:
         return []
     fm = text.split("---")[1] if text.startswith("---") else ""
-    m = re.search(r"^tags:\s*\[([^\]]*)\]", fm, re.M)
-    return [t.strip() for t in m.group(1).split(",")] if m else []
+    m = re.search(r"^" + re.escape(key) + r":\s*\[([^\]]*)\]", fm, re.M)
+    return [t.strip() for t in m.group(1).split(",") if t.strip()] if m else []
 
 
 def main():
@@ -78,8 +80,8 @@ def main():
     if not args.tag:
         parser.error("for-tag needs a TAG")
     for case, (model, _) in rows.items():
-        if args.tag in case_tags(args.evals, case):
-            print(f"{case}\t{model}")
+        if args.tag in frontmatter_list(args.evals, case, "tags"):
+            print(f"{case}\t{model}\t{','.join(frontmatter_list(args.evals, case, 'allowed_tools'))}")
     return 0
 
 

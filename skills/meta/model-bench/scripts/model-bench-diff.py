@@ -51,9 +51,12 @@ def case_filter_display(suite):
 
 def expected_judge_note(data_a, data_b, judge_models):
     """GH #510: a case in evals/judge-models.tsv is judged by its own model, so its history
-    mixes judges. When one side ran only such cases under their declared judge (same family),
-    say the judgeModel mismatch is expected; otherwise None."""
-    for data in (data_a, data_b):
+    mixes judges. When one side ran only such cases under their declared judge (same family)
+    and the other side is haiku-judged history, say the judgeModel mismatch is expected;
+    otherwise None."""
+    for data, other in ((data_a, data_b), (data_b, data_a)):
+        if model_family(judge_model_display(other.get("suite", {}))) != eval_judge_models.DEFAULT_JUDGE:
+            continue
         family = model_family(judge_model_display(data.get("suite", {})))
         names = [c.get("name") for c in data.get("cases", [])]
         rows = [(n, judge_models.get(n)) for n in names]
@@ -229,12 +232,15 @@ def main():
     parser.add_argument("result_a", help="Path to the first aggregate-result.json")
     parser.add_argument("result_b", help="Path to the second aggregate-result.json")
     parser.add_argument(
-        "--judge-models", default=eval_judge_models.sidecar_path(),
-        help="Per-eval judge sidecar (default: the repo's evals/judge-models.tsv)",
+        "--judge-models",
+        help="Per-eval judge sidecar (default: the repo's evals/judge-models.tsv, if present)",
     )
     args = parser.parse_args()
+    if args.judge_models and not os.path.exists(args.judge_models):
+        print(f"model-bench: --judge-models {args.judge_models}: no such file", file=sys.stderr)
+        sys.exit(1)
     try:
-        judge_models = eval_judge_models.load(args.judge_models)
+        judge_models = eval_judge_models.load(args.judge_models or eval_judge_models.sidecar_path())
     except ValueError as e:
         print(f"model-bench: {e}", file=sys.stderr)
         sys.exit(1)
