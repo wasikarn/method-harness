@@ -37,10 +37,28 @@ if [ -z "$tags" ]; then
 fi
 
 . scripts/_lib/eval-default-enabled.sh
+# Fail on a broken judge-models.tsv (or a missing reader) now, before the first paid run.
+python3 scripts/_lib/eval_judge_models.py check || exit 1
 # Every run loads the plugin (with_default_enabled_true): eval sandboxes load no user settings,
 # so with defaultEnabled: false every case, Agent- or Skill-based, silently scores a no-plugin
 # fallback (CHANGELOG 1.1.133), and a tool_used grader still passes on the failed dispatch.
 rc=0
+
+# shell_word <arg>: <arg> as one shell word, bare when it holds only safe characters, else
+# single-quoted with each ' written as '\''. print_wrapped <argv...>: the evals/README.md
+# run-block form of `with_default_enabled_true <argv...>`, quoted so the pasted line runs exactly
+# <argv...> (an allowed_tools entry from frontmatter can hold spaces, parens or shell syntax).
+shell_word() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_./:@,=+-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+print_wrapped() {
+  local inner="source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true" arg
+  for arg in "$@"; do inner+=" $(shell_word "$arg")"; done
+  printf 'bash -c %s\n' "$(shell_word "$inner")"
+}
 
 while IFS= read -r tag; do
   # Union every allowed_tools list across all cases whose frontmatter tags: carry this tag
@@ -57,7 +75,7 @@ for p in pathlib.Path('evals').glob('*/prompt.md'):
     if sys.argv[1] in frontmatter_list('evals', p.parent.name, 'tags'):
         tools.update(frontmatter_list('evals', p.parent.name, 'allowed_tools'))
 print(','.join(sorted(tools)))
-" "$tag")
+" "$tag") || exit 1
   cmd=(claude plugin eval . --scaffold --tag "$tag" --runs 1 --no-publish)
   [ -n "$allow" ] && cmd+=(--allow-tools "$allow")
   if [ "$run" -eq 1 ]; then
@@ -65,7 +83,7 @@ print(','.join(sorted(tools)))
     with_default_enabled_true "${cmd[@]}" </dev/null || rc=1
   else
     # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
-    printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${cmd[*]}"
+    print_wrapped "${cmd[@]}"
   fi
   # GH #510: a case in evals/judge-models.tsv gets its own run under its judge; the tag run
   # above still judges it with haiku, and that score of it is not the one to read. The run
@@ -82,7 +100,7 @@ print(','.join(sorted(tools)))
     else
       echo "# $case: judged by $model (evals/judge-models.tsv); read its score from this run"
       # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
-      printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${jcmd[*]}"
+      print_wrapped "${jcmd[@]}"
     fi
   done <<< "$overrides"
 done <<< "$tags"
