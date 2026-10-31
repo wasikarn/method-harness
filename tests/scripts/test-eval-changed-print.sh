@@ -31,8 +31,17 @@ export EC_ARGS="$TMP/args" EC_N="$TMP/n"
 # paste <shell> <line>: run <line> as a user pasting it into <shell> would. The interactive shells
 # run in a new session (no controlling terminal): from a terminal's background job (merge-pr.sh &)
 # they would try to take the terminal and be stopped, hanging the gauntlet. python3, as macOS
-# has no setsid(1).
-no_tty() { python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
+# has no setsid(1). It forks first: setsid() fails (EPERM) in a process-group leader.
+no_tty() {
+  python3 -c '
+import os, sys
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    os.execvp(sys.argv[1], sys.argv[1:])
+_, st = os.waitpid(pid, 0)
+sys.exit(os.WEXITSTATUS(st) if os.WIFEXITED(st) else 1)' "$@"
+}
 paste_in() {
   case "$1" in
     bash-c) bash -c "$2" ;;
