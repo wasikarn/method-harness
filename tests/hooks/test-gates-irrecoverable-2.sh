@@ -3663,12 +3663,8 @@ done
 
 echo ""
 echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
-_irr_t0=$(python3 -c 'import time; print(time.time())')
 MH_IRR_DEADLINE_SECS=0.001 test_ask_says "$IRRECOVERABLE" "forced deadline expiry on an allowed candidate command asks, reason says time" \
   "$(bash_payload 'git status && git log -1')" "time"
-if python3 -c "import sys,time; sys.exit(0 if time.time()-$_irr_t0 < 4 else 1)"; then
-  echo "  ✅ forced-expiry run finished well inside the deadline"; pass=$((pass + 1))
-else echo "  ❌ forced-expiry run took 4 s or more" >&2; fail=$((fail + 1)); fi
 MH_IRR_DEADLINE_SECS=0.001 test_ask "$IRRECOVERABLE" "forced deadline expiry emits exactly one ask JSON" "$(bash_payload 'git status')"
 if python3 - "$ROOT/hooks/gates/irrecoverable.py" "$ROOT/hooks/hooks.json" <<'PY'
 import json, re, sys

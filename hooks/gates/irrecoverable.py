@@ -1706,10 +1706,12 @@ def ask(reason, rule=None):
     # In a view (GH #336) an ask adds nothing once the command already asks.
     if (_ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
-    _ASKED.append(reason)
+    # Print before append (GH #771): a deadline signal between them then emits a second ask, invalid
+    # output that onFailure blocks, instead of seeing _ASKED set and exiting with nothing printed (allow).
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "ask",
                                              "permissionDecisionReason": reason}}))
+    _ASKED.append(reason)
     journal(GATE_ID, d.get("tool_name"), "ask", d.get("session_id"), rule=_VIEW[0] or rule)
 
 def delete_hint():
