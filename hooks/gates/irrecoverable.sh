@@ -48,7 +48,15 @@ case "$_norm$_norm_nows" in
 esac
 
 # Portability guard (#93): announced fail-open without python3 (rc=127 would otherwise block every git/rm).
+# GH #771: except a recursive rm or a find delete, which deny on this text check. It over-denies
+# (git rm -r, echo rm -rf), the safe direction on a machine that cannot parse.
 if ! command -v python3 >/dev/null 2>&1; then
+  _rm_re='(^|[^[:alnum:]_.-])rm[[:space:]]([^;&|]*[[:space:]])?-(-recursive|[[:alpha:]]*[rR])'
+  _find_re='(^|[^[:alnum:]_.-])find[[:space:]][^;&|]*(-delete|-(exec|execdir|ok|okdir)[[:space:]]+([^[:space:]]*/)?rm([[:space:]]|$))'
+  if [[ "$_norm" =~ $_rm_re ]] || [[ "$_norm" =~ $_find_re ]]; then
+    echo "[mh:gate] BLOCKED: python3 not found and this command names a recursive rm or a find delete; use trash instead (install python3 to restore the full gate)" >&2
+    exit 2
+  fi
   echo "[mh:gate] python3 not found — irrecoverable-pattern gate cannot run; allowing (install python3 to restore deny coverage)" >&2
   exit 0
 fi

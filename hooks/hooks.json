@@ -79,7 +79,8 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/irrecoverable.sh\"",
-            "timeout": 8
+            "timeout": 8,
+            "onFailure": "block"
           }
         ]
       },

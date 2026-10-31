@@ -23,6 +23,36 @@ except Exception as _e:
 
 GATE_ID = "gate:bash:irrecoverable"
 
+# GH #771: the gate's own wall-clock limit, well under hooks.json's 8 s timeout (a timed-out PreToolUse
+# hook lets the tool call run). On expiry it asks, never allows; os._exit also cuts short a git call in
+# flight. MH_IRR_DEADLINE_SECS (test-only) can only shorten it.
+DEADLINE_SECS = 4.0
+try:
+    _dl = float(os.environ.get("MH_IRR_DEADLINE_SECS", ""))
+except ValueError:
+    _dl = 0.0
+
+def _deadline_hit(signum, frame):
+    try:
+        if not globals().get("_ASKED"):  # an ask already printed stands; a second JSON object is invalid
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                "permissionDecisionReason": "[mh:gate] irrecoverable: ran out of time (" + format(_DEADLINE, "g")
+                + " s) checking this command - confirm with user first, or split it into smaller commands"}}))
+        sys.stdout.flush()
+        _d = globals().get("d")
+        _d = _d if isinstance(_d, dict) else {}
+        journal(GATE_ID, _d.get("tool_name"), "ask", _d.get("session_id"), rule="deadline")
+    finally:
+        os._exit(0)
+
+_DEADLINE = _dl if 0 < _dl < DEADLINE_SECS else DEADLINE_SECS
+try:
+    import signal
+    signal.signal(signal.SIGALRM, _deadline_hit)
+    signal.setitimer(signal.ITIMER_REAL, _DEADLINE)
+except (ImportError, AttributeError, ValueError, OSError):
+    pass  # no SIGALRM on this platform: onFailure block in hooks.json still stops a timeout from allowing
+
 try:
     d = json.load(sys.stdin)
 except Exception:
