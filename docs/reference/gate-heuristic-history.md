@@ -209,4 +209,5 @@ is read with its glued tokens joined (shlex cuts an unquoted `$VENV/bin/activate
 reading wins), so the directory may be quoted, a variable or a substitution (its body is checked as its own
 statement). Still asked: any second word
 (`source .venv/bin/activate x.sh`), `activate.sh`, `xbin/activate`, a bare `source activate` (old conda,
-found on PATH). The rule stays shadow.
+found on PATH), and (GH #768) a word glued to argv0 (`source$X/bin/activate`, `.$X/bin/activate`): it is one
+shell word with the verb, so what `$X` splits into decides what is sourced. The rule stays shadow.

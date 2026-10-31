@@ -4088,6 +4088,9 @@ _VENV_ACTIVATE_RE = re.compile(r"(?:^|/)bin/activate(?:\.fish|\.csh)?\Z")
 
 def _venv_activate(rest):
     # Glued runs joined, so an unquoted `$VENV/bin/activate` is one word; a leading `--` is source's own.
+    # GH #768: a first token glued to argv0 (`source$X/bin/activate`) is one shell word with it, not a path.
+    if isinstance(rest[0], _Glued):
+        return False
     words = _shell_words(rest)
     if words[:1] == ["--"]:
         words = words[1:]
