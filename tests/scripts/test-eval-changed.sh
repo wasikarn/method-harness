@@ -21,7 +21,7 @@ echo "=== eval-changed self-test ==="
 R="$TMP/repo"
 mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/agents" "$R/skills/x/performance-optimizer" "$R/bin"
 cp "$ROOT/scripts/eval-changed.sh" "$R/scripts/"
-cp "$ROOT/scripts/_lib/eval-default-enabled.sh" "$R/scripts/_lib/"
+cp "$ROOT/scripts/_lib/eval-default-enabled.sh" "$ROOT/scripts/_lib/eval_judge_models.py" "$R/scripts/_lib/"
 printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$R/.claude-plugin/plugin.json"
 case_md() { mkdir -p "$R/evals/$1"; printf -- '---\nname: %s\ntags: [%s]\nallowed_tools: [%s]\n---\nprompt\n' "$1" "$2" "$3" >"$R/evals/$1/prompt.md"; }
 # Mirrors evals/perf-*: the dir prefix is not the tag, the bug this test was written for.
