@@ -19,19 +19,23 @@ trap 'tmp_delete "$TMP"' EXIT
 echo "=== eval-changed per-eval judge self-test ==="
 
 R="$TMP/repo"
-mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/skills/x/zz-skill" "$R/evals/zz-case" "$R/bin"
+mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/skills/x/zz-skill" "$R/skills/x/zz-two" "$R/evals/zz-case" "$R/evals/zz-case2" "$R/bin"
 cp "$ROOT/scripts/eval-changed.sh" "$R/scripts/"
 cp "$ROOT/scripts/_lib/eval-default-enabled.sh" "$ROOT/scripts/_lib/eval_judge_models.py" "$R/scripts/_lib/"
 printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$R/.claude-plugin/plugin.json"
 printf -- '---\nname: zz-case\ntags: [zz-skill, clean]\nallowed_tools: [Bash, Read]\n---\nprompt\n' >"$R/evals/zz-case/prompt.md"
-printf 'zz-case\tsonnet\tGH #1\n' >"$R/evals/judge-models.tsv"
-echo a >"$R/skills/x/zz-skill/SKILL.md"
+printf -- '---\nname: zz-case2\ntags: [zz-two]\nallowed_tools: [Grep]\n---\nprompt\n' >"$R/evals/zz-case2/prompt.md"
+printf 'zz-case\tsonnet\tGH #1\nzz-case2\topus\tGH #2\n' >"$R/evals/judge-models.tsv"
+echo a >"$R/skills/x/zz-skill/SKILL.md"; echo a >"$R/skills/x/zz-two/SKILL.md"
 git -C "$R" init -q && git -C "$R" add . && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init \
   || { echo "test-eval-changed-judge: fixture commit failed" >&2; exit 1; }
-echo b >>"$R/skills/x/zz-skill/SKILL.md"
+echo b >>"$R/skills/x/zz-skill/SKILL.md"; echo b >>"$R/skills/x/zz-two/SKILL.md"
 
+# The stub drains stdin, as a real claude can: without </dev/null on each call it would eat the
+# rest of the script's here-string loops and later tags would silently not run.
 cat >"$R/bin/claude" <<'SH'
 #!/usr/bin/env bash
+cat >/dev/null
 en=$(/usr/bin/grep -o '"defaultEnabled": *[a-z]*' "$EC_MANIFEST" | sed 's/.*: *//')
 echo "enabled=$en $*" >>"$EC_LOG"
 SH
@@ -47,6 +51,27 @@ l=$(/usr/bin/grep -- "--case zz-case " "$EC_LOG")
 [[ "$l" == enabled=true* ]] \
   && ok "judge run: plugin loaded (defaultEnabled true during the call)" || bad "judge run not wrapped: '$l'"
 [ "$(cat "$EC_MANIFEST")" = "$before" ] && ok "manifest restored after --run" || bad "manifest left changed"
+[ "$(/usr/bin/grep -c -- '--tag ' "$EC_LOG")" -eq 2 ] && /usr/bin/grep -q -- "--case zz-case2 --judge-model opus" "$EC_LOG" \
+  && ok "every tag and judge run happens with a stdin-reading claude" || bad "a run was skipped: $(cat "$EC_LOG")"
+
+# A broken sidecar or a missing module must stop the script before any paid run.
+expect_no_runs() {  # <label>
+  : >"$EC_LOG"
+  if PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" --run >/dev/null 2>&1; then
+    bad "$1: --run exited 0"
+  elif [ -s "$EC_LOG" ]; then
+    bad "$1: claude ran before the failure: $(cat "$EC_LOG")"
+  else
+    ok "$1: exits non-zero before any claude call"
+  fi
+}
+cp "$R/evals/judge-models.tsv" "$TMP/sidecar.good"
+printf 'zz-case\tsonett\tGH #1\n' >"$R/evals/judge-models.tsv"
+expect_no_runs "malformed judge-models.tsv"
+cp "$TMP/sidecar.good" "$R/evals/judge-models.tsv"
+mv "$R/scripts/_lib/eval_judge_models.py" "$TMP/"
+expect_no_runs "missing eval_judge_models.py"
+mv "$TMP/eval_judge_models.py" "$R/scripts/_lib/"
 
 PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" >"$TMP/print.out" 2>&1
 p=$(/usr/bin/grep -- "--case zz-case " "$TMP/print.out")

@@ -151,6 +151,13 @@ status=$?
 [ "$status" -ne 0 ] && /usr/bin/grep -qF 'no such file' <<<"$out" \
   && ok "per-eval judge: an explicit --judge-models path that does not exist is an error" \
   || bad "per-eval judge: missing explicit --judge-models path accepted (exit $status)"
+printf '%s' '{"schemaVersion":1,"costUsd":0,"partial":false,"suite":{"judgeModel":"sonnet"},"aggregates":{"overallScore":0,"overallPassRate":0,"casesTotal":0},"cases":null}' > "$TMP_MODELS.null.json"
+out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a haiku-history --label-b null-cases \
+  "$FIXTURES/judge-override-haiku.json" "$TMP_MODELS.null.json" 2>&1)
+status=$?
+[ "$status" -eq 0 ] && /usr/bin/grep -qF 'casesTotal is 0 on null-cases' <<<"$out" \
+  && ok "per-eval judge: \"cases\": null still reports casesTotal 0, no crash" \
+  || bad "per-eval judge: \"cases\": null crashed (exit $status): $out"
 printf '# no rows\n' > "$TMP_MODELS"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
   "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
@@ -290,7 +297,7 @@ if os.path.isdir(root):
             print(os.path.join(root, d))
 " | while IFS= read -r stray; do trash "$stray" 2>/dev/null; done
 
-tmp_delete "$STUB_DIR" "$CLAUDE_STUB_LOG" "$TMP_MODELS"
+tmp_delete "$STUB_DIR" "$CLAUDE_STUB_LOG" "$TMP_MODELS" "$TMP_MODELS.null.json"
 
 echo "model-bench.sh self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
