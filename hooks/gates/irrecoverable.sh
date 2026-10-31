@@ -55,11 +55,23 @@ if ! command -v python3 >/dev/null 2>&1; then
   # between -exec and its ; or + counts (command rm, env rm, sudo -u x rm, /bin/rm).
   _rm_re='(^|[^[:alnum:]_.-])rm[[:space:]]([^;&|]*[[:space:]])?-(-r[[:alpha:]]*|[[:alpha:]]*[rR])'
   _find_re='(^|[^[:alnum:]_.-])find[[:space:]][^;&|]*(-delete|-(exec|execdir|ok|okdir)[[:space:]]([^;+]*[[:space:]/])?rm([[:space:]]|$))'
-  # A quoted ; or | ('a|b') would end the [^;&|]* match once quotes are stripped, so also match a copy
-  # with each quoted span blanked; a quoted flag ('-rf') still matches on $_norm.
+  # A quoted ; or | ('a|b') would end the [^;&|]* match once quotes are stripped, so also match copies
+  # with each quoted span blanked, in both orders: an apostrophe inside "it's" pairs with a later ' when
+  # single quotes go first, and a " inside 'it"s' pairs with a later " when double quotes go first.
+  # A quoted flag ('-rf') still matches on $_norm. Any copy that matches denies.
   _sq="'"
-  _qnorm="$(printf '%s' "$_input" | sed "s/${_sq}[^${_sq}]*${_sq}/_/g; s/\\\\\"[^\"]*\\\\\"/_/g; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"\\\\")"
-  if [[ "$_norm" =~ $_rm_re ]] || [[ "$_norm" =~ $_find_re ]] || [[ "$_qnorm" =~ $_rm_re ]] || [[ "$_qnorm" =~ $_find_re ]]; then
+  _blank_sq="s/${_sq}[^${_sq}]*${_sq}/_/g"
+  _blank_dq='s/\\"[^"]*\\"/_/g'
+  _deny=0
+  for _order in "$_blank_sq; $_blank_dq" "$_blank_dq; $_blank_sq" ''; do
+    if [ -n "$_order" ]; then
+      _q="$(printf '%s' "$_input" | sed "$_order; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"\\\\")"
+    else
+      _q="$_norm"
+    fi
+    if [[ "$_q" =~ $_rm_re ]] || [[ "$_q" =~ $_find_re ]]; then _deny=1; fi
+  done
+  if [ "$_deny" -eq 1 ]; then
     echo "[mh:gate] BLOCKED: python3 not found and this command names a recursive rm or a find delete; use trash instead (install python3 to restore the full gate)" >&2
     exit 2
   fi

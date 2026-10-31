@@ -1553,8 +1553,14 @@ for _c in 'rm -rf /tmp/x' 'rm -r x' 'rm -R x' 'rm --recursive x' 'rm -f -r x' 'r
   'git rm -r dir' 'echo rm -rf x' \
   'rm --rec x' 'rm --recursiv x' "rm 'a|b' -r" "rm 'a;b' -rf" "rm \"a|b\" -r" "find . -name 'a|b' -delete" \
   "find . -regex '.*\\(a\\|b\\)' -delete" "find . -name 'x;y' -exec rm {} +" 'find . -exec command rm {} \;' \
-  'find . -exec env rm {} \;' 'find . -exec sudo -u x rm {} \;' "rm '-rf' x"; do
+  'find . -exec env rm {} \;' 'find . -exec sudo -u x rm {} \;' "rm '-rf' x" \
+  "rm \"it's;x\" -rf y; echo 'z'" "rm 'it\"s;x' -rf y; echo \"z\""; do
   test_nopython_deny "$IRRECOVERABLE" "irrecoverable: $_c" "$(bash_payload "$_c")"
+done
+# An apostrophe in the description pairs with one inside a double-quoted argument (review of 9a65476b).
+for _c in "rm \"it's;x\" -rf y" "find . -name \"it's;x\" -delete"; do
+  test_nopython_deny "$IRRECOVERABLE" "irrecoverable: $_c, description don't" \
+    "$(printf '{"tool_name": "Bash", "tool_input": {"command": %s, "description": "don'"'"'t"}}' "$(printf '%s' "$_c" | jq -Rsa .)")"
 done
 for _c in 'rm -f x' 'rm x' 'git status' 'find . -name y' 'find . -exec cat {} +' 'rmdir x' 'ls -r rmx' 'rm --force x' "rm 'a|b'" 'find . -exec cat {} \;'; do
   test_nopython_allow "$IRRECOVERABLE" "irrecoverable: $_c keeps the #93 allow" "$(bash_payload "$_c")"
