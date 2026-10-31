@@ -3653,7 +3653,29 @@ test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute one harmless, one rm -rf
 test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute heredoc opener cannot hide the next command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"cat <<EOF\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
 test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute all harmless (rm only in queries)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}],\"queries\":[\"rm -rf\"]}}"
 test_allow "$IRRECOVERABLE" "GH #770: ctx_execute missing code field" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\"}}"
-test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute bad commands entries" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[\"rm\",{\"command\":5},null]}}"
-test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands not a list" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"rm -rf /\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute non-command entries do not crash" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":5},null,7,{\"label\":\"rm\"}]}}"
+# context-mode's coerceCommandsArray runs these shapes too: a string item, a bare string, a JSON-array string.
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute string item" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[\"ls\",\"rm -rf /tmp/x\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a JSON-array string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"[{\\\"label\\\":\\\"a\\\",\\\"command\\\":\\\"rm -rf /tmp/x\\\"}]\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute harmless bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"git status\"}}"
+# Each command is judged with the outer payload's fields, so a subagent's nested claude spawn is still denied.
+test_deny  "$IRRECOVERABLE" "GH #770: subagent ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"agent_id\":\"a1\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"claude -p hi\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: main-session ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"claude -p hi\"}]}}"
+# A batch that outruns the time budget asks for the rest instead of allowing it.
+export MH_GATE_BATCH_BUDGET_S=0
+test_ask_says "$IRRECOVERABLE" "GH #770: ctx_batch_execute over its time budget asks" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"git status\"}]}}" "time budget"
+unset MH_GATE_BATCH_BUDGET_S
+# GH #769/#770: the coverage itself lives in hooks.json's matcher (the gate reads tool_input.command for any tool).
+if python3 -c '
+import json, sys
+names = {"Bash", "Monitor"} | {"mcp__plugin_context-mode_context-mode__ctx_" + t for t in ("execute", "execute_file", "batch_execute")}
+hooks = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
+m = [e["matcher"] for e in hooks if any("gates/irrecoverable.sh" in h.get("command", "") for h in e["hooks"])]
+sys.exit(not (len(m) == 1 and names <= set(m[0].split("|"))))' "$ROOT/hooks/hooks.json"; then
+  echo "  ✅ hooks.json: irrecoverable.sh matcher covers Bash, Monitor and the three ctx tools"; pass=$((pass + 1))
+else
+  echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
+fi
 
 gates_summary

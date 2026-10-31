@@ -40,21 +40,40 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
 # GH #769/#770: Monitor carries tool_input.command like Bash (a "ws" Monitor has none); context-mode's
 # ctx_execute(_file) runs tool_input.code as shell only for language "shell"; ctx_batch_execute runs each
 # commands[].command, judged one per run so one command can't hide the next (an open heredoc); the strictest wins.
+# Each run gets the outer payload (agent_id, cwd, tool_name) with only tool_input swapped; having no "commands",
+# it takes the plain path below.
 _tn = str(d.get("tool_name") or "")
 _ti = d["tool_input"]
 if _tn.endswith(("__ctx_execute", "__ctx_execute_file")):
     _ti["command"] = _ti.get("code", "") if _ti.get("language") == "shell" else ""
-elif _tn.endswith("__ctx_batch_execute"):
-    import subprocess
+elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
+    import subprocess, time
+    # Mirrors context-mode 1.0.169's coerceCommandsArray (src/server.ts): a non-blank string is JSON-parsed
+    # if it gives a list, else lifted to [str]; a string item is its own command.
+    _cmds = _ti["commands"]
+    if isinstance(_cmds, str) and _cmds.strip():
+        try:
+            _p = json.loads(_cmds)
+        except Exception:
+            _p = None
+        _cmds = _p if isinstance(_p, list) else [_cmds]
     _ask = ""
-    _cmds = _ti.get("commands")
+    _t0 = time.monotonic()
+    _budget = float(os.environ.get("MH_GATE_BATCH_BUDGET_S") or 4)  # the hook's timeout is 8 s
     for _c in (_cmds if isinstance(_cmds, list) else []):
-        _c = _c.get("command") if isinstance(_c, dict) else None
+        _c = _c if isinstance(_c, str) else _c.get("command") if isinstance(_c, dict) else None
         if not isinstance(_c, str):
             continue
+        if time.monotonic() - _t0 > _budget:
+            _reason = ("[mh:gate] ctx_batch_execute: the gate's %gs time budget ran out before every command was "
+                       "checked; confirm the batch, or split it into smaller batches" % _budget)
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                                     "permissionDecisionReason": _reason}}))
+            journal(GATE_ID, _tn, "ask", d.get("session_id"), rule="batch-budget")
+            sys.exit(0)
+        _sub = dict(d, tool_input={"command": _c})
         _r = subprocess.run([sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"), "irrecoverable"],
-                            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": _c}, "session_id": d.get("session_id")}),
-                            capture_output=True, text=True)
+                            input=json.dumps(_sub), capture_output=True, text=True)
         sys.stderr.write(_r.stderr)
         if _r.returncode != 0:
             sys.exit(2)  # a deny, or a crash: fail closed
