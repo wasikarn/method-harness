@@ -63,7 +63,8 @@ for d in "$EVALS"/*/; do
   [ -f "$d/prompt.md" ] || { bad "$c: prompt.md missing"; continue; }
   # `--tag` and scripts/eval-changed.sh select cases by frontmatter tags: only; the six
   # deep-audit-step6-* cases had none, so no deep-audit run ever reached them.
-  /usr/bin/grep -qE '^tags:[[:space:]]*\[[[:space:]]*[^][:space:]]' "$d/prompt.md" \
+  awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } NR > 1' "$d/prompt.md" \
+    | /usr/bin/grep -qE '^tags:[[:space:]]*\[[[:space:]]*[^][:space:]]' \
     || { bad "$c: prompt.md frontmatter has no non-empty tags: list"; continue; }
   if ! tells=$(prompt_tells "$d/prompt.md"); then
     bad "$c: prompt.md tells the subject the expected answer:"$'\n'"$tells"; continue

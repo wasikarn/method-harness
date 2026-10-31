@@ -34,16 +34,15 @@ case_md other-b "other, zz-agent" "Bash"       # zz-agent is not the first tag: 
 case_md zz-agent-decoy "zz-other" "Write"      # dir prefix matches, tag does not: not selected
 case_md zz-agent-x-a "zz-agent-x" "Glob"       # tag contains zz-agent as a substring: not selected
 case_md zz-staged-a "zz-staged" "Read"
-mkdir -p "$R/evals/zz-bare-a"                   # no allowed_tools: no --allow-tools at all
+mkdir -p "$R/evals/zz-bare-a"                   # no allowed_tools, or an empty one: no --allow-tools at all
 printf -- '---\nname: zz-bare-a\ntags: [zz-bare]\n---\nprompt\n' >"$R/evals/zz-bare-a/prompt.md"
-for f in agents/zz-agent.md agents/backend-architect.md agents/zz-bare.md agents/zz-staged.md skills/x/performance-optimizer/SKILL.md; do
-  echo a >"$R/$f"
-done
+case_md zz-bare-b "zz-bare" ""
+CHANGED="agents/zz-agent.md agents/backend-architect.md agents/zz-bare.md agents/zz-staged.md skills/x/performance-optimizer/SKILL.md"
+for f in $CHANGED; do echo a >"$R/$f"; done
 git -C "$R" init -q && git -C "$R" add agents evals scripts skills .claude-plugin && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init || { echo "test-eval-changed: fixture commit failed" >&2; exit 1; }
-for f in agents/zz-agent.md agents/backend-architect.md agents/zz-bare.md agents/zz-staged.md skills/x/performance-optimizer/SKILL.md; do
-  echo b >>"$R/$f"
-done
-git -C "$R" add agents/zz-staged.md   # staged only: git diff --cached must still pick it up
+for f in $CHANGED; do echo b >>"$R/$f"; done
+# Staged only: stage the change, then put the work-tree copy back, so only git diff --cached sees it.
+git -C "$R" add agents/zz-staged.md && echo a >"$R/agents/zz-staged.md"
 
 cat >"$R/bin/claude" <<'SH'
 #!/usr/bin/env bash

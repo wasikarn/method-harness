@@ -265,12 +265,13 @@ section, confirmed via `claude plugin eval --help` on 2.1.280):
 # BASH_SOURCE) -- it silently does nothing under zsh/sh, so run each line through `bash -c`
 # regardless of your login shell; it flips defaultEnabled true for the duration and restores it
 # after, even on failure -- no manual edit, nothing to remember. scripts/eval-changed.sh prints
-# these lines, with each tag's own --allow-tools, for just the agents and skills you changed.
+# lines in this form, each with the union of its tag's cases' allowed_tools as --allow-tools, for
+# just the agents and skills you changed.
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --runs 1 --no-publish'  # judges perf-regression-routing with haiku too: its own sonnet run is below
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag silent-failure-hunter --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag deep-audit --allow-tools Bash,Edit,Write --runs 1 --no-publish'  # includes the six deep-audit-step6-* cases
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag deep-audit --allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write --runs 1 --no-publish'  # includes the six deep-audit-step6-* cases
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill --ablation with-without --no-publish'

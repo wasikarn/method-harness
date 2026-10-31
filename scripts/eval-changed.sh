@@ -23,7 +23,7 @@ done
 if [ -n "$ref" ]; then
   changed=$(git diff --name-only "$ref"...HEAD) || { echo "eval-changed: git diff $ref...HEAD failed" >&2; exit 1; }
 else
-  changed=$(git diff --name-only HEAD && git diff --name-only --cached) || { echo "eval-changed: git diff HEAD failed" >&2; exit 1; }
+  changed=$(git diff --name-only HEAD && git diff --name-only --cached) || { echo "eval-changed: git diff against HEAD or the index failed" >&2; exit 1; }
 fi
 
 tags=$(printf '%s\n' "$changed" \

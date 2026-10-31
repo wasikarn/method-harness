@@ -8,6 +8,7 @@ set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
 LIB_SRC="$ROOT/scripts/_lib/eval-default-enabled.sh"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
@@ -319,7 +320,7 @@ with_default_enabled_true true
 after=$(cat "$sandbox/.claude-plugin/plugin.json")
 [[ "$after" == *'"defaultEnabled": false'* ]] && ok "restores false when SIGINT hits the restore's own python3" \
   || bad "a SIGINT during the restore left defaultEnabled true (got: $after)"
-rm -rf "$sandbox"
+tmp_delete "$sandbox"
 
 echo
 echo "=== Summary: $pass passed, $fail failed ==="
