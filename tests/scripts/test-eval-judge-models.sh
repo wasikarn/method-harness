@@ -85,5 +85,15 @@ out=$(python3 "$PY" for-tag demo --evals "$TMP/evals" 2>&1)
   && ok "for-tag reads the --evals dir's sidecar" \
   || bad "for-tag --evals: got '$out'"
 
+# prompt.md is read as UTF-8 whatever the locale (GH #788 review 3): under an ASCII locale a
+# locale-default open() raised on a valid UTF-8 prompt, and under Latin-1 it would accept bytes
+# the UTF-8 run refuses.
+mkdir -p "$TMP/evals/utf8-case"
+printf -- '---\nname: café\ntags: [utf8]\nallowed_tools: [Read]\n---\nnaïve\n' > "$TMP/evals/utf8-case/prompt.md"
+printf 'utf8-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
+out=$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 python3 "$PY" for-tag utf8 --evals "$TMP/evals" 2>&1)
+[ "$out" = "$(printf 'utf8-case\tsonnet\tRead')" ] \
+  && ok "for-tag reads a UTF-8 prompt.md under an ASCII locale" || bad "for-tag under an ASCII locale: got '$out'"
+
 echo "eval_judge_models.py self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
