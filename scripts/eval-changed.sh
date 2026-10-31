@@ -37,28 +37,41 @@ if [ -z "$tags" ]; then
 fi
 
 . scripts/_lib/eval-default-enabled.sh
+# Tags whose cases load an mh agent or skill through the plugin: eval sandboxes load no user
+# settings, so without the defaultEnabled flip they silently score a no-plugin fallback (the
+# run block in evals/README.md wraps the same five).
+needs_plugin=" code-architect performance-optimizer backend-architect ideate-critic ideate "
 
 while IFS= read -r tag; do
-  # Union every allowed_tools list declared across this tag's own eval cases
-  # (prompt.md frontmatter) instead of hardcoding a duplicate per-tag list.
+  # Union every allowed_tools list across all cases whose frontmatter tags: carry this tag
+  # anywhere, as the CLI's --tag matches (a case dir's prefix need not be its tag: evals/perf-*
+  # is performance-optimizer), instead of hardcoding a duplicate per-tag list.
+  # shortcut: inline [a, b] lists only (eval_judge_models.frontmatter_list), upgrade if a case
+  # ever uses a YAML block list.
   allow=$(python3 -c "
-import re, sys, pathlib
+import sys, pathlib
+sys.path.insert(0, 'scripts/_lib')
+from eval_judge_models import frontmatter_list
 tools = set()
-for p in pathlib.Path('evals').glob('${tag}*/prompt.md'):
-    text = p.read_text()
-    fm = text.split('---')[1] if text.startswith('---') else ''
-    if not re.search(r'^tags:\s*\[' + re.escape('$tag') + r'\b', fm, re.M):
-        continue
-    m = re.search(r'^allowed_tools:\s*\[([^\]]*)\]', fm, re.M)
-    if m:
-        tools.update(t.strip() for t in m.group(1).split(','))
+for p in pathlib.Path('evals').glob('*/prompt.md'):
+    if sys.argv[1] in frontmatter_list('evals', p.parent.name, 'tags'):
+        tools.update(frontmatter_list('evals', p.parent.name, 'allowed_tools'))
 print(','.join(sorted(tools)))
-")
+" "$tag")
   cmd=(claude plugin eval . --scaffold --tag "$tag" --runs 1 --no-publish)
   [ -n "$allow" ] && cmd+=(--allow-tools "$allow")
+  wrap=0
+  [[ "$needs_plugin" == *" $tag "* ]] && wrap=1
   if [ "$run" -eq 1 ]; then
     echo "== $tag =="
-    "${cmd[@]}" </dev/null
+    if [ "$wrap" -eq 1 ]; then
+      with_default_enabled_true "${cmd[@]}" </dev/null
+    else
+      "${cmd[@]}" </dev/null
+    fi
+  elif [ "$wrap" -eq 1 ]; then
+    # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
+    printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${cmd[*]}"
   else
     printf '%q ' "${cmd[@]}"; echo
   fi
