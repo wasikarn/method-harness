@@ -3643,7 +3643,8 @@ tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
 # GH #741: a python/node stage that reads its script from a heredoc and pipes its stdout into a shell reading
 # stdin hands that shell code the gate never sees (print("git reset --hard") | bash), so it denies whatever the
-# body prints. A pipe into anything else, or a heredoc python only reads, keeps the GH #681 reading.
+# body prints. A pipe into anything else, or a heredoc python only reads, keeps the GH #681 reading, and so does
+# one inside $( or a backtick (x=$(python3 - <<'EOF' | sh): its re-read timed out (GH #741 review 2), so it was dropped.
 # The rule ships shadow (GH #337): each row is allowed with one would_deny interp-pipe-shell row, and denies
 # on a copy of the gates with SHADOW_RULES emptied (promotion, once /mh:gate-report shows no false positive).
 _enf741="$_JOURNAL_TMP/enforced-gates-741"
@@ -3674,13 +3675,13 @@ for _c in $'python3 - <<\'EOF\' | bash\nprint("git reset --hard")\nEOF' \
   $'python3 - <<\'EOF\' | sh\nprint("ls")\nEOF' $'python3 <<EOF | dash\nprint("ls")\nEOF' \
   $'node - <<\'EOF\' | zsh\nconsole.log("ls")\nEOF' $'nodejs <<\'EOF\' | ksh\nconsole.log("ls")\nEOF' \
   $'cat <<\'EOF\' | python3 - | bash\nprint("ls")\nEOF' $'python3 - <<\'EOF\' | tee out.log | bash\nprint("ls")\nEOF' \
-  $'python3 -u - <<\'EOF\' | sudo bash -s\nprint("ls")\nEOF' $'git status; python3 - <<\'EOF\' 2>/dev/null | sh\nprint("ls")\nEOF' \
-  $'x=$(python3 - <<\'EOF\' | sh\nprint("ls")\nEOF\n)' $'echo "`node - <<\'EOF\' | bash\nconsole.log(1)\nEOF\n`"'; do
+  $'python3 -u - <<\'EOF\' | sudo bash -s\nprint("ls")\nEOF' $'git status; python3 - <<\'EOF\' 2>/dev/null | sh\nprint("ls")\nEOF'; do
   _would741 "$_c"
 done
 for _c in $'python3 - <<\'EOF\'\nprint("bash")\nEOF' $'python3 - <<\'EOF\' | grep bash\nprint("bash")\nEOF' \
   $'node - <<\'EOF\' | sort\nconsole.log("sh")\nEOF' $'python3 - <<\'EOF\' | bash x.sh\nprint("ls")\nEOF' \
-  $'cat <<\'EOF\' | bash\nls\nEOF' $'python3 - <<\'EOF\'\nprint(1)\nEOF\necho ok | sh -c cat'; do
+  $'cat <<\'EOF\' | bash\nls\nEOF' $'python3 - <<\'EOF\'\nprint(1)\nEOF\necho ok | sh -c cat' \
+  $'x=$(python3 - <<\'EOF\' | sh\nprint("ls")\nEOF\n)' $'echo "`node - <<\'EOF\' | bash\nconsole.log(1)\nEOF\n`"'; do
   : > "$_JOURNAL_TMP/a741.jsonl"
   test_allow "$IRRECOVERABLE" "GH #741 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")" "MH_GATE_JOURNAL_PATH=$_JOURNAL_TMP/a741.jsonl"
   if [[ "$(_rows741 "$_JOURNAL_TMP/a741.jsonl")" == "0" ]]; then
@@ -3740,5 +3741,11 @@ _timed_case 'GH #741 review: git reset --hard before 12000 node heredoc openers 
   "git reset --hard; node x <<A|$(printf '<<A|%.0s' $(seq 12000))$(printf 'x|%.0s' $(seq 37000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 12001))echo ok"
 _timed_case "GH #741 review: git reset --hard before 9000 quoted node heredoc openers and 30000 pipe stages denies in bounded time" 2 \
   "git reset --hard; node x <<'A'|$(printf "<<'A'|%.0s" $(seq 9000))$(printf 'x|%.0s' $(seq 30000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 9001))echo ok"
+# GH #741 review 2: heredocs nested in ( frames, each piped through many stages, are read in bounded time (a re-read
+# from each frame's ( parsed every stage once per frame: 300 frames of 30 stages took 8-9 s, past the hook timeout).
+_timed_case 'GH #741 review 2: git reset --hard before 300 python heredoc frames of 30 pipe stages denies in bounded time' 2 \
+  "$(python3 -c "n = 300; print('git reset --hard\\n' + ''.join('(python3 - <<A%d' % i + ' | x' * 30 for i in range(n)) + ')' * n + ''.join('\\nx\\nA%d' % i for i in range(n)))")"
+_timed_case 'GH #741 review 2: 1000 python heredoc frames piped into cat are allowed in bounded time' 0 \
+  "$(python3 -c "n = 1000; print(''.join('(python3 - <<A%d | cat' % i for i in range(n)) + ')' * n + ''.join('\\nx\\nA%d' % i for i in range(n)))")"
 
 gates_summary

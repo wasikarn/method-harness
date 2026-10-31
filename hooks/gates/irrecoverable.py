@@ -479,29 +479,6 @@ class _HeredocLine:
         p = self.stages[(k, "pynext")][j]
         return p is not None and self.stages[(k, "sh")][p + 1]
 
-def _interp_to_shell_framed(line, pos, views):
-    # GH #741: a $( or backtick is no separator to _pieces, so x=$(python3 - <<'EOF' | sh is read again from
-    # the nearest ( or ` before the heredoc, as _heredoc_feeds_sql_client does (views: one parse per opener).
-    if "(" not in views:  # computed once per line: every lookup below is O(log n)
-        views["("] = [k for k, ch in enumerate(line) if ch in "(`"]
-        views["|"] = line.rfind("|")
-        views["py"] = [m.start() for m in re.finditer(r"python|node", line)]
-    op, py = views["("], views["py"]
-    k = bisect.bisect_left(op, pos) - 1
-    o = op[k] + 1 if k >= 0 else 0
-    if not o or views["|"] < pos:  # no pipe after the heredoc: nothing to re-read
-        return False
-    # ... nor with no python/node word inside the frame before the heredoc (keeps a line of `<<A (` linear)
-    k = bisect.bisect_left(py, pos) - 1
-    if k < 0 or py[k] < o:
-        return False
-    if o not in views:
-        _HEREDOC_SCAN_BUDGET[0] -= len(line) - o
-        if _HEREDOC_SCAN_BUDGET[0] < 0:
-            return True
-        views[o] = _HeredocLine(line[o:])
-    return views[o].interp_to_shell(pos - o)
-
 def _heredoc_feeds_sql_client(ctx, openers, views, pos):
     # Whether the heredoc opened at ctx.line[pos] is read by a SQL client: its own pipe stage or one
     # downstream runs one (psql <<EOF, cat <<EOF | mysql). The line is read whole and again from the nearest
@@ -742,7 +719,7 @@ def _strip_heredocs(cmd, ends=None):
         framed = "(" in stack or "`" in stack  # the heredoc sits in $( or a backtick (read only while sure)
         if not ms:
             continue
-        ctx, views, has_client, line_sql, py_views = _HeredocLine(line), {}, _may_name_client(line), None, {}
+        ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
         for n_m, m in enumerate(ms):
@@ -759,7 +736,7 @@ def _strip_heredocs(cmd, ends=None):
                 ends is not None and quoted and ("python" in line or "node" in line)) else (False, False)
             py_data = py_own and sure and not framed and not ctx.piped_shell(m.start())
             if ends is not None and not _INTERP_PIPED_SHELL[0] and ("python" in line or "node" in line) and (
-                    ctx.interp_to_shell(m.start()) or _interp_to_shell_framed(line, m.start(), py_views)):
+                    ctx.interp_to_shell(m.start())):
                 _INTERP_PIPED_SHELL[0] = True
             sql_code, code = code, code and not py_data
             body_start, found, expands, early = i, False, False, False
