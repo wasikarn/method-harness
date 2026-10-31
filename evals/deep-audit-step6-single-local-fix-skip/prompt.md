@@ -1,4 +1,5 @@
 ---
+tags: [deep-audit, step6]
 max_turns: 50
 timeout_seconds: 1200
 allowed_tools: [Bash, Read, Edit, Write, Glob, Grep, Skill, Agent]
