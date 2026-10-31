@@ -3787,4 +3787,15 @@ test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: X="a b"$(echo '"'"' rm -r
 test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: A=1 X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'A=1 X=$(echo '"'"' rm -rf b'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: true && X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'true && X=$(echo '"'"' rm -rf b'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: export X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'export X=$(echo '"'"' rm -rf b'"'"')')"
+# GH #767 review 3 (operator): var-verb's enforced pass, rm-no-preserve-root through a variable, the linear assignment
+# check, and assignment leads, quoted separators and subscripts the split copy reads as assignments.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 3: X=mkfs.ext4; $X /dev/sdb1; F=-rf; rm $F b' "$(bash_payload 'X=mkfs.ext4; $X /dev/sdb1; F=-rf; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 3: F=--no-preserve-root; rm -i $F /' "$(bash_payload 'F=--no-preserve-root; rm -i $F /')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: declare -x X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'declare -x X=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: if X=$(echo '"'"' rm -rf b'"'"'); then :; fi' "$(bash_payload 'if X=$(echo '"'"' rm -rf b'"'"'); then :; fi')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: while X=$(echo '"'"' rm -rf b'"'"'); do break; done' "$(bash_payload 'while X=$(echo '"'"' rm -rf b'"'"'); do break; done')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: X[0]=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'X[0]=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')')"
+_timed_case "GH #767 review 3: 8900 glued X=\`echo 'a b'\` words, then a split-copy target, denied in bounded time" 2 \
+  "echo x; $(printf 'X=`echo '"'"'a b'"'"'` %.0s' $(seq 8900)); rm \`echo ' -rf'\` b"
 gates_summary

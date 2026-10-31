@@ -5728,7 +5728,7 @@ _run_words()
 # owned by a rule id of its own (so it can ship shadow, GH #337): "ifs-split" reads $IFS / ${IFS} /
 # ${IFS:..} as a blank and drops the empty positionals ($9, $@) used as word ends; "var-verb" reads back
 # `$NAME` / `${NAME}` where the command assigns NAME a plain value (`X=rm; $X -rf x`; the last value,
-# then the first). Views run only after the command passed every check; the shadow var-verb view only
+# then the first). Views run only after the command passed every check; the var-verb view (rm's rules enforce, GH #767) only
 # up to _VIEW_LEN_CAP: each one re-reads the whole text, and a timed-out hook allows.
 # ponytail: one substitution per view, not every combination of values or of the two readings.
 _IFS_RE = re.compile(r"\$(?:\{IFS(?:[:%#/^,][^}]{0,40})?\}|IFS(?![A-Za-z0-9_]))")
@@ -5789,21 +5789,33 @@ def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
 
-_ASSIGN_WORD_RE = re.compile(r"[A-Za-z_]\w*\+?=")
-_ASSIGN_LEAD = frozenset({"export", "local", "declare", "typeset", "readonly", "then", "do", "else", "!", "{", "time"})
+_SPLIT_ASSIGN_RE = re.compile(r"[A-Za-z_]\w*(?:\[[^\]\s]*\])?\+?=")
+_SPLIT_ASSIGN_LEAD = frozenset({"export", "local", "declare", "typeset", "readonly", "then", "do", "else", "elif",
+                                "if", "while", "until", "!", "{", "time"})
+_SPLIT_WORD_RE = re.compile(r"\S+")
 
-def _in_assignment_value(text, mask, k, seps):
-    # True when offset k sits in the value of a NAME= / NAME+= word in assignment position (statement start, after
-    # other assignments or a declaration builtin): bash does not split an assignment's value (GH #767 review 2:
-    # `CMD=$(echo 'sudo rm -rf x')` stores text). `env X=$(..)` and `rm --opt=$(..)` are arguments, and do split.
-    i = k
-    while i > 0 and (mask[i - 1] or text[i - 1] not in " \t\n;&|("):
-        i -= 1
-    if not _ASSIGN_WORD_RE.match(text, i):
+def _in_assignment_value(text, k, bounds, seps, memo):
+    # True when offset k sits in the value of a NAME= / NAME+= / NAME[i]= word in assignment position (statement start,
+    # after other assignments, a declaration builtin and its options, or a keyword): bash does not split an
+    # assignment's value (GH #767 review 2: `CMD=$(echo 'sudo rm -rf x')` stores text). `env X=$(..)` and
+    # `rm --opt=$(..)` are arguments, and do split. bounds (unquoted blanks and separators) and seps (unquoted
+    # separators) are made once per text; memo keeps, per statement, how far its words were read and whether all
+    # were assignment-position words, so a long chain of glued `NAME=`...`` words is read once, not once per word.
+    n = bisect.bisect_left(bounds, k)
+    i = bounds[n - 1] + 1 if n else 0
+    if not _SPLIT_ASSIGN_RE.match(text, i):
         return False
-    n = bisect.bisect_left(seps, i)  # seps: the offsets of ; & | ( and newlines in text, made once per text
+    n = bisect.bisect_left(seps, i)
     j = seps[n - 1] + 1 if n else 0
-    return all(w in _ASSIGN_LEAD or _ASSIGN_WORD_RE.match(w) for w in text[j:i].split())
+    pos, ok = memo.get(j, (j, True))
+    if ok and pos < i:
+        for w in _SPLIT_WORD_RE.finditer(text, pos, i):
+            t = w.group(0)
+            if not (t in _SPLIT_ASSIGN_LEAD or _SPLIT_ASSIGN_RE.match(t) or (t[:1] == "-" and t[1:].isalnum())):
+                ok = False
+                break
+        memo[j] = (max(pos, i), ok)
+    return ok
 
 def _literal_subst_split(text):
     # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
@@ -5811,7 +5823,9 @@ def _literal_subst_split(text):
     # a word (after an unescaped blank or a separator), or whose output starts with a blank; each output word is escaped whole, so it
     # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
     mask = _quote_mask(text)
-    seps = [m.start() for m in re.finditer(r"[;&|(\n]", text)]
+    bounds = [m.start() for m in re.finditer(r"[ \t\n;&|(]", text) if not mask[m.start()]]
+    seps = [p for p in bounds if text[p] not in " \t"]
+    memo = {}
     def sub(e):
         # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
         if mask[e.start()]:
@@ -5834,7 +5848,7 @@ def _literal_subst_split(text):
         esc = lambda w: re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w)
         if not glued:
             return " ".join(esc(w) for w in out.split())
-        if not re.search(r"\s", out) or _in_assignment_value(text, mask, k, seps):
+        if not re.search(r"\s", out) or _in_assignment_value(text, k, bounds, seps, memo):
             return e.group(0)
         first, rest = ("", out) if out[:1].isspace() else (out.split(None, 1) + [""])[:2]
         return esc(first) + " " + " ".join(esc(w) for w in rest.split())
@@ -5877,7 +5891,7 @@ def _views():
             if v != _BRACEX_TEXT and ("brace-view", v) not in out:
                 out.append(("brace-view", v))
     # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
-    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the shadow var-verb view keeps the lower cap.
+    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the var-verb view keeps the lower cap (a known gap, GH #767 review).
     v = _ifs_split(cmd)
     if v != cmd:
         out.append(("ifs-split", v))
