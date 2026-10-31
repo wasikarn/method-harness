@@ -42,7 +42,7 @@ for f in "$ENV_DIR"/sessionstart-hook-*.sh; do
   /usr/bin/grep -q '^export MH_PLUGIN_ROOT=' "$f" || continue
   tmp="$(mktemp "$ENV_DIR/.mh-anchor.XXXXXX")" || continue
   if /usr/bin/grep -v '^export MH_PLUGIN_ROOT=' "$f" > "$tmp"; [ "$?" -le 1 ] && mv -f "$tmp" "$f"; then :
-  else unlink "$tmp" 2>/dev/null; fi  # fallback: temp may already be gone
+  else unlink "$tmp"; fi
 done
 
 printf 'export MH_PLUGIN_ROOT=%q\n' "$ROOT" >> "$CLAUDE_ENV_FILE"
