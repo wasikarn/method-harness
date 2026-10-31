@@ -59,12 +59,27 @@ elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
         _cmds = _p if isinstance(_p, list) else [_cmds]
     _ask = ""
     _t0 = time.monotonic()
-    _budget = float(os.environ.get("MH_GATE_BATCH_BUDGET_S") or 4)  # the hook's timeout is 8 s
+    # 4 s of the hook's 8 s timeout. MH_GATE_BATCH_BUDGET_S (tests) only shortens it; a value that is not a
+    # finite number >= 0 falls back to 4. The first command is always judged, so a budget of 0 checks just that one.
+    # A batch padded past the budget turns a later command's deny into an ask, never an allow.
+    _budget = 4.0
+    _bv = os.environ.get("MH_GATE_BATCH_BUDGET_S")
+    if _bv:
+        try:
+            _b = float(_bv)
+        except ValueError:
+            _b = -1.0
+        if 0 <= _b < float("inf"):  # NaN fails both compares
+            _budget = min(_b, 4.0)
+        else:
+            print("[mh:gate] MH_GATE_BATCH_BUDGET_S=%r is not a number >= 0; using 4 s" % _bv, file=sys.stderr)
+    _n = 0
     for _c in (_cmds if isinstance(_cmds, list) else []):
         _c = _c if isinstance(_c, str) else _c.get("command") if isinstance(_c, dict) else None
         if not isinstance(_c, str):
             continue
-        if time.monotonic() - _t0 > _budget:
+        _n += 1
+        if _n > 1 and time.monotonic() - _t0 > _budget:
             _reason = ("[mh:gate] ctx_batch_execute: the gate's %gs time budget ran out before every command was "
                        "checked; confirm the batch, or split it into smaller batches" % _budget)
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
