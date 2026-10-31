@@ -335,24 +335,30 @@ _hook_ceiling() {  # <row name>
   if [ -z "$ceil" ]; then
     echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return 1
   fi
-  # DEADLINE_SECS from the gate under test, cut by MH_IRR_DEADLINE_SECS as the gate cuts it; a gate without
-  # one (before GH #771, or a wrapper) leaves the hook timeout
+  # DEADLINE_SECS from the gate under test, cut by MH_IRR_DEADLINE_SECS as the gate cuts it; a gate that
+  # never names it (before GH #771, or a wrapper) leaves the hook timeout. One that names it but has no one
+  # plain numeric assignment fails the row, rather than quietly leaving the longer hook timeout.
   _HOOK_CEIL=$(python3 -c 'import os, re, sys
 cap = float(sys.argv[2])
 try:
-    m = re.search(r"^DEADLINE_SECS = ([0-9.]+)[ \t]*$", open(sys.argv[1]).read(), re.M)
+    src = open(sys.argv[1]).read()
 except OSError:
-    m = None
-if m:
-    dl = float(m.group(1))
+    src = ""
+found = re.findall(r"^DEADLINE_SECS[ \t]*(?::[ \t]*float[ \t]*)?=[ \t]*([0-9]+(?:\.[0-9]*)?)[ \t]*(?:#.*)?$", src, re.M)
+if len(found) == 1:
+    dl = float(found[0])
     try:
         e = float(os.environ.get("MH_IRR_DEADLINE_SECS", ""))
     except ValueError:
         e = 0.0
     cap = min(cap, e if 0 < e < dl else dl)
-print("%g" % cap)' "${IRRECOVERABLE%.sh}.py" "$ceil")
+elif found or re.search(r"\bDEADLINE_SECS\b", src):
+    sys.exit("%s names DEADLINE_SECS but has no one plain numeric assignment to it" % os.path.basename(sys.argv[1]))
+print("%g" % cap)' "${IRRECOVERABLE%.sh}.py" "$ceil" 2>"$_ERRF")
   if [ -z "$_HOOK_CEIL" ]; then
-    echo "  ❌ $name: could not work out the gate's deadline" >&2; fail=$((fail + 1)); return 1
+    jerr=$(head -1 "$_ERRF"); jerr=${jerr%$'\r'}
+    echo "  ❌ $name: could not work out the gate's deadline (${jerr:-python3 printed no error})" >&2
+    fail=$((fail + 1)); return 1
   fi
 }
 
