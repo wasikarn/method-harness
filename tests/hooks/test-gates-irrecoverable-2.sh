@@ -3803,6 +3803,76 @@ else
   echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
 fi
 
+# GH #767: rm's rules enforce in var-verb, and a substitution glued to a word splits off output that starts with a blank.
+test_deny  "$IRRECOVERABLE" 'GH #767: F=-rf; rm $F b' "$(bash_payload 'F=-rf; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: F='"'"'-rf'"'"'; rm $F b' "$(bash_payload 'F='"'"'-rf'"'"'; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: F=-r; rm $F b' "$(bash_payload 'F=-r; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: rm \ $(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm \ $(echo '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: rm x$(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm x$(echo '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: rm '"'"'a'"'"'$(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm '"'"'a'"'"'$(echo '"'"' -rf'"'"') b')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-f; rm $F a.log' "$(bash_payload 'F=-f; rm $F a.log')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-i; rm $F x' "$(bash_payload 'F=-i; rm $F x')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: D=build; rm -f $D/a.o' "$(bash_payload 'D=build; rm -f $D/a.o')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-rf; echo $F' "$(bash_payload 'F=-rf; echo $F')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-rf; grep $F file' "$(bash_payload 'F=-rf; grep $F file')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: echo a\ $(echo '"'"'b'"'"')' "$(bash_payload 'echo a\ $(echo '"'"'b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: rm -f x\ $(echo '"'"'y.log'"'"')' "$(bash_payload 'rm -f x\ $(echo '"'"'y.log'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: echo foo$(echo '"'"' a;rm -rf /'"'"')' "$(bash_payload 'echo foo$(echo '"'"' a;rm -rf /'"'"')')"
+# GH #767 review: a glued substitution keeps only its first output word glued; a backslash-newline is a continuation.
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \ $(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\ $(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \\\ $(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\\\\\ $(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \<NL>$(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\\n$(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \<NL>$(echo '"'"'x --no-preserve-root -r'"'"') /' "$(bash_payload $'rm \\\n$(echo \'x --no-preserve-root -r\') /')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm x$(echo '"'"'a -rf'"'"') b' "$(bash_payload $'rm x$(echo \'a -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm '"'"'a'"'"'$(echo '"'"'b -rf'"'"') c' "$(bash_payload $'rm \'a\'$(echo \'b -rf\') c')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: rm -f x\ $(echo '"'"'y z.log'"'"')' "$(bash_payload 'rm -f x\ $(echo '"'"'y z.log'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: touch out$(echo '"'"' a b'"'"').txt' "$(bash_payload 'touch out$(echo '"'"' a b'"'"').txt')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: echo x$(echo '"'"'a; rm -rf /'"'"')' "$(bash_payload 'echo x$(echo '"'"'a; rm -rf /'"'"')')"
+# GH #767 review 2: bash does not split an assignment's value; an argument holding = does split.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 2: env X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'env X=$(echo '"'"' rm -rf b'"'"')')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 2: rm --one-file-system=$(echo '"'"' -rf b'"'"')' "$(bash_payload 'rm --one-file-system=$(echo '"'"' -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: X=$(echo '"'"' rm -rf /tmp/x'"'"')' "$(bash_payload 'X=$(echo '"'"' rm -rf /tmp/x'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: CMD=$(echo '"'"'sudo rm -rf /tmp/build'"'"')' "$(bash_payload 'CMD=$(echo '"'"'sudo rm -rf /tmp/build'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: P=$(echo '"'"' git push --force origin main'"'"')' "$(bash_payload 'P=$(echo '"'"' git push --force origin main'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: X="a b"$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'X="a b"$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: A=1 X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'A=1 X=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: true && X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'true && X=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: export X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'export X=$(echo '"'"' rm -rf b'"'"')')"
+# GH #767 review 3 (operator): var-verb's enforced pass, rm-no-preserve-root through a variable, the linear assignment
+# check, and assignment leads, quoted separators and subscripts the split copy reads as assignments.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 3: X=mkfs.ext4; $X /dev/sdb1; F=-rf; rm $F b' "$(bash_payload 'X=mkfs.ext4; $X /dev/sdb1; F=-rf; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 3: F=--no-preserve-root; rm -i $F /' "$(bash_payload 'F=--no-preserve-root; rm -i $F /')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: declare -x X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'declare -x X=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: if X=$(echo '"'"' rm -rf b'"'"'); then :; fi' "$(bash_payload 'if X=$(echo '"'"' rm -rf b'"'"'); then :; fi')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: while X=$(echo '"'"' rm -rf b'"'"'); do break; done' "$(bash_payload 'while X=$(echo '"'"' rm -rf b'"'"'); do break; done')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: X[0]=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'X[0]=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')')"
+# GH #767 review 4: the glued split is its own copy, so develop's split copy still denies; continuations and quoted values.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 4: X=`echo '"'"'a b'"'"'` Y=`echo '"'"'a b'"'"'` rm `echo '"'"' -rf'"'"'` b' "$(bash_payload 'X=`echo '"'"'a b'"'"'` Y=`echo '"'"'a b'"'"'` rm `echo '"'"' -rf'"'"'` b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 4: X=$(echo '"'"'a b'"'"') Y=$(echo '"'"'a b'"'"') rm $(echo '"'"' -rf'"'"') b' "$(bash_payload 'X=$(echo '"'"'a b'"'"') Y=$(echo '"'"'a b'"'"') rm $(echo '"'"' -rf'"'"') b')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: true && \<NL>  X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload $'true && \\\n  X=$(echo \' rm -rf b\')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: A=1 \<NL>  B=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload $'A=1 \\\n  B=$(echo \' rm -rf b\')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: X='"'"'a b'"'"' CMD=$(echo '"'"' rm -rf build'"'"')' "$(bash_payload $'X=\'a b\' CMD=$(echo \' rm -rf build\')')"
+# GH #767 review 5: the glued copy stays out of brace-view's copies (shared positional budget); var-verb's structural
+# denies only end its window; $(...) and backticks are one word to the assignment check.
+test_deny  "$IRRECOVERABLE" "GH #767 review 5: a brace, a glued subst and a 5000-argument bash -c still reach git add -A" "$(bash_payload "echo {a,b}x$(echo 'p q'); bash -c 'echo \"\$@\"' _ $(printf 'y %.0s' $(seq 5000)); git add $(echo ' -A')")"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 5: rm $(X=1) Y=$(echo '"'"' -rf b'"'"')' "$(bash_payload 'rm $(X=1) Y=$(echo '"'"' -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: GREETING="it'"'"'s"; export GREETING; bash -c "echo \$GREETING"' "$(bash_payload 'GREETING="it'"'"'s"; export GREETING; bash -c "echo \$GREETING"')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: TS=$(date +%s) NOTE=build-$(echo '"'"'cleanup: rm -rf dist'"'"')' "$(bash_payload 'TS=$(date +%s) NOTE=build-$(echo '"'"'cleanup: rm -rf dist'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: A="$(pwd)" F=x$(echo '"'"'b rm -rf c'"'"')' "$(bash_payload 'A="$(pwd)" F=x$(echo '"'"'b rm -rf c'"'"')')"
+# GH #767 review 6: the glued copy drops printf's % format; var-verb puts no value in '...' or after \$, nor reads --opt= as NAME=.
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git checkout -b hotfix-$(printf '"'"'%03d'"'"' 7)' "$(bash_payload 'git checkout -b hotfix-$(printf '"'"'%03d'"'"' 7)')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git checkout -b rel-$(printf '"'"'%s'"'"' 2026)' "$(bash_payload 'git checkout -b rel-$(printf '"'"'%s'"'"' 2026)')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: F=-rf; rm '"'"'$F'"'"' x' "$(bash_payload 'F=-rf; rm '"'"'$F'"'"' x')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: X=-r; echo "\$X"; rm \$X y' "$(bash_payload 'X=-r; echo "\$X"; rm \$X y')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git log --format=-rf; rm $format x' "$(bash_payload 'git log --format=-rf; rm $format x')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 6: F=-rf; rm "$F" b' "$(bash_payload 'F=-rf; rm "$F" b')"
+# GH #767 review 7 (operator): the NAME= test runs once per word, so a 40,000-character word before 7000 glued
+# backtick substitutions is read in bounded time (14.6 s before, about 1.5 s after).
+_timed_case "GH #767 review 7: a 40 KB word, then 7000 glued backtick substitutions, then a split-copy target" 2 \
+  "echo $(printf 'a%.0s' $(seq 40000))$(printf '`echo '"'"'p q'"'"'`%.0s' $(seq 7000)); rm \`echo ' -rf'\` b"
+_timed_case "GH #767 review 3: 8900 glued X=\`echo 'a b'\` words, then a split-copy target, denied in bounded time" 2 \
+  "echo x; $(printf 'X=`echo '"'"'a b'"'"'` %.0s' $(seq 8900)); rm \`echo ' -rf'\` b"
 # GH #691: in a subagent, a view no longer re-runs the body spawn scan (it could only end the view), so padding that
 # spends the spawn budget in the main reading no longer stops ifs-split before a later rm${IFS}-rf / git${IFS}reset.
 _pad691="eval '$(printf 'env a b c d e f g h i j k l m n o p q r s t u v w x y z ; %.0s' $(seq 240))true'; "
