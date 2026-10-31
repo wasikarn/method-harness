@@ -5689,8 +5689,10 @@ def _literal_subst_split(text):
     # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
     # a word (after a blank or a separator, so not `''$(..)` or `"$(..)"`); each output word is escaped whole, so it
     # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
+    mask = _quote_mask(text)
     def sub(e):
-        if e.start() and text[e.start() - 1] not in " \t\n;&|(":
+        # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
+        if mask[e.start()] or (e.start() and text[e.start() - 1] not in " \t\n;&|("):
             return e.group(0)
         raw = e.group(1) or e.group(2) or ""
         try:

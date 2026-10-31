@@ -3676,4 +3676,5 @@ test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo '"'"'x'"'"'$(echo '"
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo foo\ $(echo '"'"'a;git reset --hard'"'"')' "$(bash_payload 'echo foo\ $(echo '"'"'a;git reset --hard'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: trash $(echo '"'"'~/{.,x}'"'"')' "$(bash_payload 'trash $(echo '"'"'~/{.,x}'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo "x $(echo '"'"' -rf'"'"')"' "$(bash_payload 'echo "x $(echo '"'"' -rf'"'"')"')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 3 control: a $(...) inside '"'"'...'"'"' is data to the split copy' "$(bash_payload 'echo '"'"'see $(echo "'"'"'") && git reset --hard '"'"'"\'"'"'')"
 gates_summary
