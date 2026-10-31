@@ -21,6 +21,8 @@ DEFAULT_EVALS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 SIDECAR = "judge-models.tsv"
 # The CLI's own default judge: a row naming it changes nothing, so it is refused.
 DEFAULT_JUDGE = "haiku"
+# A model must name one of these families, so a typo fails `check`, not a paid run.
+MODEL_FAMILY_RE = re.compile(r"haiku|sonnet|opus|fable", re.IGNORECASE)
 
 
 def sidecar_path(evals_dir=DEFAULT_EVALS):
@@ -36,7 +38,7 @@ def load(path):
     with open(path) as f:
         for n, line in enumerate(f, 1):
             line = line.rstrip("\n")
-            if not line.strip() or line.startswith("#"):
+            if not line.strip() or line.lstrip().startswith("#"):
                 continue
             fields = line.split("\t")
             if len(fields) != 3 or not all(x.strip() for x in fields):
@@ -44,7 +46,10 @@ def load(path):
             case, model, reason = (x.strip() for x in fields)
             if case in rows:
                 raise ValueError(f"{path}:{n}: {case} is listed twice")
-            if model == DEFAULT_JUDGE:
+            family = MODEL_FAMILY_RE.search(model)
+            if not family:
+                raise ValueError(f"{path}:{n}: {case}: {model!r} names no model family (haiku|sonnet|opus|fable)")
+            if family.group(0).lower() == DEFAULT_JUDGE:
                 raise ValueError(f"{path}:{n}: {case}: {DEFAULT_JUDGE} is already the default judge")
             rows[case] = (model, reason)
     return rows
@@ -53,7 +58,8 @@ def load(path):
 def frontmatter_list(evals_dir, case, key):
     """The `<key>: [...]` list in the case's prompt.md frontmatter (empty if none)."""
     try:
-        text = open(os.path.join(evals_dir, case, "prompt.md")).read()
+        with open(os.path.join(evals_dir, case, "prompt.md")) as f:
+            text = f.read()
     except OSError:
         return []
     fm = text.split("---")[1] if text.startswith("---") else ""

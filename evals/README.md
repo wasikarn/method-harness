@@ -258,7 +258,7 @@ version-gated, not an account-level early-access flag, per `docs/en/plugin-evals
 section, confirmed via `claude plugin eval --help` on 2.1.280):
 
 ```bash
-claude plugin eval . --scaffold --runs 1 --no-publish
+claude plugin eval . --scaffold --runs 1 --no-publish  # judges perf-regression-routing with haiku too: its own sonnet run is below
 claude plugin eval . --scaffold --tag silent-failure-hunter --runs 1 --no-publish
 claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 --no-publish
 claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish
