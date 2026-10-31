@@ -136,6 +136,10 @@ ALLOW . ~/envs/x/bin/activate.csh
 ALLOW source bin/activate
 ALLOW source "$VENV/bin/activate"
 ALLOW . "my env/bin/activate"
+# an unquoted $VAR directory is cut into glued tokens, joined back into one word
+ALLOW source $VENV/bin/activate
+ALLOW . $VIRTUAL_ENV/bin/activate
+ALLOW source -- .venv/bin/activate
 ALLOW source .venv/bin/activate && pytest -q
 # a substitution in the directory is still checked as its own statement
 DENY source $(rm -rf build)/bin/activate
