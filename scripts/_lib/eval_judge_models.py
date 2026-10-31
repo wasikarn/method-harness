@@ -69,7 +69,7 @@ def load(path):
 def frontmatter_list(evals_dir, case, key):
     """The `<key>: [...]` list in the case's prompt.md frontmatter (empty if none)."""
     try:
-        with open(os.path.join(evals_dir, case, "prompt.md")) as f:
+        with open(os.path.join(evals_dir, case, "prompt.md"), encoding="utf-8") as f:
             text = f.read()
     except OSError:
         return []
