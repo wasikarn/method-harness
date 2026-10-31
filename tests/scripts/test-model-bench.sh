@@ -173,6 +173,15 @@ for agg in '"casesTotal":3' '"overallScore":0'; do
     && ok "per-eval judge: \"cases\": null on side A with aggregates {$agg} does not crash" \
     || bad "per-eval judge: \"cases\": null on side A with {$agg} crashed (exit $status): $out"
 done
+# One family regex, shared with the sidecar reader (GH #788): a copy here could drift from it.
+python3 - "$DIFF_PY" <<'PY' && ok "per-eval judge: model-bench-diff.py reuses eval_judge_models.MODEL_FAMILY_RE" \
+  || bad "per-eval judge: model-bench-diff.py defines its own MODEL_FAMILY_RE"
+# An AST check, not `is`: re's compile cache returns one object for two identical copies.
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+own = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "MODEL_FAMILY_RE"]
+sys.exit(1 if own else 0)
+PY
 printf '# no rows\n' > "$TMP_MODELS"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
   "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
