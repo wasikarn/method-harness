@@ -5680,20 +5680,26 @@ def _psub_eval(e):
         words = words[1:]
     return "eval " + " ".join(words)
 
-def _literal_subst_words(e, mask):
-    # What echo/printf prints, as the shell then reads it (GH #718): unquoted, the output is split into words
-    # (`$(echo ' -rf')` is the word -rf); inside "..." it is one escaped string.
-    text = e.group(1) or e.group(2) or ""
-    try:
-        words = shlex.split(text)
-    except ValueError:
-        words = text.split()
-    out = " ".join(words[1:] if words[:1] == ["--"] else words)
-    if e.start() and mask[e.start() - 1]:  # the $( itself reads as unquoted (_quote_mask); what precedes it does not
-        return re.sub(r'(["\\$`])', r"\\\1", out)
-    # Only a word holding shell syntax is quoted, so `x; rm -rf /` stays text; `~`, braces and globs stay bare:
-    # bash expands them in echo's own arguments (`trash $(echo ~/{.,x})` trashes the home tree; review 1).
-    return " ".join(shlex.quote(w) if re.search(r"""[;&|()<>'"\\$`]""", w) else w for w in out.split())
+def _literal_subst_words(e):
+    words = (e.group(1) or e.group(2) or "").split()
+    return " ".join(words[1:] if words[:1] == ["--"] else words)
+
+def _literal_subst_split(text):
+    # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
+    # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
+    # a word (after a blank or a separator, so not `''$(..)` or `"$(..)"`); each output word is escaped whole, so it
+    # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
+    def sub(e):
+        if e.start() and text[e.start() - 1] not in " \t\n;&|(":
+            return e.group(0)
+        raw = e.group(1) or e.group(2) or ""
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            return e.group(0)
+        out = " ".join(words[1:] if words[:1] == ["--"] else words).split()
+        return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
+    return _LITERAL_SUBST_RE.sub(sub, text)
 
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
@@ -5705,12 +5711,14 @@ def _subst_literals(text):
         for quoted in (True, False):
             v = text
             for _ in range(3):  # inside out: `${X:-${Y:--rf}}`, `$(echo $(echo -rf))`
-                p = _PSUB_SCRIPT_RE.sub(_psub_eval, v)
-                mask = _quote_mask(p) if _LITERAL_SUBST_RE.search(p) else None
-                w = _default_subst(_LITERAL_SUBST_RE.sub(lambda e: _literal_subst_words(e, mask), p) if mask else p, quoted)
+                w = _default_subst(_LITERAL_SUBST_RE.sub(_literal_subst_words, _PSUB_SCRIPT_RE.sub(_psub_eval, v)), quoted)
                 if w == v:
                     break
                 v = w
+            if v != text and v not in out:
+                out.append(v)
+        if ("'" in text or '"' in text or "\\" in text) and _LITERAL_SUBST_RE.search(text):
+            v = _literal_subst_split(text)
             if v != text and v not in out:
                 out.append(v)
     return out

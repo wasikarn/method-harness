@@ -3666,4 +3666,14 @@ test_deny  "$IRRECOVERABLE" 'GH #718 review: chmod 777 $(echo ~/{.,.})' "$(bash_
 test_allow "$IRRECOVERABLE" 'GH #718 review control: echo $(echo '"'"'x; rm -rf /'"'"')' "$(bash_payload 'echo $(echo '"'"'x; rm -rf /'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #718 review control: rm -f $(echo build/*.o)' "$(bash_payload 'rm -f $(echo build/*.o)')"
 test_allow "$IRRECOVERABLE" 'GH #718 review control: trash $(echo build/{a,b})' "$(bash_payload 'trash $(echo build/{a,b})')"
+# GH #718 review 2: echo's arguments keep develop's plain rewrite; the word-split copy is additive and escaped.
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: trash $(echo ~/{.,\'"'"'})' "$(bash_payload 'trash $(echo ~/{.,\'"'"'})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: trash $(echo ~/{.,x\;})' "$(bash_payload 'trash $(echo ~/{.,x\;})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: eval $(echo trash ~/{.,x}\;)' "$(bash_payload 'eval $(echo trash ~/{.,x}\;)')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review 2: git checkout $(echo '"'"'-- .'"'"')' "$(bash_payload 'git checkout $(echo '"'"'-- .'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo '"'"''"'"'$(echo '"'"'a;rm -rf /'"'"')' "$(bash_payload 'echo '"'"''"'"'$(echo '"'"'a;rm -rf /'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo '"'"'x'"'"'$(echo '"'"'&& git push -f'"'"')' "$(bash_payload 'echo '"'"'x'"'"'$(echo '"'"'&& git push -f'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo foo\ $(echo '"'"'a;git reset --hard'"'"')' "$(bash_payload 'echo foo\ $(echo '"'"'a;git reset --hard'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: trash $(echo '"'"'~/{.,x}'"'"')' "$(bash_payload 'trash $(echo '"'"'~/{.,x}'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo "x $(echo '"'"' -rf'"'"')"' "$(bash_payload 'echo "x $(echo '"'"' -rf'"'"')"')"
 gates_summary
