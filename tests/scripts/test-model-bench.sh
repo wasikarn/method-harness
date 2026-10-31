@@ -158,6 +158,15 @@ status=$?
 [ "$status" -eq 0 ] && /usr/bin/grep -qF 'casesTotal is 0 on null-cases' <<<"$out" \
   && ok "per-eval judge: \"cases\": null still reports casesTotal 0, no crash" \
   || bad "per-eval judge: \"cases\": null crashed (exit $status): $out"
+for agg in '"casesTotal":3' '"overallScore":0'; do
+  printf '{"schemaVersion":1,"costUsd":0,"partial":false,"suite":{"judgeModel":"sonnet"},"aggregates":{"overallScore":0,"overallPassRate":0,%s},"cases":null}' "$agg" > "$TMP_MODELS.null.json"
+  out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a haiku-history --label-b null-cases \
+    "$FIXTURES/judge-override-haiku.json" "$TMP_MODELS.null.json" 2>&1)
+  status=$?
+  [ "$status" -eq 0 ] && ! /usr/bin/grep -q 'Traceback' <<<"$out" \
+    && ok "per-eval judge: \"cases\": null with aggregates {$agg} does not crash" \
+    || bad "per-eval judge: \"cases\": null with {$agg} crashed (exit $status): $out"
+done
 printf '# no rows\n' > "$TMP_MODELS"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
   "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)

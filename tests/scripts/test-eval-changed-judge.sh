@@ -19,17 +19,26 @@ trap 'tmp_delete "$TMP"' EXIT
 echo "=== eval-changed per-eval judge self-test ==="
 
 R="$TMP/repo"
-mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/skills/x/zz-skill" "$R/skills/x/zz-two" "$R/evals/zz-case" "$R/evals/zz-case2" "$R/bin"
+mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/bin"
 cp "$ROOT/scripts/eval-changed.sh" "$R/scripts/"
 cp "$ROOT/scripts/_lib/eval-default-enabled.sh" "$ROOT/scripts/_lib/eval_judge_models.py" "$R/scripts/_lib/"
 printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$R/.claude-plugin/plugin.json"
-printf -- '---\nname: zz-case\ntags: [zz-skill, clean]\nallowed_tools: [Bash, Read]\n---\nprompt\n' >"$R/evals/zz-case/prompt.md"
-printf -- '---\nname: zz-case2\ntags: [zz-two]\nallowed_tools: [Grep]\n---\nprompt\n' >"$R/evals/zz-case2/prompt.md"
-printf 'zz-case\tsonnet\tGH #1\nzz-case2\topus\tGH #2\n' >"$R/evals/judge-models.tsv"
-echo a >"$R/skills/x/zz-skill/SKILL.md"; echo a >"$R/skills/x/zz-two/SKILL.md"
+case_md() {  # <case> <tags> <allowed_tools>
+  mkdir -p "$R/evals/$1"
+  printf -- '---\nname: %s\ntags: [%s]\nallowed_tools: [%s]\n---\nprompt\n' "$1" "$2" "$3" >"$R/evals/$1/prompt.md"
+}
+# Tags run in sorted order: ideate (wrapped by needs_plugin), zz-skill (two judge rows, so its
+# inner loop has input left after the first call), zz-zz (a tag after both). With a
+# stdin-reading claude, a dropped </dev/null on any of the three call sites skips a later run.
+case_md ideate-case "ideate" "Agent"
+case_md zz-case "zz-skill, clean" "Bash, Read"
+case_md zz-case3 "zz-skill" "Grep"
+case_md zz-zz-case "zz-zz" "Read"
+printf 'ideate-case\tfable\tGH #3\nzz-case\tsonnet\tGH #1\nzz-case3\topus\tGH #2\n' >"$R/evals/judge-models.tsv"
+for t in ideate zz-skill zz-zz; do mkdir -p "$R/skills/x/$t"; echo a >"$R/skills/x/$t/SKILL.md"; done
 git -C "$R" init -q && git -C "$R" add . && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init \
   || { echo "test-eval-changed-judge: fixture commit failed" >&2; exit 1; }
-echo b >>"$R/skills/x/zz-skill/SKILL.md"; echo b >>"$R/skills/x/zz-two/SKILL.md"
+for t in ideate zz-skill zz-zz; do echo b >>"$R/skills/x/$t/SKILL.md"; done
 
 # The stub drains stdin, as a real claude can: without </dev/null on each call it would eat the
 # rest of the script's here-string loops and later tags would silently not run.
@@ -51,8 +60,13 @@ l=$(/usr/bin/grep -- "--case zz-case " "$EC_LOG")
 [[ "$l" == enabled=true* ]] \
   && ok "judge run: plugin loaded (defaultEnabled true during the call)" || bad "judge run not wrapped: '$l'"
 [ "$(cat "$EC_MANIFEST")" = "$before" ] && ok "manifest restored after --run" || bad "manifest left changed"
-[ "$(/usr/bin/grep -c -- '--tag ' "$EC_LOG")" -eq 2 ] && /usr/bin/grep -q -- "--case zz-case2 --judge-model opus" "$EC_LOG" \
-  && ok "every tag and judge run happens with a stdin-reading claude" || bad "a run was skipped: $(cat "$EC_LOG")"
+for want in "--tag ideate " "--tag zz-skill " "--tag zz-zz " "--case ideate-case --judge-model fable" \
+  "--case zz-case --judge-model sonnet" "--case zz-case3 --judge-model opus"; do
+  /usr/bin/grep -q -- "$want" "$EC_LOG" \
+    && ok "stdin-reading claude: '$want' still runs" || bad "stdin-reading claude: '$want' skipped: $(cat "$EC_LOG")"
+done
+/usr/bin/grep -- "--tag ideate " "$EC_LOG" | /usr/bin/grep -q '^enabled=true' \
+  && ok "ideate tag run goes through with_default_enabled_true" || bad "ideate tag run not wrapped: $(cat "$EC_LOG")"
 
 # A broken sidecar or a missing module must stop the script before any paid run.
 expect_no_runs() {  # <label>

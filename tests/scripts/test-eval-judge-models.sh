@@ -57,6 +57,10 @@ expect_bad "a model naming no known family (a typo)" 'demo-case\tsonet\tGH #1\n'
 expect_bad "shell code in the model (it would run from the printed bash -c line)" 'demo-case\tsonnet$(touch${IFS}PWNED)\tGH #1\n'
 expect_bad "a relative path in the case column" '../evals/demo-case\tsonnet\tGH #1\n'
 expect_bad "an absolute path in the case column" "$TMP/evals/demo-case\tsonnet\tGH #1\n"
+printf 'a..b\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"; mkdir -p "$TMP/evals/a..b"; cp "$TMP/evals/demo-case/prompt.md" "$TMP/evals/a..b/"
+python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 \
+  && ok "check accepts a dir name with '..' inside it (the case pattern already bars paths)" \
+  || bad "check refuses a..b: $(python3 "$PY" check --evals "$TMP/evals" 2>&1)"
 
 printf '# comment\n  # indented comment\n\ndemo-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
 python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 \
@@ -66,6 +70,7 @@ printf '\xef\xbb\xbf# comment after a BOM\ndemo-case\tsonnet\tGH #1\n' > "$TMP/e
 python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 \
   && ok "check accepts a file that starts with a UTF-8 BOM" \
   || bad "check refuses a BOM-prefixed sidecar: $(python3 "$PY" check --evals "$TMP/evals" 2>&1)"
+printf 'demo-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
 out=$(python3 "$PY" for-tag demo --evals "$TMP/evals" 2>&1)
 [ "$out" = "$(printf 'demo-case\tsonnet\t')" ] \
   && ok "for-tag reads the --evals dir's sidecar" \
