@@ -314,14 +314,14 @@ _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 # the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
 # python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
 # only skews the ratio, so a timing miss is measured once more before it fails (a wrong rc fails at once,
-# as it does not depend on timing). The command must also finish
-# under the gate's hook timeout (read from hooks/hooks.json), past which the hook allows: a slowdown both
-# runs share keeps the ratio.
+# as it does not depend on timing). The command must also finish under the gate's hook timeout (read from
+# hooks/hooks.json), past which the hook allows: a slowdown both runs share keeps the ratio.
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
   local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil seen=""
   if ! ceil=$(jq -r '[.. | objects | select((.command? // "") | test("gates/irrecoverable\\.sh")) | .timeout]
     | if length == 1 and (.[0] | type) == "number" then .[0] else empty end' "$ROOT/hooks/hooks.json" 2>&1); then
-    echo "  ❌ $name: could not read hooks/hooks.json (${ceil%%$'\n'*})" >&2; fail=$((fail + 1)); return
+    echo "  ❌ $name: jq could not read the irrecoverable.sh timeout from hooks/hooks.json (${ceil%%$'\n'*})" >&2
+    fail=$((fail + 1)); return
   fi
   if [ -z "$ceil" ]; then
     echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return
