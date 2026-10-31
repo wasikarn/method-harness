@@ -339,7 +339,7 @@ _hook_ceiling() {  # <row name>
 
 # GH #789: a row whose regression runs well past the hook timeout is timed against that timeout itself,
 # sub-second, not a fixed 4 s, so a slower host keeps its headroom. The regressions of the rows using it took
-# 15-41 s on a 4-core host, so they still fail on a host up to about twice as fast. A timing miss is
+# 15 s to over 40 s on a 4-core host, so they still fail on a host up to about twice as fast. A timing miss is
 # measured once more before it fails, as in _timed_ratio_case below.
 _timed_hook_case() {  # <name> <expected rc> <command>
   local name="$1" want="$2" cmd="$3" ceil t0 t1 rc secs ok try seen=""
