@@ -5716,16 +5716,21 @@ def _literal_subst_split(text):
             return e.group(0)
         words = words[1:] if words[:1] == ["--"] else words
         out = " ".join(words)
-        # Glued to the word before it (`x$(..)`, `\ $(..)`, `'a'$(..)`), the output joins that word, unless it
-        # starts with a blank, which ends the word there (GH #767: `rm \ $(echo ' -rf') b` is rm ' ' -rf b).
+        # Glued to the word before it (`x$(..)`, `\ $(..)`, `'a'$(..)`), the output's first word joins that word
+        # and the rest split off (GH #767: `rm \ $(echo 'x -rf') b` is rm ' x' -rf b; a leading blank makes that
+        # first word empty). A backslash-newline before it is a line continuation, not an escaped blank.
         k = e.start()
         j = k - 1
         while j > 0 and text[j - 1] == "\\":  # the backslashes before that char: an odd run escapes it
             j -= 1
-        glued = k and (text[k - 1] not in " \t\n;&|(" or (k - 1 - j) % 2)
-        if glued and not out[:1].isspace():
+        glued = k and (text[k - 1] not in " \t\n;&|(" or ((k - 1 - j) % 2 and text[k - 1] != "\n"))
+        esc = lambda w: re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w)
+        if not glued:
+            return " ".join(esc(w) for w in out.split())
+        if not re.search(r"\s", out):
             return e.group(0)
-        return (" " if glued else "") + " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out.split())
+        first, rest = ("", out) if out[:1].isspace() else (out.split(None, 1) + [""])[:2]
+        return esc(first) + " " + " ".join(esc(w) for w in rest.split())
     return _LITERAL_SUBST_RE.sub(sub, text)
 
 def _ifs_split(text):

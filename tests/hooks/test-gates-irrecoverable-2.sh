@@ -3704,4 +3704,14 @@ test_allow "$IRRECOVERABLE" 'GH #767 control: F=-rf; grep $F file' "$(bash_paylo
 test_allow "$IRRECOVERABLE" 'GH #767 control: echo a\ $(echo '"'"'b'"'"')' "$(bash_payload 'echo a\ $(echo '"'"'b'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #767 control: rm -f x\ $(echo '"'"'y.log'"'"')' "$(bash_payload 'rm -f x\ $(echo '"'"'y.log'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #767 control: echo foo$(echo '"'"' a;rm -rf /'"'"')' "$(bash_payload 'echo foo$(echo '"'"' a;rm -rf /'"'"')')"
+# GH #767 review: a glued substitution keeps only its first output word glued; a backslash-newline is a continuation.
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \ $(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\ $(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \\\ $(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\\\\\ $(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \<NL>$(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\\n$(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \<NL>$(echo '"'"'x --no-preserve-root -r'"'"') /' "$(bash_payload $'rm \\\n$(echo \'x --no-preserve-root -r\') /')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm x$(echo '"'"'a -rf'"'"') b' "$(bash_payload $'rm x$(echo \'a -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm '"'"'a'"'"'$(echo '"'"'b -rf'"'"') c' "$(bash_payload $'rm \'a\'$(echo \'b -rf\') c')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: rm -f x\ $(echo '"'"'y z.log'"'"')' "$(bash_payload 'rm -f x\ $(echo '"'"'y z.log'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: touch out$(echo '"'"' a b'"'"').txt' "$(bash_payload 'touch out$(echo '"'"' a b'"'"').txt')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: echo x$(echo '"'"'a; rm -rf /'"'"')' "$(bash_payload 'echo x$(echo '"'"'a; rm -rf /'"'"')')"
 gates_summary
