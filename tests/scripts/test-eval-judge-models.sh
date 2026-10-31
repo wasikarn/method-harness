@@ -40,7 +40,7 @@ out=$(python3 "$PY" for-tag code-architect 2>&1)
 mkdir -p "$TMP/evals/demo-case"
 printf -- '---\nname: demo-case\ntags: [demo, clean]\n---\nask\n' > "$TMP/evals/demo-case/prompt.md"
 expect_bad() {  # <label> <tsv body>
-  printf "$2" > "$TMP/evals/judge-models.tsv"
+  printf '%b' "$2" > "$TMP/evals/judge-models.tsv"
   if python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1; then
     bad "check accepts $1"
   else
@@ -52,8 +52,10 @@ expect_bad "a duplicate case" 'demo-case\tsonnet\tGH #1\ndemo-case\topus\tGH #2\
 expect_bad "an empty model" 'demo-case\t\tGH #1\n'
 expect_bad "a missing reason" 'demo-case\tsonnet\n'
 expect_bad "a haiku row (the default, so a no-op)" 'demo-case\thaiku\tGH #1\n'
+expect_bad "a haiku-family model id (also the default)" 'demo-case\tclaude-haiku-4-5\tGH #1\n'
+expect_bad "a model naming no known family (a typo)" 'demo-case\tsonet\tGH #1\n'
 
-printf '# comment\n\ndemo-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
+printf '# comment\n  # indented comment\n\ndemo-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
 python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 \
   && ok "check accepts comments, blank lines and a valid row" \
   || bad "check refuses a valid fixture sidecar"

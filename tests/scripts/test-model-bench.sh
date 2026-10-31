@@ -137,14 +137,14 @@ out=$(python3 "$DIFF_PY" --label-a haiku-history --label-b sonnet-rerun \
   || bad "per-eval judge: the repo's evals/judge-models.tsv was not read by default"
 out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a fixture-a --label-b fixture-b \
   "$FIXTURES/clean-a.json" "$FIXTURES/mismatch-b.json" 2>&1)
-/usr/bin/grep -qF 'expected:' <<<"$out" \
-  && bad "per-eval judge: undeclared cases' judge mismatch marked expected" \
-  || ok "per-eval judge: undeclared cases keep the bare judgeModel WARN"
+/usr/bin/grep -qF 'judgeModel differs' <<<"$out" && ! /usr/bin/grep -qF 'expected:' <<<"$out" \
+  && ok "per-eval judge: undeclared cases keep the bare judgeModel WARN" \
+  || bad "per-eval judge: undeclared cases: judgeModel WARN missing or marked expected"
 out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a sonnet-rerun --label-b opus-run \
   "$FIXTURES/judge-override-sonnet.json" "$FIXTURES/judge-override-opus.json" 2>&1)
-/usr/bin/grep -qF 'expected:' <<<"$out" \
-  && bad "per-eval judge: marked expected against a non-haiku judge (only haiku history is expected)" \
-  || ok "per-eval judge: declared judge vs a non-haiku judge keeps the bare WARN"
+/usr/bin/grep -qF 'judgeModel differs' <<<"$out" && ! /usr/bin/grep -qF 'expected:' <<<"$out" \
+  && ok "per-eval judge: declared judge vs a non-haiku judge keeps the bare WARN" \
+  || bad "per-eval judge: non-haiku other side: judgeModel WARN missing or marked expected"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS.missing" --label-a haiku-history --label-b sonnet-rerun \
   "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
 status=$?
@@ -154,9 +154,9 @@ status=$?
 printf '# no rows\n' > "$TMP_MODELS"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
   "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
-/usr/bin/grep -qF 'expected:' <<<"$out" \
-  && bad "per-eval judge: marked expected with no declaration" \
-  || ok "per-eval judge: no declaration, bare judgeModel WARN"
+/usr/bin/grep -qF 'judgeModel differs' <<<"$out" && ! /usr/bin/grep -qF 'expected:' <<<"$out" \
+  && ok "per-eval judge: no declaration, bare judgeModel WARN" \
+  || bad "per-eval judge: no declaration: judgeModel WARN missing or marked expected"
 
 # --- plugin-problem arm: must hard-fail, never print a comparison table ---
 out=$(python3 "$DIFF_PY" --label-a fixture-a --label-b fixture-b \
