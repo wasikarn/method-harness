@@ -45,12 +45,14 @@ python3 scripts/_lib/eval_judge_models.py check || exit 1
 rc=0
 
 # shell_word <arg>: <arg> as one shell word, bare when it holds only safe characters, else
-# single-quoted with each ' written as '\''. print_wrapped <argv...>: the evals/README.md
-# run-block form of `with_default_enabled_true <argv...>`, quoted so the pasted line runs exactly
-# <argv...> (an allowed_tools entry from frontmatter can hold spaces, parens or shell syntax).
+# single-quoted with each ' written as '\'' (a parameter expansion: $(...) would drop trailing
+# newlines). print_wrapped <argv...>: the evals/README.md run-block form of
+# `with_default_enabled_true <argv...>`, quoted so the pasted line runs exactly <argv...>
+# (an allowed_tools entry from frontmatter can hold spaces, parens or shell syntax).
 shell_word() {
+  local sq="'" esc="'\\''"  # variables: quoting inside ${//} differs across bash versions (3.2)
   case "$1" in
-    ''|*[!A-Za-z0-9_./:@,=+-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+    ''|*[!A-Za-z0-9_./:@,=+-]*) printf "'%s'" "${1//$sq/$esc}" ;;
     *) printf '%s' "$1" ;;
   esac
 }
