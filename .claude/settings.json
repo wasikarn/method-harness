@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "ask": [
+      "Bash(*scripts/merge-pr.sh *)",
+      "Bash(*gh pr comment *ontext review*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
