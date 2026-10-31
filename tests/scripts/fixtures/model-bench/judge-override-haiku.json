@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "costUsd": 0.077,
+  "claudeVersion": "2.1.314",
+  "partial": false,
+  "suite": {
+    "caseFilter": "perf-regression-routing",
+    "ablation": "none",
+    "plugins": [{"name": "mh", "version": "1.1.488"}]
+  },
+  "aggregates": {"overallScore": 0.5, "overallPassRate": 0.0, "casesTotal": 1},
+  "cases": [
+    {
+      "name": "perf-regression-routing",
+      "promptMarkdown": "calculateShipping got slow after a merge. Can you fix it?",
+      "aggregates": {"score": 0.5, "passRate": 0.0}
+    }
+  ]
+}
