@@ -126,6 +126,25 @@ check_fixture apostrophe 'Bash(git log:*), Read, $(touch${IFS}PWNED), it'\''s' \
 check_fixture no-apostrophe 'Bash(git log:*), Read, $(touch${IFS}PWNED), !!' \
   '!!,$(touch${IFS}PWNED),Bash(git log:*),Read' 'Bash(git log:*),Read,$(touch${IFS}PWNED),!!' 'opus[1m]'
 
+# evals/README.md's run block, pasted whole into each shell as its readers do (it tells zsh users
+# to paste there), must run every line. In zsh without interactivecomments a `#` comment is a
+# command: a trailing `# ... (...)` made its whole line a parse error, skipping that run.
+RB="$TMP/readme-block"
+mkdir -p "$RB/scripts/_lib" "$RB/.claude-plugin" "$RB/bin"
+cp "$ROOT/scripts/_lib/eval-default-enabled.sh" "$RB/scripts/_lib/"
+cp "$TMP/claude" "$RB/bin/"
+printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$RB/.claude-plugin/plugin.json"
+block=$(awk '/^Run \(needs Claude Code/ {r=1} r && /^```bash$/ {b=1; next} b && /^```$/ {exit} b' "$ROOT/evals/README.md")
+want=$(/usr/bin/grep -c '^bash -c ' <<<"$block")
+[ "$want" -gt 0 ] || bad "evals/README.md: run block not found"
+for sh in $shells; do
+  echo 0 >"$EC_N"
+  (cd "$RB" && PATH="$RB/bin:$PATH" paste_in "$sh" "$block") >"$TMP/paste.out" 2>&1
+  [ "$(cat "$EC_N")" -eq "$want" ] \
+    && ok "evals/README.md run block pasted into $sh runs all $want lines" \
+    || bad "evals/README.md run block pasted into $sh: $(cat "$EC_N") of $want lines ran: $(/usr/bin/grep -i 'error\|not found' "$TMP/paste.out" | head -3)"
+done
+
 # shell_word itself: every word must read back verbatim, trailing newlines included ($(...) strips
 # them, so a version built on command substitution prints $'x\n' as 'x').
 eval "$(sed -n '/^shell_word() {/,/^}/p' "$ROOT/scripts/eval-changed.sh")"
