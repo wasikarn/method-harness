@@ -42,9 +42,12 @@ Advice is honest about being advice; no doc claims a check enforces a rule unles
 
 Each gate owns its error path, and the policy is written in the gate, not assumed: input
 `irrecoverable.py` cannot tokenize denies (exit 2, `could not safely tokenize ... - confirm with user
-first`), since an unparsed command could hide any write; a missing `python3` always allows, announced
-on stderr (#93); a missing sibling script denies (exit 2) for `irrecoverable.py`, but allows
-(same stderr-note posture) for the four subagent-scoped gates (`subagent-git-guard`,
+first`), since an unparsed command could hide any write; past its own 4 s deadline
+(`DEADLINE_SECS`, under the 8 s hook timeout) it asks, and its hooks.json entry sets
+`"onFailure": "block"` so a hook timeout blocks instead of allowing (GH #771); a missing `python3`
+allows, announced on stderr (#93), except a command whose text names a recursive `rm` or a `find`
+delete, which denies (GH #771); a missing sibling script denies (exit 2) for `irrecoverable.py`,
+but allows (same stderr-note posture) for the four subagent-scoped gates (`subagent-git-guard`,
 `task-complete-separation`, `subagent-spawn-guard`, `subagent-verdict-check`), for
 `routine-trigger-guard` (tool-scoped, not subagent-scoped, same allow-on-missing-sibling
 posture), for the three ask-only write gates (`test-integrity`, `config-write-guard`,

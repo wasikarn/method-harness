@@ -1531,8 +1531,40 @@ test_documented_fastpath_allow() {
 }
 
 
-test_nopython_allow "$IRRECOVERABLE" "irrecoverable: rm -rf passes with note (was: rc=127 read as fail-CLOSED, blocking every git/rm command)" \
-  "$(bash_payload 'rm -rf /tmp/x')"
+# GH #771: without python3 a recursive rm or a find delete denies on a text check (names trash);
+# everything else keeps #93's announced allow. Ruling: the text check over-denies "git rm -r" and
+# "echo rm -rf" (any rm word with an -r flag), the safe direction on a machine that cannot parse.
+test_nopython_deny() {
+  local gate="$1" desc="$2" payload="$3"
+  local rc errf
+  errf=$(mktemp "${TMPDIR:-/tmp}/kbg-nopy-err.XXXXXX")
+  rc=$(echo "$payload" | PATH="$NOPY_BIN" bash "$gate" 2>"$errf"; echo $?)
+  if [[ "$rc" == "2" ]] && grep -q 'trash' "$errf"; then
+    echo "  ✅ NO-PYTHON DENY: $desc"
+    pass=$((pass + 1))
+  else
+    echo "  ❌ NO-PYTHON DENY expected (rc=2 + trash hint) but got rc=$rc, stderr: $(cat "$errf")" >&2
+    fail=$((fail + 1))
+  fi
+  rm -f "$errf"
+}
+for _c in 'rm -rf /tmp/x' 'rm -r x' 'rm -R x' 'rm --recursive x' 'rm -f -r x' 'rm x -fr' '/bin/rm -rf x' \
+  'ls; rm -rf x' 'find . -delete' 'find . -name y -delete' 'find . -exec rm {} +' 'find . -exec /bin/rm -f {} ;' \
+  'git rm -r dir' 'echo rm -rf x' \
+  'rm --rec x' 'rm --recursiv x' "rm 'a|b' -r" "rm 'a;b' -rf" "rm \"a|b\" -r" "find . -name 'a|b' -delete" \
+  "find . -regex '.*\\(a\\|b\\)' -delete" "find . -name 'x;y' -exec rm {} +" 'find . -exec command rm {} \;' \
+  'find . -exec env rm {} \;' 'find . -exec sudo -u x rm {} \;' "rm '-rf' x" \
+  "rm \"it's;x\" -rf y; echo 'z'" "rm 'it\"s;x' -rf y; echo \"z\""; do
+  test_nopython_deny "$IRRECOVERABLE" "irrecoverable: $_c" "$(bash_payload "$_c")"
+done
+# An apostrophe in the description pairs with one inside a double-quoted argument (review of 9a65476b).
+for _c in "rm \"it's;x\" -rf y" "find . -name \"it's;x\" -delete"; do
+  test_nopython_deny "$IRRECOVERABLE" "irrecoverable: $_c, description don't" \
+    "$(printf '{"tool_name": "Bash", "tool_input": {"command": %s, "description": "don'"'"'t"}}' "$(printf '%s' "$_c" | jq -Rsa .)")"
+done
+for _c in 'rm -f x' 'rm x' 'git status' 'find . -name y' 'find . -exec cat {} +' 'rmdir x' 'ls -r rmx' 'rm --force x' "rm 'a|b'" 'find . -exec cat {} \;'; do
+  test_nopython_allow "$IRRECOVERABLE" "irrecoverable: $_c keeps the #93 allow" "$(bash_payload "$_c")"
+done
 # Backtick/$(...) fast-path bypass: a command substitution vanishes in real bash ("gi`true`t" IS
 # "git" once bash evaluates it) but survives as literal characters through the fast path's
 # normalization, so neither "git" nor any other tracked argv0 forms a contiguous substring and
@@ -3658,6 +3690,25 @@ for _c in 'gp' 'gp origin feat' 'gpu' 'ggp' 'ggp feat' 'gpsup' 'gpd origin main'
   'ggpnp' 'ggpnp feat' 'grename feat x' 'grename' 'g status' 'g push origin feat' 'echo g push -f' 'ls -g'; do
   test_allow "$IRRECOVERABLE" "GH #750 push alias control: $_c" "$(bash_payload "$_c")"
 done
+echo ""
+echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
+MH_IRR_DEADLINE_SECS=0.001 test_ask_says "$IRRECOVERABLE" "forced deadline expiry on an allowed candidate command asks, reason says time" \
+  "$(bash_payload 'git status && git log -1')" "time"
+MH_IRR_DEADLINE_SECS=0.001 test_ask "$IRRECOVERABLE" "forced deadline expiry emits exactly one ask JSON" "$(bash_payload 'git status')"
+if python3 - "$ROOT/hooks/gates/irrecoverable.py" "$ROOT/hooks/hooks.json" <<'PY'
+import json, re, sys
+src = open(sys.argv[1]).read()
+m = re.search(r"^DEADLINE_SECS = ([0-9.]+)", src, re.M)
+hooks = [h for e in json.load(open(sys.argv[2]))["hooks"]["PreToolUse"] for h in e["hooks"]]
+irr = [h for h in hooks if "irrecoverable.sh" in h["command"]]
+others = [h for h in hooks if "irrecoverable.sh" not in h["command"] and "onFailure" in h]
+assert m and len(irr) == 1, "constant or entry missing"
+assert float(m.group(1)) <= irr[0]["timeout"] / 2, "deadline not well under the hook timeout"
+assert irr[0].get("onFailure") == "block", "irrecoverable.sh lacks onFailure block"
+assert not others, "onFailure set on another entry"
+PY
+then echo "  ✅ DEADLINE_SECS is at most half the hooks.json timeout; onFailure block on irrecoverable.sh only"; pass=$((pass + 1))
+else echo "  ❌ deadline/onFailure contract broken" >&2; fail=$((fail + 1)); fi
 
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"

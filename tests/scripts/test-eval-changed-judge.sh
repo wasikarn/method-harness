@@ -19,19 +19,32 @@ trap 'tmp_delete "$TMP"' EXIT
 echo "=== eval-changed per-eval judge self-test ==="
 
 R="$TMP/repo"
-mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/skills/x/zz-skill" "$R/evals/zz-case" "$R/bin"
+mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/bin"
 cp "$ROOT/scripts/eval-changed.sh" "$R/scripts/"
 cp "$ROOT/scripts/_lib/eval-default-enabled.sh" "$ROOT/scripts/_lib/eval_judge_models.py" "$R/scripts/_lib/"
 printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$R/.claude-plugin/plugin.json"
-printf -- '---\nname: zz-case\ntags: [zz-skill, clean]\nallowed_tools: [Bash, Read]\n---\nprompt\n' >"$R/evals/zz-case/prompt.md"
-printf 'zz-case\tsonnet\tGH #1\n' >"$R/evals/judge-models.tsv"
-echo a >"$R/skills/x/zz-skill/SKILL.md"
+case_md() {  # <case> <tags> <allowed_tools>
+  mkdir -p "$R/evals/$1"
+  printf -- '---\nname: %s\ntags: [%s]\nallowed_tools: [%s]\n---\nprompt\n' "$1" "$2" "$3" >"$R/evals/$1/prompt.md"
+}
+# Tags run in sorted order: ideate, zz-skill (two judge rows, so its inner loop has input left
+# after the first call), zz-zz (a tag after both). With a stdin-reading claude, a dropped
+# </dev/null on either call site (the tag run or the judge run) skips a later run.
+case_md ideate-case "ideate" "Agent"
+case_md zz-case "zz-skill, clean" "Bash, Read"
+case_md zz-case3 "zz-skill" "Grep"
+case_md zz-zz-case "zz-zz" "Read"
+printf 'ideate-case\tfable\tGH #3\nzz-case\tsonnet\tGH #1\nzz-case3\topus\tGH #2\n' >"$R/evals/judge-models.tsv"
+for t in ideate zz-skill zz-zz; do mkdir -p "$R/skills/x/$t"; echo a >"$R/skills/x/$t/SKILL.md"; done
 git -C "$R" init -q && git -C "$R" add . && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init \
   || { echo "test-eval-changed-judge: fixture commit failed" >&2; exit 1; }
-echo b >>"$R/skills/x/zz-skill/SKILL.md"
+for t in ideate zz-skill zz-zz; do echo b >>"$R/skills/x/$t/SKILL.md"; done
 
+# The stub drains stdin, as a real claude can: without </dev/null on each call it would eat the
+# rest of the script's here-string loops and later tags would silently not run.
 cat >"$R/bin/claude" <<'SH'
 #!/usr/bin/env bash
+cat >/dev/null
 en=$(/usr/bin/grep -o '"defaultEnabled": *[a-z]*' "$EC_MANIFEST" | sed 's/.*: *//')
 echo "enabled=$en $*" >>"$EC_LOG"
 SH
@@ -47,6 +60,32 @@ l=$(/usr/bin/grep -- "--case zz-case " "$EC_LOG")
 [[ "$l" == enabled=true* ]] \
   && ok "judge run: plugin loaded (defaultEnabled true during the call)" || bad "judge run not wrapped: '$l'"
 [ "$(cat "$EC_MANIFEST")" = "$before" ] && ok "manifest restored after --run" || bad "manifest left changed"
+for want in "--tag ideate " "--tag zz-skill " "--tag zz-zz " "--case ideate-case --judge-model fable" \
+  "--case zz-case --judge-model sonnet" "--case zz-case3 --judge-model opus"; do
+  /usr/bin/grep -q -- "$want" "$EC_LOG" \
+    && ok "stdin-reading claude: '$want' still runs" || bad "stdin-reading claude: '$want' skipped: $(cat "$EC_LOG")"
+done
+/usr/bin/grep -q '^enabled=true' <<<"$(/usr/bin/grep -- "--tag ideate " "$EC_LOG")" \
+  && ok "ideate tag run goes through with_default_enabled_true" || bad "ideate tag run not wrapped: $(cat "$EC_LOG")"
+
+# A broken sidecar or a missing module must stop the script before any paid run.
+expect_no_runs() {  # <label>
+  : >"$EC_LOG"
+  if PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" --run >/dev/null 2>&1; then
+    bad "$1: --run exited 0"
+  elif [ -s "$EC_LOG" ]; then
+    bad "$1: claude ran before the failure: $(cat "$EC_LOG")"
+  else
+    ok "$1: exits non-zero before any claude call"
+  fi
+}
+cp "$R/evals/judge-models.tsv" "$TMP/sidecar.good"
+printf 'zz-case\tsonett\tGH #1\n' >"$R/evals/judge-models.tsv"
+expect_no_runs "malformed judge-models.tsv"
+cp "$TMP/sidecar.good" "$R/evals/judge-models.tsv"
+mv "$R/scripts/_lib/eval_judge_models.py" "$TMP/"
+expect_no_runs "missing eval_judge_models.py"
+mv "$TMP/eval_judge_models.py" "$R/scripts/_lib/"
 
 PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" >"$TMP/print.out" 2>&1
 p=$(/usr/bin/grep -- "--case zz-case " "$TMP/print.out")

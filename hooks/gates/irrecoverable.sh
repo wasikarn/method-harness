@@ -52,7 +52,33 @@ case "$_norm$_norm_nows" in
 esac
 
 # Portability guard (#93): announced fail-open without python3 (rc=127 would otherwise block every git/rm).
+# GH #771: except a recursive rm or a find delete, which deny on this text check. It over-denies
+# (git rm -r, echo rm -rf), the safe direction on a machine that cannot parse.
 if ! command -v python3 >/dev/null 2>&1; then
+  # --r[a-z]*: rm's only --r option is --recursive, and getopt_long takes any prefix of it. Any rm word
+  # between -exec and its ; or + counts (command rm, env rm, sudo -u x rm, /bin/rm).
+  _rm_re='(^|[^[:alnum:]_.-])rm[[:space:]]([^;&|]*[[:space:]])?-(-r[[:alpha:]]*|[[:alpha:]]*[rR])'
+  _find_re='(^|[^[:alnum:]_.-])find[[:space:]][^;&|]*(-delete|-(exec|execdir|ok|okdir)[[:space:]]([^;+]*[[:space:]/])?rm([[:space:]]|$))'
+  # A quoted ; or | ('a|b') would end the [^;&|]* match once quotes are stripped, so also match copies
+  # with each quoted span blanked, in both orders: an apostrophe inside "it's" pairs with a later ' when
+  # single quotes go first, and a " inside 'it"s' pairs with a later " when double quotes go first.
+  # A quoted flag ('-rf') still matches on $_norm. Any copy that matches denies.
+  _sq="'"
+  _blank_sq="s/${_sq}[^${_sq}]*${_sq}/_/g"
+  _blank_dq='s/\\"[^"]*\\"/_/g'
+  _deny=0
+  for _order in "$_blank_sq; $_blank_dq" "$_blank_dq; $_blank_sq" ''; do
+    if [ -n "$_order" ]; then
+      _q="$(printf '%s' "$_input" | sed "$_order; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"\\\\")"
+    else
+      _q="$_norm"
+    fi
+    if [[ "$_q" =~ $_rm_re ]] || [[ "$_q" =~ $_find_re ]]; then _deny=1; fi
+  done
+  if [ "$_deny" -eq 1 ]; then
+    echo "[mh:gate] BLOCKED: python3 not found and this command names a recursive rm or a find delete; use trash instead (install python3 to restore the full gate)" >&2
+    exit 2
+  fi
   echo "[mh:gate] python3 not found — irrecoverable-pattern gate cannot run; allowing (install python3 to restore deny coverage)" >&2
   exit 0
 fi
