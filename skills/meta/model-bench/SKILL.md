@@ -72,7 +72,9 @@ report label, and each arm's output dir gets an `arm-meta.txt` (arm spec, comman
   `partial: true` (a ceiling cut the run short, so its case set differs).
 - **WARN, still compared:** judge model, case filter, ablation mode, Claude Code version or plugin
   version differ between sides, or an arm's model family matches its own judge's family. Read the
-  warning before trusting the delta.
+  warning before trusting the delta. A judge-model WARN carrying an `expected:` note means one side
+  ran only cases `evals/judge-models.tsv` gives their own judge and the other is haiku-judged
+  history (GH #510), so the mismatch is intended.
 - **Not comparable:** cases present on only one side (usually different `--tag`/`--case` filters).
 
 Never re-derive scores by hand from the JSON. `aggregate-result.json` never records the model, so

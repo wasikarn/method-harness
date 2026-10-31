@@ -11,6 +11,7 @@ ROOT="$HERE/../.."
 . "$ROOT/scripts/_lib/tmp-delete.sh"
 DIFF_PY="$ROOT/skills/meta/model-bench/scripts/model-bench-diff.py"
 FIXTURES="$HERE/fixtures/model-bench"
+TMP_MODELS="$(mktemp)"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
@@ -115,6 +116,47 @@ if [ "$status" -eq 0 ]; then ok "mismatch pair: exit 0 (WARN, not fatal)"; else 
 /usr/bin/grep -qF "plugin version differs: fixture-a=['1.1.94'] vs fixture-b=['1.1.95']" <<<"$out" \
   && ok "mismatch pair: WARN on plugin version 1.1.94 vs 1.1.95" \
   || bad "mismatch pair: plugin version WARN missing or wrong"
+
+# --- per-eval judge (GH #510): a judgeModel mismatch on a case evals/judge-models.tsv moves to
+# another judge is expected, so the WARN says so; any other mismatch keeps the bare WARN ---
+EXPECTED_NOTE='expected: perf-regression-routing is judged by sonnet (evals/judge-models.tsv: GH #510)'
+out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a haiku-history --label-b sonnet-rerun \
+  "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
+/usr/bin/grep -qF "judgeModel differs: haiku-history=haiku (default) vs sonnet-rerun=sonnet — $EXPECTED_NOTE" <<<"$out" \
+  && ok "per-eval judge: mismatch on a declared case is marked expected" \
+  || bad "per-eval judge: declared-case mismatch not marked expected"
+out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a sonnet-rerun --label-b haiku-history \
+  "$FIXTURES/judge-override-sonnet.json" "$FIXTURES/judge-override-haiku.json" 2>&1)
+/usr/bin/grep -qF "$EXPECTED_NOTE" <<<"$out" \
+  && ok "per-eval judge: marked expected with the declared judge on side A too" \
+  || bad "per-eval judge: side-A declared judge not marked expected"
+out=$(python3 "$DIFF_PY" --label-a haiku-history --label-b sonnet-rerun \
+  "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
+/usr/bin/grep -qF "$EXPECTED_NOTE" <<<"$out" \
+  && ok "per-eval judge: default --judge-models reads the repo's evals/judge-models.tsv" \
+  || bad "per-eval judge: the repo's evals/judge-models.tsv was not read by default"
+out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a fixture-a --label-b fixture-b \
+  "$FIXTURES/clean-a.json" "$FIXTURES/mismatch-b.json" 2>&1)
+/usr/bin/grep -qF 'judgeModel differs' <<<"$out" && ! /usr/bin/grep -qF 'expected:' <<<"$out" \
+  && ok "per-eval judge: undeclared cases keep the bare judgeModel WARN" \
+  || bad "per-eval judge: undeclared cases: judgeModel WARN missing or marked expected"
+out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a sonnet-rerun --label-b opus-run \
+  "$FIXTURES/judge-override-sonnet.json" "$FIXTURES/judge-override-opus.json" 2>&1)
+/usr/bin/grep -qF 'judgeModel differs' <<<"$out" && ! /usr/bin/grep -qF 'expected:' <<<"$out" \
+  && ok "per-eval judge: declared judge vs a non-haiku judge keeps the bare WARN" \
+  || bad "per-eval judge: non-haiku other side: judgeModel WARN missing or marked expected"
+out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS.missing" --label-a haiku-history --label-b sonnet-rerun \
+  "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
+status=$?
+[ "$status" -ne 0 ] && /usr/bin/grep -qF 'no such file' <<<"$out" \
+  && ok "per-eval judge: an explicit --judge-models path that does not exist is an error" \
+  || bad "per-eval judge: missing explicit --judge-models path accepted (exit $status)"
+printf '# no rows\n' > "$TMP_MODELS"
+out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
+  "$FIXTURES/judge-override-haiku.json" "$FIXTURES/judge-override-sonnet.json" 2>&1)
+/usr/bin/grep -qF 'judgeModel differs' <<<"$out" && ! /usr/bin/grep -qF 'expected:' <<<"$out" \
+  && ok "per-eval judge: no declaration, bare judgeModel WARN" \
+  || bad "per-eval judge: no declaration: judgeModel WARN missing or marked expected"
 
 # --- plugin-problem arm: must hard-fail, never print a comparison table ---
 out=$(python3 "$DIFF_PY" --label-a fixture-a --label-b fixture-b \
@@ -248,7 +290,7 @@ if os.path.isdir(root):
             print(os.path.join(root, d))
 " | while IFS= read -r stray; do trash "$stray" 2>/dev/null; done
 
-tmp_delete "$STUB_DIR" "$CLAUDE_STUB_LOG"
+tmp_delete "$STUB_DIR" "$CLAUDE_STUB_LOG" "$TMP_MODELS"
 
 echo "model-bench.sh self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

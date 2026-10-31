@@ -1203,6 +1203,16 @@ _quad_cmd="$(python3 -c 'print("x=$((cat <<EOF\nit'"'"'s\nEOF\n) )\n" * 28571 + 
 _timed_case 'GH #668 round 4: 800 KB of $(( heredoc lines denies in bounded time' 2 "$_quad_cmd"
 _deep_cmd="$(python3 -c 'print("\"$(\n" * 37000)')"
 _timed_case 'GH #668 round 4: 37000 nested "$( lines (148 KB) deny in bounded time' 2 "$_deep_cmd"
+# GH #685: a $(...) on line 1 then a line that opens a quote after <<EOF was allowed; bash runs line 1, then
+# fails on line 2. The controls drop the trailing ' (the verb's own deny) or the <<EOF (no tokenize).
+for _v in 'rm -rf build|rm -rf detected' 'git push --force origin main|git push --force overwrites'; do
+  test_deny_says "$IRRECOVERABLE" "GH #685: echo \$(${_v%|*}) | <<EOF'" "$(bash_payload "echo \$(${_v%|*})"$'\n'"<<EOF'")" \
+    'heredoc the gate reads unsure has no closing delimiter'
+  test_deny_says "$IRRECOVERABLE" "GH #685 control: echo \$(${_v%|*}) | <<EOF" "$(bash_payload "echo \$(${_v%|*})"$'\n<<EOF')" \
+    "${_v#*|}"
+  test_deny_says "$IRRECOVERABLE" "GH #685 control: echo \$(${_v%|*}) | '" "$(bash_payload "echo \$(${_v%|*})"$'\n'"'")" \
+    'could not safely tokenize'
+done
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 
@@ -3390,9 +3400,11 @@ _timed_case 'GH #693: a ${x:-$(rm -rf ~/x)} target after 9000 padding words deni
   "echo $(printf '${x:-$(date)} %.0s' $(seq 9000)) \${x:-\$(rm -rf ~/x)}"
 _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
   "echo $(printf '${x:-a %.0s' $(seq 20000))"
-# each nested funsub level appends its body blanked, not raw, so nested text is not read once per level
-_timed_case 'GH #693: 12 nested funsubs around 124 KB of words are read in bounded time' 0 \
-  "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 15500))$(printf '; }%.0s' $(seq 12))"
+# each nested funsub level appends its body blanked, not raw, so nested text is not read once per level.
+# GH #761: timed against one funsub around the same words, not a fixed 4 s (blanked ~2.7x, raw ~6.1x).
+_timed_ratio_case 'GH #693: 12 nested funsubs around 62 KB of words run within the hook timeout and 4x one funsub' 0 4 \
+  "echo \${ echo $(printf "'a}' x; %.0s" $(seq 7750)); }" \
+  "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 7750))$(printf '; }%.0s' $(seq 12))"
 
 # GH #702: the ${...} closer counted every "{" and ignored quotes, escapes and nested $(...)/backtick, so it
 # ended the word before bash (a "}" in a nested substitution) or after it (a "\{", a bare "{"), and a "#"

@@ -198,3 +198,15 @@ Targeted replay of every own-project command with a python/node heredoc or a tra
 10 rule hits on prose read as shell, each checked by hand: none calls a process API); 12 allow to deny: 2 real
 `trash *` / `trash "$HOME" ...`, the rest scripts whose process-API literals name a git verb (mostly gate tests). Padded 137-140 KB python heredocs:
 0.17-0.24 s (develop 0.25-0.35 s).
+
+## irrecoverable.py: virtualenv activation out of source-file (GH #595)
+
+The bypass hunt's F18: `source .venv/bin/activate` journaled `would_ask source-file`, so promoting the rule
+would ask on every venv activation, and those rows inflated the false-positive count the promotion is judged
+by. Operator decision 2026-10-31: `source`/`.` of one word whose last two path parts are `bin/activate`,
+`bin/activate.fish` or `bin/activate.csh`, after an optional `--`, is let through (`_venv_activate`). The word
+is read with its glued tokens joined (shlex cuts an unquoted `$VENV/bin/activate` in two, and an ask in either
+reading wins), so the directory may be quoted, a variable or a substitution (its body is checked as its own
+statement). Still asked: any second word
+(`source .venv/bin/activate x.sh`), `activate.sh`, `xbin/activate`, a bare `source activate` (old conda,
+found on PATH). The rule stays shadow.
