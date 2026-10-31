@@ -3803,4 +3803,12 @@ else
   echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
 fi
 
+# GH #691: in a subagent, a view no longer re-runs the body spawn scan (it could only end the view), so padding that
+# spends the spawn budget in the main reading no longer stops ifs-split before a later rm${IFS}-rf / git${IFS}reset.
+_pad691="eval '$(printf 'env a b c d e f g h i j k l m n o p q r s t u v w x y z ; %.0s' $(seq 240))true'; "
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then rm\${IFS}-rf b" "$(bash_agent_payload "${_pad691}rm\${IFS}-rf b" fork)"
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash -c 'rm\${IFS}-rf b'" "$(bash_agent_payload "${_pad691}bash -c 'rm\${IFS}-rf b'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then git\${IFS}reset --hard" "$(bash_agent_payload "${_pad691}git\${IFS}reset --hard" fork)"
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash -c 'claude -p x' (spawn still denied)" "$(bash_agent_payload "${_pad691}bash -c 'claude -p x'" fork)"
+test_allow "$IRRECOVERABLE" "GH #691 control: subagent, spawn-budget padding, then echo ok" "$(bash_agent_payload "${_pad691}echo ok" fork)"
 gates_summary

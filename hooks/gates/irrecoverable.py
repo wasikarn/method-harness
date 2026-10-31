@@ -3590,7 +3590,10 @@ def _scan_body(body):
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
-    if ("agent_id" in d) and not _ONLY_RULE_PASS_ON[0] and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
+    # GH #691: not in a view. There this rule-less deny only ends the view (_ViewStop), so the scan could never deny,
+    # yet it charged the spawn budget the main reading had nearly spent: once over, the view stopped before a later
+    # rm${IFS}-rf window. The main reading scans every body for a spawn.
+    if ("agent_id" in d) and not _ONLY_RULE_PASS_ON[0] and not _VIEW[0] and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
                               or _subst_spawn(body)):
         deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
