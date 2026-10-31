@@ -30,4 +30,19 @@ ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 # "${MH_PLUGIN_ROOT}/scripts/..." without producing double slashes.
 ROOT="${ROOT%/}"
 
+# GH #783: Claude Code keeps one sessionstart-hook-<n>.sh per hook position and
+# does not clear them on resume; after a plugin update shifts the hook order, a
+# stale sibling sourced later would win with the old root. Drop the export from
+# the other regular files in that dir (atomic temp+mv); any problem leaves the
+# file alone.
+ENV_DIR="$(dirname "$CLAUDE_ENV_FILE")"
+for f in "$ENV_DIR"/sessionstart-hook-*.sh; do
+  [ "$f" -ef "$CLAUDE_ENV_FILE" ] && continue
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  /usr/bin/grep -q '^export MH_PLUGIN_ROOT=' "$f" || continue
+  tmp="$(mktemp "$ENV_DIR/.mh-anchor.XXXXXX")" || continue
+  if /usr/bin/grep -v '^export MH_PLUGIN_ROOT=' "$f" > "$tmp"; [ "$?" -le 1 ] && mv -f "$tmp" "$f"; then :
+  else unlink "$tmp" 2>/dev/null; fi  # fallback: temp may already be gone
+done
+
 printf 'export MH_PLUGIN_ROOT=%q\n' "$ROOT" >> "$CLAUDE_ENV_FILE"
