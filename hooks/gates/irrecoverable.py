@@ -71,8 +71,10 @@ elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
             _b = -1.0
         if 0 <= _b < float("inf"):  # NaN fails both compares
             _budget = min(_b, 4.0)
+            if _b > 4.0:
+                print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is over 4; using 4 s".format(_bv), file=sys.stderr)
         else:
-            print("[mh:gate] MH_GATE_BATCH_BUDGET_S=%r is not a number >= 0; using 4 s" % _bv, file=sys.stderr)
+            print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is not a number >= 0; using 4 s".format(_bv), file=sys.stderr)
     _n = 0
     for _c in (_cmds if isinstance(_cmds, list) else []):
         _c = _c if isinstance(_c, str) else _c.get("command") if isinstance(_c, dict) else None
@@ -84,7 +86,7 @@ elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
                        "checked; confirm the batch, or split it into smaller batches" % _budget)
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                                      "permissionDecisionReason": _reason}}))
-            journal(GATE_ID, _tn, "ask", d.get("session_id"), rule="batch-budget")
+            journal(GATE_ID, _tn, "ask", d.get("session_id"))  # structural, no rule id (repo-gotchas.md)
             sys.exit(0)
         _sub = dict(d, tool_input={"command": _c})
         _r = subprocess.run([sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"), "irrecoverable"],
