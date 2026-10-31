@@ -3888,12 +3888,10 @@ test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; bash -c "$X -p x"' "$(
 test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; $X -p x' "$(bash_agent_payload 'X=claude; $X -p x' fork)"
 test_deny  "$IRRECOVERABLE" 'GH #798: subagent: claude${IFS}-p${IFS}x' "$(bash_agent_payload 'claude${IFS}-p${IFS}x' fork)"
 test_deny  "$IRRECOVERABLE" "GH #798: subagent, spawn-budget padding, then bash\${IFS}-c 'claude -p x'" "$(bash_agent_payload "${_pad691}bash\${IFS}-c 'claude -p x'" fork)"
-test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: claude${IFS}--help' "$(bash_agent_payload 'claude${IFS}--help' fork)"
-test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: bash -c '"'"'claude${IFS}--version'"'"'' "$(bash_agent_payload 'bash -c '"'"'claude${IFS}--version'"'"'' fork)"
 test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=echo; bash -c "$X -p x"' "$(bash_agent_payload 'X=echo; bash -c "$X -p x"' fork)"
 test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=claude; echo $X -p x' "$(bash_agent_payload 'X=claude; echo $X -p x' fork)"
 test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: bash${IFS}-c '"'"'echo hi'"'"'' "$(bash_agent_payload 'bash${IFS}-c '"'"'echo hi'"'"'' fork)"
-# GH #798 review: the $IFS re-check reads only an unquoted, unescaped plain $IFS / ${IFS}, and not when IFS is set;
+# GH #798 review: no $IFS re-check drops a raw spawn finding (it hid ${IFS%..}, ${IFS/?/-p hi} and X=a${IFS}b claude -p);
 # the views scan only the statements they changed, so a script changed near each end is not refused as too dense.
 test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: echo '"'"'${IFS%'"'"' ; claude -p x ; echo '"'"'}'"'"'' "$(bash_agent_payload 'echo '"'"'${IFS%'"'"' ; claude -p x ; echo '"'"'}'"'"'' fork)"
 test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: echo \${IFS%; claude -p x; echo }' "$(bash_agent_payload 'echo \${IFS%; claude -p x; echo }' fork)"
@@ -3907,4 +3905,8 @@ mkdir -p \"\$OUT\"
 $(for i in $(seq 0 135); do printf 'cp src/file_%s.txt "$OUT/" \&\& echo copied %s\n' $i $i; done)"
 test_allow "$IRRECOVERABLE" "GH #798 review control: subagent: a 6 KB script that sets OUT twice" "$(bash_agent_payload "$_s798" fork)"
 test_deny  "$IRRECOVERABLE" "GH #798 review: subagent: the same script, then C=claude; \$C -p x" "$(bash_agent_payload "$_s798"$'\nC=claude; $C -p x' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: X=a${IFS}b claude -p hi' "$(bash_agent_payload 'X=a${IFS}b claude -p hi' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: X=${IFS}z claude -p hi' "$(bash_agent_payload 'X=${IFS}z claude -p hi' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: echo hi | X=a${IFS}b claude -p' "$(bash_agent_payload 'echo hi | X=a${IFS}b claude -p' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: eval '"'"'X=a${IFS}b claude -p hi'"'"'' "$(bash_agent_payload 'eval '"'"'X=a${IFS}b claude -p hi'"'"'' fork)"
 gates_summary

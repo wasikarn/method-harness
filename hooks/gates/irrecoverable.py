@@ -1423,21 +1423,7 @@ def _spawn_drop_escapes(c):
         return " " * (len(w) - len(u)) + u
     return _SPAWN_WORD_RE.sub(word, c)
 
-_IFS_SPAWN_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")  # the plain forms only: an operator form builds any text
-
 def _nested_spawn(c, overlap):
-    found = _nested_spawn_raw(c, overlap)
-    if found and not _spawn_over_budget and "IFS" in c and not re.search(r"(?<![\w$])IFS\+?=", c):
-        # GH #798: the raw text reads an unknown `${IFS}--help` word as a possible spawn flag; bash splits it, so a
-        # finding must hold on the text with each unquoted, unescaped plain $IFS / ${IFS} read as a blank too
-        # (`claude${IFS}-p x` still does). Not when the command sets IFS, and never ${IFS%..} and the like
-        # (review: `${IFS/?/-p hi}` is `-p hi`, and a quoted `${IFS%` could swallow a real claude up to a `}`).
-        mask = _quote_mask(c)
-        v = _IFS_SPAWN_RE.sub(lambda m: m.group(0) if mask[m.start()] else " " * len(m.group(0)), c)
-        return v == c or _spawn_over_budget or _nested_spawn_raw(v, overlap)
-    return found
-
-def _nested_spawn_raw(c, overlap):
     c = _spawn_drop_escapes(c)
     j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, c)
     return _nested_spawn_text(j, overlap) or (j != c and _nested_spawn_text(c, overlap))
