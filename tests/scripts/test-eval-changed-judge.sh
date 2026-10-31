@@ -36,7 +36,7 @@ case_md zz-case3 "zz-skill" "Grep"
 case_md zz-zz-case "zz-zz" "Read"
 printf 'ideate-case\tfable\tGH #3\nzz-case\tsonnet\tGH #1\nzz-case3\topus\tGH #2\n' >"$R/evals/judge-models.tsv"
 for t in ideate zz-skill zz-zz; do mkdir -p "$R/skills/x/$t"; echo a >"$R/skills/x/$t/SKILL.md"; done
-git -C "$R" init -q && git -C "$R" add . && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init \
+git -C "$R" init -q && git -C "$R" add . && git -C "$R" -c user.name=t -c user.email=t@t -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm init \
   || { echo "test-eval-changed-judge: fixture commit failed" >&2; exit 1; }
 for t in ideate zz-skill zz-zz; do echo b >>"$R/skills/x/$t/SKILL.md"; done
 
