@@ -1,0 +1,7 @@
+# Per-eval judge model (GH #510). `claude plugin eval` takes only a run-wide --judge-model
+# (default haiku), so a case listed here also gets its own run with --judge-model <model>:
+# scripts/eval-changed.sh prints that run, and model-bench-diff.py marks the judgeModel
+# mismatch against older haiku-judged history of the case as expected. Read by
+# scripts/_lib/eval_judge_models.py; evals/README.md "Judge model" has the decision record.
+# case<TAB>judge model<TAB>reason
+perf-regression-routing	sonnet	GH #510
