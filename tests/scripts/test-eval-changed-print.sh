@@ -47,7 +47,9 @@ paste_in() {
   case "$1" in
     bash-c) bash -c "$2" ;;
     bash-i) HISTFILE=/dev/null no_tty bash --norc --noprofile -i <<<"$2" 2>&1 ;;
-    zsh-i) HISTFILE=/dev/null no_tty zsh -f -i <<<"$2" ;;
+    # zsh -f still reads /etc/zshenv, which may rebuild PATH: restate it first, so the paste
+    # reaches the stub claude and never a real one.
+    zsh-i) HISTFILE=/dev/null no_tty zsh -f -i <<<"PATH=$(printf '%q' "$PATH")"$'\n'"$2" ;;
   esac
 }
 shells="bash-c bash-i"

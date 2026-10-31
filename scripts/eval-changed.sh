@@ -100,7 +100,9 @@ print(','.join(sorted(tools)))
       echo "== $tag: $case, judged by $model (evals/judge-models.tsv) =="
       with_default_enabled_true "${jcmd[@]}" </dev/null || rc=1
     else
-      echo "# $case: judged by $model (evals/judge-models.tsv); read its score from this run"
+      # A `:` no-op, not a `#` comment: zsh runs a pasted `#` line as a command unless
+      # interactivecomments is set, and the old hint's `; read ...` then ate the judge line.
+      printf ': %s\n' "$(shell_word "$case: judged by $model (evals/judge-models.tsv); read its score from the next line")"
       # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
       print_wrapped "${jcmd[@]}"
     fi
