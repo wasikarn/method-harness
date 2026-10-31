@@ -3638,6 +3638,21 @@ for _c in 'git push -f origin a:feat b:main' 'git push origin +HEAD:production' 
   test_deny "$IRRECOVERABLE" "force-push v3 deny: $_c" "$(bash_payload "$_c")"
 done
 
+# GH #750: the Bash tool sources the user's shell snapshot, so oh-my-zsh's git-plugin push aliases and
+# functions run `git push`. Each is read as its git push text; none gets the strict force-push allow.
+for _c in 'gp -f' 'gpf' 'ggp -f' 'gpu --force' \
+  'gp -f origin main' 'gpd -f origin main' 'gpf origin feat' 'gpf! origin feat' 'gpsup -f' 'gpsupf' \
+  'gpv -f origin main' 'gpoat -f' 'gpod -f origin x' 'ggpush -f' 'gpu -f main' 'ggf' 'ggf feat' 'ggfl feat' \
+  'ggp --force main' 'gp origin +HEAD:main' 'gp --mirror origin' 'gpod main' 'gp origin :develop' \
+  'sudo gp -f origin main' 'env gp -f origin main' "sh -c 'gpf! origin feat'" 'echo x && gp -f origin main' \
+  '"gp" -f origin main' 'gp -f origin HEAD:feat' 'ggp -f origin HEAD:feat'; do
+  test_deny "$IRRECOVERABLE" "GH #750 push alias: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'gp' 'gp origin feat' 'gpu' 'ggp' 'ggp feat' 'gpsup' 'gpd origin main' 'gpv' 'ggpush' 'gpoat' \
+  'gpod feat' 'gpg --verify x.sig' 'echo gp -f' 'git push origin HEAD:feat'; do
+  test_allow "$IRRECOVERABLE" "GH #750 push alias control: $_c" "$(bash_payload "$_c")"
+done
+
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
