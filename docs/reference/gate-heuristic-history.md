@@ -210,3 +210,16 @@ reading wins), so the directory may be quoted, a variable or a substitution (its
 statement). Still asked: any second word
 (`source .venv/bin/activate x.sh`), `activate.sh`, `xbin/activate`, a bare `source activate` (old conda,
 found on PATH). The rule stays shadow.
+
+## irrecoverable.py: shell push aliases (GH #750)
+
+The gate read `git push` by its literal words, while the Bash tool sources the user's shell snapshot, so
+oh-my-zsh's git plugin aliases ran a forced push unseen (`gp -f`, `gpf`, `ggp -f`, `gpu --force` were allowed
+on develop 83604e12). Operator decision 2026-10-31: a fixed list, no general alias model. `_SHELL_PUSH_ALIASES`
+holds the 14 push words the plugin defines (11 aliases, the functions `ggf`, `ggfl`, `ggp`), each mapped to the
+git push words it runs, `$(git_current_branch)` as PH; the expansions were checked against the plugin source
+with bash and an argv-logging git stub. The command word is expanded after the wrapper walk, so every git push
+rule (force, mirror, delete-protected) applies with its own rule id; the fast path routes any `gp` or `ggf`
+substring to python. Accepted over-denies: the strict force-push allow reads the raw text, so a forced alias
+push never gets it (`gp -f origin HEAD:feat` denies: write the `git push` form); and a wrapped or quoted alias
+(`sudo gp -f`, `"gp" -f`), which no shell expands, denies too. Not covered: a user's own alias or function.
