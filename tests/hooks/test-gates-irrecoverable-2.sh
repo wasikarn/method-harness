@@ -3708,4 +3708,48 @@ test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo foo\ $(echo '"'"'a;g
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: trash $(echo '"'"'~/{.,x}'"'"')' "$(bash_payload 'trash $(echo '"'"'~/{.,x}'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo "x $(echo '"'"' -rf'"'"')"' "$(bash_payload 'echo "x $(echo '"'"' -rf'"'"')"')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 3 control: a $(...) inside '"'"'...'"'"' is data to the split copy' "$(bash_payload 'echo '"'"'see $(echo "'"'"'") && git reset --hard '"'"'"\'"'"'')"
+# GH #769/#770: Monitor and context-mode's ctx_execute tools run shell too; the gate judges it like Bash.
+_CTX=mcp__plugin_context-mode_context-mode__ctx
+test_deny  "$IRRECOVERABLE" "GH #769: Monitor rm -rf" '{"tool_name":"Monitor","tool_input":{"command":"rm -rf /tmp/x"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor ws payload" '{"tool_name":"Monitor","tool_input":{"ws":"ws://localhost:1/rm"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor harmless" '{"tool_name":"Monitor","tool_input":{"command":"tail -f log | grep rm"}}'
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute shell rm -rf" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute javascript holding rm -rf text" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"javascript\",\"code\":\"console.log('rm -rf /')\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute_file shell rm -rf" "{\"tool_name\":\"${_CTX}_execute_file\",\"tool_input\":{\"path\":\"a.log\",\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute one harmless, one rm -rf" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"label\":\"a\",\"command\":\"ls\"},{\"label\":\"b\",\"command\":\"rm -rf /tmp/x\"}],\"queries\":[\"rm -rf\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute heredoc opener cannot hide the next command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"cat <<EOF\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute all harmless (rm only in queries)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}],\"queries\":[\"rm -rf\"]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute missing code field" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute non-command entries do not crash" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":5},null,7,{\"label\":\"rm\"}]}}"
+# context-mode's coerceCommandsArray runs these shapes too: a string item, a bare string, a JSON-array string.
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute string item" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[\"ls\",\"rm -rf /tmp/x\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a JSON-array string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"[{\\\"label\\\":\\\"a\\\",\\\"command\\\":\\\"rm -rf /tmp/x\\\"}]\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute harmless bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"git status\"}}"
+# Each command is judged with the outer payload's fields, so a subagent's nested claude spawn is still denied.
+test_deny  "$IRRECOVERABLE" "GH #770: subagent ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"agent_id\":\"a1\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"claude -p hi\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: main-session ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"claude -p hi\"}]}}"
+# A batch that outruns the time budget asks for the rest instead of allowing it.
+# The first command is always judged; a bad budget value falls back to the 4 s default, never crashes or disables it.
+export MH_GATE_BATCH_BUDGET_S=0
+test_ask_says "$IRRECOVERABLE" "GH #770: ctx_batch_execute over its time budget asks" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"rm -rf /tmp/x\"}]}}" "time budget"
+test_deny  "$IRRECOVERABLE" "GH #770: budget 0 still judges the first command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"rm -rf /tmp/x\"},{\"command\":\"ls\"}]}}"
+for _bv in abc nan inf -1 4s; do
+  export MH_GATE_BATCH_BUDGET_S="$_bv"
+  test_deny  "$IRRECOVERABLE" "GH #770: budget '$_bv' uses the default (rm -rf denied)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
+  test_allow "$IRRECOVERABLE" "GH #770: budget '$_bv' uses the default (git status allowed)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}]}}"
+done
+unset MH_GATE_BATCH_BUDGET_S
+# GH #769/#770: the coverage itself lives in hooks.json's matcher (the gate reads tool_input.command for any tool).
+if python3 -c '
+import json, sys
+names = {"Bash", "Monitor"} | {"mcp__plugin_context-mode_context-mode__ctx_" + t for t in ("execute", "execute_file", "batch_execute")}
+hooks = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
+m = [e["matcher"] for e in hooks if any("gates/irrecoverable.sh" in h.get("command", "") for h in e["hooks"])]
+sys.exit(not (len(m) == 1 and names <= set(m[0].split("|"))))' "$ROOT/hooks/hooks.json"; then
+  echo "  ✅ hooks.json: irrecoverable.sh matcher covers Bash, Monitor and the three ctx tools"; pass=$((pass + 1))
+else
+  echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
+fi
+
 gates_summary
