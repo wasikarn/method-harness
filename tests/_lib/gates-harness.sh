@@ -313,9 +313,10 @@ _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 # GH #761: a cost that must not grow with some factor (nesting depth) is checked against a baseline of
 # the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
 # python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
-# only skews the ratio, so a timing miss is measured up to twice more before it fails (a wrong rc fails at
-# once, as it does not depend on timing, except a gate-deadline ask on a row that wants a deny: see below). The command must also finish under the gate's hook timeout (read from
-# hooks/hooks.json), past which the hook allows: a slowdown both runs share keeps the ratio.
+# only skews the ratio, so a timing miss is measured once more before it fails (twice more on a row that
+# wants a deny, see below); a wrong rc fails at once, as it does not depend on timing. The command must
+# also finish under the gate's hook timeout (read from hooks/hooks.json), past which the hook allows: a
+# slowdown both runs share keeps the ratio.
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
   local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil jerr seen="" out bout late
   # a trial run, not `command -v`: a jq on PATH that cannot run (a wrong-architecture binary), or some other
@@ -335,9 +336,10 @@ _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <co
     echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return
   fi
   # The gate's own deadline (DEADLINE_SECS) asks, rc 0, on one loaded run. On a row that wants a deny that
-  # is a timing miss too: it gets the next try and never passes, and a real slowdown asks on every try. A
-  # row that wants rc 0 still reads such an ask as rc 0, as before this retry (the GH #693 row asks under load).
-  for try in 1 2 3; do
+  # is a timing miss too: it gets a third try and never passes, and a real slowdown asks on every try. A row
+  # that wants rc 0 keeps two tries and still reads such an ask as rc 0 (the GH #693 row asks under load).
+  local tries="1 2"; [[ "$want" == 0 ]] || tries="1 2 3"
+  for try in $tries; do
     t0=$(_ratio_now)
     bout=$(bash_payload "$base" | timeout 10 bash "$IRRECOVERABLE" 2>/dev/null); brc=$?
     t1=$(_ratio_now)
