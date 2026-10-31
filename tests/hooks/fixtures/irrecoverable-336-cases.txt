@@ -127,6 +127,24 @@ WOULD_ASK source-file .<in x.sh
 WOULD_ASK source-file .>/dev/null x.sh
 WOULD_ASK source-file .&>/dev/null x.sh
 WOULD_ASK source-file case a in a). x.sh;; esac
+# GH #595: activating a virtualenv is routine: one path ending bin/activate, bin/activate.fish or
+# bin/activate.csh, in either spelling, is not asked about
+ALLOW source .venv/bin/activate
+ALLOW . .venv/bin/activate
+ALLOW source venv/bin/activate.fish
+ALLOW . ~/envs/x/bin/activate.csh
+ALLOW source bin/activate
+ALLOW source "$VENV/bin/activate"
+ALLOW . "my env/bin/activate"
+ALLOW source .venv/bin/activate && pytest -q
+# a substitution in the directory is still checked as its own statement
+DENY source $(rm -rf build)/bin/activate
+WOULD_ASK source-file source .venv/bin/activate.sh
+WOULD_ASK source-file source .venv/xbin/activate
+WOULD_ASK source-file . .venv/bin/activate.d/x.sh
+WOULD_ASK source-file source .venv/bin/activate x.sh
+WOULD_ASK source-file source activate
+WOULD_ASK source-file source .venv/bin/activate && . ./setup.sh
 ALLOW cp -r . /tmp/x
 ALLOW ls -la .
 ALLOW echo done. next
