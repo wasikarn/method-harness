@@ -28,12 +28,16 @@ SH
 chmod +x "$TMP/claude"
 export EC_ARGS="$TMP/args" EC_N="$TMP/n"
 
-# paste <shell> <line>: run <line> as a user pasting it into <shell> would.
+# paste <shell> <line>: run <line> as a user pasting it into <shell> would. The interactive shells
+# run in a new session (no controlling terminal): from a terminal's background job (merge-pr.sh &)
+# they would try to take the terminal and be stopped, hanging the gauntlet. python3, as macOS
+# has no setsid(1).
+no_tty() { python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
 paste_in() {
   case "$1" in
     bash-c) bash -c "$2" ;;
-    bash-i) HISTFILE=/dev/null bash --norc --noprofile -i <<<"$2" 2>&1 ;;
-    zsh-i) HISTFILE=/dev/null zsh -f -i <<<"$2" ;;
+    bash-i) HISTFILE=/dev/null no_tty bash --norc --noprofile -i <<<"$2" 2>&1 ;;
+    zsh-i) HISTFILE=/dev/null no_tty zsh -f -i <<<"$2" ;;
   esac
 }
 shells="bash-c bash-i"
