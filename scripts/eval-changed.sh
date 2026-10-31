@@ -37,6 +37,23 @@ if [ -z "$tags" ]; then
 fi
 
 . scripts/_lib/eval-default-enabled.sh
+
+# shell_word <arg>: <arg> as one shell word, bare when it holds only safe characters, else
+# single-quoted with each ' written as '\''. print_wrapped <argv...>: the evals/README.md
+# run-block form of `with_default_enabled_true <argv...>`, quoted so the pasted line runs exactly
+# <argv...> (an allowed_tools entry from frontmatter can hold spaces, parens or shell syntax).
+shell_word() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_./:@,=+-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+print_wrapped() {
+  local inner="source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true" arg
+  for arg in "$@"; do inner+=" $(shell_word "$arg")"; done
+  printf 'bash -c %s\n' "$(shell_word "$inner")"
+}
+
 # Tags whose cases load an mh agent or skill through the plugin: eval sandboxes load no user
 # settings, so without the defaultEnabled flip they silently score a no-plugin fallback (the
 # run block in evals/README.md wraps the same five).
@@ -71,7 +88,7 @@ print(','.join(sorted(tools)))
     fi
   elif [ "$wrap" -eq 1 ]; then
     # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
-    printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${cmd[*]}"
+    print_wrapped "${cmd[@]}"
   else
     printf '%q ' "${cmd[@]}"; echo
   fi
@@ -90,7 +107,7 @@ print(','.join(sorted(tools)))
     else
       echo "# $case: judged by $model (evals/judge-models.tsv); read its score from this run"
       # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
-      printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${jcmd[*]}"
+      print_wrapped "${jcmd[@]}"
     fi
   done <<< "$overrides"
 done <<< "$tags"
