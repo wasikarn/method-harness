@@ -95,5 +95,11 @@ out=$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 python3 "$PY" for-tag utf8 --e
 [ "$out" = "$(printf 'utf8-case\tsonnet\tRead')" ] \
   && ok "for-tag reads a UTF-8 prompt.md under an ASCII locale" || bad "for-tag under an ASCII locale: got '$out'"
 
+printf '\xef\xbb\xbf---\nname: bom-case\ntags: [bom]\nallowed_tools: [Grep]\n---\nask\n' > "$TMP/evals/utf8-case/prompt.md"
+printf 'utf8-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
+out=$(python3 "$PY" for-tag bom --evals "$TMP/evals" 2>&1)
+[ "$out" = "$(printf 'utf8-case\tsonnet\tGrep')" ] \
+  && ok "for-tag reads the frontmatter of a BOM-prefixed prompt.md" || bad "for-tag on a BOM-prefixed prompt.md: got '$out'"
+
 echo "eval_judge_models.py self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
