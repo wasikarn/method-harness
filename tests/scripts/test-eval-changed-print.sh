@@ -27,6 +27,7 @@ echo $(( $(cat "$EC_N") + 1 )) >"$EC_N"
 SH
 chmod +x "$TMP/claude"
 export EC_ARGS="$TMP/args" EC_N="$TMP/n"
+mkdir -p "$TMP/stubbin" && cp "$TMP/claude" "$TMP/stubbin/"
 
 # paste <shell> <line>: run <line> as a user pasting it into <shell> would. The interactive shells
 # run in a new session (no controlling terminal): from a terminal's background job (merge-pr.sh &)
@@ -92,7 +93,28 @@ check_fixture() {
         || { bad "$1: $kind: pasting the printed line into $sh ran \$(touch PWNED)"; tmp_delete "$R/PWNED"; }
     done
   done
+  # The whole printed block, hint line included, as a user pastes it: both runs must happen. With
+  # zsh's default (no interactivecomments) a `# ...; read ...` hint ran `read`, which swallowed
+  # the judge line below it.
+  for sh in $shells; do
+    echo 0 >"$EC_N"; : >"$EC_ARGS.0"; : >"$EC_ARGS.1"
+    (cd "$R" && PATH="$R/bin:$PATH" paste_in "$sh" "$(cat "$TMP/print.out")") >"$TMP/paste.out" 2>&1
+    if /usr/bin/grep -qx -- '--tag' "$EC_ARGS.0" && /usr/bin/grep -qx -- '--case' "$EC_ARGS.1"; then
+      ok "$1: the whole printed block pasted into $sh runs the tag run, then the judge run"
+    else
+      bad "$1: the whole printed block pasted into $sh: $(cat "$EC_N") claude call(s); output: $(cat "$TMP/paste.out")"
+    fi
+  done
 }
+
+# An interactive paste must reach the stub claude, never a real one: zsh -f still reads
+# /etc/zshenv, and one that rebuilds PATH would make the paste checks below paid eval runs.
+for sh in $shells; do
+  [ "$sh" = bash-c ] && continue
+  got=$(PATH="$TMP/stubbin:$PATH" paste_in "$sh" 'command -v claude' 2>&1)
+  /usr/bin/grep -qF "$TMP/stubbin/claude" <<<"$got" && ok "$sh resolves claude to the stub on the paste's PATH" \
+    || { bad "$sh does not resolve claude to the stub (a zshenv or rc file reset PATH): $got"; exit 1; }
+done
 
 # The tag run's list is the sorted union over the tag's cases; the judge run keeps frontmatter order.
 check_fixture apostrophe 'Bash(git log:*), Read, $(touch${IFS}PWNED), it'\''s' \
