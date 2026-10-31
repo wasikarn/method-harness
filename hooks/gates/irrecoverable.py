@@ -23,6 +23,44 @@ except Exception as _e:
 
 GATE_ID = "gate:bash:irrecoverable"
 
+# GH #771: the gate's own wall-clock limit, well under hooks.json's 8 s timeout (a timed-out PreToolUse
+# hook lets the tool call run). On expiry it asks, never allows; os._exit also cuts short a git call in
+# flight. MH_IRR_DEADLINE_SECS (test-only) can only shorten it.
+DEADLINE_SECS = 4.0
+try:
+    _dl = float(os.environ.get("MH_IRR_DEADLINE_SECS", ""))
+except ValueError:
+    _dl = 0.0
+
+def _deadline_hit(signum, frame):
+    try:
+        if not globals().get("_ASKED"):  # an ask already printed stands; a second JSON object is invalid
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                "permissionDecisionReason": "[mh:gate] irrecoverable: ran out of time (" + format(_DEADLINE, "g")
+                + " s) checking this command - confirm with user first, or split it into smaller commands"}}))
+        sys.stdout.flush()
+        _d = globals().get("d")
+        _d = _d if isinstance(_d, dict) else {}
+        journal(GATE_ID, _d.get("tool_name"), "ask", _d.get("session_id"), rule="deadline")
+    finally:
+        os._exit(0)
+
+_DEADLINE = _dl if 0 < _dl < DEADLINE_SECS else DEADLINE_SECS
+try:
+    import signal
+    signal.signal(signal.SIGALRM, _deadline_hit)
+    signal.setitimer(signal.ITIMER_REAL, _DEADLINE)
+except (ImportError, AttributeError, ValueError, OSError):
+    pass  # no SIGALRM on this platform: onFailure block in hooks.json still stops a timeout from allowing
+
+def _disarm():
+    # Before every exit: a timer firing during shutdown (default SIGALRM, rc 142) or a deny's unwind (ask)
+    # would replace the decision already made.
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except Exception:
+        pass  # fallback: no timer was armed on this platform
+
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -32,10 +70,72 @@ except Exception:
 # tool_input:null). irrecoverable.sh short-circuits empty stdin and payloads
 # with no destructive token before python runs, so those allow by design.
 if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
+    _disarm()
     print("[mh:gate] BLOCKED: malformed PreToolUse payload — failing closed", file=sys.stderr)
     # d may be None or a non-dict here -- pass literals, never d.get(...).
     journal(GATE_ID, None, "deny", None)
     sys.exit(2)
+
+# GH #769/#770: Monitor carries tool_input.command like Bash (a "ws" Monitor has none); context-mode's
+# ctx_execute(_file) runs tool_input.code as shell only for language "shell"; ctx_batch_execute runs each
+# commands[].command, judged one per run so one command can't hide the next (an open heredoc); the strictest wins.
+# Each run gets the outer payload (agent_id, cwd, tool_name) with only tool_input swapped; having no "commands",
+# it takes the plain path below.
+_tn = str(d.get("tool_name") or "")
+_ti = d["tool_input"]
+if _tn.endswith(("__ctx_execute", "__ctx_execute_file")):
+    _ti["command"] = _ti.get("code", "") if _ti.get("language") == "shell" else ""
+elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
+    import subprocess, time
+    # Mirrors context-mode 1.0.169's coerceCommandsArray (src/server.ts): a non-blank string is JSON-parsed
+    # if it gives a list, else lifted to [str]; a string item is its own command.
+    _cmds = _ti["commands"]
+    if isinstance(_cmds, str) and _cmds.strip():
+        try:
+            _p = json.loads(_cmds)
+        except Exception:
+            _p = None
+        _cmds = _p if isinstance(_p, list) else [_cmds]
+    _ask = ""
+    _t0 = time.monotonic()
+    # 4 s of the hook's 8 s timeout. MH_GATE_BATCH_BUDGET_S (tests) only shortens it; a value that is not a
+    # finite number >= 0 falls back to 4. The first command is always judged, so a budget of 0 checks just that one.
+    # A batch padded past the budget turns a later command's deny into an ask, never an allow.
+    _budget = 4.0
+    _bv = os.environ.get("MH_GATE_BATCH_BUDGET_S")
+    if _bv:
+        try:
+            _b = float(_bv)
+        except ValueError:
+            _b = -1.0
+        if 0 <= _b < float("inf"):  # NaN fails both compares
+            _budget = min(_b, 4.0)
+            if _b > 4.0:
+                print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is over 4; using 4 s".format(_bv), file=sys.stderr)
+        else:
+            print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is not a number >= 0; using 4 s".format(_bv), file=sys.stderr)
+    _n = 0
+    for _c in (_cmds if isinstance(_cmds, list) else []):
+        _c = _c if isinstance(_c, str) else _c.get("command") if isinstance(_c, dict) else None
+        if not isinstance(_c, str):
+            continue
+        _n += 1
+        if _n > 1 and time.monotonic() - _t0 > _budget:
+            _reason = ("[mh:gate] ctx_batch_execute: the gate's %gs time budget ran out before every command was "
+                       "checked; confirm the batch, or split it into smaller batches" % _budget)
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                                     "permissionDecisionReason": _reason}}))
+            journal(GATE_ID, _tn, "ask", d.get("session_id"))  # structural, no rule id (repo-gotchas.md)
+            sys.exit(0)
+        _sub = dict(d, tool_input={"command": _c})
+        _r = subprocess.run([sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"), "irrecoverable"],
+                            input=json.dumps(_sub), capture_output=True, text=True)
+        sys.stderr.write(_r.stderr)
+        if _r.returncode != 0:
+            sys.exit(2)  # a deny, or a crash: fail closed
+        _ask = _ask or _r.stdout
+    sys.stdout.write(_ask)
+    sys.exit(0)
 
 # Force-push spec v3 (2026-10-30): the one allowed force push is a WHOLE command, read before any view,
 # rewrite or tokenizing, that is a single plain `git [-C path] push [opts] <remote> <src:dst>...` over an
@@ -1531,6 +1631,7 @@ def _deny_nested_spawn():
         raise _ViewStop
     if _ONLY_RULE_PASS_ON[0]:
         return  # the enforced view pass reads only the _VIEW_ENFORCED rules: no spawn scan, so no spawn-scan budget (review 8)
+    _disarm()
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1663,6 +1764,7 @@ def deny(reason, rule=None, hint=None):
         if rule is None:  # every rule-less confirm deny is a tokenizer/complexity refusal
             reason += "; split it into simpler separate commands"
         reason += "; if nobody can confirm, skip this step, keep going on the rest, and list it for the user in your final report"
+    _disarm()
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
     # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
@@ -1681,10 +1783,12 @@ def ask(reason, rule=None):
     # In a view (GH #336) an ask adds nothing once the command already asks.
     if (_ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
-    _ASKED.append(reason)
+    # Print before append (GH #771): a deadline signal between them then emits a second ask, invalid
+    # output that onFailure blocks, instead of seeing _ASKED set and exiting with nothing printed (allow).
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "ask",
                                              "permissionDecisionReason": reason}}))
+    _ASKED.append(reason)
     journal(GATE_ID, d.get("tool_name"), "ask", d.get("session_id"), rule=_VIEW[0] or rule)
 
 def delete_hint():
@@ -3587,6 +3691,24 @@ KNOWN_GIT_SUBS = ("push", "reset", "clean", "restore", "checkout", "switch", "br
 
 _DELETE_PROTECTED = ("main", "master", "develop")
 
+# GH #750 (operator decision 2026-10-31): the Bash tool sources the user's shell snapshot, so oh-my-zsh's git
+# plugin push aliases and functions are live command words. A command word from this fixed list is read as the
+# git push it runs, the user's words appended; PH stands for $(git_current_branch). gpoat runs `git push origin
+# --all && git push origin --tags`: only the second takes the user's words. The strict force-push allow
+# (_FORCE_PUSH_OK) reads the raw text, so a forced alias push never gets it. A user's own alias is not covered.
+# Review of PR #774: `g` is the plugin's `alias g='git'`, so every git rule reads it; ggpnp pulls, then runs ggp
+# with the same words; grename OLD NEW runs `git push origin :OLD`, a remote delete (_check_window builds it).
+_SHELL_PUSH_ALIASES = {
+    "g": [], "ggpnp": ["push", "origin"],
+    "gp": ["push"], "gpd": ["push", "--dry-run"], "gpf!": ["push", "--force"],
+    "gpf": ["push", "--force-with-lease", "--force-if-includes"],
+    "gpsup": ["push", "--set-upstream", "origin", PH],
+    "gpsupf": ["push", "--set-upstream", "origin", PH, "--force-with-lease", "--force-if-includes"],
+    "gpv": ["push", "--verbose"], "gpoat": ["push", "origin", "--tags"], "gpod": ["push", "origin", "--delete"],
+    "ggpush": ["push", "origin", PH], "gpu": ["push", "upstream"],
+    "ggf": ["push", "--force", "origin"], "ggfl": ["push", "--force-with-lease", "origin"], "ggp": ["push", "origin"],
+}
+
 def _protected_ref(name):
     # main/master/develop as the last path part, any case: "origin/main", "refs/heads/Develop".
     return name.rstrip("/").rsplit("/", 1)[-1].lower() in _DELETE_PROTECTED
@@ -4095,9 +4217,14 @@ _VENV_ACTIVATE_RE = re.compile(r"(?:^|/)bin/activate(?:\.fish|\.csh)?\Z")
 
 def _venv_activate(rest):
     # Glued runs joined, so an unquoted `$VENV/bin/activate` is one word; a leading `--` is source's own.
+    # GH #768: a first token glued to argv0 (`source$X/bin/activate`) is one shell word with it, not a path.
+    if isinstance(rest[0], _Glued):
+        return False
     words = _shell_words(rest)
     if words[:1] == ["--"]:
         words = words[1:]
+    elif words[0].startswith("-"):  # an option word (`--$X/bin/activate`): sources only when $X splits
+        return False
     return len(words) == 1 and bool(_VENV_ACTIVATE_RE.search(words[0]))
 
 # trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
@@ -5019,6 +5146,12 @@ def _check_window(_wi, w):
             argv0, o = basename(rest[i]), i + 1
 
     rest = rest[o:]
+    if argv0 in _SHELL_PUSH_ALIASES:  # GH #750: after the wrappers, so `sudo gp -f` reads as a git push too
+        argv0, rest = "git", _SHELL_PUSH_ALIASES[argv0] + rest
+    elif argv0 == "grename" and rest:  # its second push takes NEW as one word: `grename x -f` force-pushes
+        _WDEPTH[len(windows)] = _cur_depth
+        windows.append(["git", "push", "--set-upstream", "origin"] + rest[1:2])
+        argv0, rest = "git", ["push", "origin", ":" + rest[0]]
 
     _unwrap_shell(argv0.replace(PH, ""), rest)  # `s$(true)h -c` is still sh
     _ib = _interp_body(argv0.replace(PH, ""), rest)  # GH #608
@@ -5881,4 +6014,5 @@ for _VIEW[0], _text in _views():
         if _VIEW[0] in _VIEW_ENFORCED:
             _enforced_pass(_text)
 
+_disarm()
 sys.exit(0)

@@ -209,4 +209,26 @@ is read with its glued tokens joined (shlex cuts an unquoted `$VENV/bin/activate
 reading wins), so the directory may be quoted, a variable or a substitution (its body is checked as its own
 statement). Still asked: any second word
 (`source .venv/bin/activate x.sh`), `activate.sh`, `xbin/activate`, a bare `source activate` (old conda,
-found on PATH). The rule stays shadow.
+found on PATH), and (GH #768) a word glued to argv0 (`source$X/bin/activate`, `.$X/bin/activate`) or a
+dash word (`source --$X/bin/activate`, `-$X/...`): the first is one shell word with the verb and the second an
+option bash rejects, so each reaches `source` only when `$X` splits, and the split decides what is sourced.
+The rule stays shadow.
+
+## irrecoverable.py: shell push aliases (GH #750)
+
+The gate read `git push` by its literal words, while the Bash tool sources the user's shell snapshot, so
+oh-my-zsh's git plugin aliases ran a forced push unseen (`gp -f`, `gpf`, `ggp -f`, `gpu --force` were allowed
+on develop 83604e12). Operator decision 2026-10-31: a fixed list, no general alias model. `_SHELL_PUSH_ALIASES`
+holds the plugin's push words (11 aliases, the functions `ggf`, `ggfl`, `ggp`, `ggpnp`) and `g` (`alias
+g='git'`), each mapped to the git words it runs, `$(git_current_branch)` as PH; `grename OLD NEW` is read as
+its two pushes, `git push origin :OLD` and `git push --set-upstream origin NEW`. The expansions were checked
+against the plugin source (master, 2026-10-31) with bash and an argv-logging git stub. The command word is
+expanded after the wrapper walk, so every git rule applies with its own rule id; the fast path routes a `gp`,
+`ggf` or `grename` substring, or a `g` word in command position (a glued redirection too: `g>/dev/null push`),
+to python. `gate-differential.sh
+--fuzz-seed 750` against develop: 0 diffs in 568 cases (no transcript replay: built in a cloud session).
+Accepted over-denies: the strict force-push allow reads the raw text, so a forced alias push never gets it
+(`gp -f origin HEAD:feat` denies: write the `git push` form); and a wrapped or quoted alias (`sudo gp -f`,
+`"gp" -f`), which no shell expands, denies too. Not covered: a user's own alias or function, the plugin's
+`git-svn-dcommit-push` (a plain push to `svntrunk`), and its non-push git aliases (`grhh` is `git reset
+--hard`, `gbD` is `git branch -D`, `gpristine`, `gwip`), which their literal forms deny.

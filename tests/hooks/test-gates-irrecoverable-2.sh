@@ -1531,8 +1531,40 @@ test_documented_fastpath_allow() {
 }
 
 
-test_nopython_allow "$IRRECOVERABLE" "irrecoverable: rm -rf passes with note (was: rc=127 read as fail-CLOSED, blocking every git/rm command)" \
-  "$(bash_payload 'rm -rf /tmp/x')"
+# GH #771: without python3 a recursive rm or a find delete denies on a text check (names trash);
+# everything else keeps #93's announced allow. Ruling: the text check over-denies "git rm -r" and
+# "echo rm -rf" (any rm word with an -r flag), the safe direction on a machine that cannot parse.
+test_nopython_deny() {
+  local gate="$1" desc="$2" payload="$3"
+  local rc errf
+  errf=$(mktemp "${TMPDIR:-/tmp}/kbg-nopy-err.XXXXXX")
+  rc=$(echo "$payload" | PATH="$NOPY_BIN" bash "$gate" 2>"$errf"; echo $?)
+  if [[ "$rc" == "2" ]] && grep -q 'trash' "$errf"; then
+    echo "  ✅ NO-PYTHON DENY: $desc"
+    pass=$((pass + 1))
+  else
+    echo "  ❌ NO-PYTHON DENY expected (rc=2 + trash hint) but got rc=$rc, stderr: $(cat "$errf")" >&2
+    fail=$((fail + 1))
+  fi
+  rm -f "$errf"
+}
+for _c in 'rm -rf /tmp/x' 'rm -r x' 'rm -R x' 'rm --recursive x' 'rm -f -r x' 'rm x -fr' '/bin/rm -rf x' \
+  'ls; rm -rf x' 'find . -delete' 'find . -name y -delete' 'find . -exec rm {} +' 'find . -exec /bin/rm -f {} ;' \
+  'git rm -r dir' 'echo rm -rf x' \
+  'rm --rec x' 'rm --recursiv x' "rm 'a|b' -r" "rm 'a;b' -rf" "rm \"a|b\" -r" "find . -name 'a|b' -delete" \
+  "find . -regex '.*\\(a\\|b\\)' -delete" "find . -name 'x;y' -exec rm {} +" 'find . -exec command rm {} \;' \
+  'find . -exec env rm {} \;' 'find . -exec sudo -u x rm {} \;' "rm '-rf' x" \
+  "rm \"it's;x\" -rf y; echo 'z'" "rm 'it\"s;x' -rf y; echo \"z\""; do
+  test_nopython_deny "$IRRECOVERABLE" "irrecoverable: $_c" "$(bash_payload "$_c")"
+done
+# An apostrophe in the description pairs with one inside a double-quoted argument (review of 9a65476b).
+for _c in "rm \"it's;x\" -rf y" "find . -name \"it's;x\" -delete"; do
+  test_nopython_deny "$IRRECOVERABLE" "irrecoverable: $_c, description don't" \
+    "$(printf '{"tool_name": "Bash", "tool_input": {"command": %s, "description": "don'"'"'t"}}' "$(printf '%s' "$_c" | jq -Rsa .)")"
+done
+for _c in 'rm -f x' 'rm x' 'git status' 'find . -name y' 'find . -exec cat {} +' 'rmdir x' 'ls -r rmx' 'rm --force x' "rm 'a|b'" 'find . -exec cat {} \;'; do
+  test_nopython_allow "$IRRECOVERABLE" "irrecoverable: $_c keeps the #93 allow" "$(bash_payload "$_c")"
+done
 # Backtick/$(...) fast-path bypass: a command substitution vanishes in real bash ("gi`true`t" IS
 # "git" once bash evaluates it) but survives as literal characters through the fast path's
 # normalization, so neither "git" nor any other tracked argv0 forms a contiguous substring and
@@ -3640,6 +3672,44 @@ for _c in 'git push -f origin a:feat b:main' 'git push origin +HEAD:production' 
   test_deny "$IRRECOVERABLE" "force-push v3 deny: $_c" "$(bash_payload "$_c")"
 done
 
+# GH #750: the Bash tool sources the user's shell snapshot, so oh-my-zsh's git-plugin push aliases and
+# functions run `git push`. Each is read as its git push text; none gets the strict force-push allow.
+for _c in 'gp -f' 'gpf' 'ggp -f' 'gpu --force' \
+  'gp -f origin main' 'gpd -f origin main' 'gpf origin feat' 'gpf! origin feat' 'gpsup -f' 'gpsupf' \
+  'gpv -f origin main' 'gpoat -f' 'gpod -f origin x' 'ggpush -f' 'gpu -f main' 'ggf' 'ggf feat' 'ggfl feat' \
+  'ggp --force main' 'gp origin +HEAD:main' 'gp --mirror origin' 'gpod main' 'gp origin :develop' \
+  'sudo gp -f origin main' 'env gp -f origin main' "sh -c 'gpf! origin feat'" 'echo x && gp -f origin main' \
+  '"gp" -f origin main' 'gp -f origin HEAD:feat' 'ggp -f origin HEAD:feat' \
+  'ggpnp -f' 'grename main foo' 'grename develop x' 'echo x; grename Master y' 'grename feat -f' \
+  'g push -f origin main' 'g push origin :main' 'g push --mirror origin' 'echo x && g reset --hard' 'sudo g clean -fd' \
+  'g>/dev/null push -f origin main' 'g<x push -f origin main' 'g&>/dev/null push -f origin main' 'x;g>&2 push -f origin main'; do
+  test_deny "$IRRECOVERABLE" "GH #750 push alias: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'gp' 'gp origin feat' 'gpu' 'ggp' 'ggp feat' 'gpsup' 'gpd origin main' 'gpv' 'ggpush' 'gpoat' \
+  'gpod feat' 'gpg --verify x.sig' 'echo gp -f' 'git push origin HEAD:feat' \
+  'ggpnp' 'ggpnp feat' 'grename feat x' 'grename' 'g status' 'g push origin feat' 'echo g push -f' 'ls -g'; do
+  test_allow "$IRRECOVERABLE" "GH #750 push alias control: $_c" "$(bash_payload "$_c")"
+done
+echo ""
+echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
+MH_IRR_DEADLINE_SECS=0.001 test_ask_says "$IRRECOVERABLE" "forced deadline expiry on an allowed candidate command asks, reason says time" \
+  "$(bash_payload 'git status && git log -1')" "time"
+MH_IRR_DEADLINE_SECS=0.001 test_ask "$IRRECOVERABLE" "forced deadline expiry emits exactly one ask JSON" "$(bash_payload 'git status')"
+if python3 - "$ROOT/hooks/gates/irrecoverable.py" "$ROOT/hooks/hooks.json" <<'PY'
+import json, re, sys
+src = open(sys.argv[1]).read()
+m = re.search(r"^DEADLINE_SECS = ([0-9.]+)", src, re.M)
+hooks = [h for e in json.load(open(sys.argv[2]))["hooks"]["PreToolUse"] for h in e["hooks"]]
+irr = [h for h in hooks if "irrecoverable.sh" in h["command"]]
+others = [h for h in hooks if "irrecoverable.sh" not in h["command"] and "onFailure" in h]
+assert m and len(irr) == 1, "constant or entry missing"
+assert float(m.group(1)) <= irr[0]["timeout"] / 2, "deadline not well under the hook timeout"
+assert irr[0].get("onFailure") == "block", "irrecoverable.sh lacks onFailure block"
+assert not others, "onFailure set on another entry"
+PY
+then echo "  ✅ DEADLINE_SECS is at most half the hooks.json timeout; onFailure block on irrecoverable.sh only"; pass=$((pass + 1))
+else echo "  ❌ deadline/onFailure contract broken" >&2; fail=$((fail + 1)); fi
+
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
@@ -3689,4 +3759,48 @@ test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo foo\ $(echo '"'"'a;g
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: trash $(echo '"'"'~/{.,x}'"'"')' "$(bash_payload 'trash $(echo '"'"'~/{.,x}'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo "x $(echo '"'"' -rf'"'"')"' "$(bash_payload 'echo "x $(echo '"'"' -rf'"'"')"')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 3 control: a $(...) inside '"'"'...'"'"' is data to the split copy' "$(bash_payload 'echo '"'"'see $(echo "'"'"'") && git reset --hard '"'"'"\'"'"'')"
+# GH #769/#770: Monitor and context-mode's ctx_execute tools run shell too; the gate judges it like Bash.
+_CTX=mcp__plugin_context-mode_context-mode__ctx
+test_deny  "$IRRECOVERABLE" "GH #769: Monitor rm -rf" '{"tool_name":"Monitor","tool_input":{"command":"rm -rf /tmp/x"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor ws payload" '{"tool_name":"Monitor","tool_input":{"ws":"ws://localhost:1/rm"}}'
+test_allow "$IRRECOVERABLE" "GH #769: Monitor harmless" '{"tool_name":"Monitor","tool_input":{"command":"tail -f log | grep rm"}}'
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute shell rm -rf" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute javascript holding rm -rf text" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"javascript\",\"code\":\"console.log('rm -rf /')\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_execute_file shell rm -rf" "{\"tool_name\":\"${_CTX}_execute_file\",\"tool_input\":{\"path\":\"a.log\",\"language\":\"shell\",\"code\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute one harmless, one rm -rf" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"label\":\"a\",\"command\":\"ls\"},{\"label\":\"b\",\"command\":\"rm -rf /tmp/x\"}],\"queries\":[\"rm -rf\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute heredoc opener cannot hide the next command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"cat <<EOF\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute all harmless (rm only in queries)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}],\"queries\":[\"rm -rf\"]}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_execute missing code field" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"shell\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute non-command entries do not crash" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":5},null,7,{\"label\":\"rm\"}]}}"
+# context-mode's coerceCommandsArray runs these shapes too: a string item, a bare string, a JSON-array string.
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute string item" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[\"ls\",\"rm -rf /tmp/x\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #770: ctx_batch_execute commands as a JSON-array string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"[{\\\"label\\\":\\\"a\\\",\\\"command\\\":\\\"rm -rf /tmp/x\\\"}]\"}}"
+test_allow "$IRRECOVERABLE" "GH #770: ctx_batch_execute harmless bare string" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":\"git status\"}}"
+# Each command is judged with the outer payload's fields, so a subagent's nested claude spawn is still denied.
+test_deny  "$IRRECOVERABLE" "GH #770: subagent ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"agent_id\":\"a1\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"claude -p hi\"}]}}"
+test_allow "$IRRECOVERABLE" "GH #770: main-session ctx_batch_execute claude -p" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"claude -p hi\"}]}}"
+# A batch that outruns the time budget asks for the rest instead of allowing it.
+# The first command is always judged; a bad budget value falls back to the 4 s default, never crashes or disables it.
+export MH_GATE_BATCH_BUDGET_S=0
+test_ask_says "$IRRECOVERABLE" "GH #770: ctx_batch_execute over its time budget asks" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"rm -rf /tmp/x\"}]}}" "time budget"
+test_deny  "$IRRECOVERABLE" "GH #770: budget 0 still judges the first command" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"rm -rf /tmp/x\"},{\"command\":\"ls\"}]}}"
+for _bv in abc nan inf -1 4s; do
+  export MH_GATE_BATCH_BUDGET_S="$_bv"
+  test_deny  "$IRRECOVERABLE" "GH #770: budget '$_bv' uses the default (rm -rf denied)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"rm -rf /tmp/x\"}]}}"
+  test_allow "$IRRECOVERABLE" "GH #770: budget '$_bv' uses the default (git status allowed)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}]}}"
+done
+unset MH_GATE_BATCH_BUDGET_S
+# GH #769/#770: the coverage itself lives in hooks.json's matcher (the gate reads tool_input.command for any tool).
+if python3 -c '
+import json, sys
+names = {"Bash", "Monitor"} | {"mcp__plugin_context-mode_context-mode__ctx_" + t for t in ("execute", "execute_file", "batch_execute")}
+hooks = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
+m = [e["matcher"] for e in hooks if any("gates/irrecoverable.sh" in h.get("command", "") for h in e["hooks"])]
+sys.exit(not (len(m) == 1 and names <= set(m[0].split("|"))))' "$ROOT/hooks/hooks.json"; then
+  echo "  ✅ hooks.json: irrecoverable.sh matcher covers Bash, Monitor and the three ctx tools"; pass=$((pass + 1))
+else
+  echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
+fi
+
 gates_summary
