@@ -1712,6 +1712,10 @@ def deny(reason, rule=None, hint=None):
             raise _ViewStop
         if rule is not None:
             return
+        if _VIEW[0] == "var-verb":
+            # GH #767 review 5: var-verb's text holds values put back in place (`\$G` too), which can leave a quote
+            # unbalanced where the shell's text is fine; a structural deny there only ends the window.
+            raise _ViewStop
 
     elif _VIEW[0] and rule is None:
         raise _ViewStop
@@ -5839,6 +5843,28 @@ def _literal_subst_split(text):
         return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
     return _LITERAL_SUBST_RE.sub(sub, text)
 
+def _split_bounds(text, mask):
+    # The offsets of the unquoted blanks and separators outside $(...) and `...` (GH #767 review 5: `TS=$(date +%s)`
+    # is one word, and its ( starts no statement), and of each line continuation (a blank); seps are the separators.
+    bounds, seps, depth, tick, i, n = [], [], 0, False, 0, len(text)
+    while i < n:
+        c = text[i]
+        if mask[i]:
+            if c == "\n" and i and text[i - 1] == "\\" and not depth and not tick:
+                bounds.append(i)
+        elif c == "`":
+            tick = not tick
+        elif c == "(" and i and text[i - 1] == "$":  # _quote_mask leaves a "$(" in "..." unquoted from its (
+            depth += 1
+        elif c == ")" and depth:
+            depth -= 1
+        elif not depth and not tick and c in " \t\n;&|(":
+            bounds.append(i)
+            if c not in " \t":
+                seps.append(i)
+        i += 1
+    return bounds, seps
+
 def _literal_subst_glued(text):
     # GH #767: one more copy for a substitution glued to the word before it (`x$(..)`, `\ $(..)`, `'a'$(..)`): bash
     # glues the output's first word to that word and splits off the rest (`rm \ $(echo 'x -rf') b` is rm ' x' -rf b;
@@ -5846,9 +5872,7 @@ def _literal_subst_glued(text):
     # assignment's value is not split. Its own copy, so _literal_subst_split's copy, and every deny it gives, stays
     # as it was (review 4: splitting a glued `Y=..` in that copy hid the rm after it).
     mask = _quote_mask(text)
-    bounds = [m.start() for m in re.finditer(r"[ \t\n;&|(]", text)
-              if not mask[m.start()] or (text[m.start()] == "\n" and text[m.start() - 1:m.start()] == "\\")]
-    seps = [p for p in bounds if text[p] not in " \t" and not (text[p] == "\n" and mask[p])]
+    bounds, seps = _split_bounds(text, mask)
     memo = {}
     esc = lambda w: re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w)
     def sub(e):
@@ -5875,7 +5899,7 @@ def _literal_subst_glued(text):
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
 
-def _subst_literals(text):
+def _subst_literals(text, glued=True):
     # The text with each literal substitution replaced by what it prints: one copy per quoted mode (see below).
     out = []
     if "$" in text or "`" in text or "<(" in text:
@@ -5889,7 +5913,9 @@ def _subst_literals(text):
             if v != text and v not in out:
                 out.append(v)
         if ("'" in text or '"' in text or "\\" in text) and _LITERAL_SUBST_RE.search(text):
-            for v in (_literal_subst_split(text), _literal_subst_glued(text)):
+            # GH #767 review 5: brace-view's copies (glued=False) run before the subst-literal views and share their
+            # positional-fill budget, so the glued copy is read only here, after develop's copies.
+            for v in (_literal_subst_split(text),) + ((_literal_subst_glued(text),) if glued else ()):
                 if v != text and v not in out:
                     out.append(v)
     return out
@@ -5905,7 +5931,7 @@ def _views():
     if _BRACEX_TEXT is not None:
         out.append(("brace-view", _BRACEX_TEXT))
         ifs = _ifs_split(_BRACEX_TEXT)
-        for v in _subst_literals(ifs) or [ifs]:
+        for v in _subst_literals(ifs, glued=False) or [ifs]:
             if v != _BRACEX_TEXT and ("brace-view", v) not in out:
                 out.append(("brace-view", v))
     # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
