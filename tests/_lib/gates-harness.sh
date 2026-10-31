@@ -311,24 +311,27 @@ _timed_case() {  # <name> <expected rc> <command>
 # GH #761: a cost that must not grow with some factor (nesting depth) is checked against a baseline of
 # the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
 # python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
-# only skews the ratio, so a miss is measured once more before it fails.
+# only skews the ratio, so a miss is measured once more before it fails. The command must also finish
+# under the gate's 8 s hook timeout, past which the hook allows: a slowdown both runs share keeps the ratio.
 _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
-  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio try
+  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try
   for try in 1 2; do
     t0=$(_ratio_now)
     bash_payload "$base" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; brc=$?
     t1=$(_ratio_now)
     bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; rc=$?
     t2=$(_ratio_now)
-    ratio=$(python3 -c 'import sys; a, b, c = map(float, sys.argv[1:]); print("%.2f" % ((c - b) / max(b - a, 0.01)))' "$t0" "$t1" "$t2")
+    read -r ratio secs ok < <(python3 -c 'import sys
+a, b, c, m = map(float, sys.argv[1:]); r = (c - b) / max(b - a, 0.01)
+print("%.2f %.2f %d" % (r, c - b, r <= m and c - b < 8))' "$t0" "$t1" "$t2" "$max")
     [[ "$rc" == "$want" && "$brc" == "$want" ]] || break
-    python3 -c 'import sys; sys.exit(float(sys.argv[1]) > float(sys.argv[2]))' "$ratio" "$max" && break
+    [[ "$ok" == 1 ]] && break
   done
-  if [[ "$rc" == "$want" && "$brc" == "$want" ]] && python3 -c 'import sys; sys.exit(float(sys.argv[1]) > float(sys.argv[2]))' "$ratio" "$max"; then
-    echo "  ✅ $name (rc=$rc, ${ratio}x the baseline)"; pass=$((pass + 1))
+  if [[ "$rc" == "$want" && "$brc" == "$want" && "$ok" == 1 ]]; then
+    echo "  ✅ $name (rc=$rc in ${secs}s, ${ratio}x the baseline)"; pass=$((pass + 1))
   else
-    echo "  ❌ $name: expected rc=$want within ${max}x the baseline, got rc=$rc (baseline rc=$brc) at ${ratio}x" >&2
+    echo "  ❌ $name: expected rc=$want under 8s and within ${max}x the baseline, got rc=$rc (baseline rc=$brc) in ${secs}s at ${ratio}x" >&2
     fail=$((fail + 1))
   fi
 }

@@ -3392,7 +3392,7 @@ _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
   "echo $(printf '${x:-a %.0s' $(seq 20000))"
 # each nested funsub level appends its body blanked, not raw, so nested text is not read once per level.
 # GH #761: timed against one funsub around the same words, not a fixed 4 s (blanked ~2.7x, raw ~6.1x).
-_timed_ratio_case 'GH #693: 12 nested funsubs around 62 KB of words cost under 4x one funsub' 0 4 \
+_timed_ratio_case 'GH #693: 12 nested funsubs around 62 KB of words run under 8 s and 4x one funsub' 0 4 \
   "echo \${ echo $(printf "'a}' x; %.0s" $(seq 7750)); }" \
   "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 7750))$(printf '; }%.0s' $(seq 12))"
 
