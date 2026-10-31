@@ -3689,15 +3689,22 @@ test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo foo\ $(echo '"'"'a;g
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: trash $(echo '"'"'~/{.,x}'"'"')' "$(bash_payload 'trash $(echo '"'"'~/{.,x}'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 2 control: echo "x $(echo '"'"' -rf'"'"')"' "$(bash_payload 'echo "x $(echo '"'"' -rf'"'"')"')"
 test_allow "$IRRECOVERABLE" 'GH #718 review 3 control: a $(...) inside '"'"'...'"'"' is data to the split copy' "$(bash_payload 'echo '"'"'see $(echo "'"'"'") && git reset --hard '"'"'"\'"'"'')"
-# GH #755: chrt runs the command after its options and the priority (getopt "+abdD:fiphmoP:T:rRvV"; -p takes a
-# pid, -m prints limits). The priority is optional for -o/-b/-i on newer util-linux, so only digits are skipped.
+# GH #755: chrt runs the command after its options and the priority (getopt "+abdD:fiphmoP:T:rRvV"; with -p the
+# last word is a pid, -m prints limits). The priority is read as strtol reads it (+10, ' 0', -- -0), 2.40+ skips
+# one `--` after it, and 2.42+ makes it optional for every policy but RR and FIFO (a non-number is the command).
 for _c755 in "chrt -o 0 rm -rf b" "chrt 10 rm -rf b" "chrt -f 10 rm -rf b" "chrt -d -T 1000 -P 2000 -D 2000 0 rm -rf b" \
   "chrt --sched-runtime 1000 -d 0 rm -rf b" "chrt -v -r 5 bash -c 'rm -rf b'" "sudo chrt 10 rm -rf b" \
-  "chrt -o rm -rf b" "chrt -- 10 rm -rf b" "echo 'rm -rf b' | chrt 10 sh" "echo 'rm -rf b' | chrt -o sh"; do
+  "chrt -o rm -rf b" "chrt -- 10 rm -rf b" "echo 'rm -rf b' | chrt 10 sh" "echo 'rm -rf b' | chrt -o sh" \
+  "chrt +10 rm -rf b" "chrt -o +0 rm -rf b" "chrt -o ' 0' rm -rf b" "chrt -o -- -0 rm -rf b" "chrt -f +50 bash -c 'rm -rf b'" \
+  "echo 'rm -rf b' | chrt -o +0 sh" "chrt 10 -- rm -rf b" "chrt -o 0 -- dd if=/dev/zero of=/dev/sda" \
+  "echo 'rm -rf b' | chrt 10 -- sh" "chrt -U 512 10 rm -rf b" "chrt --clamp-min 512 10 rm -rf b"; do
   test_deny "$IRRECOVERABLE" "GH #755: $_c755" "$(bash_payload "$_c755")"
 done
 test_deny  "$IRRECOVERABLE" "GH #755: subagent: chrt 10 claude -p x" "$(bash_agent_payload 'chrt 10 claude -p x' fork)"
-for _c755 in "chrt -p 700" "chrt -p 10 700" "chrt -m" "chrt 10 make -j4" "chrt -o 0 ls" "echo chrt 10 rm -rf b"; do
+test_deny  "$IRRECOVERABLE" "GH #755: subagent: chrt -o +0 claude -p x" "$(bash_agent_payload 'chrt -o +0 claude -p x' fork)"
+test_deny  "$IRRECOVERABLE" "GH #755: subagent: chrt 10 -- claude -p x" "$(bash_agent_payload 'chrt 10 -- claude -p x' fork)"
+for _c755 in "chrt -p 700" "chrt -p 10 700" "chrt -p -f 10 1234" "chrt -m" "chrt 10 make -j4" "chrt -o 0 ls" \
+  "chrt -o +0 -- ls" "echo chrt 10 rm -rf b"; do
   test_allow "$IRRECOVERABLE" "GH #755 control: $_c755" "$(bash_payload "$_c755")"
 done
 

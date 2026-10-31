@@ -1117,9 +1117,10 @@ _RUN_WRAPPERS = {
     "watch": (("-n", "--interval", "-q", "--equexit"), 0, (), True),  # watch runs `sh -c "<words>"`
     "script": (("-E", "--echo", "-o", "--output-limit", "-T", "--log-timing", "-I", "--log-in",
                 "-O", "--log-out", "-B", "--log-io", "-m", "--logging-format"), 0, ("-c", "--command"), False),
-    # GH #755: chrt's getopt is "+abdD:fiphmoP:T:rRvV"; the priority is the one positional, skipped only when it
-    # is all digits (newer util-linux makes it optional for -o/-b/-i). -p's pid and -m's limits run no command.
-    "chrt": (("-D", "-P", "-T", "--sched-deadline", "--sched-period", "--sched-runtime"), 1, (), False),
+    # GH #755: chrt's getopt is "+abdD:fiphmoP:T:rRvV" (2.39-2.41; master adds -U/-X clamp values). The priority
+    # is read by _past_chrt_priority, not as a fixed positional; -p runs no command (the last word is a pid).
+    "chrt": (("-D", "-P", "-T", "-U", "-X", "--sched-deadline", "--sched-period", "--sched-runtime",
+              "--clamp-min", "--clamp-max"), 0, (), False),
     "su": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"), 0,
            ("-c", "--command", "-C", "--session-command"), None),  # su's words are a user, not a command
     "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
@@ -1143,6 +1144,18 @@ _RUN_WRAPPERS = {
 # GH #662: the walks with their own wrapper list (xargs, find -exec, a shell reading stdin) read past these too.
 _BUSYBOX_NAMES = ("busybox", "busybox.static", "busybox-static", "toybox")
 _STEP_WRAPPERS = PREFIX_WRAPPERS + _BUSYBOX_NAMES
+# GH #755 review: chrt reads its priority with strtol (leading blanks, a sign: `+10`, `' 0'`, `-- -0`), and
+# util-linux 2.40+ then skips one `--` before the command. 2.42+ makes the priority optional for every
+# policy but RR and FIFO, so a word that is no number is the command.
+_CHRT_PRIORITY_RE = re.compile(r"[ \t\n\v\f\r]*[+-]?[0-9]+")
+
+def _past_chrt_priority(words, i):
+    if i < len(words) and _CHRT_PRIORITY_RE.fullmatch(words[i].replace(PH, "")):
+        i += 1
+        if i < len(words) and words[i].replace(PH, "") == "--":
+            i += 1
+    return i
+
 def _past_run_prefix(w, i=0):
     # GH #674: the index of the program word in w[i:] past assignments and every wrapper the rule loop
     # unwraps: PREFIX_WRAPPERS with their value options (sudo's, env's, FLAG_VALUE_WRAPPERS), timeout's
@@ -1180,7 +1193,7 @@ def _past_run_prefix(w, i=0):
                     break
             if join is None:
                 return None  # su: a user, not a command
-            i += 0 if b == "chrt" and not (i < len(w) and w[i].isdigit()) else npos
+            i = _past_chrt_priority(w, i) if b == "chrt" else i + npos
             # watch (join) runs `sh -c "<words>"`, whose first word is still the program
         else:
             return i
@@ -5003,7 +5016,7 @@ def _check_window(_wi, w):
             if body is None and join is None:
                 break  # su without -c runs a login shell, no command
             if body is None:
-                i += 0 if argv0 == "chrt" and not (i < len(rest) and rest[i].replace(PH, "").isdigit()) else npos
+                i = _past_chrt_priority(rest, i) if argv0 == "chrt" else i + npos
             if body is None and i < len(rest) and argv0 == "flock" and rest[i].replace(PH, "") in ("-c", "--command"):
                 body = rest[i + 1] if i + 1 < len(rest) else None
             if body is not None or join:
