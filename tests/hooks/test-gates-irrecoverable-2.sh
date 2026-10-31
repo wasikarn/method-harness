@@ -3837,6 +3837,14 @@ _timed_case 'GH #741 review 4: trash with 3100 `x`/.* words, then git reset --ha
 # quoted openers took 5.4 s (develop 3 s). It now runs once per line.
 _timed_case "GH #741 review 5: git reset --hard before a cat line of 18000 quoted heredoc openers denies in bounded time" 2 \
   "git reset --hard"$'\n'"cat $(printf "<<'o' %.0s" $(seq 18000))"$'\n'"$(printf 'o\n%.0s' $(seq 18000))"
+# GH #741 review 6: the shell check split every pipe stage of a python/node heredoc line (two shlex.split calls each),
+# for unquoted delimiters too, about 1 s per 60000 stages; past the 4 s deadline (GH #771) with $( frames added. A
+# stage that names no shell or python/node (quotes and backslashes removed) is no longer split, and a line with no
+# shell word is not walked. Guards, not red rows: the old head took about 2.3 s here, under the 4 s bound.
+_timed_case 'GH #741 review 6: git reset --hard before an unquoted python heredoc of 70000 pipe stages denies in bounded time' 2 \
+  "git reset --hard"$'\n'"python3 - <<Z$(printf '|x%.0s' $(seq 70000))"$'\n'"Z"
+_timed_case 'GH #741 review 6: an unquoted node heredoc of 70000 pipe stages is allowed in bounded time' 0 \
+  "node - <<A$(printf '|x%.0s' $(seq 70000))"$'\n'"A"
 # GH #741 review 2: heredocs nested in ( frames, each piped through many stages, are read in bounded time (a re-read
 # from each frame's ( parsed every stage once per frame: 300 frames of 30 stages took 8-9 s, past the hook timeout).
 _timed_case 'GH #741 review 2: git reset --hard before 300 python heredoc frames of 30 pipe stages denies in bounded time' 2 \

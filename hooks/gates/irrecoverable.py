@@ -521,6 +521,12 @@ def _odd_trailing_bs(line):
 _INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|ash|hush|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _HEREDOC_SCAN_BUDGET = [3_000_000]  # chars a $( re-read of heredoc lines may parse; past it, a client is assumed
 
+# GH #741 review 6: a stage whose text, quotes and backslashes removed, names no shell (every _STDIN_SHELLS word
+# holds "sh") or no python/node cannot pass _reads_stdin_shell / _reads_stdin_interp (shlex only drops quotes and
+# backslashes), so it is not split: a line of 60000 `|x` stages paid two shlex.split calls per stage.
+_UNQUOTE = str.maketrans("", "", "\"'\\")
+_PYNODE_NAME_RE = re.compile(r"python|node")
+
 class _HeredocLine:
     # The statements and pipe stages of one line, parsed once however many heredocs it opens, so a line
     # of 20000 openers costs one parse, not one per opener.
@@ -553,7 +559,8 @@ class _HeredocLine:
         if (k, "sh") not in self.stages:
             shell = [False] * (len(st) + 1)
             for i in range(len(st) - 1, -1, -1):
-                shell[i] = shell[i + 1] or _reads_stdin_shell(self.line[st[i][0]:st[i][1]])
+                seg = self.line[st[i][0]:st[i][1]]
+                shell[i] = shell[i + 1] or ("sh" in seg.translate(_UNQUOTE) and _reads_stdin_shell(seg))
             self.stages[(k, "sh")] = shell
         return self.stages[(k, "sh")][j + 1]
 
@@ -561,7 +568,8 @@ class _HeredocLine:
         # GH #681: (the heredoc's own stage, a later stage) runs python/node reading its script on stdin.
         k, j, st, _ = self._stage(pos)
         if (k, "py") not in self.stages:
-            py = [_reads_stdin_interp(self.line[a:b]) for a, b in st]
+            py = [bool(_PYNODE_NAME_RE.search(self.line[a:b].translate(_UNQUOTE))) and _reads_stdin_interp(self.line[a:b])
+                  for a, b in st]
             # GH #741 review: nxt[i], the first such stage from i on (None past the last), read in O(1) per opener
             nxt = [None] * (len(st) + 1)
             for i in range(len(st) - 1, -1, -1):
@@ -823,6 +831,7 @@ def _strip_heredocs(cmd, ends=None):
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
         pyline = "python" in line or "node" in line  # once per line, not per opener (GH #741 review 5: quadratic)
+        shline = pyline and "sh" in line.translate(_UNQUOTE)  # no shell word anywhere: no stage reads stdin as one
         for n_m, m in enumerate(ms):
             # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
             # from the line's stages parsed once.
@@ -836,7 +845,7 @@ def _strip_heredocs(cmd, ends=None):
             py_own, py_down = ctx.stdin_interp(m.start()) if (
                 ends is not None and quoted and pyline) else (False, False)
             py_data = py_own and sure and not framed and not ctx.piped_shell(m.start())
-            if ends is not None and not _INTERP_PIPED_SHELL[0] and pyline and ctx.interp_to_shell(m.start()):
+            if ends is not None and not _INTERP_PIPED_SHELL[0] and shline and ctx.interp_to_shell(m.start()):
                 _INTERP_PIPED_SHELL[0] = True
             sql_code, code = code, code and not py_data
             body_start, found, expands, early = i, False, False, False
