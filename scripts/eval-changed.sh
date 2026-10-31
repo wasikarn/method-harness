@@ -37,6 +37,8 @@ if [ -z "$tags" ]; then
 fi
 
 . scripts/_lib/eval-default-enabled.sh
+# Fail on a broken judge-models.tsv (or a missing reader) now, before the first paid run.
+python3 scripts/_lib/eval_judge_models.py check || exit 1
 # Every run loads the plugin (with_default_enabled_true): eval sandboxes load no user settings,
 # so with defaultEnabled: false every case, Agent- or Skill-based, silently scores a no-plugin
 # fallback (CHANGELOG 1.1.133), and a tool_used grader still passes on the failed dispatch.
@@ -73,7 +75,7 @@ for p in pathlib.Path('evals').glob('*/prompt.md'):
     if sys.argv[1] in frontmatter_list('evals', p.parent.name, 'tags'):
         tools.update(frontmatter_list('evals', p.parent.name, 'allowed_tools'))
 print(','.join(sorted(tools)))
-" "$tag")
+" "$tag") || exit 1
   cmd=(claude plugin eval . --scaffold --tag "$tag" --runs 1 --no-publish)
   [ -n "$allow" ] && cmd+=(--allow-tools "$allow")
   if [ "$run" -eq 1 ]; then
