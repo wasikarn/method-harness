@@ -36,6 +36,8 @@ if [ -z "$tags" ]; then
   exit 0
 fi
 
+. scripts/_lib/eval-default-enabled.sh
+
 while IFS= read -r tag; do
   # Union every allowed_tools list declared across this tag's own eval cases
   # (prompt.md frontmatter) instead of hardcoding a duplicate per-tag list.
@@ -61,7 +63,9 @@ print(','.join(sorted(tools)))
     printf '%q ' "${cmd[@]}"; echo
   fi
   # GH #510: a case in evals/judge-models.tsv gets its own run under its judge; the tag run
-  # above still judges it with haiku, and that score of it is not the one to read.
+  # above still judges it with haiku, and that score of it is not the one to read. The run
+  # loads the plugin (with_default_enabled_true), as its evals/README.md line does: a paid
+  # judge run that scores the no-plugin fallback is wasted.
   overrides=$(python3 scripts/_lib/eval_judge_models.py for-tag "$tag") || exit 1
   while IFS=$'\t' read -r case model case_allow; do
     [ -n "$case" ] || continue
@@ -69,10 +73,11 @@ print(','.join(sorted(tools)))
     [ -n "$case_allow" ] && jcmd+=(--allow-tools "$case_allow")
     if [ "$run" -eq 1 ]; then
       echo "== $tag: $case, judged by $model (evals/judge-models.tsv) =="
-      "${jcmd[@]}" </dev/null
+      with_default_enabled_true "${jcmd[@]}" </dev/null
     else
       echo "# $case: judged by $model (evals/judge-models.tsv); read its score from this run"
-      printf '%q ' "${jcmd[@]}"; echo
+      # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
+      printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${jcmd[*]}"
     fi
   done <<< "$overrides"
 done <<< "$tags"
