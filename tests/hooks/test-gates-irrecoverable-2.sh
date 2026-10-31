@@ -3822,10 +3822,11 @@ _timed_case 'GH #741 review: git reset --hard before 12000 node heredoc openers 
 _timed_case "GH #741 review: git reset --hard before 9000 quoted node heredoc openers and 30000 pipe stages denies in bounded time" 2 \
   "git reset --hard; node x <<'A'|$(printf "<<'A'|%.0s" $(seq 9000))$(printf 'x|%.0s' $(seq 30000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 9001))echo ok"
 # GH #741 review 3: trash's placeholder words re-read its raw arguments (quadratic since develop); a widened
-# braced-home regex there pushed 48 KB past the hook timeout, so it was dropped. This size stays under the bound
-# on develop's reading too (a guard against a slower scan, not a red row).
-_timed_case 'GH #741 review 3: trash with 1500 placeholders and 1070 "${HOME}/" words, then git reset --hard, denies in bounded time' 2 \
-  "trash $(printf '"$(true)" %.0s' $(seq 1500))$(printf '"${HOME}/"/x %.0s' $(seq 1070))"$'\n'"git reset --hard"
+# braced-home regex there pushed 48 KB past the hook timeout, so it was dropped. A guard against a slower scan, not a
+# red row: sized well under the gate's own 4 s deadline (GH #771, which asks on expiry) on develop's reading too,
+# since 1500 placeholders already reach that deadline on develop under gauntlet load.
+_timed_case 'GH #741 review 3: trash with 600 placeholders and 430 "${HOME}/" words, then git reset --hard, denies in bounded time' 2 \
+  "trash $(printf '"$(true)" %.0s' $(seq 600))$(printf '"${HOME}/"/x %.0s' $(seq 430))"$'\n'"git reset --hard"
 # GH #741 review 4: a substitution word ending /.* ($(x)/.*) is not a bare placeholder (develop's reading), so it never
 # enters that per-placeholder re-read: 3100 of them took 6 s once the /.* strip made each one bare.
 _timed_case 'GH #741 review 4: trash with 3100 $(x)/.* words, then git reset --hard, denies in bounded time' 2 \
