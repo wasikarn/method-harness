@@ -3893,4 +3893,18 @@ test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: bash -c '"'"'claude${IFS
 test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=echo; bash -c "$X -p x"' "$(bash_agent_payload 'X=echo; bash -c "$X -p x"' fork)"
 test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=claude; echo $X -p x' "$(bash_agent_payload 'X=claude; echo $X -p x' fork)"
 test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: bash${IFS}-c '"'"'echo hi'"'"'' "$(bash_agent_payload 'bash${IFS}-c '"'"'echo hi'"'"'' fork)"
+# GH #798 review: the $IFS re-check reads only an unquoted, unescaped plain $IFS / ${IFS}, and not when IFS is set;
+# the views scan only the statements they changed, so a script changed near each end is not refused as too dense.
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: echo '"'"'${IFS%'"'"' ; claude -p x ; echo '"'"'}'"'"'' "$(bash_agent_payload 'echo '"'"'${IFS%'"'"' ; claude -p x ; echo '"'"'}'"'"'' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: echo \${IFS%; claude -p x; echo }' "$(bash_agent_payload 'echo \${IFS%; claude -p x; echo }' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: claude ${IFS/?/-p hi}' "$(bash_agent_payload 'claude ${IFS/?/-p hi}' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: IFS=-; claude${IFS}--help' "$(bash_agent_payload 'IFS=-; claude${IFS}--help' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: claude$IFS'"'"'-p'"'"' hi' "$(bash_agent_payload 'claude$IFS'"'"'-p'"'"' hi' fork)"
+_s798="set -e
+OUT=build
+[ -n \"\$CI\" ] && OUT=dist
+mkdir -p \"\$OUT\"
+$(for i in $(seq 0 135); do printf 'cp src/file_%s.txt "$OUT/" \&\& echo copied %s\n' $i $i; done)"
+test_allow "$IRRECOVERABLE" "GH #798 review control: subagent: a 6 KB script that sets OUT twice" "$(bash_agent_payload "$_s798" fork)"
+test_deny  "$IRRECOVERABLE" "GH #798 review: subagent: the same script, then C=claude; \$C -p x" "$(bash_agent_payload "$_s798"$'\nC=claude; $C -p x' fork)"
 gates_summary

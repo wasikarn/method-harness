@@ -1423,14 +1423,17 @@ def _spawn_drop_escapes(c):
         return " " * (len(w) - len(u)) + u
     return _SPAWN_WORD_RE.sub(word, c)
 
-_IFS_SPAWN_RE = re.compile(r"\$(?:\{IFS(?:[:%#/^,][^}]{0,40})?\}|IFS(?![A-Za-z0-9_]))")
+_IFS_SPAWN_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")  # the plain forms only: an operator form builds any text
 
 def _nested_spawn(c, overlap):
     found = _nested_spawn_raw(c, overlap)
-    if found and not _spawn_over_budget and "IFS" in c:
+    if found and not _spawn_over_budget and "IFS" in c and not re.search(r"(?<![\w$])IFS\+?=", c):
         # GH #798: the raw text reads an unknown `${IFS}--help` word as a possible spawn flag; bash splits it, so a
-        # finding must hold on the text with $IFS read as a blank too (`claude${IFS}-p x` still does).
-        v = _IFS_SPAWN_RE.sub(" ", c)
+        # finding must hold on the text with each unquoted, unescaped plain $IFS / ${IFS} read as a blank too
+        # (`claude${IFS}-p x` still does). Not when the command sets IFS, and never ${IFS%..} and the like
+        # (review: `${IFS/?/-p hi}` is `-p hi`, and a quoted `${IFS%` could swallow a real claude up to a `}`).
+        mask = _quote_mask(c)
+        v = _IFS_SPAWN_RE.sub(lambda m: m.group(0) if mask[m.start()] else " " * len(m.group(0)), c)
         return v == c or _spawn_over_budget or _nested_spawn_raw(v, overlap)
     return found
 
@@ -6150,27 +6153,32 @@ def _enforced_pass(text):
         _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0], _WORD_PHASE[0] = None, False, False
         del _WORDS[:]
 
-def _view_spawn_span(text):
-    # GH #798: the statements of a view's text that differ from the command, which the main reading scanned whole: from
-    # the unquoted separator before the first difference to the one after the last (scanning the whole text again
-    # pushed padded commands past the time limit).
-    n, m = len(text), len(cmd)
-    p = 0
-    while p < n and p < m and text[p] == cmd[p]:
-        p += 1
-    if p == n == m:
-        return ""
-    q = 0
-    while q < n - p and q < m - p and text[n - 1 - q] == cmd[m - 1 - q]:
-        q += 1
-    mask = _quote_mask(text)
-    a = p
-    while a > 0 and (mask[a - 1] or text[a - 1] not in ";&|\n"):
-        a -= 1
-    b = n - q
-    while b < n and (mask[b] or text[b] not in ";&|\n"):
-        b += 1
-    return text[a:b]
+def _text_statements(text):
+    # The statements of text, split at each unquoted ; & | and newline (_quote_mask).
+    mask, out, start = _quote_mask(text), [], 0
+    for i, ch in enumerate(text):
+        if ch in ";&|\n" and not mask[i]:
+            out.append(text[start:i])
+            start = i + 1
+    out.append(text[start:])
+    return out
+
+_CMD_STATEMENTS = None
+_VIEW_STATEMENTS_SCANNED = set()
+
+def _view_spawn_statements(text):
+    # GH #798: the statements of a view's text that the command does not hold as written (the main reading scanned
+    # those whole), each once across the views. Statement by statement, not one span: a change near each end of a
+    # script made the span the whole script, and the views' budget refused 6 KB scripts (review).
+    global _CMD_STATEMENTS
+    if _CMD_STATEMENTS is None:
+        _CMD_STATEMENTS = set(_text_statements(cmd))
+    out = []
+    for st in _text_statements(text):
+        if st.strip() and st not in _CMD_STATEMENTS and st not in _VIEW_STATEMENTS_SCANNED:
+            _VIEW_STATEMENTS_SCANNED.add(st)
+            out.append(st)
+    return out
 
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
@@ -6180,9 +6188,9 @@ for _VIEW[0], _text in _views():
         # Not brace-view (GH #661: its expansion copies a body many times, which spent the budget on legal commands);
         # a brace-built spawn is GH #731.
         if "agent_id" in d and _VIEW[0] != "brace-view":
-            _vs = _view_spawn_span(_text)
-            if _vs and (_nested_spawn(_vs, False) or _nested_spawn(_vs, True) or _nested_spawn(_vs, 2) or _subst_spawn(_vs)):
-                _deny_nested_spawn()
+            for _vs in _view_spawn_statements(_text):
+                if _nested_spawn(_vs, False) or _nested_spawn(_vs, True) or _nested_spawn(_vs, 2) or _subst_spawn(_vs):
+                    _deny_nested_spawn()
         _start = len(windows)
         windows.extend(_view_windows(_text))
         _run_windows(_start)
