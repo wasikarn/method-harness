@@ -5682,7 +5682,7 @@ def _psub_eval(e):
 
 def _literal_subst_words(e, mask):
     # What echo/printf prints, as the shell then reads it (GH #718): unquoted, the output is split into words
-    # (`$(echo ' -rf')` is the word -rf) and each stays one literal word; inside "..." it is one escaped string.
+    # (`$(echo ' -rf')` is the word -rf); inside "..." it is one escaped string.
     text = e.group(1) or e.group(2) or ""
     try:
         words = shlex.split(text)
@@ -5691,7 +5691,9 @@ def _literal_subst_words(e, mask):
     out = " ".join(words[1:] if words[:1] == ["--"] else words)
     if e.start() and mask[e.start() - 1]:  # the $( itself reads as unquoted (_quote_mask); what precedes it does not
         return re.sub(r'(["\\$`])', r"\\\1", out)
-    return " ".join(shlex.quote(w) for w in out.split())
+    # Only a word holding shell syntax is quoted, so `x; rm -rf /` stays text; `~`, braces and globs stay bare:
+    # bash expands them in echo's own arguments (`trash $(echo ~/{.,x})` trashes the home tree; review 1).
+    return " ".join(shlex.quote(w) if re.search(r"""[;&|()<>'"\\$`]""", w) else w for w in out.split())
 
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text

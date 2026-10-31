@@ -3657,4 +3657,13 @@ test_allow "$IRRECOVERABLE" 'GH #718 control: git restore --staged {a,b}.txt' "$
 test_allow "$IRRECOVERABLE" 'GH #718 control: git stash push -- {a,b}.txt' "$(bash_payload 'git stash push -- {a,b}.txt')"
 test_allow "$IRRECOVERABLE" 'GH #718 control: git rm --cached {a,b}.txt' "$(bash_payload 'git rm --cached {a,b}.txt')"
 test_allow "$IRRECOVERABLE" 'GH #718 control: git log --oneline {main,develop}' "$(bash_payload 'git log --oneline {main,develop}')"
+# GH #718 review: bash still expands ~, braces and globs in echo's own arguments, so they stay bare in the output.
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash $(echo ~/{.,x})' "$(bash_payload 'trash $(echo ~/{.,x})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash $(echo /{,})' "$(bash_payload 'trash $(echo /{,})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash `echo ~/{.,.}`' "$(bash_payload 'trash `echo ~/{.,.}`')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: trash $(printf '"'"'%s '"'"' ~/{.,x})' "$(bash_payload 'trash $(printf '"'"'%s '"'"' ~/{.,x})')"
+test_deny  "$IRRECOVERABLE" 'GH #718 review: chmod 777 $(echo ~/{.,.})' "$(bash_payload 'chmod 777 $(echo ~/{.,.})')"
+test_allow "$IRRECOVERABLE" 'GH #718 review control: echo $(echo '"'"'x; rm -rf /'"'"')' "$(bash_payload 'echo $(echo '"'"'x; rm -rf /'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #718 review control: rm -f $(echo build/*.o)' "$(bash_payload 'rm -f $(echo build/*.o)')"
+test_allow "$IRRECOVERABLE" 'GH #718 review control: trash $(echo build/{a,b})' "$(bash_payload 'trash $(echo build/{a,b})')"
 gates_summary
