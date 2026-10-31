@@ -319,7 +319,7 @@ _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
   local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil jerr probe seen=""
   # a trial run, not `command -v`: a jq on PATH that cannot run (a wrong-architecture binary), or some other
-  # program named jq, does not print 3 for 1+2 (a "\r" a Windows jq ends lines with is dropped)
+  # program named jq, does not print 3 for 1+2 (one trailing "\r" is dropped: a Windows jq ends lines "\r\n")
   probe=$(jq -n '1+2' 2>/dev/null)
   if [ "${probe%$'\r'}" != 3 ]; then
     echo "  ❌ $name: jq is missing, will not run, or is not jq, so the irrecoverable.sh timeout cannot be read from hooks/hooks.json" >&2
@@ -328,11 +328,11 @@ _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <co
   # stderr apart from the value, so a jq warning on a good read cannot end up in the ceiling
   if ! ceil=$(jq -r '[.. | objects | select((.command? // "") | test("gates/irrecoverable\\.sh")) | .timeout]
     | if length == 1 and (.[0] | type) == "number" then .[0] else empty end' "$ROOT/hooks/hooks.json" 2>"$_ERRF"); then
-    jerr=$(head -1 "$_ERRF")
+    jerr=$(head -1 "$_ERRF"); jerr=${jerr%$'\r'}
     echo "  ❌ $name: jq could not read the irrecoverable.sh timeout from hooks/hooks.json (${jerr:-jq printed no error})" >&2
     fail=$((fail + 1)); return
   fi
-  ceil=${ceil%$'\r'}
+  ceil=${ceil%$'\r'}  # the same Windows "\r", before the empty check so a lone "\r" counts as no value
   if [ -z "$ceil" ]; then
     echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return
   fi
