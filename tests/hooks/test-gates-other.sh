@@ -177,17 +177,18 @@ test_deny "$IRRECOVERABLE" "26 xargs handovers in the main reading leave the ifs
 print("echo a | xargs env true; " * 26 + "rm${IFS}-rf${IFS}/tmp/x", end="")
 PY
 )")"
-# Stripping leading words one slice at a time copied the rest each step: 75k `!` took 19 s, past the 8 s timeout
-# (28 s for 74900 `!` and 15.7 s for 37450 env on a 4-core host, gate at 9c37835c^, GH #789).
+# Stripping leading words one slice at a time copied the rest each step: 75k `!` took 19 s, past the 8 s timeout.
+# GH #789: sized against the gate's 4 s deadline (GH #771). On a 4-core host the fixed gate denies 41200 `!` in
+# 1.6-1.7 s and 26200 env in 1.6-2.0 s; the gate at 9c37835c^ took 9.1 s and 7.6 s.
 _quad_tail='rm${IFS}-rf${IFS}/tmp/x a{b} c$d'
-_timed_hook_case "74900 leading ! words before an IFS rm are stripped inside the hook timeout" 2 \
-  "$(python3 -c 'import sys; print("! " * 74900 + sys.argv[1], end="")' "$_quad_tail")"
-_timed_hook_case "37450 env wrappers before an IFS rm are unwrapped inside the hook timeout" 2 \
-  "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
+_timed_hook_case "41200 leading ! words before an IFS rm are stripped inside the gate's deadline" 2 \
+  "$(python3 -c 'import sys; print("! " * 41200 + sys.argv[1], end="")' "$_quad_tail")"
+_timed_hook_case "26200 env wrappers before an IFS rm are unwrapped inside the gate's deadline" 2 \
+  "$(python3 -c 'import sys; print("env " * 26200 + sys.argv[1], end="")' "$_quad_tail")"
 # Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
-# four evals took 25 s (over 40 s on the same 4-core host, GH #789).
-_timed_hook_case "a 20 KB ! flood under four evals is denied inside the hook timeout" 2 \
-  "$(python3 -c 'import sys; t = sys.argv[1]; print("eval eval eval eval " + "! " * ((20000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail")"
+# four evals took 25 s. GH #789: at 10 KB the fixed gate denies in 1.6-1.7 s; the gate at 9c37835c^ took 14.9 s.
+_timed_hook_case "a 10 KB ! flood under four evals is denied inside the gate's deadline" 2 \
+  "$(python3 -c 'import sys; t = sys.argv[1]; print("eval eval eval eval " + "! " * ((10000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail")"
 # Empty alternatives build no new text, so the budget never charged them: 26 groups of {,} made 2^26 empty
 # strings (4.7 s, 1.8 GB), and at 27 the gate ran past the 8 s hook timeout and failed open on the raw reset.
 # 28 groups: the old gate does not finish inside the 10 s timeout (rc 124), so the row is red there on any machine.

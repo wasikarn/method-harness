@@ -310,9 +310,10 @@ _timed_case() {  # <name> <expected rc> <command>
 
 _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 
-# irrecoverable.sh's hook timeout from hooks/hooks.json into _HOOK_CEIL (past it the hook allows). On a
-# failure it counts the row failed and returns 1, so it is called bare, never in $(...), which would drop
-# the count: `_hook_ceiling "$name" || return`.
+# The time a gate run has before it stops denying, into _HOOK_CEIL: the lower of irrecoverable.sh's hook
+# timeout in hooks/hooks.json (past it the hook blocks) and the gate's own deadline (GH #771: past it the
+# gate asks). On a failure it counts the row failed and returns 1, so it is called bare, never in $(...),
+# which would drop the count: `_hook_ceiling "$name" || return`.
 _hook_ceiling() {  # <row name>
   local name="$1" ceil jerr probe
   _HOOK_CEIL=""
@@ -334,13 +335,32 @@ _hook_ceiling() {  # <row name>
   if [ -z "$ceil" ]; then
     echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return 1
   fi
-  _HOOK_CEIL=$ceil
+  # DEADLINE_SECS from the gate under test, cut by MH_IRR_DEADLINE_SECS as the gate cuts it; a gate without
+  # one (before GH #771, or a wrapper) leaves the hook timeout
+  _HOOK_CEIL=$(python3 -c 'import os, re, sys
+cap = float(sys.argv[2])
+try:
+    m = re.search(r"^DEADLINE_SECS = ([0-9.]+)[ \t]*$", open(sys.argv[1]).read(), re.M)
+except OSError:
+    m = None
+if m:
+    dl = float(m.group(1))
+    try:
+        e = float(os.environ.get("MH_IRR_DEADLINE_SECS", ""))
+    except ValueError:
+        e = 0.0
+    cap = min(cap, e if 0 < e < dl else dl)
+print("%g" % cap)' "${IRRECOVERABLE%.sh}.py" "$ceil")
+  if [ -z "$_HOOK_CEIL" ]; then
+    echo "  ❌ $name: could not work out the gate's deadline" >&2; fail=$((fail + 1)); return 1
+  fi
 }
 
-# GH #789: a row whose regression runs well past the hook timeout is timed against that timeout itself,
-# sub-second, not a fixed 4 s, so a slower host keeps its headroom. The regressions of the rows using it took
-# 15 s to over 40 s on a 4-core host, so they still fail on a host up to about twice as fast. A timing miss is
-# measured once more before it fails, as in _timed_ratio_case below.
+# GH #789: a row whose regression runs well past the gate's deadline is timed sub-second against the limit
+# _hook_ceiling reads (4 s today, the gate's own), not a fixed whole-second 4 s. Its payload is sized so the
+# fixed gate denies in about half that and the regression takes about twice it or more on a 4-core host, so
+# a host about twice as slow still passes and one about twice as fast still fails the regression. A timing
+# miss is measured once more before it fails, as in _timed_ratio_case below.
 _timed_hook_case() {  # <name> <expected rc> <command>
   local name="$1" want="$2" cmd="$3" ceil t0 t1 rc secs ok try seen=""
   _hook_ceiling "$name" || return
@@ -368,8 +388,8 @@ print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$ceil")
 # the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
 # python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
 # only skews the ratio, so a timing miss is measured once more before it fails (a wrong rc fails at once,
-# as it does not depend on timing). The command must also finish under the gate's hook timeout (read from
-# hooks/hooks.json), past which the hook allows: a slowdown both runs share keeps the ratio.
+# as it does not depend on timing). The command must also finish under the limit _hook_ceiling reads, past
+# which the gate stops denying: a slowdown both runs share keeps the ratio.
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
   local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil seen=""
   _hook_ceiling "$name" || return
