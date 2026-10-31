@@ -344,6 +344,8 @@ try:
     src = open(sys.argv[1]).read()
 except OSError:
     src = ""
+except ValueError as err:
+    sys.exit("%s cannot be read as text (%s)" % (os.path.basename(sys.argv[1]), err))
 found = re.findall(r"^DEADLINE_SECS[ \t]*(?::[ \t]*float[ \t]*)?=[ \t]*([0-9]+(?:\.[0-9]*)?)[ \t]*(?:#.*)?$", src, re.M)
 if len(found) == 1:
     dl = float(found[0])
@@ -356,7 +358,8 @@ elif found or re.search(r"\bDEADLINE_SECS\b", src):
     sys.exit("%s names DEADLINE_SECS but has no single plain numeric assignment to it" % os.path.basename(sys.argv[1]))
 print("%g" % cap)' "${IRRECOVERABLE%.sh}.py" "$ceil" 2>"$_ERRF")
   if [ -z "$_HOOK_CEIL" ]; then
-    jerr=$(head -1 "$_ERRF"); jerr=${jerr%$'\r'}
+    # the last line: one python3 did not expect is a traceback, whose last line names the error
+    jerr=$(tail -1 "$_ERRF"); jerr=${jerr%$'\r'}
     echo "  ❌ $name: could not work out the gate's deadline (${jerr:-python3 printed no error})" >&2
     fail=$((fail + 1)); return 1
   fi
