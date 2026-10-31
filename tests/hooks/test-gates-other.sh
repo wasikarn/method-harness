@@ -181,7 +181,7 @@ PY
 _quad_tail='rm${IFS}-rf${IFS}/tmp/x a{b} c$d'
 _timed_hook_case "74900 leading ! words before an IFS rm are stripped inside the hook timeout" 2 \
   "$(python3 -c 'import sys; print("! " * 74900 + sys.argv[1], end="")' "$_quad_tail")"
-_timed_case "37450 env wrappers before an IFS rm are unwrapped in linear time" 2 \
+_timed_hook_case "37450 env wrappers before an IFS rm are unwrapped inside the hook timeout" 2 \
   "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
 # Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
 # four evals took 25 s.
