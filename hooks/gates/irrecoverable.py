@@ -5798,56 +5798,74 @@ def _in_assignment_value(text, k, bounds, seps, memo):
     # True when offset k sits in the value of a NAME= / NAME+= / NAME[i]= word in assignment position (statement start,
     # after other assignments, a declaration builtin and its options, or a keyword): bash does not split an
     # assignment's value (GH #767 review 2: `CMD=$(echo 'sudo rm -rf x')` stores text). `env X=$(..)` and
-    # `rm --opt=$(..)` are arguments, and do split. bounds (unquoted blanks and separators) and seps (unquoted
-    # separators) are made once per text; memo keeps, per statement, how far its words were read and whether all
-    # were assignment-position words, so a long chain of glued `NAME=`...`` words is read once, not once per word.
+    # `rm --opt=$(..)` are arguments, and do split. bounds (unquoted blanks, separators and line continuations) and
+    # seps (the separators) are made once per text, so words are read as the shell splits them (`X='a b' CMD=..`);
+    # memo keeps, per statement, how far its words were read and whether all were assignment-position words, so a
+    # long chain of glued `NAME=`...`` words is read once, not once per word.
     n = bisect.bisect_left(bounds, k)
     i = bounds[n - 1] + 1 if n else 0
     if not _SPLIT_ASSIGN_RE.match(text, i):
         return False
-    n = bisect.bisect_left(seps, i)
-    j = seps[n - 1] + 1 if n else 0
-    pos, ok = memo.get(j, (j, True))
-    if ok and pos < i:
-        for w in _SPLIT_WORD_RE.finditer(text, pos, i):
-            t = w.group(0)
-            if not (t in _SPLIT_ASSIGN_LEAD or _SPLIT_ASSIGN_RE.match(t) or (t[:1] == "-" and t[1:].isalnum())):
-                ok = False
-                break
-        memo[j] = (max(pos, i), ok)
+    m = bisect.bisect_left(seps, i)
+    j = seps[m - 1] + 1 if m else 0
+    a, ok = memo.get(j, (bisect.bisect_left(bounds, j), True))
+    start = bounds[a - 1] + 1 if a and bounds[a - 1] >= j else j
+    while ok and a < n:
+        t = text[start:bounds[a]]
+        if t and t != "\\" and not (t in _SPLIT_ASSIGN_LEAD or _SPLIT_ASSIGN_RE.match(t)
+                                     or (t[:1] == "-" and t[1:].isalnum())):
+            ok = False
+        start = bounds[a] + 1
+        a += 1
+    memo[j] = (a, ok)
     return ok
 
 def _literal_subst_split(text):
     # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
     # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
-    # a word (after an unescaped blank or a separator), or whose output starts with a blank; each output word is escaped whole, so it
+    # a word (after a blank or a separator, so not `''$(..)` or `"$(..)"`); each output word is escaped whole, so it
     # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
     mask = _quote_mask(text)
-    bounds = [m.start() for m in re.finditer(r"[ \t\n;&|(]", text) if not mask[m.start()]]
-    seps = [p for p in bounds if text[p] not in " \t"]
-    memo = {}
     def sub(e):
         # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
-        if mask[e.start()]:
+        if mask[e.start()] or (e.start() and text[e.start() - 1] not in " \t\n;&|("):
             return e.group(0)
         raw = e.group(1) or e.group(2) or ""
         try:
             words = shlex.split(raw)
         except ValueError:
             return e.group(0)
-        words = words[1:] if words[:1] == ["--"] else words
-        out = " ".join(words)
-        # Glued to the word before it (`x$(..)`, `\ $(..)`, `'a'$(..)`), the output's first word joins that word
-        # and the rest split off (GH #767: `rm \ $(echo 'x -rf') b` is rm ' x' -rf b; a leading blank makes that
-        # first word empty). A backslash-newline before it is a line continuation, not an escaped blank.
+        out = " ".join(words[1:] if words[:1] == ["--"] else words).split()
+        return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
+    return _LITERAL_SUBST_RE.sub(sub, text)
+
+def _literal_subst_glued(text):
+    # GH #767: one more copy for a substitution glued to the word before it (`x$(..)`, `\ $(..)`, `'a'$(..)`): bash
+    # glues the output's first word to that word and splits off the rest (`rm \ $(echo 'x -rf') b` is rm ' x' -rf b;
+    # a leading blank makes that first word empty). A backslash-newline before it is a line continuation, and an
+    # assignment's value is not split. Its own copy, so _literal_subst_split's copy, and every deny it gives, stays
+    # as it was (review 4: splitting a glued `Y=..` in that copy hid the rm after it).
+    mask = _quote_mask(text)
+    bounds = [m.start() for m in re.finditer(r"[ \t\n;&|(]", text)
+              if not mask[m.start()] or (text[m.start()] == "\n" and text[m.start() - 1:m.start()] == "\\")]
+    seps = [p for p in bounds if text[p] not in " \t" and not (text[p] == "\n" and mask[p])]
+    memo = {}
+    esc = lambda w: re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w)
+    def sub(e):
         k = e.start()
+        if mask[k] or not k:
+            return e.group(0)
         j = k - 1
         while j > 0 and text[j - 1] == "\\":  # the backslashes before that char: an odd run escapes it
             j -= 1
-        glued = k and (text[k - 1] not in " \t\n;&|(" or ((k - 1 - j) % 2 and text[k - 1] != "\n"))
-        esc = lambda w: re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w)
-        if not glued:
-            return " ".join(esc(w) for w in out.split())
+        if text[k - 1] in " \t\n;&|(" and not ((k - 1 - j) % 2 and text[k - 1] != "\n"):
+            return e.group(0)  # not glued: _literal_subst_split's copy reads it
+        raw = e.group(1) or e.group(2) or ""
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            return e.group(0)
+        out = " ".join(words[1:] if words[:1] == ["--"] else words)
         if not re.search(r"\s", out) or _in_assignment_value(text, k, bounds, seps, memo):
             return e.group(0)
         first, rest = ("", out) if out[:1].isspace() else (out.split(None, 1) + [""])[:2]
@@ -5871,9 +5889,9 @@ def _subst_literals(text):
             if v != text and v not in out:
                 out.append(v)
         if ("'" in text or '"' in text or "\\" in text) and _LITERAL_SUBST_RE.search(text):
-            v = _literal_subst_split(text)
-            if v != text and v not in out:
-                out.append(v)
+            for v in (_literal_subst_split(text), _literal_subst_glued(text)):
+                if v != text and v not in out:
+                    out.append(v)
     return out
 
 def _views():

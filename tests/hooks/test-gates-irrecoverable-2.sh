@@ -3796,6 +3796,12 @@ test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: if X=$(echo '"'"' rm -rf 
 test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: while X=$(echo '"'"' rm -rf b'"'"'); do break; done' "$(bash_payload 'while X=$(echo '"'"' rm -rf b'"'"'); do break; done')"
 test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: X[0]=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'X[0]=$(echo '"'"' rm -rf b'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')')"
+# GH #767 review 4: the glued split is its own copy, so develop's split copy still denies; continuations and quoted values.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 4: X=`echo '"'"'a b'"'"'` Y=`echo '"'"'a b'"'"'` rm `echo '"'"' -rf'"'"'` b' "$(bash_payload 'X=`echo '"'"'a b'"'"'` Y=`echo '"'"'a b'"'"'` rm `echo '"'"' -rf'"'"'` b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 4: X=$(echo '"'"'a b'"'"') Y=$(echo '"'"'a b'"'"') rm $(echo '"'"' -rf'"'"') b' "$(bash_payload 'X=$(echo '"'"'a b'"'"') Y=$(echo '"'"'a b'"'"') rm $(echo '"'"' -rf'"'"') b')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: true && \<NL>  X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload $'true && \\\n  X=$(echo \' rm -rf b\')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: A=1 \<NL>  B=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload $'A=1 \\\n  B=$(echo \' rm -rf b\')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: X='"'"'a b'"'"' CMD=$(echo '"'"' rm -rf build'"'"')' "$(bash_payload $'X=\'a b\' CMD=$(echo \' rm -rf build\')')"
 _timed_case "GH #767 review 3: 8900 glued X=\`echo 'a b'\` words, then a split-copy target, denied in bounded time" 2 \
   "echo x; $(printf 'X=`echo '"'"'a b'"'"'` %.0s' $(seq 8900)); rm \`echo ' -rf'\` b"
 gates_summary
