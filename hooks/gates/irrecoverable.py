@@ -4082,6 +4082,17 @@ def _root_or_home_word(rest):
             return True
     return False
 
+# GH #595: the virtualenv activate scripts source-file lets through: a word whose last two path parts are bin and
+# activate, activate.fish or activate.csh (the decision on the issue; a bare `source activate` still asks).
+_VENV_ACTIVATE_RE = re.compile(r"(?:^|/)bin/activate(?:\.fish|\.csh)?\Z")
+
+def _venv_activate(rest):
+    # Glued runs joined, so an unquoted `$VENV/bin/activate` is one word; a leading `--` is source's own.
+    words = _shell_words(rest)
+    if words[:1] == ["--"]:
+        words = words[1:]
+    return len(words) == 1 and bool(_VENV_ACTIVATE_RE.search(words[0]))
+
 # trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
 # path. Any other variable stays allowed (trash is recoverable; the docs advise "${X:?}"). A ${HOME} or $(pwd)
 # word is blanked to a placeholder, so it is matched on trash's own raw arguments, as chmod's ${HOME} is.
@@ -5121,7 +5132,8 @@ def _check_window(_wi, w):
     if not _in_value and _opaque_var(argv0, rest):
         ask("the program this runs is a variable with no visible assignment — confirm what it runs",
             rule="opaque-var-verb")
-    if argv0 in ("source", ".") and rest:
+    # GH #595: activating a virtualenv is routine, so one path ending bin/activate(.fish|.csh) is not asked about.
+    if argv0 in ("source", ".") and rest and not _venv_activate(rest):
         ask("source runs a file's commands in this shell, unchecked — confirm what it runs", rule="source-file")
 
     for argv0 in _candidates(argv0, KNOWN_DANGEROUS):
