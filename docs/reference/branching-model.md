@@ -46,13 +46,16 @@ Enforcement layers, weakest to strongest:
 at merge time** (2026-10-25: while each PR bumped itself, every peer merge re-conflicted every open PR
 on the two manifest lines, and #581 took about six re-sync and gauntlet cycles to land).
 
-The agent runs the merge itself; the operator only confirms. `.claude/settings.json` has `ask` rules
-for `bash scripts/merge-pr.sh` and the `Fresh-context review: MERGE` comment, so each shows a
-permission prompt naming the PR. Send both as one command (`gh pr comment <N> --body "..." && bash
-scripts/merge-pr.sh <N>`) for a single prompt. Do not ask with `AskUserQuestion` instead: the
-auto-mode classifier strips tool results, so it never sees that answer and blocks the merge as
-self-approval, while a content-matching `ask` rule prompts before the classifier runs
-(code.claude.com/docs/en/permission-modes, checked 2026-10-31).
+In a local session with `gh`, the agent runs the merge itself and the operator only confirms.
+`.claude/settings.json` has `ask` rules matching any `scripts/merge-pr.sh` call and any
+`gh pr comment` whose text holds `context review`. The orchestrating session (not a review
+subagent) posts the verdict and merges in one command, so there is one prompt:
+`gh pr comment <N> --body "Fresh-context review: MERGE @ <full head sha>" && bash scripts/merge-pr.sh <N>`.
+Use `--body`, not `--body-file`: the rule reads the command text, so a verdict in a file posts
+unprompted or is blocked. Do not ask with `AskUserQuestion` instead: the auto-mode classifier
+strips tool results, so it never sees that answer and blocks the merge as self-approval, while a
+content-matching `ask` rule prompts before the classifier runs (code.claude.com/docs/en/permission-modes
+and /permissions, checked 2026-10-31). The cloud path below (MCP comment and merge) has no such rule.
 
 Run it from the PR's own checkout, on its branch, with a clean tree (untracked files count), and
 start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. Do not edit that
