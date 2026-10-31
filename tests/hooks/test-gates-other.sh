@@ -184,11 +184,12 @@ _timed_case "74900 leading ! words before an IFS rm are stripped in linear time"
 _timed_case "37450 env wrappers before an IFS rm are unwrapped in linear time" 2 \
   "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
 # Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
-# four evals took 25 s. GH #761 shape: timed against the same flood under one eval, not a fixed whole-second
-# 4 s that a loaded container's ~3 s run could pass (now ~2.3-3.2x). A quadratic strip is red
-# either way: it trips the gate's 4 s deadline (an ask, rc 0) or, past it, the 10 s timeout (rc 124).
-_bang_flood() { python3 -c 'import sys; t = sys.argv[1]; print(sys.argv[2] + "! " * ((20000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail" "$1"; }
-_timed_ratio_case "a 20 KB ! flood under four evals is denied inside the hook timeout and 6x one eval" 2 6 \
+# four evals took 25 s. The binding limit is the gate's own 4 s deadline (DEADLINE_SECS; on expiry it asks,
+# rc 0): 20 KB took ~3 s, so a loaded container tipped it past 4 s and the row failed. At 10 KB a healthy run
+# takes ~1.4 s, timed against the same flood under one eval (GH #761 shape; ~2.7x). A quadratic strip is still
+# red: it asks at the deadline, and with the deadline raised it takes ~8-9 s, over 6x the baseline.
+_bang_flood() { python3 -c 'import sys; t = sys.argv[1]; print(sys.argv[2] + "! " * ((10000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail" "$1"; }
+_timed_ratio_case "a 10 KB ! flood under four evals is denied inside the hook timeout and 6x one eval" 2 6 \
   "$(_bang_flood 'eval ')" "$(_bang_flood 'eval eval eval eval ')"
 # Empty alternatives build no new text, so the budget never charged them: 26 groups of {,} made 2^26 empty
 # strings (4.7 s, 1.8 GB), and at 27 the gate ran past the 8 s hook timeout and failed open on the raw reset.
