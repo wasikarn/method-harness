@@ -221,7 +221,8 @@ g='git'`), each mapped to the git words it runs, `$(git_current_branch)` as PH; 
 its two pushes, `git push origin :OLD` and `git push --set-upstream origin NEW`. The expansions were checked
 against the plugin source (master, 2026-10-31) with bash and an argv-logging git stub. The command word is
 expanded after the wrapper walk, so every git rule applies with its own rule id; the fast path routes a `gp`,
-`ggf` or `grename` substring, or a `g` word in command position, to python. `gate-differential.sh
+`ggf` or `grename` substring, or a `g` word in command position (a glued redirection too: `g>/dev/null push`),
+to python. `gate-differential.sh
 --fuzz-seed 750` against develop: 0 diffs in 568 cases (no transcript replay: built in a cloud session).
 Accepted over-denies: the strict force-push allow reads the raw text, so a forced alias push never gets it
 (`gp -f origin HEAD:feat` denies: write the `git push` form); and a wrapped or quoted alias (`sudo gp -f`,
