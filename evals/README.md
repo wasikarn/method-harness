@@ -257,29 +257,39 @@ Run (needs Claude Code 2.1.269+; older builds print "currently in early access" 
 version-gated, not an account-level early-access flag, per `docs/en/plugin-evals.md`'s Requirements
 section, confirmed via `claude plugin eval --help` on 2.1.280):
 
+Every case loads an mh agent (`subagent_type:`) or skill (`skill:`), which needs the plugin
+actually loaded in the eval sandbox: sandboxes load no user settings, so `defaultEnabled: false`
+never loads it (silent no-plugin fallback, no error; a `tool_used` grader still passes on the
+failed dispatch), whichever tag you run. The helper needs bash specifically (it relies on
+`BASH_SOURCE`) and silently does nothing under zsh or sh, so each line runs through `bash -c`
+whatever your login shell; it flips `defaultEnabled` true for the duration and restores it after,
+even on failure, with no manual edit. `scripts/eval-changed.sh` prints lines in this form, each
+with the union of its tag's cases' `allowed_tools` as `--allow-tools`, for just the agents and
+skills you changed. Notes on single lines:
+
+- The first line also judges `perf-regression-routing` with haiku; its own sonnet run is further
+  down.
+- `--tag deep-audit` includes the six `deep-audit-step6-*` cases.
+- The `ideate` run case spawns 6 agents (5 plus `mh:ideate-critic`).
+
+The block has no `#` comments: zsh, without `interactivecomments`, runs a pasted `#` line as a
+command, and a trailing `# ... (...)` makes its whole line a parse error, so pasting it whole
+skipped those runs. The one note inside is a `:` no-op, as `eval-changed.sh` prints it.
+
 ```bash
-# Every case loads an mh agent (subagent_type:) or skill (skill:), which needs the plugin actually
-# loaded in the eval sandbox -- sandboxes load no user settings, so defaultEnabled: false never
-# loads it (silent no-plugin fallback, no error; a tool_used grader still passes on the failed
-# dispatch), whichever tag you run. The helper needs bash specifically (it relies on
-# BASH_SOURCE) -- it silently does nothing under zsh/sh, so run each line through `bash -c`
-# regardless of your login shell; it flips defaultEnabled true for the duration and restores it
-# after, even on failure -- no manual edit, nothing to remember. scripts/eval-changed.sh prints
-# lines in this form, each with the union of its tag's cases' allowed_tools as --allow-tools, for
-# just the agents and skills you changed.
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --runs 1 --no-publish'  # judges perf-regression-routing with haiku too: its own sonnet run is below
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag silent-failure-hunter --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag deep-audit --allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write --runs 1 --no-publish'  # includes the six deep-audit-step6-* cases
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag deep-audit --allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
-# perf-regression-routing is judged by sonnet (evals/judge-models.tsv, GH #510): read its score from this run, not the line above
+: 'perf-regression-routing is judged by sonnet (evals/judge-models.tsv, GH #510): read its score from the next line, not from the tag run above'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --case perf-regression-routing --judge-model sonnet --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate --allow-tools Agent,Bash,Read,Glob,Grep,Skill --runs 1 --no-publish'  # the run case spawns 6 agents (5 + mh:ideate-critic)
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate --allow-tools Agent,Bash,Read,Glob,Grep,Skill --runs 1 --no-publish'
 ```
 
 Cost and time: the last full run (2026-09-13, 76 cases, `-j 1`) took 34,801 s and $119.40; the
