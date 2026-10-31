@@ -88,7 +88,7 @@ refused as too dense, as `command rtk proxy ` x 200 already was.
 GH #336 added `mkfs`, `chmod-world` (777 / a+rwx with -R or on / or ~), `rm-no-preserve-root` and two
 views, each a second reading of the whole command checked by every rule: `ifs-split` ($IFS read as a
 blank) and `var-verb` (`$NAME` read back where the command assigns NAME a plain value). A view runs
-after the command passed, up to 20 KB, and a structural deny inside one only ends that view. Two exceptions (GH #309): `brace-view` is read up to the main gate's 150 KB cap, and `_deny_ambiguous` returns inside it (a guard-position brace such as `{,git} reset --hard` would otherwise end the view before any rule ran). GH #661: rm's own rules (`rm-rf`, `rm-recursive`, `rm-no-preserve-root`) enforce inside `brace-view` (`_VIEW_ENFORCED`), since no token reading keeps a word such as `--{r,} b` whole. GH #309 (push slice) adds `git-push-force` (send-pack too), `git-push-mirror` and `git-push-delete-protected`, so `git push --{force,force} origin main` denies; `gate-differential.sh --replay 3000` against develop: 0 diffs. Every other rule there stays shadow. GH #690: bash expands braces before `$IFS` splitting and command substitution, so `brace-view` also reads its expanded text with the `ifs-split` and `subst-literal` rewrites applied (`r{m,m}${IFS}-rf b`, `rm $(echo --{r,f}) b`), under the same enforcement. Replay of
+after the command passed, up to 20 KB, and a structural deny inside one only ends that view. Two exceptions (GH #309): `brace-view` is read up to the main gate's 150 KB cap, and `_deny_ambiguous` returns inside it (a guard-position brace such as `{,git} reset --hard` would otherwise end the view before any rule ran). GH #661: rm's own rules (`rm-rf`, `rm-recursive`, `rm-no-preserve-root`) enforce inside `brace-view` (`_VIEW_ENFORCED`), since no token reading keeps a word such as `--{r,} b` whole. GH #309 (push slice) adds `git-push-force` (send-pack too), `git-push-mirror` and `git-push-delete-protected`, so `git push --{force,force} origin main` denies; `gate-differential.sh --replay 3000` against develop: 0 diffs. Every other rule there stays shadow. GH #690: bash expands braces before `$IFS` splitting and command substitution, so `brace-view` also reads its expanded text with the `ifs-split` and `subst-literal` rewrites applied (`r{m,m}${IFS}-rf b`, `rm $(echo --{r,f}) b`), under the same enforcement. GH #718: git's discard rules (reset --hard, clean -f, checkout/restore/switch discards, stash drop, branch -D, rm -f, worktree remove -f, reflog/update-ref/read-tree) enforce inside `brace-view` too (`git reset --{hard,hard}` was read only there), and every view skips the brace-token ambiguity, which in a view only ended the reading (`echo {a,b}; git${IFS}reset --hard`). Replay of
 55,000 real commands with every new rule shadowed: 0 verdict diffs against develop; 0 hits for the
 first four, 1 for `var-verb` (a real `git -C $R checkout -- <file>`, a discard develop misses, GH #375), 63
 `opaque-var-verb` asks and 98 `source-file` asks. Those three ship shadow. Residue: zsh does not split
@@ -198,3 +198,15 @@ Targeted replay of every own-project command with a python/node heredoc or a tra
 10 rule hits on prose read as shell, each checked by hand: none calls a process API); 12 allow to deny: 2 real
 `trash *` / `trash "$HOME" ...`, the rest scripts whose process-API literals name a git verb (mostly gate tests). Padded 137-140 KB python heredocs:
 0.17-0.24 s (develop 0.25-0.35 s).
+
+## irrecoverable.py: virtualenv activation out of source-file (GH #595)
+
+The bypass hunt's F18: `source .venv/bin/activate` journaled `would_ask source-file`, so promoting the rule
+would ask on every venv activation, and those rows inflated the false-positive count the promotion is judged
+by. Operator decision 2026-10-31: `source`/`.` of one word whose last two path parts are `bin/activate`,
+`bin/activate.fish` or `bin/activate.csh`, after an optional `--`, is let through (`_venv_activate`). The word
+is read with its glued tokens joined (shlex cuts an unquoted `$VENV/bin/activate` in two, and an ask in either
+reading wins), so the directory may be quoted, a variable or a substitution (its body is checked as its own
+statement). Still asked: any second word
+(`source .venv/bin/activate x.sh`), `activate.sh`, `xbin/activate`, a bare `source activate` (old conda,
+found on PATH). The rule stays shadow.

@@ -21,9 +21,9 @@ for arg in "$@"; do
 done
 
 if [ -n "$ref" ]; then
-  changed=$(git diff --name-only "$ref"...HEAD)
+  changed=$(git diff --name-only "$ref"...HEAD) || { echo "eval-changed: git diff $ref...HEAD failed" >&2; exit 1; }
 else
-  changed=$(git diff --name-only HEAD; git diff --name-only --cached)
+  changed=$(git diff --name-only HEAD && git diff --name-only --cached) || { echo "eval-changed: git diff against HEAD or the index failed" >&2; exit 1; }
 fi
 
 tags=$(printf '%s\n' "$changed" \
@@ -39,10 +39,10 @@ fi
 . scripts/_lib/eval-default-enabled.sh
 # Fail on a broken judge-models.tsv (or a missing reader) now, before the first paid run.
 python3 scripts/_lib/eval_judge_models.py check || exit 1
-# Tags whose cases load an mh agent or skill through the plugin: eval sandboxes load no user
-# settings, so without the defaultEnabled flip they silently score a no-plugin fallback (the
-# run block in evals/README.md wraps the same five).
-needs_plugin=" code-architect performance-optimizer backend-architect ideate-critic ideate "
+# Every run loads the plugin (with_default_enabled_true): eval sandboxes load no user settings,
+# so with defaultEnabled: false every case, Agent- or Skill-based, silently scores a no-plugin
+# fallback (CHANGELOG 1.1.133), and a tool_used grader still passes on the failed dispatch.
+rc=0
 
 while IFS= read -r tag; do
   # Union every allowed_tools list across all cases whose frontmatter tags: carry this tag
@@ -62,20 +62,12 @@ print(','.join(sorted(tools)))
 " "$tag") || exit 1
   cmd=(claude plugin eval . --scaffold --tag "$tag" --runs 1 --no-publish)
   [ -n "$allow" ] && cmd+=(--allow-tools "$allow")
-  wrap=0
-  [[ "$needs_plugin" == *" $tag "* ]] && wrap=1
   if [ "$run" -eq 1 ]; then
     echo "== $tag =="
-    if [ "$wrap" -eq 1 ]; then
-      with_default_enabled_true "${cmd[@]}" </dev/null
-    else
-      "${cmd[@]}" </dev/null
-    fi
-  elif [ "$wrap" -eq 1 ]; then
+    with_default_enabled_true "${cmd[@]}" </dev/null || rc=1
+  else
     # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
     printf "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true %s'\n" "${cmd[*]}"
-  else
-    printf '%q ' "${cmd[@]}"; echo
   fi
   # GH #510: a case in evals/judge-models.tsv gets its own run under its judge; the tag run
   # above still judges it with haiku, and that score of it is not the one to read. The run
@@ -88,7 +80,7 @@ print(','.join(sorted(tools)))
     [ -n "$case_allow" ] && jcmd+=(--allow-tools "$case_allow")
     if [ "$run" -eq 1 ]; then
       echo "== $tag: $case, judged by $model (evals/judge-models.tsv) =="
-      with_default_enabled_true "${jcmd[@]}" </dev/null
+      with_default_enabled_true "${jcmd[@]}" </dev/null || rc=1
     else
       echo "# $case: judged by $model (evals/judge-models.tsv); read its score from this run"
       # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
@@ -96,3 +88,4 @@ print(','.join(sorted(tools)))
     fi
   done <<< "$overrides"
 done <<< "$tags"
+exit "$rc"

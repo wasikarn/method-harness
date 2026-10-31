@@ -1610,9 +1610,14 @@ class _ViewStop(Exception):
 # The rules a shadowed view still enforces; brace-view stays shadow for every other rule (GH #337). These rules
 # must read the words bash builds, and no token reading keeps such a word whole (`--{r,} b` loses its `}`):
 # rm's own (GH #661: `rm --{r,f} b` is `rm --r --f b`) and push's overwrite rules, send-pack included (GH #309:
-# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`).
-_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root",
-                                           "git-push-force", "git-push-mirror", "git-push-delete-protected"})}
+# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`), and git's discard rules (GH #718: `git reset --{hard,hard}`
+# was read only here, and allowed).
+_VIEW_ENFORCED = {"brace-view": frozenset({
+    "rm-rf", "rm-recursive", "rm-no-preserve-root",
+    "git-push-force", "git-push-mirror", "git-push-delete-protected",
+    "git-reset-hard", "git-clean-force", "git-checkout-discard", "git-restore", "git-stash-drop", "git-switch-force",
+    "git-checkout-index-force", "git-read-tree-reset", "git-branch-force-delete", "git-branch-force-move-protected",
+    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
@@ -2918,8 +2923,10 @@ def _ambiguous(c):
 
 _ambig = _ambiguous(cmd)
 def _deny_ambiguous():
-    if _VIEW[0] == "brace-view":
-        return  # the raw text was checked above; this deny would end the view before any rule ran (other views keep ending on it)
+    if _VIEW[0]:
+        # The raw text was checked above. In a view this rule-less deny only ends the view before any rule ran,
+        # so a brace anywhere in the command hid `git${IFS}reset --hard` from ifs-split (GH #718).
+        return
     deny("ambiguous shell syntax (" + _ambig[0] + ") next to an irrecoverable verb - confirm with user first")
 # The verb is looked for in three views: the raw text, the text with line continuations joined, and the
 # text with quotes and backslashes dropped, so '"git" push' and 'r\m' cannot hide it (GH #255).
@@ -4082,6 +4089,17 @@ def _root_or_home_word(rest):
             return True
     return False
 
+# GH #595: the virtualenv activate scripts source-file lets through: a word whose last two path parts are bin and
+# activate, activate.fish or activate.csh (the decision on the issue; a bare `source activate` still asks).
+_VENV_ACTIVATE_RE = re.compile(r"(?:^|/)bin/activate(?:\.fish|\.csh)?\Z")
+
+def _venv_activate(rest):
+    # Glued runs joined, so an unquoted `$VENV/bin/activate` is one word; a leading `--` is source's own.
+    words = _shell_words(rest)
+    if words[:1] == ["--"]:
+        words = words[1:]
+    return len(words) == 1 and bool(_VENV_ACTIVATE_RE.search(words[0]))
+
 # trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
 # path. Any other variable stays allowed (trash is recoverable; the docs advise "${X:?}"). A ${HOME} or $(pwd)
 # word is blanked to a placeholder, so it is matched on trash's own raw arguments, as chmod's ${HOME} is.
@@ -5121,7 +5139,8 @@ def _check_window(_wi, w):
     if not _in_value and _opaque_var(argv0, rest):
         ask("the program this runs is a variable with no visible assignment — confirm what it runs",
             rule="opaque-var-verb")
-    if argv0 in ("source", ".") and rest:
+    # GH #595: activating a virtualenv is routine, so one path ending bin/activate(.fish|.csh) is not asked about.
+    if argv0 in ("source", ".") and rest and not _venv_activate(rest):
         ask("source runs a file's commands in this shell, unchecked — confirm what it runs", rule="source-file")
 
     for argv0 in _candidates(argv0, KNOWN_DANGEROUS):
@@ -5677,6 +5696,25 @@ def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
 
+def _literal_subst_split(text):
+    # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
+    # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
+    # a word (after a blank or a separator, so not `''$(..)` or `"$(..)"`); each output word is escaped whole, so it
+    # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
+    mask = _quote_mask(text)
+    def sub(e):
+        # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
+        if mask[e.start()] or (e.start() and text[e.start() - 1] not in " \t\n;&|("):
+            return e.group(0)
+        raw = e.group(1) or e.group(2) or ""
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            return e.group(0)
+        out = " ".join(words[1:] if words[:1] == ["--"] else words).split()
+        return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
+    return _LITERAL_SUBST_RE.sub(sub, text)
+
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
 
@@ -5691,6 +5729,10 @@ def _subst_literals(text):
                 if w == v:
                     break
                 v = w
+            if v != text and v not in out:
+                out.append(v)
+        if ("'" in text or '"' in text or "\\" in text) and _LITERAL_SUBST_RE.search(text):
+            v = _literal_subst_split(text)
             if v != text and v not in out:
                 out.append(v)
     return out

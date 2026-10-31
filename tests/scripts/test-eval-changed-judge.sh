@@ -27,9 +27,9 @@ case_md() {  # <case> <tags> <allowed_tools>
   mkdir -p "$R/evals/$1"
   printf -- '---\nname: %s\ntags: [%s]\nallowed_tools: [%s]\n---\nprompt\n' "$1" "$2" "$3" >"$R/evals/$1/prompt.md"
 }
-# Tags run in sorted order: ideate (wrapped by needs_plugin), zz-skill (two judge rows, so its
-# inner loop has input left after the first call), zz-zz (a tag after both). With a
-# stdin-reading claude, a dropped </dev/null on any of the three call sites skips a later run.
+# Tags run in sorted order: ideate, zz-skill (two judge rows, so its inner loop has input left
+# after the first call), zz-zz (a tag after both). With a stdin-reading claude, a dropped
+# </dev/null on either call site (the tag run or the judge run) skips a later run.
 case_md ideate-case "ideate" "Agent"
 case_md zz-case "zz-skill, clean" "Bash, Read"
 case_md zz-case3 "zz-skill" "Grep"
@@ -91,6 +91,12 @@ PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" >"$TMP/print.out" 2>&1
 p=$(/usr/bin/grep -- "--case zz-case " "$TMP/print.out")
 [[ "$p" == "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval "*"--judge-model sonnet"*"'" ]] \
   && ok "print mode: judge run printed in the README's bash -c helper form" || bad "print mode judge line wrong: '$p'"
+
+# A failing judge run must fail --run too, not vanish behind the tag run's success.
+printf '#!/usr/bin/env bash\ncase " $* " in *" --case zz-case "*) exit 3 ;; esac\n' >"$R/bin/claude"
+PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" --run >/dev/null 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && ok "--run exits non-zero when the judge run fails (exit $rc)" || bad "--run exited 0 although the judge run failed"
 
 echo "eval-changed per-eval judge self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

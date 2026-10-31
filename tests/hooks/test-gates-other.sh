@@ -279,8 +279,6 @@ fi
 # for the literal '{ ., }' reading, so its stdout is not empty; it is the same bypass as 'git add {..,}'.)
 for _c in \
   'fi{nd,nd} /tmp/x -delete' \
-  'git restore -S --wor{ktree,} file.txt' \
-  'git branch --del{ete,ete} --forc{e,e} main' \
   'git add {..,}' \
   'git add {-A,}' \
   'git add {:/,}' \
@@ -291,21 +289,8 @@ for _c in \
   'git {,add} -A' \
   'git a{dd,dd} .' \
   'git -C . a{dd,dd} .' \
-  'git rest{ore,ore} .' \
-  'git br{anch,anch} -D main' \
   'fi{"nd",} /tmp -delete' \
-  'git {,"reset"} --hard' \
-  'git -C . {,"reset"} --hard' \
-  'git {,"clean"} -fd' \
-  "bash -c 'git {,\"reset\"} --hard'" \
-  'echo {x,#$}; git {,"reset"} --hard' \
-  $'# {x,y}\'\ngit {,"reset"} --hard' \
   '{f,"x y"}ind . -delete' \
-  '{,git} reset --hard' \
-  'git {{,},reset} --hard' \
-  '{A=1}},git} reset --hard' \
-  '{A="x y",git} reset --hard' \
-  "{A='x y',git} reset --hard" \
   'f{ind,x\ y} /tmp/x -delete' \
   $'f{ind,x\ry} /tmp/x -delete' \
   'f{ind,<(:)} /tmp/x -delete' \
@@ -369,6 +354,26 @@ for _c in \
   '{A=1}},git} push --force origin main' \
   'git push --for{ce-with-lease,} origin main' ; do
   test_deny "$IRRECOVERABLE" "GH #309: a brace-built forced push denies through brace-view: $_c" "$(bash_payload "$_c")"
+done
+# GH #718: git's discard rules enforce in brace-view too, so a brace-built reset --hard, clean -f, restore,
+# branch -D or forced delete denies (`git reset --{hard,hard}` was read only there, and allowed).
+for _c in \
+  'git restore -S --wor{ktree,} file.txt' \
+  'git branch --del{ete,ete} --forc{e,e} main' \
+  'git rest{ore,ore} .' \
+  'git br{anch,anch} -D main' \
+  'git {,"reset"} --hard' \
+  'git -C . {,"reset"} --hard' \
+  'git {,"clean"} -fd' \
+  "bash -c 'git {,\"reset\"} --hard'" \
+  'echo {x,#$}; git {,"reset"} --hard' \
+  $'# {x,y}\'\ngit {,"reset"} --hard' \
+  '{,git} reset --hard' \
+  'git {{,},reset} --hard' \
+  '{A=1}},git} reset --hard' \
+  '{A="x y",git} reset --hard' \
+  "{A='x y',git} reset --hard" ; do
+  test_deny "$IRRECOVERABLE" "GH #718: a brace-built git discard denies through brace-view: $_c" "$(bash_payload "$_c")"
 done
 # The .sh fast path hands a command to python only when brace-route.awk sees an expanding group, so the
 # awk must see every shape _bracex expands: enumerate each string of { } , x . up to 7 characters (97,655; plus
@@ -455,12 +460,13 @@ fi
 # awk now bounds its own work, so a long f-string/dict heredoc with no expanding group stays on the fast path.
 test_allow "$IRRECOVERABLE" "GH #309: a 2 KB python heredoc with braces and a mixed-quote line (no group expands) stays allowed" \
   "$(bash_payload "$(python3 -c "print(\"python3 - <<'PY'\\n\" + \"\".join(f\"x{i} = {{'a': {i}}}\\n\" for i in range(120)) + \"v[:1] in '\\\"\\\\''\\nPY\")")")"
-# _deny_ambiguous returns inside brace-view only: any other view (ifs-split enforces) still ends on it.
-if /usr/bin/grep -qE '_VIEW\[0\] == "brace-view"' "$ROOT/hooks/gates/irrecoverable.py"; then
-  echo "  ✅ GH #309: _deny_ambiguous skips only the brace-view view"
+# _deny_ambiguous returns inside every view (GH #718): the main reading checked the raw text, and in a view this
+# rule-less deny only ends the reading, so a brace anywhere hid `git${IFS}reset --hard` from ifs-split.
+if /usr/bin/grep -qx '    if _VIEW\[0\]:' <<<"$(awk '/^def _deny_ambiguous\(\):/{getline; print; exit}' "$ROOT/hooks/gates/irrecoverable.py")"; then
+  echo "  ✅ GH #718: _deny_ambiguous skips every view"
   pass=$((pass + 1))
 else
-  echo "  ❌ GH #309: _deny_ambiguous must return only inside brace-view" >&2
+  echo "  ❌ GH #718: _deny_ambiguous must return inside every view" >&2
   fail=$((fail + 1))
 fi
 # A structural deny takes no id, so it enforces even while brace-view is shadowed: a raw noncharacter
@@ -478,7 +484,8 @@ test_allow "$IRRECOVERABLE" "GH #309 control: a JSON here-string with chained ob
   "$(bash_payload "python3 weighted-score.py <<< '$_json309'")"
 test_deny "$IRRECOVERABLE" "GH #309: a bash -c body that only starts like JSON is still expanded (structural deny over the cap)" \
   "$(bash_payload "bash -c '$_json309; git {,\"reset\"} --hard'")"
-_would336 deny brace-view "bash -c '{\"a\":1}; git {,\"reset\"} --hard; {x,y}'"
+test_deny "$IRRECOVERABLE" "GH #718: a bash -c body that starts like JSON hides no brace-built reset --hard" \
+  "$(bash_payload "bash -c '{\"a\":1}; git {,\"reset\"} --hard; {x,y}'")"
 # A brace that cannot expand (no comma, no range: an f-string field, "{x}") stays on the shell fast path, so
 # a heredoc body whose quotes the tokenizer cannot balance is not newly denied by the brace routing.
 _c309h=$(cat <<'XEOF'
