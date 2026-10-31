@@ -53,6 +53,14 @@ try:
 except (ImportError, AttributeError, ValueError, OSError):
     pass  # no SIGALRM on this platform: onFailure block in hooks.json still stops a timeout from allowing
 
+def _disarm():
+    # Before every exit: a timer firing during shutdown (default SIGALRM, rc 142) or a deny's unwind (ask)
+    # would replace the decision already made.
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except Exception:
+        pass  # fallback: no timer was armed on this platform
+
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -62,6 +70,7 @@ except Exception:
 # tool_input:null). irrecoverable.sh short-circuits empty stdin and payloads
 # with no destructive token before python runs, so those allow by design.
 if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
+    _disarm()
     print("[mh:gate] BLOCKED: malformed PreToolUse payload — failing closed", file=sys.stderr)
     # d may be None or a non-dict here -- pass literals, never d.get(...).
     journal(GATE_ID, None, "deny", None)
@@ -1561,6 +1570,7 @@ def _deny_nested_spawn():
         raise _ViewStop
     if _ONLY_RULE_PASS_ON[0]:
         return  # the enforced view pass reads only the _VIEW_ENFORCED rules: no spawn scan, so no spawn-scan budget (review 8)
+    _disarm()
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1688,6 +1698,7 @@ def deny(reason, rule=None, hint=None):
         if rule is None:  # every rule-less confirm deny is a tokenizer/complexity refusal
             reason += "; split it into simpler separate commands"
         reason += "; if nobody can confirm, skip this step, keep going on the rest, and list it for the user in your final report"
+    _disarm()
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
     # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
@@ -5883,4 +5894,5 @@ for _VIEW[0], _text in _views():
         if _VIEW[0] in _VIEW_ENFORCED:
             _enforced_pass(_text)
 
+_disarm()
 sys.exit(0)

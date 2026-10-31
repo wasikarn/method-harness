@@ -51,9 +51,15 @@ esac
 # GH #771: except a recursive rm or a find delete, which deny on this text check. It over-denies
 # (git rm -r, echo rm -rf), the safe direction on a machine that cannot parse.
 if ! command -v python3 >/dev/null 2>&1; then
-  _rm_re='(^|[^[:alnum:]_.-])rm[[:space:]]([^;&|]*[[:space:]])?-(-recursive|[[:alpha:]]*[rR])'
-  _find_re='(^|[^[:alnum:]_.-])find[[:space:]][^;&|]*(-delete|-(exec|execdir|ok|okdir)[[:space:]]+([^[:space:]]*/)?rm([[:space:]]|$))'
-  if [[ "$_norm" =~ $_rm_re ]] || [[ "$_norm" =~ $_find_re ]]; then
+  # --r[a-z]*: rm's only --r option is --recursive, and getopt_long takes any prefix of it. Any rm word
+  # between -exec and its ; or + counts (command rm, env rm, sudo -u x rm, /bin/rm).
+  _rm_re='(^|[^[:alnum:]_.-])rm[[:space:]]([^;&|]*[[:space:]])?-(-r[[:alpha:]]*|[[:alpha:]]*[rR])'
+  _find_re='(^|[^[:alnum:]_.-])find[[:space:]][^;&|]*(-delete|-(exec|execdir|ok|okdir)[[:space:]]([^;+]*[[:space:]/])?rm([[:space:]]|$))'
+  # A quoted ; or | ('a|b') would end the [^;&|]* match once quotes are stripped, so also match a copy
+  # with each quoted span blanked; a quoted flag ('-rf') still matches on $_norm.
+  _sq="'"
+  _qnorm="$(printf '%s' "$_input" | sed "s/${_sq}[^${_sq}]*${_sq}/_/g; s/\\\\\"[^\"]*\\\\\"/_/g; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"\\\\")"
+  if [[ "$_norm" =~ $_rm_re ]] || [[ "$_norm" =~ $_find_re ]] || [[ "$_qnorm" =~ $_rm_re ]] || [[ "$_qnorm" =~ $_find_re ]]; then
     echo "[mh:gate] BLOCKED: python3 not found and this command names a recursive rm or a find delete; use trash instead (install python3 to restore the full gate)" >&2
     exit 2
   fi

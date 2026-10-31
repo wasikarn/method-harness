@@ -1550,10 +1550,13 @@ test_nopython_deny() {
 }
 for _c in 'rm -rf /tmp/x' 'rm -r x' 'rm -R x' 'rm --recursive x' 'rm -f -r x' 'rm x -fr' '/bin/rm -rf x' \
   'ls; rm -rf x' 'find . -delete' 'find . -name y -delete' 'find . -exec rm {} +' 'find . -exec /bin/rm -f {} ;' \
-  'git rm -r dir' 'echo rm -rf x'; do
+  'git rm -r dir' 'echo rm -rf x' \
+  'rm --rec x' 'rm --recursiv x' "rm 'a|b' -r" "rm 'a;b' -rf" "rm \"a|b\" -r" "find . -name 'a|b' -delete" \
+  "find . -regex '.*\\(a\\|b\\)' -delete" "find . -name 'x;y' -exec rm {} +" 'find . -exec command rm {} \;' \
+  'find . -exec env rm {} \;' 'find . -exec sudo -u x rm {} \;' "rm '-rf' x"; do
   test_nopython_deny "$IRRECOVERABLE" "irrecoverable: $_c" "$(bash_payload "$_c")"
 done
-for _c in 'rm -f x' 'rm x' 'git status' 'find . -name y' 'find . -exec cat {} +' 'rmdir x' 'ls -r rmx'; do
+for _c in 'rm -f x' 'rm x' 'git status' 'find . -name y' 'find . -exec cat {} +' 'rmdir x' 'ls -r rmx' 'rm --force x' "rm 'a|b'" 'find . -exec cat {} \;'; do
   test_nopython_allow "$IRRECOVERABLE" "irrecoverable: $_c keeps the #93 allow" "$(bash_payload "$_c")"
 done
 # Backtick/$(...) fast-path bypass: a command substitution vanishes in real bash ("gi`true`t" IS
