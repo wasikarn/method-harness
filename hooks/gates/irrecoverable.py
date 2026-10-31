@@ -23,6 +23,44 @@ except Exception as _e:
 
 GATE_ID = "gate:bash:irrecoverable"
 
+# GH #771: the gate's own wall-clock limit, well under hooks.json's 8 s timeout (a timed-out PreToolUse
+# hook lets the tool call run). On expiry it asks, never allows; os._exit also cuts short a git call in
+# flight. MH_IRR_DEADLINE_SECS (test-only) can only shorten it.
+DEADLINE_SECS = 4.0
+try:
+    _dl = float(os.environ.get("MH_IRR_DEADLINE_SECS", ""))
+except ValueError:
+    _dl = 0.0
+
+def _deadline_hit(signum, frame):
+    try:
+        if not globals().get("_ASKED"):  # an ask already printed stands; a second JSON object is invalid
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                "permissionDecisionReason": "[mh:gate] irrecoverable: ran out of time (" + format(_DEADLINE, "g")
+                + " s) checking this command - confirm with user first, or split it into smaller commands"}}))
+        sys.stdout.flush()
+        _d = globals().get("d")
+        _d = _d if isinstance(_d, dict) else {}
+        journal(GATE_ID, _d.get("tool_name"), "ask", _d.get("session_id"), rule="deadline")
+    finally:
+        os._exit(0)
+
+_DEADLINE = _dl if 0 < _dl < DEADLINE_SECS else DEADLINE_SECS
+try:
+    import signal
+    signal.signal(signal.SIGALRM, _deadline_hit)
+    signal.setitimer(signal.ITIMER_REAL, _DEADLINE)
+except (ImportError, AttributeError, ValueError, OSError):
+    pass  # no SIGALRM on this platform: onFailure block in hooks.json still stops a timeout from allowing
+
+def _disarm():
+    # Before every exit: a timer firing during shutdown (default SIGALRM, rc 142) or a deny's unwind (ask)
+    # would replace the decision already made.
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except Exception:
+        pass  # fallback: no timer was armed on this platform
+
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -32,6 +70,7 @@ except Exception:
 # tool_input:null). irrecoverable.sh short-circuits empty stdin and payloads
 # with no destructive token before python runs, so those allow by design.
 if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
+    _disarm()
     print("[mh:gate] BLOCKED: malformed PreToolUse payload — failing closed", file=sys.stderr)
     # d may be None or a non-dict here -- pass literals, never d.get(...).
     journal(GATE_ID, None, "deny", None)
@@ -1610,6 +1649,7 @@ def _deny_nested_spawn():
         raise _ViewStop
     if _ONLY_RULE_PASS_ON[0]:
         return  # the enforced view pass reads only the _VIEW_ENFORCED rules: no spawn scan, so no spawn-scan budget (review 8)
+    _disarm()
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1742,6 +1782,7 @@ def deny(reason, rule=None, hint=None):
         if rule is None:  # every rule-less confirm deny is a tokenizer/complexity refusal
             reason += "; split it into simpler separate commands"
         reason += "; if nobody can confirm, skip this step, keep going on the rest, and list it for the user in your final report"
+    _disarm()
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
     # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
@@ -1760,10 +1801,12 @@ def ask(reason, rule=None):
     # In a view (GH #336) an ask adds nothing once the command already asks.
     if (_ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
-    _ASKED.append(reason)
+    # Print before append (GH #771): a deadline signal between them then emits a second ask, invalid
+    # output that onFailure blocks, instead of seeing _ASKED set and exiting with nothing printed (allow).
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "ask",
                                              "permissionDecisionReason": reason}}))
+    _ASKED.append(reason)
     journal(GATE_ID, d.get("tool_name"), "ask", d.get("session_id"), rule=_VIEW[0] or rule)
 
 def delete_hint():
@@ -4213,9 +4256,14 @@ _VENV_ACTIVATE_RE = re.compile(r"(?:^|/)bin/activate(?:\.fish|\.csh)?\Z")
 
 def _venv_activate(rest):
     # Glued runs joined, so an unquoted `$VENV/bin/activate` is one word; a leading `--` is source's own.
+    # GH #768: a first token glued to argv0 (`source$X/bin/activate`) is one shell word with it, not a path.
+    if isinstance(rest[0], _Glued):
+        return False
     words = _shell_words(rest)
     if words[:1] == ["--"]:
         words = words[1:]
+    elif words[0].startswith("-"):  # an option word (`--$X/bin/activate`): sources only when $X splits
+        return False
     return len(words) == 1 and bool(_VENV_ACTIVATE_RE.search(words[0]))
 
 # trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
@@ -6010,4 +6058,5 @@ for _VIEW[0], _text in _views():
         if _VIEW[0] in _VIEW_ENFORCED:
             _enforced_pass(_text)
 
+_disarm()
 sys.exit(0)
