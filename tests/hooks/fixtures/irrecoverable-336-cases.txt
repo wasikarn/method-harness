@@ -149,6 +149,16 @@ WOULD_ASK source-file . .venv/bin/activate.d/x.sh
 WOULD_ASK source-file source .venv/bin/activate x.sh
 WOULD_ASK source-file source activate
 WOULD_ASK source-file source .venv/bin/activate && . ./setup.sh
+# GH #768: only one `--` is skipped, and a second word after it still asks
+WOULD_ASK source-file source --
+WOULD_ASK source-file source -- -- x/bin/activate
+WOULD_ASK source-file source -- .venv/bin/activate x.sh
+# GH #768: a word glued to argv0 is one shell word with it; what $X splits into decides what is sourced
+WOULD_ASK source-file source$X/bin/activate
+WOULD_ASK source-file .$X/bin/activate
+# the same through a dash word: bash rejects `--x` as an option, so it sources only when $X splits
+WOULD_ASK source-file source --$X/bin/activate
+WOULD_ASK source-file source -$X/bin/activate
 ALLOW cp -r . /tmp/x
 ALLOW ls -la .
 ALLOW echo done. next
