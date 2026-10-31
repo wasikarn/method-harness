@@ -264,7 +264,8 @@ enforced_drift() { # enforced_drift <irrecoverable.py> -> _VIEW_ENFORCED rule id
   python3 -c '
 import re, sys
 src = open(sys.argv[1]).read()
-block = re.search(r"^_VIEW_ENFORCED = \{\"brace-view\": frozenset\(\{(.*?)\}\)\}$", src, re.M | re.S).group(1)
+block = re.search(r"^_VIEW_ENFORCED = \{(.*?)\}\)\}$", src, re.M | re.S).group(1)
+block = re.sub(r"#[^\n]*", "", re.sub(r"\"[^\"]+\": frozenset", "", block))  # the views, then comments
 ids = set(re.findall(r"\"([^\"]+)\"", block))
 print(" ".join(sorted(ids - set(re.findall(r"rule=\"([^\"]+)\"", src)))))' "$1"
 }
@@ -278,12 +279,13 @@ check "mutation proof: a _VIEW_ENFORCED id with no call site is reported" "$ok"
 
 # --- Case 7: GH #336's views (another reading of the command) carry a rule id of their own. With the
 # view shadowed, a deny found only in that reading is journaled under the view's id and allowed, even
-# though the rule it matched (rm-rf) enforces; the plain command still denies. ---
+# though the rule it matched enforces elsewhere (rm-rf; var-verb uses mkfs, since rm's rules enforce there,
+# GH #767); the plain command still denies. ---
 for _view in ifs-split var-verb; do
   SH_V="$WORK/shadow-$_view"; shadow_copy "$SH_V" "\"$_view\""
   case "$_view" in
     ifs-split) _vcmd='rm${IFS}-rf build' ;;
-    var-verb) _vcmd='X=rm; $X -rf build' ;;
+    var-verb) _vcmd='X=mkfs.ext4; $X /dev/sda1' ;;  # GH #767: rm's rules enforce in var-verb, mkfs's stay shadow
   esac
   J7="$WORK/case7/$_view.jsonl"
   out=$(payload_bash "$_vcmd" | MH_GATE_JOURNAL_PATH="$J7" bash "$SH_V/irrecoverable.sh" 2>/dev/null); rc=$?
