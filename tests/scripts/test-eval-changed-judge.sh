@@ -65,7 +65,7 @@ for want in "--tag ideate " "--tag zz-skill " "--tag zz-zz " "--case ideate-case
   /usr/bin/grep -q -- "$want" "$EC_LOG" \
     && ok "stdin-reading claude: '$want' still runs" || bad "stdin-reading claude: '$want' skipped: $(cat "$EC_LOG")"
 done
-/usr/bin/grep -- "--tag ideate " "$EC_LOG" | /usr/bin/grep -q '^enabled=true' \
+/usr/bin/grep -q '^enabled=true' <<<"$(/usr/bin/grep -- "--tag ideate " "$EC_LOG")" \
   && ok "ideate tag run goes through with_default_enabled_true" || bad "ideate tag run not wrapped: $(cat "$EC_LOG")"
 
 # A broken sidecar or a missing module must stop the script before any paid run.
