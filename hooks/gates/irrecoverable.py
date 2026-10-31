@@ -4094,6 +4094,8 @@ def _venv_activate(rest):
     words = _shell_words(rest)
     if words[:1] == ["--"]:
         words = words[1:]
+    elif words[0].startswith("-"):  # an option word (`--$X/bin/activate`): sources only when $X splits
+        return False
     return len(words) == 1 and bool(_VENV_ACTIVATE_RE.search(words[0]))
 
 # trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
