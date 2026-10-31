@@ -5742,7 +5742,7 @@ _VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
 # ended by a blank or a separator. Read from the raw text (bash -c / eval bodies count too), not from the
 # tokens: they split `RW=$R/x` into "RW=", "$", "R/x", which reads as RW assigned nothing.
 _PLAIN_ASSIGN_RE = re.compile(
-    r"(?<![\w$])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
+    r"(?<![\w$-])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
 _VIEW_LEN_CAP = 20_000
 
 # GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
@@ -5889,7 +5889,10 @@ def _literal_subst_glued(text):
             words = shlex.split(raw)
         except ValueError:
             return e.group(0)
-        out = " ".join(words[1:] if words[:1] == ["--"] else words)
+        words = words[1:] if words[:1] == ["--"] else words
+        if words and "%" in words[0] and "printf" in e.group(0)[:e.group(0).find(raw) if raw else None]:
+            words = words[1:]  # printf's format is not output (review 6: `-b rel-$(printf '%s' 2026)` is one word)
+        out = " ".join(words)
         if not re.search(r"\s", out) or _in_assignment_value(text, k, bounds, seps, memo):
             return e.group(0)
         first, rest = ("", out) if out[:1].isspace() else (out.split(None, 1) + [""])[:2]
@@ -5918,6 +5921,28 @@ def _subst_literals(text, glued=True):
             for v in (_literal_subst_split(text),) + ((_literal_subst_glued(text),) if glued else ()):
                 if v != text and v not in out:
                     out.append(v)
+    return out
+
+def _literal_dollars(text):
+    # The offsets of each $ the shell keeps as text: inside '...' (outside "...") or after an odd run of
+    # backslashes. var-verb puts no value back there (GH #767 review 6: `rm '$F' x` removes a file named $F).
+    out, sq, dq, i, n = set(), False, False, 0, len(text)
+    while i < n:
+        c = text[i]
+        if sq:
+            if c == "'":
+                sq = False
+            elif c == "$":
+                out.add(i)
+        elif c == "\\":
+            if text[i + 1:i + 2] == "$":
+                out.add(i + 1)
+            i += 1
+        elif c == "'" and not dq:
+            sq = True
+        elif c == '"':
+            dq = not dq
+        i += 1
     return out
 
 def _views():
@@ -5950,10 +5975,11 @@ def _views():
     vals = {}
     for m in _PLAIN_ASSIGN_RE.finditer(cmd):
         vals.setdefault(m.group(1), []).append(next(g for g in m.groups()[1:] if g is not None))
+    lit = _literal_dollars(cmd) if vals else ()
     for pick in (-1, 0):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
-            return vals[name][pick] if name in vals else m.group(0)
+            return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
         v = _VAR_REF_RE.sub(_sub, cmd) if vals else cmd
         if v != cmd and ("var-verb", v) not in out:
             out.append(("var-verb", v))

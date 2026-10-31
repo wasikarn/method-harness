@@ -3809,6 +3809,13 @@ test_deny  "$IRRECOVERABLE" 'GH #767 review 5: rm $(X=1) Y=$(echo '"'"' -rf b'"'
 test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: GREETING="it'"'"'s"; export GREETING; bash -c "echo \$GREETING"' "$(bash_payload 'GREETING="it'"'"'s"; export GREETING; bash -c "echo \$GREETING"')"
 test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: TS=$(date +%s) NOTE=build-$(echo '"'"'cleanup: rm -rf dist'"'"')' "$(bash_payload 'TS=$(date +%s) NOTE=build-$(echo '"'"'cleanup: rm -rf dist'"'"')')"
 test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: A="$(pwd)" F=x$(echo '"'"'b rm -rf c'"'"')' "$(bash_payload 'A="$(pwd)" F=x$(echo '"'"'b rm -rf c'"'"')')"
+# GH #767 review 6: the glued copy drops printf's % format; var-verb puts no value in '...' or after \$, nor reads --opt= as NAME=.
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git checkout -b hotfix-$(printf '"'"'%03d'"'"' 7)' "$(bash_payload 'git checkout -b hotfix-$(printf '"'"'%03d'"'"' 7)')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git checkout -b rel-$(printf '"'"'%s'"'"' 2026)' "$(bash_payload 'git checkout -b rel-$(printf '"'"'%s'"'"' 2026)')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: F=-rf; rm '"'"'$F'"'"' x' "$(bash_payload 'F=-rf; rm '"'"'$F'"'"' x')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: X=-r; echo "\$X"; rm \$X y' "$(bash_payload 'X=-r; echo "\$X"; rm \$X y')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git log --format=-rf; rm $format x' "$(bash_payload 'git log --format=-rf; rm $format x')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 6: F=-rf; rm "$F" b' "$(bash_payload 'F=-rf; rm "$F" b')"
 _timed_case "GH #767 review 3: 8900 glued X=\`echo 'a b'\` words, then a split-copy target, denied in bounded time" 2 \
   "echo x; $(printf 'X=`echo '"'"'a b'"'"'` %.0s' $(seq 8900)); rm \`echo ' -rf'\` b"
 gates_summary
