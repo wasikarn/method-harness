@@ -10,8 +10,12 @@ rather than assumed present.
 """
 import argparse
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "scripts", "_lib"))
+import eval_judge_models  # noqa: E402
 
 DEFAULT_JUDGE_MODEL_DISPLAY = "haiku (default)"
 DEFAULT_CASE_FILTER_DISPLAY = "all cases"
@@ -45,6 +49,24 @@ def case_filter_display(suite):
     return value if value else DEFAULT_CASE_FILTER_DISPLAY
 
 
+def expected_judge_note(data_a, data_b, judge_models):
+    """GH #510: a case in evals/judge-models.tsv is judged by its own model, so its history
+    mixes judges. When one side ran only such cases under their declared judge (same family)
+    and the other side is haiku-judged history, say the judgeModel mismatch is expected;
+    otherwise None."""
+    for data, other in ((data_a, data_b), (data_b, data_a)):
+        if model_family(judge_model_display(other.get("suite", {}))) != eval_judge_models.DEFAULT_JUDGE:
+            continue
+        family = model_family(judge_model_display(data.get("suite", {})))
+        names = [c.get("name") for c in data.get("cases", [])]
+        rows = [(n, judge_models.get(n)) for n in names]
+        if names and family and all(row and model_family(row[0]) == family for _, row in rows):
+            return "; ".join(
+                f"expected: {n} is judged by {row[0]} (evals/judge-models.tsv: {row[1]})" for n, row in rows
+            )
+    return None
+
+
 def is_agent_dispatch(case):
     prompt = case.get("promptMarkdown") or ""
     return "subagent_type" in prompt
@@ -65,7 +87,7 @@ def hard_fail_reasons(label, data):
     return reasons
 
 
-def compare(path_a, path_b, label_a, label_b):
+def compare(path_a, path_b, label_a, label_b, judge_models=None):
     data_a, data_b = load(path_a), load(path_b)
     suite_a, suite_b = data_a.get("suite", {}), data_b.get("suite", {})
 
@@ -112,10 +134,12 @@ def compare(path_a, path_b, label_a, label_b):
         )
 
     if judge_model_display(suite_a) != judge_model_display(suite_b):
-        warnings.append(
+        warning = (
             f"judgeModel differs: {label_a}={judge_model_display(suite_a)} "
             f"vs {label_b}={judge_model_display(suite_b)}"
         )
+        note = expected_judge_note(data_a, data_b, judge_models or {})
+        warnings.append(f"{warning} — {note}" if note else warning)
     # #391: a judge tends to favor output from its own model family, which skews that arm's score.
     for label, suite in ((label_a, suite_a), (label_b, suite_b)):
         family = model_family(label)
@@ -207,8 +231,20 @@ def main():
     parser.add_argument("--label-b", required=True, help="Label for the second result")
     parser.add_argument("result_a", help="Path to the first aggregate-result.json")
     parser.add_argument("result_b", help="Path to the second aggregate-result.json")
+    parser.add_argument(
+        "--judge-models",
+        help="Per-eval judge sidecar (default: the repo's evals/judge-models.tsv, if present)",
+    )
     args = parser.parse_args()
-    sys.exit(compare(args.result_a, args.result_b, args.label_a, args.label_b))
+    if args.judge_models and not os.path.exists(args.judge_models):
+        print(f"model-bench: --judge-models {args.judge_models}: no such file", file=sys.stderr)
+        sys.exit(1)
+    try:
+        judge_models = eval_judge_models.load(args.judge_models or eval_judge_models.sidecar_path())
+    except ValueError as e:
+        print(f"model-bench: {e}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(compare(args.result_a, args.result_b, args.label_a, args.label_b, judge_models))
 
 
 if __name__ == "__main__":

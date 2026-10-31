@@ -1203,6 +1203,16 @@ _quad_cmd="$(python3 -c 'print("x=$((cat <<EOF\nit'"'"'s\nEOF\n) )\n" * 28571 + 
 _timed_case 'GH #668 round 4: 800 KB of $(( heredoc lines denies in bounded time' 2 "$_quad_cmd"
 _deep_cmd="$(python3 -c 'print("\"$(\n" * 37000)')"
 _timed_case 'GH #668 round 4: 37000 nested "$( lines (148 KB) deny in bounded time' 2 "$_deep_cmd"
+# GH #685: a $(...) on line 1 then a line that opens a quote after <<EOF was allowed; bash runs line 1, then
+# fails on line 2. The controls drop the trailing ' (the verb's own deny) or the <<EOF (no tokenize).
+for _v in 'rm -rf build|rm -rf detected' 'git push --force origin main|git push --force overwrites'; do
+  test_deny_says "$IRRECOVERABLE" "GH #685: echo \$(${_v%|*}) | <<EOF'" "$(bash_payload "echo \$(${_v%|*})"$'\n'"<<EOF'")" \
+    'heredoc the gate reads unsure has no closing delimiter'
+  test_deny_says "$IRRECOVERABLE" "GH #685 control: echo \$(${_v%|*}) | <<EOF" "$(bash_payload "echo \$(${_v%|*})"$'\n<<EOF')" \
+    "${_v#*|}"
+  test_deny_says "$IRRECOVERABLE" "GH #685 control: echo \$(${_v%|*}) | '" "$(bash_payload "echo \$(${_v%|*})"$'\n'"'")" \
+    'could not safely tokenize'
+done
 test_allow "$TASK_COMPLETE" "non-TaskUpdate tool with agent_type (out of scope)" \
   "$(python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"ls"},"agent_type":"mh:build-error-resolver"}))')"
 
