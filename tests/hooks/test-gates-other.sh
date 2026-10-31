@@ -249,7 +249,7 @@ while IFS= read -r _line; do
 done < "$_c336"
 # Each view re-reads the whole command (up to _VIEW_LEN_CAP), and a timed-out hook allows.
 _pad336="$(printf 'echo a; %.0s' $(seq 1200))"
-_timed_case "GH #336: var-verb view (shadow), target after 10 KB of statements, read in bounded time" 0 "${_pad336}X=rm; \$X -rf build"
+_timed_case "GH #336: var-verb view (rm rules enforce, GH #767), target after 10 KB of statements, denied in bounded time" 2 "${_pad336}X=rm; \$X -rf build"
 _timed_case "GH #336: ifs-split view, target after 10 KB of statements, denied in bounded time" 2 "${_pad336}rm\${IFS}-rf build"
 _timed_case "GH #336: var-verb view, 1200 references of one benign variable, allowed in bounded time" 0 "X=ls; $(printf 'echo $X %.0s' $(seq 1200))"
 _timed_case "GH #336: chmod with 4000 a+rw words, allowed in bounded time" 0 "chmod -R $(printf 'a+rw %.0s' $(seq 4000))build"
