@@ -3717,5 +3717,28 @@ done
 for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 'trash "${HOME}/"*.log' 'trash ./.cache'; do
   test_allow "$IRRECOVERABLE" "GH #741 trash control: $_c" "$(bash_payload "$_c")"
 done
+# GH #741 review: the quoted-dot home glob, a full-path argv0 in an exec argv list, and a getattr on a process
+# module whose name is one plain literal (the API it names is read on its own: getattr(os, "system") still is).
+for _c in 'trash "${HOME}/."*' "python3 -c 'import os; os.execv(\"/usr/bin/git\", [\"/usr/bin/git\", \"reset\", \"--hard\"])'"; do
+  test_deny "$IRRECOVERABLE" "GH #741 review: $_c" "$(bash_payload "$_c")"
+done
+for _c in "python3 -c 'import os; print(getattr(os, \"sep\")); print(\"rm -rf build\")'" \
+  $'python3 - <<\'EOF\'\nimport os\nprint(getattr(os.path, "sep"))\nprint("rm -rf node_modules is what the docs say")\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #741 review control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+test_deny "$IRRECOVERABLE" "GH #741 review: getattr(os, \"system\") still reads its literals" \
+  "$(bash_payload "python3 -c 'import os; getattr(os, \"system\")(\"git reset --hard\")'")"
+# GH #741 review: each new scan in bounded time (repo-gotchas: time every new regex and scan piece). An unquoted
+# ${HOME} before a long run of slashes (the home regex), and 12000 heredoc openers before 37000 pipe stages (the
+# interpreter-to-shell walk, unquoted delimiters included), the target before the openers (the body lines after
+# them are read as before, GH #681).
+_timed_case 'GH #741 review: ${HOME} before 30000 slashes, then git reset --hard, denies in bounded time' 2 \
+  "chmod 777 \${X} \${HOME}$(printf '/%.0s' $(seq 30000))x; git reset --hard"
+_timed_case 'GH #741 review: trash ${HOME} before 30000 slashes, then git reset --hard, denies in bounded time' 2 \
+  "trash \$(true) \${HOME}$(printf '/%.0s' $(seq 30000))x; git reset --hard"
+_timed_case 'GH #741 review: git reset --hard before 12000 node heredoc openers and 37000 pipe stages denies in bounded time' 2 \
+  "git reset --hard; node x <<A|$(printf '<<A|%.0s' $(seq 12000))$(printf 'x|%.0s' $(seq 37000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 12001))echo ok"
+_timed_case "GH #741 review: git reset --hard before 9000 quoted node heredoc openers and 30000 pipe stages denies in bounded time" 2 \
+  "git reset --hard; node x <<'A'|$(printf "<<'A'|%.0s" $(seq 9000))$(printf 'x|%.0s' $(seq 30000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 9001))echo ok"
 
 gates_summary

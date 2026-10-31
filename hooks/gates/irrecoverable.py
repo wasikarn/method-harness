@@ -461,9 +461,13 @@ class _HeredocLine:
         # GH #681: (the heredoc's own stage, a later stage) runs python/node reading its script on stdin.
         k, j, st, _ = self._stage(pos)
         if (k, "py") not in self.stages:
-            self.stages[(k, "py")] = [_reads_stdin_interp(self.line[a:b]) for a, b in st]
-        py = self.stages[(k, "py")]
-        return py[j], any(py[j + 1:])
+            py = [_reads_stdin_interp(self.line[a:b]) for a, b in st]
+            # GH #741 review: nxt[i], the first such stage from i on (None past the last), read in O(1) per opener
+            nxt = [None] * (len(st) + 1)
+            for i in range(len(st) - 1, -1, -1):
+                nxt[i] = i if py[i] else nxt[i + 1]
+            self.stages[(k, "py")], self.stages[(k, "pynext")] = py, nxt
+        return self.stages[(k, "py")][j], self.stages[(k, "pynext")][j + 1] is not None
 
     def interp_to_shell(self, pos):
         # GH #741: the first stage from the heredoc's on that runs python/node reading its script on stdin
@@ -471,10 +475,9 @@ class _HeredocLine:
         # runs whatever the script prints, which the gate never sees.
         self.piped_shell(pos)
         self.stdin_interp(pos)
-        k, j, st, _ = self._stage(pos)
-        py, shell = self.stages[(k, "py")], self.stages[(k, "sh")]
-        p = next((i for i in range(j, len(st)) if py[i]), None)
-        return p is not None and shell[p + 1]
+        k, j, _, _ = self._stage(pos)
+        p = self.stages[(k, "pynext")][j]
+        return p is not None and self.stages[(k, "sh")][p + 1]
 
 def _interp_to_shell_framed(line, pos, views):
     # GH #741: a $( or backtick is no separator to _pieces, so x=$(python3 - <<'EOF' | sh is read again from
@@ -3157,7 +3160,9 @@ _INTERP_BODY_FLAGS = {"python": ("-c",), "perl": ("-e", "-E"), "ruby": ("-e",), 
 _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)[\d.]*|(node)(?:js)?")
 # GH #741: asyncio's create_subprocess_shell/exec, posix_spawn(p), and a process module reached by name
 # (getattr(os, ...), importlib.import_module("os"), __import__("subprocess")), where the call is built at run time.
-_PROC_BY_NAME = (r"|\b(?:create_subprocess_(?:shell|exec)|posix_spawnp?)\b|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b"
+# A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review).
+_PROC_BY_NAME = (r"|\b(?:create_subprocess_(?:shell|exec)|posix_spawnp?)\b|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
+                 r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)\1)\w+\1\s*[,)])"
                  r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']")
 _INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
                              r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`"
@@ -3198,9 +3203,9 @@ def _emit_run(run, out):
     if len(run) > 1:
         out.append(" ".join(run))
     # GH #741: exec*/spawn*/posix_spawn* take the program path, then its argv (execvp("git", ["git", "reset",
-    # "--hard"]), execv("/usr/bin/git", ["git", ...])): when the second literal is the first one's name, the
+    # "--hard"]), execv("/usr/bin/git", ["git", ...])): when the second literal names the first one's program, the
     # argv from it on is read too. Only then, so subprocess.run(["echo", "rm", "-rf", "x"]) stays an echo.
-    if len(run) > 2 and run[0].rsplit("/", 1)[-1] == run[1] and run[1]:
+    if len(run) > 2 and run[1] and run[0].rsplit("/", 1)[-1] == run[1].rsplit("/", 1)[-1]:
         out.append(" ".join(run[1:]))
 
 def _interp_commands(body):
@@ -4108,8 +4113,9 @@ _ROOT_OR_HOME = ("/", "/*", "/.", "~", "~/", "~/*", "~/.")
 # `${HOME}` (and `${HOME:-}`, `${HOME%/}`, ...) is blanked to a substitution before the rules read it,
 # so a placeholder target is matched against the raw text of a chmod's own arguments (the text after
 # `chmod` up to its statement's end), never against another statement's `echo ${HOME}`. GH #741: a glob or
-# `/` after the closing quote still names home ("${HOME}/"*, "${HOME}"/.*), as it does inside the quotes.
-_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?:(?<=/[\"'])[./*]+|/[./*]*)?(?=[\s;&|)<>]|$)")
+# `/` after the closing quote still names home ("${HOME}/"*, "${HOME}"/.*, "${HOME}/."*), as it does inside the
+# quotes. Only after a quote: two optional slash runs side by side split one run every way (quadratic, GH #741 review).
+_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?:(?<=[\"'])(?:(?<=/[\"'])[./*]+|(?<=/\.[\"'])\*|/[./*]*))?(?=[\s;&|)<>]|$)")
 _CHMOD_ARGS_RAW_RE = re.compile(r"(?<![\w.-])g?chmod(?![\w.-])([^;&|\n]*)")
 def _root_or_home_word(rest):
     words, cur = [], []
