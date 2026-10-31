@@ -37,6 +37,10 @@ if [ -z "$tags" ]; then
 fi
 
 . scripts/_lib/eval-default-enabled.sh
+# Tags whose cases load an mh agent or skill through the plugin: eval sandboxes load no user
+# settings, so without the defaultEnabled flip they silently score a no-plugin fallback (the
+# run block in evals/README.md wraps the same five).
+needs_plugin=" code-architect performance-optimizer backend-architect ideate-critic ideate "
 
 # shell_word <arg>: <arg> as one shell word, bare when it holds only safe characters, else
 # single-quoted with each ' written as '\''. print_wrapped <argv...>: the evals/README.md
@@ -53,11 +57,6 @@ print_wrapped() {
   for arg in "$@"; do inner+=" $(shell_word "$arg")"; done
   printf 'bash -c %s\n' "$(shell_word "$inner")"
 }
-
-# Tags whose cases load an mh agent or skill through the plugin: eval sandboxes load no user
-# settings, so without the defaultEnabled flip they silently score a no-plugin fallback (the
-# run block in evals/README.md wraps the same five).
-needs_plugin=" code-architect performance-optimizer backend-architect ideate-critic ideate "
 
 while IFS= read -r tag; do
   # Union every allowed_tools list across all cases whose frontmatter tags: carry this tag
