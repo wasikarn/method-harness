@@ -90,7 +90,11 @@ open(p, 'w').write(s2)
 
   _restore_default_enabled() {
     [ "$__ede_flipped" -eq 1 ] || return 0
-    __ede_flipped=0
+    # A terminal Ctrl-C reaches the whole process group, this python3 child included: killed
+    # mid-restore, it left true in the tracked manifest with no warning (a double Ctrl-C ~20 ms
+    # apart, 3/3). Ignored signals stay ignored in the child, so the write always finishes; a
+    # signal that lands in this window is dropped, and every caller resets the traps right after.
+    trap '' INT TERM HUP
     python3 -c "
 import re, sys
 p = '$__ede_manifest'
@@ -102,7 +106,7 @@ if m and n == 1:
     open(p, 'w').write(s2)
 else:
     print(f'eval-default-enabled: WARNING could not restore defaultEnabled: false in {p} (found {n} matches) -- fix manually', file=sys.stderr)
-"
+" && __ede_flipped=0
     return 0
   }
   # Capture whatever signal traps the CALLER already had before we install our own, so we can
