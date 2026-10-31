@@ -179,13 +179,13 @@ PY
 )")"
 # Stripping leading words one slice at a time copied the rest each step: 75k `!` took 19 s, past the 8 s timeout.
 _quad_tail='rm${IFS}-rf${IFS}/tmp/x a{b} c$d'
-_timed_case "74900 leading ! words before an IFS rm are stripped in linear time" 2 \
+_timed_hook_case "74900 leading ! words before an IFS rm are stripped inside the hook timeout" 2 \
   "$(python3 -c 'import sys; print("! " * 74900 + sys.argv[1], end="")' "$_quad_tail")"
 _timed_case "37450 env wrappers before an IFS rm are unwrapped in linear time" 2 \
   "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
 # Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
 # four evals took 25 s.
-_timed_case "a 20 KB ! flood under four evals is denied inside the hook timeout" 2 \
+_timed_hook_case "a 20 KB ! flood under four evals is denied inside the hook timeout" 2 \
   "$(python3 -c 'import sys; t = sys.argv[1]; print("eval eval eval eval " + "! " * ((20000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail")"
 # Empty alternatives build no new text, so the budget never charged them: 26 groups of {,} made 2^26 empty
 # strings (4.7 s, 1.8 GB), and at 27 the gate ran past the 8 s hook timeout and failed open on the raw reset.

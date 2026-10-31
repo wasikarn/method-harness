@@ -310,6 +310,59 @@ _timed_case() {  # <name> <expected rc> <command>
 
 _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 
+# irrecoverable.sh's hook timeout from hooks/hooks.json into _HOOK_CEIL (past it the hook allows). On a
+# failure it counts the row failed and returns 1, so it is called bare, never in $(...), which would drop
+# the count: `_hook_ceiling "$name" || return`.
+_hook_ceiling() {  # <row name>
+  local name="$1" ceil jerr probe
+  _HOOK_CEIL=""
+  # a trial run, not `command -v`: a jq on PATH that cannot run (a wrong-architecture binary), or some other
+  # program named jq, does not print 3 for 1+2 (one trailing "\r" is dropped: a Windows jq ends lines "\r\n")
+  probe=$(jq -n '1+2' 2>/dev/null)
+  if [ "${probe%$'\r'}" != 3 ]; then
+    echo "  ❌ $name: jq is missing, will not run, or is not jq, so the irrecoverable.sh timeout cannot be read from hooks/hooks.json" >&2
+    fail=$((fail + 1)); return 1
+  fi
+  # stderr apart from the value, so a jq warning on a good read cannot end up in the ceiling
+  if ! ceil=$(jq -r '[.. | objects | select((.command? // "") | test("gates/irrecoverable\\.sh")) | .timeout]
+    | if length == 1 and (.[0] | type) == "number" then .[0] else empty end' "$ROOT/hooks/hooks.json" 2>"$_ERRF"); then
+    jerr=$(head -1 "$_ERRF"); jerr=${jerr%$'\r'}
+    echo "  ❌ $name: jq could not read the irrecoverable.sh timeout from hooks/hooks.json (${jerr:-jq printed no error})" >&2
+    fail=$((fail + 1)); return 1
+  fi
+  ceil=${ceil%$'\r'}  # the same Windows "\r", before the empty check so a lone "\r" counts as no value
+  if [ -z "$ceil" ]; then
+    echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return 1
+  fi
+  _HOOK_CEIL=$ceil
+}
+
+# GH #789: a row whose regression runs past the hook timeout (tens of seconds) is timed against that
+# timeout itself, sub-second, not a fixed 4 s: a slower host keeps its headroom and the regression fails
+# anywhere. A timing miss is measured once more before it fails, as in _timed_ratio_case below.
+_timed_hook_case() {  # <name> <expected rc> <command>
+  local name="$1" want="$2" cmd="$3" ceil t0 t1 rc secs ok try seen=""
+  _hook_ceiling "$name" || return
+  ceil=$_HOOK_CEIL
+  for try in 1 2; do
+    t0=$(_ratio_now)
+    bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; rc=$?
+    t1=$(_ratio_now)
+    read -r secs ok < <(python3 -c 'import sys
+a, b, cap = map(float, sys.argv[1:])
+print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$ceil")
+    secs=${secs:-?} ok=${ok:-0}
+    seen="$seen${seen:+, then }rc=$rc in ${secs}s"
+    [[ "$rc" == "$want" ]] || break
+    [[ "$ok" == 1 ]] && break
+  done
+  if [[ "$rc" == "$want" && "$ok" == 1 ]]; then
+    echo "  ✅ $name (rc=$rc in ${secs}s, under ${ceil}s)"; pass=$((pass + 1))
+  else
+    echo "  ❌ $name: expected rc=$want under ${ceil}s, got $seen" >&2; fail=$((fail + 1))
+  fi
+}
+
 # GH #761: a cost that must not grow with some factor (nesting depth) is checked against a baseline of
 # the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
 # python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
@@ -317,25 +370,9 @@ _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 # as it does not depend on timing). The command must also finish under the gate's hook timeout (read from
 # hooks/hooks.json), past which the hook allows: a slowdown both runs share keeps the ratio.
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
-  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil jerr probe seen=""
-  # a trial run, not `command -v`: a jq on PATH that cannot run (a wrong-architecture binary), or some other
-  # program named jq, does not print 3 for 1+2 (one trailing "\r" is dropped: a Windows jq ends lines "\r\n")
-  probe=$(jq -n '1+2' 2>/dev/null)
-  if [ "${probe%$'\r'}" != 3 ]; then
-    echo "  ❌ $name: jq is missing, will not run, or is not jq, so the irrecoverable.sh timeout cannot be read from hooks/hooks.json" >&2
-    fail=$((fail + 1)); return
-  fi
-  # stderr apart from the value, so a jq warning on a good read cannot end up in the ceiling
-  if ! ceil=$(jq -r '[.. | objects | select((.command? // "") | test("gates/irrecoverable\\.sh")) | .timeout]
-    | if length == 1 and (.[0] | type) == "number" then .[0] else empty end' "$ROOT/hooks/hooks.json" 2>"$_ERRF"); then
-    jerr=$(head -1 "$_ERRF"); jerr=${jerr%$'\r'}
-    echo "  ❌ $name: jq could not read the irrecoverable.sh timeout from hooks/hooks.json (${jerr:-jq printed no error})" >&2
-    fail=$((fail + 1)); return
-  fi
-  ceil=${ceil%$'\r'}  # the same Windows "\r", before the empty check so a lone "\r" counts as no value
-  if [ -z "$ceil" ]; then
-    echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return
-  fi
+  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil seen=""
+  _hook_ceiling "$name" || return
+  ceil=$_HOOK_CEIL
   for try in 1 2; do
     t0=$(_ratio_now)
     bash_payload "$base" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; brc=$?
