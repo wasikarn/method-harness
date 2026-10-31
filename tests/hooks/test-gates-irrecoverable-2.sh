@@ -3816,6 +3816,10 @@ test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: F=-rf; rm '"'"'$F'"'"' x'
 test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: X=-r; echo "\$X"; rm \$X y' "$(bash_payload 'X=-r; echo "\$X"; rm \$X y')"
 test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git log --format=-rf; rm $format x' "$(bash_payload 'git log --format=-rf; rm $format x')"
 test_deny  "$IRRECOVERABLE" 'GH #767 review 6: F=-rf; rm "$F" b' "$(bash_payload 'F=-rf; rm "$F" b')"
+# GH #767 review 7 (operator): the NAME= test runs once per word, so a 40,000-character word before 7000 glued
+# backtick substitutions is read in bounded time (14.6 s before, about 1.5 s after).
+_timed_case "GH #767 review 7: a 40 KB word, then 7000 glued backtick substitutions, then a split-copy target" 2 \
+  "echo $(printf 'a%.0s' $(seq 40000))$(printf '`echo '"'"'p q'"'"'`%.0s' $(seq 7000)); rm \`echo ' -rf'\` b"
 _timed_case "GH #767 review 3: 8900 glued X=\`echo 'a b'\` words, then a split-copy target, denied in bounded time" 2 \
   "echo x; $(printf 'X=`echo '"'"'a b'"'"'` %.0s' $(seq 8900)); rm \`echo ' -rf'\` b"
 gates_summary

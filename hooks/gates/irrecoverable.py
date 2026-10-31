@@ -5796,7 +5796,6 @@ def _literal_subst_words(e):
 _SPLIT_ASSIGN_RE = re.compile(r"[A-Za-z_]\w*(?:\[[^\]\s]*\])?\+?=")
 _SPLIT_ASSIGN_LEAD = frozenset({"export", "local", "declare", "typeset", "readonly", "then", "do", "else", "elif",
                                 "if", "while", "until", "!", "{", "time"})
-_SPLIT_WORD_RE = re.compile(r"\S+")
 
 def _in_assignment_value(text, k, bounds, seps, memo):
     # True when offset k sits in the value of a NAME= / NAME+= / NAME[i]= word in assignment position (statement start,
@@ -5808,7 +5807,10 @@ def _in_assignment_value(text, k, bounds, seps, memo):
     # long chain of glued `NAME=`...`` words is read once, not once per word.
     n = bisect.bisect_left(bounds, k)
     i = bounds[n - 1] + 1 if n else 0
-    if not _SPLIT_ASSIGN_RE.match(text, i):
+    w = ("word", i)  # the NAME= test once per word: a long \w run before many glued substs (review 7) is read once
+    if w not in memo:
+        memo[w] = bool(_SPLIT_ASSIGN_RE.match(text, i))
+    if not memo[w]:
         return False
     m = bisect.bisect_left(seps, i)
     j = seps[m - 1] + 1 if m else 0
@@ -5960,7 +5962,7 @@ def _views():
             if v != _BRACEX_TEXT and ("brace-view", v) not in out:
                 out.append(("brace-view", v))
     # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
-    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the var-verb view keeps the lower cap (a known gap, GH #767 review).
+    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the var-verb view keeps the lower cap (GH #787 tracks raising it now rm enforces there).
     v = _ifs_split(cmd)
     if v != cmd:
         out.append(("ifs-split", v))
