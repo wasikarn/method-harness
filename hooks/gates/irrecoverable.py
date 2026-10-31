@@ -3203,21 +3203,23 @@ _SHELL_GETOPT = {"bash": (False,), "zsh": (True,), "ksh": (True,), "dash": (Fals
 # is not read, so print("rm -rf is denied") stays allowed. API deletes (shutil.rmtree, fs.rmSync) are unseen.
 _INTERP_BODY_FLAGS = {"python": ("-c",), "perl": ("-e", "-E"), "ruby": ("-e",), "node": ("-e", "--eval", "-p", "--print")}
 _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)[\d.]*|(node)(?:js)?")
-# GH #741: asyncio's create_subprocess_shell/exec, posix_spawn(p), and a process module reached by name
+# GH #741: asyncio's create_subprocess_shell/exec and posix_spawn(p) (a bare name in a -c body, a call in a heredoc
+# script, GH #741 review 3), and a process module reached by name
 # (getattr(os, ...), importlib.import_module("os"), __import__("subprocess")), where the call is built at run time.
 # A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review).
-_PROC_BY_NAME = (r"|\b(?:create_subprocess_(?:shell|exec)|posix_spawnp?)\b|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
+_PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
                  r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)\1)\w+\1\s*[,)])"
                  r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']")
 _INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
                              r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`"
-                             + _PROC_BY_NAME)
+                             r"|\b(?:create_subprocess_(?:shell|exec)|posix_spawnp?)\b" + _PROC_BY_NAME)
 # GH #681: a whole python/node heredoc script is often a docs edit whose prose says spawn, exec or system and
 # holds markdown backticks (no API in python/node), so it is read only when it names a module or calls a
 # function that runs a process.
 _PYNODE_PROC_RE = re.compile(r"\b(?:subprocess|child_process|execSync|execFileSync|execFile|spawnSync|getoutput|"
                              r"getstatusoutput|check_output|check_call|Popen|pty)\b"
-                             r"|\b(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?)\s*\(" + _PROC_BY_NAME)
+                             r"|\b(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?|create_subprocess_(?:shell|exec))\s*\("
+                             + _PROC_BY_NAME)
 _INTERP_LIT_RE = re.compile("'''(?:.|\\n)*?'''|\"\"\"(?:.|\\n)*?\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`[^`]*`"
                             r"|\bqx\s*([{(\[<|/!])|%x\s*([{(\[<|/!])")
 _INTERP_CLOSE = {"{": "}", "(": ")", "[": "]", "<": ">"}
@@ -4175,10 +4177,8 @@ _ROOT_OR_HOME = ("/", "/*", "/.", "~", "~/", "~/*", "~/.")
 # a path that normalises to / or to this machine's home (taken from the environment at run time).
 # `${HOME}` (and `${HOME:-}`, `${HOME%/}`, ...) is blanked to a substitution before the rules read it,
 # so a placeholder target is matched against the raw text of a chmod's own arguments (the text after
-# `chmod` up to its statement's end), never against another statement's `echo ${HOME}`. GH #741: a glob or
-# `/` after the closing quote still names home ("${HOME}/"*, "${HOME}"/.*, "${HOME}/."*), as it does inside the
-# quotes. Only after a quote: two optional slash runs side by side split one run every way (quadratic, GH #741 review).
-_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?:(?<=[\"'])(?:(?<=/[\"'])[./*]+|(?<=/\.[\"'])\*|/[./*]*))?(?=[\s;&|)<>]|$)")
+# `chmod` up to its statement's end), never against another statement's `echo ${HOME}`.
+_HOME_BRACED_RAW_RE = re.compile(r"(?<![\w$])[\"']{0,2}\$\{HOME(?:[:%#/^,][^}]{0,40})?\}(?:/[./*]*)?[\"']{0,2}(?=[\s;&|)<>]|$)")
 _CHMOD_ARGS_RAW_RE = re.compile(r"(?<![\w.-])g?chmod(?![\w.-])([^;&|\n]*)")
 def _root_or_home_word(rest):
     words, cur = [], []

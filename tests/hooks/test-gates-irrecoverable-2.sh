@@ -3732,16 +3732,18 @@ for _p in 'import asyncio; print("create_subprocess_shell is async")' 'import os
   test_allow "$IRRECOVERABLE" "GH #741 control python -c: $_p" "$(bash_payload "python3 -c '$_p'")"
   test_allow "$IRRECOVERABLE" "GH #741 control python heredoc: $_p" "$(bash_payload "python3 - <<'EOF'"$'\n'"${_p//; /$'\n'}"$'\nEOF')"
 done
-# GH #741: trash-whole-tree also reads every dotfile of home (~/.*) and a quoted braced home glob ("${HOME}/"*).
-for _c in 'trash ~/.*' 'trash "${HOME}/"*' 'trash $HOME/.*' 'trash "$HOME"/.*' 'trash ./.*' 'gio trash ~/.*'; do
+# GH #741: trash-whole-tree also reads every dotfile of home (~/.*, $HOME/.*). A quoted braced home glob ("${HOME}/"*,
+# "${HOME}/."*) keeps develop's reading: its widened raw regex failed two reviews on time (GH #741 reviews 1 and 3).
+for _c in 'trash ~/.*' 'trash $HOME/.*' 'trash "$HOME"/.*' 'trash ./.*' 'gio trash ~/.*'; do
   test_deny "$IRRECOVERABLE" "GH #741 trash whole tree: $_c" "$(bash_payload "$_c")"
 done
-for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 'trash "${HOME}/"*.log' 'trash ./.cache'; do
+for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 'trash "${HOME}/"*.log' 'trash ./.cache' \
+  'trash "${HOME}/"*' 'trash "${HOME}/."*'; do
   test_allow "$IRRECOVERABLE" "GH #741 trash control: $_c" "$(bash_payload "$_c")"
 done
-# GH #741 review: the quoted-dot home glob, a full-path argv0 in an exec argv list, and a getattr on a process
+# GH #741 review: a full-path argv0 in an exec argv list, and a getattr on a process
 # module whose name is one plain literal (the API it names is read on its own: getattr(os, "system") still is).
-for _c in 'trash "${HOME}/."*' "python3 -c 'import os; os.execv(\"/usr/bin/git\", [\"/usr/bin/git\", \"reset\", \"--hard\"])'"; do
+for _c in "python3 -c 'import os; os.execv(\"/usr/bin/git\", [\"/usr/bin/git\", \"reset\", \"--hard\"])'"; do
   test_deny "$IRRECOVERABLE" "GH #741 review: $_c" "$(bash_payload "$_c")"
 done
 for _c in "python3 -c 'import os; print(getattr(os, \"sep\")); print(\"rm -rf build\")'" \
@@ -3750,6 +3752,12 @@ for _c in "python3 -c 'import os; print(getattr(os, \"sep\")); print(\"rm -rf bu
 done
 test_deny "$IRRECOVERABLE" "GH #741 review: getattr(os, \"system\") still reads its literals" \
   "$(bash_payload "python3 -c 'import os; getattr(os, \"system\")(\"git reset --hard\")'")"
+# GH #741 review 3: in a heredoc script (GH #681: read only on a call) the asyncio and posix_spawn names count only
+# when called; a comment or string naming them is prose.
+for _c in $'python3 - <<\'EOF\'\n# docs: posix_spawn is faster\nprint("rm -rf build")\nEOF' \
+  $'python3 - <<\'EOF\'\ns = \'use create_subprocess_exec\'\nprint(\'git reset --hard\')\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #741 review 3 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
 # GH #741 review: each new scan in bounded time (repo-gotchas: time every new regex and scan piece). An unquoted
 # ${HOME} before a long run of slashes (the home regex), and 12000 heredoc openers before 37000 pipe stages (the
 # interpreter-to-shell walk, unquoted delimiters included), the target before the openers (the body lines after
@@ -3762,6 +3770,11 @@ _timed_case 'GH #741 review: git reset --hard before 12000 node heredoc openers 
   "git reset --hard; node x <<A|$(printf '<<A|%.0s' $(seq 12000))$(printf 'x|%.0s' $(seq 37000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 12001))echo ok"
 _timed_case "GH #741 review: git reset --hard before 9000 quoted node heredoc openers and 30000 pipe stages denies in bounded time" 2 \
   "git reset --hard; node x <<'A'|$(printf "<<'A'|%.0s" $(seq 9000))$(printf 'x|%.0s' $(seq 30000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 9001))echo ok"
+# GH #741 review 3: trash's placeholder words re-read its raw arguments (quadratic since develop); a widened
+# braced-home regex there pushed 48 KB past the hook timeout, so it was dropped. This size stays under the bound
+# on develop's reading too (a guard against a slower scan, not a red row).
+_timed_case 'GH #741 review 3: trash with 1500 placeholders and 1070 "${HOME}/" words, then git reset --hard, denies in bounded time' 2 \
+  "trash $(printf '"$(true)" %.0s' $(seq 1500))$(printf '"${HOME}/"/x %.0s' $(seq 1070))"$'\n'"git reset --hard"
 # GH #741 review 2: heredocs nested in ( frames, each piped through many stages, are read in bounded time (a re-read
 # from each frame's ( parsed every stage once per frame: 300 frames of 30 stages took 8-9 s, past the hook timeout).
 _timed_case 'GH #741 review 2: git reset --hard before 300 python heredoc frames of 30 pipe stages denies in bounded time' 2 \
