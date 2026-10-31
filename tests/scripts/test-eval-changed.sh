@@ -32,7 +32,7 @@ case_md zz-agent-a "zz-agent, clean" "Read"
 case_md other-b "other, zz-agent" "Bash"       # zz-agent is not the first tag: still selected
 case_md zz-agent-decoy "zz-other" "Write"      # dir prefix matches, tag does not: not selected
 echo a >"$R/agents/zz-agent.md"; echo a >"$R/agents/backend-architect.md"; echo a >"$R/skills/x/performance-optimizer/SKILL.md"
-git -C "$R" init -q && git -C "$R" add agents evals scripts skills .claude-plugin &&git -C "$R" -c user.name=t -c user.email=t@t commit -qm init || { echo "test-eval-changed: fixture commit failed" >&2; exit 1; }
+git -C "$R" init -q && git -C "$R" add agents evals scripts skills .claude-plugin && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init || { echo "test-eval-changed: fixture commit failed" >&2; exit 1; }
 echo b >>"$R/agents/zz-agent.md"; echo b >>"$R/agents/backend-architect.md"; echo b >>"$R/skills/x/performance-optimizer/SKILL.md"
 
 cat >"$R/bin/claude" <<'SH'
@@ -65,9 +65,10 @@ l=$(line zz-agent)
 [ "$(shasum "$EC_MANIFEST" | cut -d' ' -f1)" = "$before" ] && ok "manifest restored after --run" || bad "manifest left changed"
 
 # Print mode: the printed line for a wrapped tag must be runnable as-is (README run-block form).
-PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" >"$TMP/print.out" 2>&1
+PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" >"$TMP/print.out" 2>&1 \
+  && ok "print mode exits 0" || bad "print mode exited non-zero: $(cat "$TMP/print.out")"
 p=$(/usr/bin/grep -- "--tag performance-optimizer " "$TMP/print.out")
-[[ "$p" == "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval "* ]] \
+[[ "$p" == "bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --runs 1 --no-publish --allow-tools Bash,Edit,Read,Skill,Write'" ]] \
   && ok "print mode: wrapped tag printed in the bash -c helper form" || bad "print mode perf line wrong: '$p'"
 p=$(/usr/bin/grep -- "--tag zz-agent " "$TMP/print.out")
 [[ "$p" == "claude plugin eval "* ]] && ok "print mode: unwrapped tag printed bare" || bad "print mode zz-agent line wrong: '$p'"
