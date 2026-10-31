@@ -3644,18 +3644,51 @@ tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 # GH #741: a python/node stage that reads its script from a heredoc and pipes its stdout into a shell reading
 # stdin hands that shell code the gate never sees (print("git reset --hard") | bash), so it denies whatever the
 # body prints. A pipe into anything else, or a heredoc python only reads, keeps the GH #681 reading.
+# The rule ships shadow (GH #337): each row is allowed with one would_deny interp-pipe-shell row, and denies
+# on a copy of the gates with SHADOW_RULES emptied (promotion, once /mh:gate-report shows no false positive).
+_enf741="$_JOURNAL_TMP/enforced-gates-741"
+mkdir -p "$_enf741" && cp -R "$ROOT/hooks/gates/." "$_enf741/"
+python3 - "$_enf741/irrecoverable.py" <<'EOF'
+import re, sys
+s, n = re.subn(r"^SHADOW_RULES = .*$", "SHADOW_RULES = frozenset()", open(sys.argv[1]).read(), flags=re.M)
+assert n == 1
+open(sys.argv[1], "w").write(s)
+EOF
+_rows741() { # <journal>: would_deny rows for interp-pipe-shell
+  python3 -c 'import json,sys; print(sum(json.loads(l).get("decision") == "would_deny" and json.loads(l).get("rule") == "interp-pipe-shell" for l in open(sys.argv[1])))' "$1"
+}
+_would741() { # <cmd>: shadowed -> rc 0, no stdout, one would_deny row; enforced copy -> deny
+  local j="$_JOURNAL_TMP/w741.jsonl" out rc rows
+  : > "$j"
+  out=$(bash_payload "$1" | MH_GATE_JOURNAL_PATH="$j" bash "$IRRECOVERABLE" 2>/dev/null); rc=$?
+  rows=$(_rows741 "$j")
+  if [[ "$rc" == "0" && -z "$out" && "$rows" == "1" ]]; then
+    echo "  ✅ SHADOW would_deny interp-pipe-shell: ${1//$'\n'/ | }"; pass=$((pass + 1))
+  else
+    echo "  ❌ SHADOW would_deny interp-pipe-shell expected (rc=0, no stdout, 1 row), got rc=$rc rows=$rows: ${1//$'\n'/ | }" >&2
+    fail=$((fail + 1))
+  fi
+  test_deny "$_enf741/irrecoverable.sh" "GH #741 enforced once promoted: ${1//$'\n'/ | }" "$(bash_payload "$1")"
+}
 for _c in $'python3 - <<\'EOF\' | bash\nprint("git reset --hard")\nEOF' \
   $'python3 - <<\'EOF\' | sh\nprint("ls")\nEOF' $'python3 <<EOF | dash\nprint("ls")\nEOF' \
   $'node - <<\'EOF\' | zsh\nconsole.log("ls")\nEOF' $'nodejs <<\'EOF\' | ksh\nconsole.log("ls")\nEOF' \
   $'cat <<\'EOF\' | python3 - | bash\nprint("ls")\nEOF' $'python3 - <<\'EOF\' | tee out.log | bash\nprint("ls")\nEOF' \
   $'python3 -u - <<\'EOF\' | sudo bash -s\nprint("ls")\nEOF' $'git status; python3 - <<\'EOF\' 2>/dev/null | sh\nprint("ls")\nEOF' \
   $'x=$(python3 - <<\'EOF\' | sh\nprint("ls")\nEOF\n)' $'echo "`node - <<\'EOF\' | bash\nconsole.log(1)\nEOF\n`"'; do
-  test_deny "$IRRECOVERABLE" "GH #741 interpreter heredoc piped to a shell: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+  _would741 "$_c"
 done
 for _c in $'python3 - <<\'EOF\'\nprint("bash")\nEOF' $'python3 - <<\'EOF\' | grep bash\nprint("bash")\nEOF' \
   $'node - <<\'EOF\' | sort\nconsole.log("sh")\nEOF' $'python3 - <<\'EOF\' | bash x.sh\nprint("ls")\nEOF' \
   $'cat <<\'EOF\' | bash\nls\nEOF' $'python3 - <<\'EOF\'\nprint(1)\nEOF\necho ok | sh -c cat'; do
-  test_allow "$IRRECOVERABLE" "GH #741 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+  : > "$_JOURNAL_TMP/a741.jsonl"
+  test_allow "$IRRECOVERABLE" "GH #741 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")" "MH_GATE_JOURNAL_PATH=$_JOURNAL_TMP/a741.jsonl"
+  if [[ "$(_rows741 "$_JOURNAL_TMP/a741.jsonl")" == "0" ]]; then
+    echo "  ✅ GH #741 control journals no would_deny: ${_c//$'\n'/ | }"; pass=$((pass + 1))
+  else
+    echo "  ❌ GH #741 control journaled a would_deny row: ${_c//$'\n'/ | }" >&2; fail=$((fail + 1))
+  fi
+  test_allow "$_enf741/irrecoverable.sh" "GH #741 control, enforced copy: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 # GH #741: the process-API scan (GH #608 -c bodies, GH #681 heredoc scripts) also reads asyncio's
 # create_subprocess_shell/exec, the argv-list exec/spawn forms whose first literal is the path (execvp("git",
