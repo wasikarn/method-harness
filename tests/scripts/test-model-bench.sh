@@ -175,12 +175,16 @@ for agg in '"casesTotal":3' '"overallScore":0'; do
 done
 # One family regex, shared with the sidecar reader (GH #788): a copy here could drift from it.
 python3 - "$DIFF_PY" <<'PY' && ok "per-eval judge: model-bench-diff.py reuses eval_judge_models.MODEL_FAMILY_RE" \
-  || bad "per-eval judge: model-bench-diff.py defines its own MODEL_FAMILY_RE"
-# An AST check, not `is`: re's compile cache returns one object for two identical copies.
-import ast, sys
+  || bad "per-eval judge: model-bench-diff.py compiles its own copy of MODEL_FAMILY_RE"
+# An AST check, not `is`: re's compile cache returns one object for two identical copies. It
+# refuses any re.compile of the family pattern, whatever the copy is named.
+import ast, os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[1]), "..", "..", "..", "..", "scripts", "_lib"))
+from eval_judge_models import MODEL_FAMILY_RE
 tree = ast.parse(open(sys.argv[1]).read())
-own = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "MODEL_FAMILY_RE"]
-sys.exit(1 if own else 0)
+copies = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "compile"
+          and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value == MODEL_FAMILY_RE.pattern]
+sys.exit(1 if copies else 0)
 PY
 printf '# no rows\n' > "$TMP_MODELS"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
