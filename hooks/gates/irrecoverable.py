@@ -3587,7 +3587,26 @@ def _positional_body(body, rest):
     return filled if found else None
 
 
-_SPAWN_BODIES_SCANNED = set()  # GH #798: the bodies the main reading spawn-scanned
+_MAIN_STATEMENTS = set()  # GH #798: the statements of each body the main reading spawn-scanned
+_VAR_ORDERED = [None]  # GH #798: var-verb's in-order copy of the command
+_VIEW_TEXT = [None]  # the text of the view being read
+
+def _view_spawns():
+    # GH #798: the views whose spawns deny: not brace-view (GH #661: its copies spent the budget on legal commands;
+    # a brace-built spawn is GH #731), and of var-verb only the in-order copy (its first-value copy made
+    # `BIN=claude .. BIN=python3; $BIN -c ..` a spawn).
+    return _VIEW[0] != "brace-view" and (_VIEW[0] != "var-verb" or _VIEW_TEXT[0] == _VAR_ORDERED[0])
+
+def _text_statements(text):
+    # The statements of text, split at each unquoted ; & | and newline (_quote_mask).
+    mask, out, start = _quote_mask(text), [], 0
+    for i, ch in enumerate(text):
+        if ch in ";&|\n" and not mask[i]:
+            out.append(text[start:i])
+            start = i + 1
+    out.append(text[start:])
+    return out
+
 
 def _scan_body(body):
     if not body:
@@ -3607,14 +3626,19 @@ def _scan_body(body):
     # only ended the view, so `bash${IFS}-c 'claude -p x'` and `X=claude; bash -c "$X -p x"` passed). Views charge
     # their own budget, reset before the first view (GH #691: sharing the main reading's let padding stop a view).
     # A view re-scans only a body the main reading did not (its own rewrite); the main reading's are recorded.
-    _seen = body in _SPAWN_BODIES_SCANNED
-    if not _VIEW[0]:
-        _SPAWN_BODIES_SCANNED.add(body)
-    if ("agent_id" in d) and not _ONLY_RULE_PASS_ON[0] and not (_VIEW[0] and _seen) and _VIEW[0] != "brace-view" and (
-            _nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2) or _subst_spawn(body)):
-        if _spawn_over_budget or _VIEW[0]:
-            _deny_nested_spawn()  # over budget: the "too dense" message, not the spawn one (GH #798)
-        deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
+    # In a view only the body's statements the main reading did not scan are read, once across the views (review:
+    # whole rewritten bodies, one per var-verb copy, spent the views' budget on 5 KB scripts). Not brace-view
+    # (GH #661) or var-verb (its order-blind first value made `BIN=claude .. BIN=python3; $BIN -c` a spawn; the
+    # spawn reading in order is _ordered_var_text).
+    if "agent_id" in d and not _ONLY_RULE_PASS_ON[0]:
+        if not _VIEW[0]:
+            _MAIN_STATEMENTS.update(_text_statements(body))
+            if _nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2) or _subst_spawn(body):
+                if _spawn_over_budget:
+                    _deny_nested_spawn()  # the "too dense" message, not the spawn one (GH #798)
+                deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
+        elif _view_spawns():
+            _scan_view_statements(body)
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
         if ww:
@@ -6036,11 +6060,15 @@ def _views():
     for m in _PLAIN_ASSIGN_RE.finditer(cmd):
         vals.setdefault(m.group(1), []).append(next(g for g in m.groups()[1:] if g is not None))
     lit = _literal_dollars(cmd) if vals else ()
-    for pick in (-1, 0):
+    # GH #798 review: the first copy reads each value in order (the one assigned last before the reference), not the
+    # last value anywhere; the second keeps the first value. Only the ordered copy is spawn-scanned (_VAR_ORDERED).
+    for pick in (None, 0):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
             return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
-        v = _VAR_REF_RE.sub(_sub, cmd) if vals else cmd
+        v = (_ordered_var_text(cmd) if pick is None else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+        if pick is None and v != cmd:
+            _VAR_ORDERED[0] = v
         if v != cmd and ("var-verb", v) not in out:
             out.append(("var-verb", v))
     return out
@@ -6139,32 +6167,47 @@ def _enforced_pass(text):
         _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0], _WORD_PHASE[0] = None, False, False
         del _WORDS[:]
 
-def _text_statements(text):
-    # The statements of text, split at each unquoted ; & | and newline (_quote_mask).
-    mask, out, start = _quote_mask(text), [], 0
-    for i, ch in enumerate(text):
-        if ch in ";&|\n" and not mask[i]:
-            out.append(text[start:i])
-            start = i + 1
-    out.append(text[start:])
-    return out
-
 _CMD_STATEMENTS = None
 _VIEW_STATEMENTS_SCANNED = set()
 
 def _view_spawn_statements(text):
-    # GH #798: the statements of a view's text that the command does not hold as written (the main reading scanned
-    # those whole), each once across the views. Statement by statement, not one span: a change near each end of a
-    # script made the span the whole script, and the views' budget refused 6 KB scripts (review).
+    # GH #798: the statements of a view's text that the command or a body the main reading scanned does not hold as
+    # written (those were scanned whole), each once across the views. Statement by statement, not one span: a change
+    # near each end of a script made the span the whole script, and the views' budget refused 6 KB scripts (review).
     global _CMD_STATEMENTS
     if _CMD_STATEMENTS is None:
         _CMD_STATEMENTS = set(_text_statements(cmd))
     out = []
     for st in _text_statements(text):
-        if st.strip() and st not in _CMD_STATEMENTS and st not in _VIEW_STATEMENTS_SCANNED:
+        if st.strip() and st not in _CMD_STATEMENTS and st not in _MAIN_STATEMENTS and st not in _VIEW_STATEMENTS_SCANNED:
             _VIEW_STATEMENTS_SCANNED.add(st)
             out.append(st)
     return out
+
+def _scan_view_statements(text):
+    # A spawn in a statement only a view reads denies (_deny_nested_spawn exits; in a view a rule-less deny() only
+    # ended the view, so `bash${IFS}-c 'claude -p x'` and `X=claude; bash -c "$X -p x"` passed).
+    for st in _view_spawn_statements(text):
+        if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
+            _deny_nested_spawn()
+
+def _ordered_var_text(text):
+    # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it (none: left
+    # as written), so `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude.
+    # Order-aware, not scope-aware: a function's or a subshell's value counts from where it is written.
+    sets = sorted((m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None)) for m in _PLAIN_ASSIGN_RE.finditer(text))
+    if not sets:
+        return text
+    lit, keys = _literal_dollars(text), [e for e, _, _ in sets]
+    def sub(m):
+        name = m.group(1) or m.group(2)
+        if m.start() in lit:
+            return m.group(0)
+        for k in range(bisect.bisect_right(keys, m.start()) - 1, -1, -1):
+            if sets[k][1] == name:
+                return sets[k][2]
+        return m.group(0)
+    return _VAR_REF_RE.sub(sub, text)
 
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
@@ -6173,10 +6216,9 @@ for _VIEW[0], _text in _views():
         # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.
         # Not brace-view (GH #661: its expansion copies a body many times, which spent the budget on legal commands);
         # a brace-built spawn is GH #731.
-        if "agent_id" in d and _VIEW[0] != "brace-view":
-            for _vs in _view_spawn_statements(_text):
-                if _nested_spawn(_vs, False) or _nested_spawn(_vs, True) or _nested_spawn(_vs, 2) or _subst_spawn(_vs):
-                    _deny_nested_spawn()
+        _VIEW_TEXT[0] = _text
+        if "agent_id" in d and _view_spawns():
+            _scan_view_statements(_text)
         _start = len(windows)
         windows.extend(_view_windows(_text))
         _run_windows(_start)
