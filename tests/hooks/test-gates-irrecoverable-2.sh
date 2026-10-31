@@ -3647,7 +3647,8 @@ for _c in 'gp -f' 'gpf' 'ggp -f' 'gpu --force' \
   'sudo gp -f origin main' 'env gp -f origin main' "sh -c 'gpf! origin feat'" 'echo x && gp -f origin main' \
   '"gp" -f origin main' 'gp -f origin HEAD:feat' 'ggp -f origin HEAD:feat' \
   'ggpnp -f' 'grename main foo' 'grename develop x' 'echo x; grename Master y' 'grename feat -f' \
-  'g push -f origin main' 'g push origin :main' 'g push --mirror origin' 'echo x && g reset --hard' 'sudo g clean -fd'; do
+  'g push -f origin main' 'g push origin :main' 'g push --mirror origin' 'echo x && g reset --hard' 'sudo g clean -fd' \
+  'g>/dev/null push -f origin main' 'g<x push -f origin main' 'g&>/dev/null push -f origin main' 'x;g>&2 push -f origin main'; do
   test_deny "$IRRECOVERABLE" "GH #750 push alias: $_c" "$(bash_payload "$_c")"
 done
 for _c in 'gp' 'gp origin feat' 'gpu' 'ggp' 'ggp feat' 'gpsup' 'gpd origin main' 'gpv' 'ggpush' 'gpoat' \
