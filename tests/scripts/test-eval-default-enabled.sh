@@ -310,7 +310,9 @@ sandbox="$(new_sandbox '{"defaultEnabled": false}')"
 mkdir -p "$sandbox/bin"
 printf '#!/usr/bin/env bash\ncase "$*" in *"could not restore"*) kill -INT $$ ;; esac\nexec %q "$@"\n' "$(command -v python3)" >"$sandbox/bin/python3"
 chmod +x "$sandbox/bin/python3"
-PATH="$sandbox/bin:$PATH" bash -c "
+# SIGINT reset to default first: a backgrounded test run starts with it ignored, which would make
+# the shim's kill a no-op with or without the fix.
+PATH="$sandbox/bin:$PATH" "$(command -v python3)" -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' bash -c "
 source '$sandbox/scripts/_lib/eval-default-enabled.sh'
 with_default_enabled_true true
 " >/dev/null 2>&1
