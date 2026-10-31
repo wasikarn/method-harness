@@ -308,6 +308,31 @@ _timed_case() {  # <name> <expected rc> <command>
   fi
 }
 
+# GH #761: a cost that must not grow with some factor (nesting depth) is checked against a baseline of
+# the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
+# python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
+# only skews the ratio, so a miss is measured once more before it fails.
+_ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
+_timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
+  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio try
+  for try in 1 2; do
+    t0=$(_ratio_now)
+    bash_payload "$base" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; brc=$?
+    t1=$(_ratio_now)
+    bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; rc=$?
+    t2=$(_ratio_now)
+    ratio=$(python3 -c 'import sys; a, b, c = map(float, sys.argv[1:]); print("%.2f" % ((c - b) / max(b - a, 0.01)))' "$t0" "$t1" "$t2")
+    [[ "$rc" == "$want" && "$brc" == "$want" ]] || break
+    python3 -c 'import sys; sys.exit(float(sys.argv[1]) > float(sys.argv[2]))' "$ratio" "$max" && break
+  done
+  if [[ "$rc" == "$want" && "$brc" == "$want" ]] && python3 -c 'import sys; sys.exit(float(sys.argv[1]) > float(sys.argv[2]))' "$ratio" "$max"; then
+    echo "  ✅ $name (rc=$rc, ${ratio}x the baseline)"; pass=$((pass + 1))
+  else
+    echo "  ❌ $name: expected rc=$want within ${max}x the baseline, got rc=$rc (baseline rc=$brc) at ${ratio}x" >&2
+    fail=$((fail + 1))
+  fi
+}
+
 # 100 -C globals: used by GH #255 rows in test-gates-irrecoverable-2.sh and eval rows in test-gates-other.sh.
 _many_c=$(printf -- '-C . %.0s' $(seq 100))
 
