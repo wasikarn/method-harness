@@ -3775,6 +3775,12 @@ _timed_case "GH #741 review: git reset --hard before 9000 quoted node heredoc op
 # on develop's reading too (a guard against a slower scan, not a red row).
 _timed_case 'GH #741 review 3: trash with 1500 placeholders and 1070 "${HOME}/" words, then git reset --hard, denies in bounded time' 2 \
   "trash $(printf '"$(true)" %.0s' $(seq 1500))$(printf '"${HOME}/"/x %.0s' $(seq 1070))"$'\n'"git reset --hard"
+# GH #741 review 4: a substitution word ending /.* ($(x)/.*) is not a bare placeholder (develop's reading), so it never
+# enters that per-placeholder re-read: 3100 of them took 6 s once the /.* strip made each one bare.
+_timed_case 'GH #741 review 4: trash with 3100 $(x)/.* words, then git reset --hard, denies in bounded time' 2 \
+  "trash $(printf '$(x)/.* %.0s' $(seq 3100)); git reset --hard"
+_timed_case 'GH #741 review 4: trash with 3100 `x`/.* words, then git reset --hard, denies in bounded time' 2 \
+  "trash $(printf '`x`/.* %.0s' $(seq 3100)); git reset --hard"
 # GH #741 review 2: heredocs nested in ( frames, each piped through many stages, are read in bounded time (a re-read
 # from each frame's ( parsed every stage once per frame: 300 frames of 30 stages took 8-9 s, past the hook timeout).
 _timed_case 'GH #741 review 2: git reset --hard before 300 python heredoc frames of 30 pipe stages denies in bounded time' 2 \

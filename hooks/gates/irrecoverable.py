@@ -4224,10 +4224,12 @@ def _venv_activate(rest):
 _TRASH_TREE_WORDS = ("/", "~", ".", "..", "../..", "*", ".*", "", "$HOME", "$PWD")
 _TRASH_ARGS_RAW_RE = re.compile(r"(?<![\w.-])(?:trash(?:-put)?|gio\s+trash)(?![\w.-])([^;&|\n]*)")
 _PWD_SUBST_WORDS = ("$(pwd)", "`pwd`")
-def _trash_norm(w):
-    # The tree itself or everything in it: quotes removed, then each trailing /, /. or /* (~/*, "$HOME"/, ../).
+def _trash_norm(w, dotstar=True):
+    # The tree itself or everything in it: quotes removed, then each trailing /, /. or /* (~/*, "$HOME"/, ../), and
+    # /.* (GH #741: every dotfile in it) unless dotstar is off.
     w = w.replace('"', "").replace("'", "")
-    while w.endswith(("/", "/.", "/*", "/.*")) and w != "/":  # GH #741: /.* is every dotfile in it
+    ends = ("/", "/.", "/*", "/.*") if dotstar else ("/", "/.", "/*")
+    while w.endswith(ends) and w != "/":
         w = w[:-1] if w.endswith("/") else w[:-3] if w.endswith("/.*") else w[:-2]
     return w
 
@@ -4245,11 +4247,14 @@ def _trash_whole_tree(rest):
         if opts and w.startswith("-"):
             opts = w != "--"
             continue
-        w = _trash_norm(w)
+        w0, w = w, _trash_norm(w)
         if w in _TRASH_TREE_WORDS or (w.startswith("/") and PH not in w and os.path.normpath(w) in ("/", home)):
             return True
-        # A placeholder word: each raw operand of trash, normalized the same way, is read for $(pwd) / `pwd`.
-        if PH in w and w.strip(PH) == "" and any(any(_trash_norm(r) in _PWD_SUBST_WORDS for r in m.group(1).split())
+        # A placeholder word: each raw operand of trash, normalized the same way, is read for $(pwd) / `pwd`. Only a word
+        # that is bare without the /.* strip too ($(x)/.* is not, as on develop): the re-read costs the whole command per
+        # word, so 3100 such words took 6 s (GH #741 review 4).
+        if PH in w and w.strip(PH) == "" and _trash_norm(w0, False).strip(PH) == "" and any(
+                any(_trash_norm(r, False) in _PWD_SUBST_WORDS for r in m.group(1).split())
                                                 or _HOME_BRACED_RAW_RE.search(m.group(1))
                                                 for m in _TRASH_ARGS_RAW_RE.finditer(cmd.replace("\\\n", " "))):
             return True
