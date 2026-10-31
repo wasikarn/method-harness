@@ -1117,11 +1117,9 @@ _RUN_WRAPPERS = {
     "watch": (("-n", "--interval", "-q", "--equexit"), 0, (), True),  # watch runs `sh -c "<words>"`
     "script": (("-E", "--echo", "-o", "--output-limit", "-T", "--log-timing", "-I", "--log-in",
                 "-O", "--log-out", "-B", "--log-io", "-m", "--logging-format"), 0, ("-c", "--command"), False),
-    # GH #755: chrt's getopt is "+abdD:fiphmoP:T:rRvV"; the priority is the one positional (-p's pid and -m's
-    # limits run no command). runuser is read with su below, both permuting.
+    # GH #755: chrt's getopt is "+abdD:fiphmoP:T:rRvV"; the priority is the one positional, skipped only when it
+    # is all digits (newer util-linux makes it optional for -o/-b/-i). -p's pid and -m's limits run no command.
     "chrt": (("-D", "-P", "-T", "--sched-deadline", "--sched-period", "--sched-runtime"), 1, (), False),
-    "runuser": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment",
-                 "-u", "--user"), 0, ("-c", "--command", "--session-command"), None),
     "su": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"), 0,
            ("-c", "--command", "-C", "--session-command"), None),  # su's words are a user, not a command
     "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
@@ -1170,17 +1168,6 @@ def _past_run_prefix(w, i=0):
                     break
             if b in ("timeout", "gtimeout") and i < len(w):
                 i += 1  # the DURATION positional
-        elif b == "runuser" and any(x in ("-u", "--user") or x.startswith("--user=") for x in w[i + 1:]):
-            # GH #755: runuser -u USER [--] CMD; the common order only (an option after CMD is runuser's)
-            vals, _, bodies, _ = _RUN_WRAPPERS[b]
-            i += 1
-            while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
-                if w[i].split("=", 1)[0] in bodies:
-                    return None
-                done = w[i] == "--"
-                i += 2 if w[i] in vals else 1
-                if done:
-                    break
         elif b in _RUN_WRAPPERS:
             vals, npos, bodies, join = _RUN_WRAPPERS[b]
             i += 1
@@ -1193,7 +1180,8 @@ def _past_run_prefix(w, i=0):
                     break
             if join is None:
                 return None  # su: a user, not a command
-            i += npos  # watch (join) runs `sh -c "<words>"`, whose first word is still the program
+            i += 0 if b == "chrt" and not (i < len(w) and w[i].isdigit()) else npos
+            # watch (join) runs `sh -c "<words>"`, whose first word is still the program
         else:
             return i
     return None
@@ -1626,9 +1614,14 @@ class _ViewStop(Exception):
 # The rules a shadowed view still enforces; brace-view stays shadow for every other rule (GH #337). These rules
 # must read the words bash builds, and no token reading keeps such a word whole (`--{r,} b` loses its `}`):
 # rm's own (GH #661: `rm --{r,f} b` is `rm --r --f b`) and push's overwrite rules, send-pack included (GH #309:
-# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`).
-_VIEW_ENFORCED = {"brace-view": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root",
-                                           "git-push-force", "git-push-mirror", "git-push-delete-protected"})}
+# `--{force,force}`, `--{mirror,mirror}`, `:{main,main}`), and git's discard rules (GH #718: `git reset --{hard,hard}`
+# was read only here, and allowed).
+_VIEW_ENFORCED = {"brace-view": frozenset({
+    "rm-rf", "rm-recursive", "rm-no-preserve-root",
+    "git-push-force", "git-push-mirror", "git-push-delete-protected",
+    "git-reset-hard", "git-clean-force", "git-checkout-discard", "git-restore", "git-stash-drop", "git-switch-force",
+    "git-checkout-index-force", "git-read-tree-reset", "git-branch-force-delete", "git-branch-force-move-protected",
+    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
@@ -2934,8 +2927,10 @@ def _ambiguous(c):
 
 _ambig = _ambiguous(cmd)
 def _deny_ambiguous():
-    if _VIEW[0] == "brace-view":
-        return  # the raw text was checked above; this deny would end the view before any rule ran (other views keep ending on it)
+    if _VIEW[0]:
+        # The raw text was checked above. In a view this rule-less deny only ends the view before any rule ran,
+        # so a brace anywhere in the command hid `git${IFS}reset --hard` from ifs-split (GH #718).
+        return
     deny("ambiguous shell syntax (" + _ambig[0] + ") next to an irrecoverable verb - confirm with user first")
 # The verb is looked for in three views: the raw text, the text with line continuations joined, and the
 # text with quotes and backslashes dropped, so '"git" push' and 'r\m' cannot hide it (GH #255).
@@ -4198,7 +4193,7 @@ _BLANKS_RE = re.compile(r"[ \t]*")
 _PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])([\w./~"'$-][^\s;&|()<>]*)""")
 _PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "hush", "env", "xargs", "eval", "exec", "sudo", "doas", "su",
                         "nohup", "setsid", "stdbuf", "timeout", "nice", "ionice", "taskset", "chroot", "unshare",
-                        "nsenter", "chpst", "setuidgid", "chrt", "runuser",
+                        "nsenter", "chpst", "setuidgid", "chrt",
                         "script", "command", "builtin", "time", "find", "watch", "flock", "parallel", "npx",
                         "python", "python3", "perl", "ruby", "node"}
 _DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
@@ -4987,40 +4982,6 @@ def _check_window(_wi, w):
                 argv0, o = basename(rest[j]), j + 1
             else:  # an rtk verb that dispatches to the real tool of the same name
                 argv0, o = basename(rest[i]), i + 1
-        elif argv0 in ("su", "runuser"):
-            # GH #755: util-linux su and runuser permute, so an option (a -c BODY too) may follow the user or the
-            # command, up to `--`. With runuser -u USER, the non-option words, in order, then those past `--`,
-            # are the command (`runuser echo -u root -- -n x` runs `echo -n x`); otherwise the first word is a
-            # user and only a body runs.
-            vals, _, bodies, _ = _RUN_WRAPPERS[argv0]
-            i, body, user_mode, words = o, None, False, []
-            while i < len(rest):
-                t = rest[i].replace(PH, "")
-                if t == "--":
-                    words += rest[i + 1:]
-                    break
-                if t.startswith("-") and len(t) > 1:
-                    name = t.split("=", 1)[0]
-                    if name in bodies:
-                        body = t.split("=", 1)[1] if "=" in t else (rest[i + 1] if i + 1 < len(rest) else None)
-                        break
-                    k = next((k for k, ch in enumerate(t[1:], 1) if "-" + ch in bodies), 0) if not t.startswith("--") else 0
-                    if k:
-                        body = t[k + 1:] or (rest[i + 1] if i + 1 < len(rest) else None)
-                        break
-                    user_mode = user_mode or name in ("-u", "--user") or (not t.startswith("--") and "u" in t[1:])
-                    i += 2 if t in vals else 1
-                    continue
-                if t != "-":  # `-` asks for a login shell
-                    words.append(rest[i])
-                i += 1
-            if body is not None:
-                _scan_body(body)
-                o = len(rest)
-                break
-            if argv0 != "runuser" or not user_mode or not words:
-                break  # a user and a login shell, no command
-            rest, argv0, o, via_run_wrapper = words, basename(words[0]), 1, True
         elif argv0 in _RUN_WRAPPERS:  # GH #566
             vals, npos, bodies, join = _RUN_WRAPPERS[argv0]
             i, body = o, None
@@ -5042,7 +5003,7 @@ def _check_window(_wi, w):
             if body is None and join is None:
                 break  # su without -c runs a login shell, no command
             if body is None:
-                i += npos
+                i += 0 if argv0 == "chrt" and not (i < len(rest) and rest[i].replace(PH, "").isdigit()) else npos
             if body is None and i < len(rest) and argv0 == "flock" and rest[i].replace(PH, "") in ("-c", "--command"):
                 body = rest[i + 1] if i + 1 < len(rest) else None
             if body is not None or join:
@@ -5739,6 +5700,25 @@ def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
 
+def _literal_subst_split(text):
+    # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
+    # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
+    # a word (after a blank or a separator, so not `''$(..)` or `"$(..)"`); each output word is escaped whole, so it
+    # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
+    mask = _quote_mask(text)
+    def sub(e):
+        # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
+        if mask[e.start()] or (e.start() and text[e.start() - 1] not in " \t\n;&|("):
+            return e.group(0)
+        raw = e.group(1) or e.group(2) or ""
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            return e.group(0)
+        out = " ".join(words[1:] if words[:1] == ["--"] else words).split()
+        return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
+    return _LITERAL_SUBST_RE.sub(sub, text)
+
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
 
@@ -5753,6 +5733,10 @@ def _subst_literals(text):
                 if w == v:
                     break
                 v = w
+            if v != text and v not in out:
+                out.append(v)
+        if ("'" in text or '"' in text or "\\" in text) and _LITERAL_SUBST_RE.search(text):
+            v = _literal_subst_split(text)
             if v != text and v not in out:
                 out.append(v)
     return out
