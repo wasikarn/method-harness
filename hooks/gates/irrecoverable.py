@@ -783,6 +783,7 @@ def _strip_heredocs(cmd, ends=None):
         ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
+        pyline = "python" in line or "node" in line  # once per line, not per opener (GH #741 review 5: quadratic)
         for n_m, m in enumerate(ms):
             # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
             # from the line's stages parsed once.
@@ -794,10 +795,9 @@ def _strip_heredocs(cmd, ends=None):
             # python3 -) is scanned like a -c body; read by its own stage it is also stripped as data, so its
             # quotes never pair with text past the delimiter. A shell downstream (| bash) keeps today's reading.
             py_own, py_down = ctx.stdin_interp(m.start()) if (
-                ends is not None and quoted and ("python" in line or "node" in line)) else (False, False)
+                ends is not None and quoted and pyline) else (False, False)
             py_data = py_own and sure and not framed and not ctx.piped_shell(m.start())
-            if ends is not None and not _INTERP_PIPED_SHELL[0] and ("python" in line or "node" in line) and (
-                    ctx.interp_to_shell(m.start())):
+            if ends is not None and not _INTERP_PIPED_SHELL[0] and pyline and ctx.interp_to_shell(m.start()):
                 _INTERP_PIPED_SHELL[0] = True
             sql_code, code = code, code and not py_data
             body_start, found, expands, early = i, False, False, False

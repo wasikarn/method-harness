@@ -3781,6 +3781,10 @@ _timed_case 'GH #741 review 4: trash with 3100 $(x)/.* words, then git reset --h
   "trash $(printf '$(x)/.* %.0s' $(seq 3100)); git reset --hard"
 _timed_case 'GH #741 review 4: trash with 3100 `x`/.* words, then git reset --hard, denies in bounded time' 2 \
   "trash $(printf '`x`/.* %.0s' $(seq 3100)); git reset --hard"
+# GH #741 review 5: the python/node word test ran once per heredoc opener over the whole line; a cat line of 18000
+# quoted openers took 5.4 s (develop 3 s). It now runs once per line.
+_timed_case "GH #741 review 5: git reset --hard before a cat line of 18000 quoted heredoc openers denies in bounded time" 2 \
+  "git reset --hard"$'\n'"cat $(printf "<<'o' %.0s" $(seq 18000))"$'\n'"$(printf 'o\n%.0s' $(seq 18000))"
 # GH #741 review 2: heredocs nested in ( frames, each piped through many stages, are read in bounded time (a re-read
 # from each frame's ( parsed every stage once per frame: 300 frames of 30 stages took 8-9 s, past the hook timeout).
 _timed_case 'GH #741 review 2: git reset --hard before 300 python heredoc frames of 30 pipe stages denies in bounded time' 2 \
