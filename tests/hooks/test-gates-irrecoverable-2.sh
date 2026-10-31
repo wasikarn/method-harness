@@ -3881,4 +3881,16 @@ test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash 
 test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then git\${IFS}reset --hard" "$(bash_agent_payload "${_pad691}git\${IFS}reset --hard" fork)"
 test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash -c 'claude -p x' (spawn still denied)" "$(bash_agent_payload "${_pad691}bash -c 'claude -p x'" fork)"
 test_allow "$IRRECOVERABLE" "GH #691 control: subagent, spawn-budget padding, then echo ok" "$(bash_agent_payload "${_pad691}echo ok" fork)"
+# GH #798: a spawn only a view reads denies in a subagent (views scan their own text and the bodies they rewrote, on a
+# budget of their own); a raw ${IFS}--help is not a spawn flag; a spent scan budget says "too dense".
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: bash${IFS}-c '"'"'claude -p x'"'"'' "$(bash_agent_payload 'bash${IFS}-c '"'"'claude -p x'"'"'' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; bash -c "$X -p x"' "$(bash_agent_payload 'X=claude; bash -c "$X -p x"' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; $X -p x' "$(bash_agent_payload 'X=claude; $X -p x' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: claude${IFS}-p${IFS}x' "$(bash_agent_payload 'claude${IFS}-p${IFS}x' fork)"
+test_deny  "$IRRECOVERABLE" "GH #798: subagent, spawn-budget padding, then bash\${IFS}-c 'claude -p x'" "$(bash_agent_payload "${_pad691}bash\${IFS}-c 'claude -p x'" fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: claude${IFS}--help' "$(bash_agent_payload 'claude${IFS}--help' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: bash -c '"'"'claude${IFS}--version'"'"'' "$(bash_agent_payload 'bash -c '"'"'claude${IFS}--version'"'"'' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=echo; bash -c "$X -p x"' "$(bash_agent_payload 'X=echo; bash -c "$X -p x"' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=claude; echo $X -p x' "$(bash_agent_payload 'X=claude; echo $X -p x' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: bash${IFS}-c '"'"'echo hi'"'"'' "$(bash_agent_payload 'bash${IFS}-c '"'"'echo hi'"'"'' fork)"
 gates_summary

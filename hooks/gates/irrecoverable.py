@@ -1423,7 +1423,18 @@ def _spawn_drop_escapes(c):
         return " " * (len(w) - len(u)) + u
     return _SPAWN_WORD_RE.sub(word, c)
 
+_IFS_SPAWN_RE = re.compile(r"\$(?:\{IFS(?:[:%#/^,][^}]{0,40})?\}|IFS(?![A-Za-z0-9_]))")
+
 def _nested_spawn(c, overlap):
+    found = _nested_spawn_raw(c, overlap)
+    if found and not _spawn_over_budget and "IFS" in c:
+        # GH #798: the raw text reads an unknown `${IFS}--help` word as a possible spawn flag; bash splits it, so a
+        # finding must hold on the text with $IFS read as a blank too (`claude${IFS}-p x` still does).
+        v = _IFS_SPAWN_RE.sub(" ", c)
+        return v == c or _spawn_over_budget or _nested_spawn_raw(v, overlap)
+    return found
+
+def _nested_spawn_raw(c, overlap):
     c = _spawn_drop_escapes(c)
     j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, c)
     return _nested_spawn_text(j, overlap) or (j != c and _nested_spawn_text(c, overlap))
@@ -1560,13 +1571,17 @@ def _claude_words_start_session(stmt, piped):
     return piped
 
 def _nested_spawn_text(c, overlap):
+    global _spawn_over_budget
     if _charge_spawn_anchor(c):
         return True
     work = 0  # shared across every anchor's scan, never reset per-anchor -- see _SPAWN_SCAN_BUDGET above
     mask = None
     for m in _SPAWN_ANCHOR_RES[overlap].finditer(c):
         stmt, work = _spawn_statement(c[m.end(1):], work)
-        if stmt is None or _SPAWN_FLAG_RE.search(stmt):
+        if stmt is None:  # GH #798: a spent scan budget denies as "too dense", not as a spawn it did not find
+            _spawn_over_budget = True
+            return True
+        if _SPAWN_FLAG_RE.search(stmt):
             return True
         if mask is None:
             mask = _quote_mask(c)
@@ -3583,6 +3598,8 @@ def _positional_body(body, rest):
     return filled if found else None
 
 
+_SPAWN_BODIES_SCANNED = set()  # GH #798: the bodies the main reading spawn-scanned
+
 def _scan_body(body):
     if not body:
         return
@@ -3597,11 +3614,17 @@ def _scan_body(body):
         _deny_sql_stdin_drop(_strip_heredocs(body))
     # All three passes (GH #248). This runs inside the rule loop, so the quadratic passes could push
     # a later deny past the hook timeout; _SPAWN_ANCHOR_BUDGET bounds them and denies when over.
-    # GH #691: not in a view. There this rule-less deny only ends the view (_ViewStop), so the scan could never deny,
-    # yet it charged the spawn budget the main reading had nearly spent: once over, the view stopped before a later
-    # rm${IFS}-rf window. The main reading scans every body for a spawn.
-    if ("agent_id" in d) and not _ONLY_RULE_PASS_ON[0] and not _VIEW[0] and (_nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2)
-                              or _subst_spawn(body)):
+    # GH #798: views scan bodies too, and a spawn a view finds denies (_deny_nested_spawn exits; a rule-less deny()
+    # only ended the view, so `bash${IFS}-c 'claude -p x'` and `X=claude; bash -c "$X -p x"` passed). Views charge
+    # their own budget, reset before the first view (GH #691: sharing the main reading's let padding stop a view).
+    # A view re-scans only a body the main reading did not (its own rewrite); the main reading's are recorded.
+    _seen = body in _SPAWN_BODIES_SCANNED
+    if not _VIEW[0]:
+        _SPAWN_BODIES_SCANNED.add(body)
+    if ("agent_id" in d) and not _ONLY_RULE_PASS_ON[0] and not (_VIEW[0] and _seen) and _VIEW[0] != "brace-view" and (
+            _nested_spawn(body, False) or _nested_spawn(body, True) or _nested_spawn(body, 2) or _subst_spawn(body)):
+        if _spawn_over_budget or _VIEW[0]:
+            _deny_nested_spawn()  # over budget: the "too dense" message, not the spawn one (GH #798)
         deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
@@ -6127,8 +6150,39 @@ def _enforced_pass(text):
         _ONLY_RULE[0], _ONLY_RULE_PASS_ON[0], _WORD_PHASE[0] = None, False, False
         del _WORDS[:]
 
+def _view_spawn_span(text):
+    # GH #798: the statements of a view's text that differ from the command, which the main reading scanned whole: from
+    # the unquoted separator before the first difference to the one after the last (scanning the whole text again
+    # pushed padded commands past the time limit).
+    n, m = len(text), len(cmd)
+    p = 0
+    while p < n and p < m and text[p] == cmd[p]:
+        p += 1
+    if p == n == m:
+        return ""
+    q = 0
+    while q < n - p and q < m - p and text[n - 1 - q] == cmd[m - 1 - q]:
+        q += 1
+    mask = _quote_mask(text)
+    a = p
+    while a > 0 and (mask[a - 1] or text[a - 1] not in ";&|\n"):
+        a -= 1
+    b = n - q
+    while b < n and (mask[b] or text[b] not in ";&|\n"):
+        b += 1
+    return text[a:b]
+
+# GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
+_spawn_anchor_work, _spawn_over_budget = 0, False
 for _VIEW[0], _text in _views():
     try:
+        # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.
+        # Not brace-view (GH #661: its expansion copies a body many times, which spent the budget on legal commands);
+        # a brace-built spawn is GH #731.
+        if "agent_id" in d and _VIEW[0] != "brace-view":
+            _vs = _view_spawn_span(_text)
+            if _vs and (_nested_spawn(_vs, False) or _nested_spawn(_vs, True) or _nested_spawn(_vs, 2) or _subst_spawn(_vs)):
+                _deny_nested_spawn()
         _start = len(windows)
         windows.extend(_view_windows(_text))
         _run_windows(_start)
