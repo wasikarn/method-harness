@@ -26,7 +26,7 @@ printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$R/.claude-plugin/
 mkdir -p "$R/evals/ideate-case"
 # ideate is one of the tags eval-changed.sh wraps; the case also has a judge row, so both the
 # tag line and the judge line are printed in the bash -c form.
-printf -- '---\nname: ideate-case\ntags: [ideate]\nallowed_tools: [Bash(git log:*), Read, $(touch${IFS}PWNED)]\n---\nprompt\n' \
+printf -- '---\nname: ideate-case\ntags: [ideate]\nallowed_tools: [Bash(git log:*), Read, $(touch${IFS}PWNED), it'\''s]\n---\nprompt\n' \
   >"$R/evals/ideate-case/prompt.md"
 printf 'ideate-case\tsonnet\tGH #1\n' >"$R/evals/judge-models.tsv"
 echo a >"$R/skills/x/ideate/SKILL.md"
@@ -48,8 +48,8 @@ echo 0 >"$EC_N"
 # The tag run's list is the sorted union over the tag's cases; the judge run keeps frontmatter order.
 for kind in "--tag ideate" "--case ideate-case"; do
   case "$kind" in
-    --tag*) want_allow='$(touch${IFS}PWNED),Bash(git log:*),Read' ;;
-    *) want_allow='Bash(git log:*),Read,$(touch${IFS}PWNED)' ;;
+    --tag*) want_allow='$(touch${IFS}PWNED),Bash(git log:*),Read,it'\''s' ;;
+    *) want_allow='Bash(git log:*),Read,$(touch${IFS}PWNED),it'\''s' ;;
   esac
   line=$(/usr/bin/grep -F -- "$kind " "$TMP/print.out")
   case "$line" in "bash -c "*) ;; *) bad "$kind: not printed in the bash -c form: '$line'"; continue ;; esac
