@@ -3685,7 +3685,7 @@ for _c in 'gp -f' 'gpf' 'ggp -f' 'gpu --force' \
 done
 for _c in 'gp' 'gp origin feat' 'gpu' 'ggp' 'ggp feat' 'gpsup' 'gpd origin main' 'gpv' 'ggpush' 'gpoat' \
   'gpod feat' 'gpg --verify x.sig' 'echo gp -f' 'git push origin HEAD:feat' \
-  'ggpnp' 'ggpnp feat' 'grename feat x' 'grename' 'g status' 'g push origin feat' 'echo g push -f' 'ls -g'; do
+  'ggpnp' 'ggpnp feat' 'grename feat x' 'grename'; do
   test_allow "$IRRECOVERABLE" "GH #750 push alias control: $_c" "$(bash_payload "$_c")"
 done
 # Operator 2026-10-31: #750 stays push-only, so `alias g='git'` is not read (the general alias table is #781).

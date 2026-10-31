@@ -224,11 +224,10 @@ git push words it runs, `$(git_current_branch)` as PH; `grename OLD NEW` is read
 origin :OLD` and `git push --set-upstream origin NEW`. The expansions were checked against the plugin source
 (master, 2026-10-31) with bash and an argv-logging git stub. The command word is expanded after the wrapper
 walk, so every git rule applies with its own rule id; the fast path routes a `gp`, `ggf` or `grename`
-substring to python. PR #774 also read `alias g='git'` (every git rule, with a command-position fast-path
-case); the operator kept #750 push-only and a follow-up PR dropped it, so `g push -f` is allowed again and
-pinned as such (the general alias table is #781). `gate-differential.sh
---fuzz-seed 750` against develop: 0 diffs in 568 cases (no transcript replay: built in a cloud session).
-Accepted over-denies: the strict force-push allow reads the raw text, so a forced alias push never gets it
+substring to python. PR #774's `gate-differential.sh --fuzz-seed 750` against develop: 0 diffs in 568 cases
+(no transcript replay: built in a cloud session). PR #774 also read `alias g='git'` (every git rule, with a
+command-position fast-path case); the operator kept #750 push-only and PR #791 dropped it, so `g push -f` is
+allowed again and pinned as such (the general alias table is #781). Accepted over-denies: the strict force-push allow reads the raw text, so a forced alias push never gets it
 (`gp -f origin HEAD:feat` denies: write the `git push` form); and a wrapped or quoted alias (`sudo gp -f`,
 `"gp" -f`), which no shell expands, denies too. Not covered: a user's own alias or function, the plugin's
 `git-svn-dcommit-push` (a plain push to `svntrunk`), `g`, and its non-push git aliases (`grhh` is `git reset
