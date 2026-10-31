@@ -58,7 +58,7 @@ def expected_judge_note(data_a, data_b, judge_models):
         if model_family(judge_model_display(other.get("suite", {}))) != eval_judge_models.DEFAULT_JUDGE:
             continue
         family = model_family(judge_model_display(data.get("suite", {})))
-        names = [c.get("name") for c in data.get("cases", [])]
+        names = [c.get("name") for c in data.get("cases") or []]
         rows = [(n, judge_models.get(n)) for n in names]
         if names and family and all(row and model_family(row[0]) == family for _, row in rows):
             return "; ".join(
