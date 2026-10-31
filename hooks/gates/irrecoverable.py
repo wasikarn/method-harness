@@ -1617,7 +1617,10 @@ _VIEW_ENFORCED = {"brace-view": frozenset({
     "git-push-force", "git-push-mirror", "git-push-delete-protected",
     "git-reset-hard", "git-clean-force", "git-checkout-discard", "git-restore", "git-stash-drop", "git-switch-force",
     "git-checkout-index-force", "git-read-tree-reset", "git-branch-force-delete", "git-branch-force-move-protected",
-    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"})}
+    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"}),
+    # GH #767: rm's own rules read the value a plain NAME=value assignment puts back (`F=-rf; rm $F b`); every
+    # other var-verb rule stays shadow until /mh:gate-report shows no false positive.
+    "var-verb": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
@@ -5687,20 +5690,30 @@ def _literal_subst_words(e):
 def _literal_subst_split(text):
     # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
     # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
-    # a word (after a blank or a separator, so not `''$(..)` or `"$(..)"`); each output word is escaped whole, so it
+    # a word (after an unescaped blank or a separator), or whose output starts with a blank; each output word is escaped whole, so it
     # only shows a flag the quotes hid and builds no syntax (`x; rm -rf /` stays text). Additive: the plain copy stays.
     mask = _quote_mask(text)
     def sub(e):
         # Inside '...' the text is data (review 3: an escaped ' from the output closed it in the view).
-        if mask[e.start()] or (e.start() and text[e.start() - 1] not in " \t\n;&|("):
+        if mask[e.start()]:
             return e.group(0)
         raw = e.group(1) or e.group(2) or ""
         try:
             words = shlex.split(raw)
         except ValueError:
             return e.group(0)
-        out = " ".join(words[1:] if words[:1] == ["--"] else words).split()
-        return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
+        words = words[1:] if words[:1] == ["--"] else words
+        out = " ".join(words)
+        # Glued to the word before it (`x$(..)`, `\ $(..)`, `'a'$(..)`), the output joins that word, unless it
+        # starts with a blank, which ends the word there (GH #767: `rm \ $(echo ' -rf') b` is rm ' ' -rf b).
+        k = e.start()
+        j = k - 1
+        while j > 0 and text[j - 1] == "\\":  # the backslashes before that char: an odd run escapes it
+            j -= 1
+        glued = k and (text[k - 1] not in " \t\n;&|(" or (k - 1 - j) % 2)
+        if glued and not out[:1].isspace():
+            return e.group(0)
+        return (" " if glued else "") + " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out.split())
     return _LITERAL_SUBST_RE.sub(sub, text)
 
 def _ifs_split(text):
