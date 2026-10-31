@@ -39,7 +39,7 @@ paste_in() {
 shells="bash-c bash-i"
 if command -v zsh >/dev/null 2>&1; then shells="$shells zsh-i"; else echo "  SKIP: zsh not installed, no zsh paste"; fi
 
-# check_fixture <name> <allowed_tools list> <want tag --allow-tools> <want judge --allow-tools>
+# check_fixture <name> <allowed_tools list> <want tag --allow-tools> <want judge --allow-tools> <judge model>
 check_fixture() {
   local R="$TMP/$1" kind want_allow line sh got
   mkdir -p "$R/scripts/_lib" "$R/.claude-plugin" "$R/bin" "$R/skills/x/ideate" "$R/evals/ideate-case"
@@ -49,8 +49,9 @@ check_fixture() {
   printf '{\n  "name": "mh",\n  "defaultEnabled": false\n}\n' >"$R/.claude-plugin/plugin.json"
   # The case also has a judge row, so both the tag line and the judge line are printed.
   printf -- '---\nname: ideate-case\ntags: [ideate]\nallowed_tools: [%s]\n---\nprompt\n' "$2" >"$R/evals/ideate-case/prompt.md"
-  printf 'ideate-case\tsonnet\tGH #1\n' >"$R/evals/judge-models.tsv"
+  printf 'ideate-case\t%s\tGH #1\n' "$5" >"$R/evals/judge-models.tsv"
   echo a >"$R/skills/x/ideate/SKILL.md"
+  : >"$R/opusm"  # an unquoted opus[1m] would glob to it
   git -C "$R" init -q && git -C "$R" add . \
     && git -C "$R" -c user.name=t -c user.email=t@t -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm init \
     || { bad "$1: fixture commit failed"; return; }
@@ -69,6 +70,11 @@ check_fixture() {
       [ "$got" = "$want_allow" ] \
         && ok "$1: $kind: --allow-tools pastes back into $sh as one argument, verbatim" \
         || bad "$1: $kind: --allow-tools pasted into $sh as '$got', want '$want_allow'"
+      if [ "$kind" = "--case ideate-case" ]; then
+        got=$(/usr/bin/grep -A1 -x -- '--judge-model' "$EC_ARGS.0" | tail -n 1)
+        [ "$got" = "$5" ] && ok "$1: --judge-model $5 pastes back into $sh verbatim" \
+          || bad "$1: --judge-model pasted into $sh as '$got', want '$5'"
+      fi
       [ ! -e "$R/PWNED" ] && ok "$1: $kind: shell syntax in allowed_tools does not run when pasted into $sh" \
         || { bad "$1: $kind: pasting the printed line into $sh ran \$(touch PWNED)"; tmp_delete "$R/PWNED"; }
     done
@@ -77,11 +83,11 @@ check_fixture() {
 
 # The tag run's list is the sorted union over the tag's cases; the judge run keeps frontmatter order.
 check_fixture apostrophe 'Bash(git log:*), Read, $(touch${IFS}PWNED), it'\''s' \
-  '$(touch${IFS}PWNED),Bash(git log:*),Read,it'\''s' 'Bash(git log:*),Read,$(touch${IFS}PWNED),it'\''s'
+  '$(touch${IFS}PWNED),Bash(git log:*),Read,it'\''s' 'Bash(git log:*),Read,$(touch${IFS}PWNED),it'\''s' sonnet
 # No apostrophe: in the fixture above, a reverted script's paste is a syntax error at `it's`
 # before the other entries are checked, so a fix that quoted only lines holding ' would pass it.
 check_fixture no-apostrophe 'Bash(git log:*), Read, $(touch${IFS}PWNED), !!' \
-  '!!,$(touch${IFS}PWNED),Bash(git log:*),Read' 'Bash(git log:*),Read,$(touch${IFS}PWNED),!!'
+  '!!,$(touch${IFS}PWNED),Bash(git log:*),Read' 'Bash(git log:*),Read,$(touch${IFS}PWNED),!!' 'opus[1m]'
 
 # shell_word itself: every word must read back verbatim, trailing newlines included ($(...) strips
 # them, so a version built on command substitution prints $'x\n' as 'x').

@@ -57,6 +57,15 @@ expect_bad "a model naming no known family (a typo)" 'demo-case\tsonet\tGH #1\n'
 expect_bad "shell code in the model (it would run from the printed bash -c line)" 'demo-case\tsonnet$(touch${IFS}PWNED)\tGH #1\n'
 expect_bad "a relative path in the case column" '../evals/demo-case\tsonnet\tGH #1\n'
 expect_bad "an absolute path in the case column" "$TMP/evals/demo-case\tsonnet\tGH #1\n"
+expect_bad "a quote in the model" "demo-case\tsonnet'x\tGH #1\n"
+expect_bad "a space in the model" 'demo-case\tson net\tGH #1\n'
+# GH #788: eval-changed.sh quotes each printed argument, so a context-window suffix or a Bedrock
+# ARN is allowed in the model column.
+for m in 'opus[1m]' 'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-v1:0'; do
+  printf 'demo-case\t%s\tGH #1\n' "$m" > "$TMP/evals/judge-models.tsv"
+  python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 && ok "check accepts model $m" \
+    || bad "check refuses model $m: $(python3 "$PY" check --evals "$TMP/evals" 2>&1)"
+done
 printf 'a..b\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"; mkdir -p "$TMP/evals/a..b"; cp "$TMP/evals/demo-case/prompt.md" "$TMP/evals/a..b/"
 python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 \
   && ok "check accepts a dir name with '..' inside it (the case pattern already bars paths)" \
