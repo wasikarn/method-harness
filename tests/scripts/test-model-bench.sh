@@ -166,6 +166,12 @@ for agg in '"casesTotal":3' '"overallScore":0'; do
   [ "$status" -eq 0 ] && ! /usr/bin/grep -q 'Traceback' <<<"$out" \
     && ok "per-eval judge: \"cases\": null with aggregates {$agg} does not crash" \
     || bad "per-eval judge: \"cases\": null with {$agg} crashed (exit $status): $out"
+  out=$(python3 "$DIFF_PY" --judge-models "$FIXTURES/judge-models.tsv" --label-a null-cases --label-b haiku-history \
+    "$TMP_MODELS.null.json" "$FIXTURES/judge-override-haiku.json" 2>&1)
+  status=$?
+  [ "$status" -eq 0 ] && ! /usr/bin/grep -q 'Traceback' <<<"$out" \
+    && ok "per-eval judge: \"cases\": null on side A with aggregates {$agg} does not crash" \
+    || bad "per-eval judge: \"cases\": null on side A with {$agg} crashed (exit $status): $out"
 done
 printf '# no rows\n' > "$TMP_MODELS"
 out=$(python3 "$DIFF_PY" --judge-models "$TMP_MODELS" --label-a haiku-history --label-b sonnet-rerun \
