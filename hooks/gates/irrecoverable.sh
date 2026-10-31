@@ -3,7 +3,8 @@
 set -uo pipefail
 
 # Fast path: skip the python3 cold-start when no deny can match. Every deny in
-# irrecoverable.py dispatches on an argv0 in the case list below (trash covers trash-put and gio trash); wrappers never
+# irrecoverable.py dispatches on an argv0 in the case list below (trash covers trash-put and gio trash; gp and ggf
+# cover the shell push aliases, GH #750); wrappers never
 # hide it. Quote/backslash stripping exposes r""m -> rm, the whitespace-collapsed
 # variant a backslash-newline split argv0, and any bare $ or backtick may be a
 # zero-width splice (gi$(true)t) so it defers to python on its own. False
@@ -43,7 +44,7 @@ case "$_norm" in
   *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
 esac
 case "$_norm$_norm_nows" in
-  *rm*|*find*|*git*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
+  *rm*|*find*|*git*|*gp*|*ggf*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
   *) [ "$_has_subst" -eq 1 ] || exit 0 ;;                          # no destructive token possible -> allow (unless obfuscated)
 esac
 
