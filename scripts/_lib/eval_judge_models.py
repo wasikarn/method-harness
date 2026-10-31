@@ -10,7 +10,8 @@ one `case<TAB>model<TAB>reason` row per case, `#` comments and blank lines skipp
                                                   TAG's overrides (the case's own tools, comma-joined,
                                                   for --allow-tools; empty when it lists none)
 
-Imported by skills/meta/model-bench/scripts/model-bench-diff.py (load()).
+Imported by skills/meta/model-bench/scripts/model-bench-diff.py (load(), MODEL_FAMILY_RE).
+scripts/eval-changed.sh runs it (check, for-tag) and imports frontmatter_list.
 """
 import argparse
 import os
