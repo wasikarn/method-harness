@@ -25,11 +25,11 @@ DEFAULT_JUDGE = "haiku"
 # A model must name one of these families. This catches a model naming no family, not every
 # typo (`sonnett` passes).
 MODEL_FAMILY_RE = re.compile(r"haiku|sonnet|opus|fable", re.IGNORECASE)
-# eval-changed.sh prints rows inside a `bash -c '...'` line, so a case or model is limited to
-# characters that cannot quote, expand or traverse there (a case is one evals/ dir name). The
-# line's --allow-tools value comes from prompt.md frontmatter and is not checked here.
+# A case is one evals/ dir name, so it cannot traverse. eval-changed.sh quotes each argument of
+# the `bash -c '...'` line it prints (GH #775), so a model may also hold a context-window suffix
+# (`opus[1m]`) or a Bedrock ARN (`/`); quotes, spaces and other shell syntax stay refused.
 CASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:-]*")
+MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:/\[\]-]*")
 
 
 def sidecar_path(evals_dir=DEFAULT_EVALS):
@@ -54,7 +54,7 @@ def load(path):
             if not CASE_RE.fullmatch(case):
                 raise ValueError(f"{path}:{n}: {case!r} is not an evals/ case dir name")
             if not MODEL_RE.fullmatch(model):
-                raise ValueError(f"{path}:{n}: {case}: model {model!r} has characters this sidecar does not allow ([, /, spaces, shell syntax)")
+                raise ValueError(f"{path}:{n}: {case}: model {model!r} has characters this sidecar does not allow (quotes, spaces, shell syntax)")
             if case in rows:
                 raise ValueError(f"{path}:{n}: {case} is listed twice")
             family = MODEL_FAMILY_RE.search(model)
