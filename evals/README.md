@@ -272,6 +272,8 @@ claude plugin eval . --scaffold --tag cost-report --allow-tools Bash --runs 1 --
 # after, even on failure -- no manual edit, nothing to remember.
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag code-architect --allow-tools Bash,Read,Grep,Glob,Agent,Edit,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag performance-optimizer --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
+# perf-regression-routing is judged by sonnet (evals/judge-models.tsv, GH #510): read its score from this run, not the line above
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --case perf-regression-routing --judge-model sonnet --allow-tools Bash,Read,Write,Edit,Grep,Glob,Agent,Skill --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag backend-architect --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate-critic --allow-tools Bash,Read,Grep,Glob,Agent --ablation with-without --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag ideate --allow-tools Agent,Bash,Read,Glob,Grep,Skill --runs 1 --no-publish'  # the run case spawns 6 agents (5 + mh:ideate-critic)
@@ -279,9 +281,31 @@ bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_tru
 
 Cost and time: the last full run (2026-09-13, 76 cases, `-j 1`) took 34,801 s and $119.40; the
 30 `runs: 3` cases were 66% of that, the without-plugin arm 31%, LLM graders 6%. Graders already
-use the cheapest judge (`--judge-model` defaults to haiku), so do not raise it. Add `-j 4` to any
+use the cheapest judge (`--judge-model` defaults to haiku), so do not raise it run-wide; the one
+exception is per case, below. Add `-j 4` to any
 line above to run cases in parallel (same cost, roughly a quarter of the wall time; runs share one
 rate limit), and `--max-cost-usd` to cap a run.
+
+### Judge model: per case, in `judge-models.tsv`
+
+`claude plugin eval` takes only a run-wide `--judge-model`, and its case and grader schemas have
+no judge key (both are strict in 2.1.314, so an added key fails to load). A case that needs
+another judge is listed in `evals/judge-models.tsv` (`case<TAB>model<TAB>reason`) and gets a
+second run of its own, `--case <case> --judge-model <model>`. `scripts/eval-changed.sh` prints
+that run after the tag's line, and the performance-optimizer line above has it. The tag run
+still judges the case with haiku; read the case's score from its own run. Passing
+`--judge-model <model>` run-wide makes the row moot. `scripts/_lib/eval_judge_models.py check`
+validates the file (`tests/scripts/test-eval-judge-models.sh`).
+
+History, so a mixed-judge comparison reads right:
+
+- **perf-regression-routing, sonnet, from 2026-10-31 (GH #510).** On 2026-10-05 a haiku judge
+  failed all 20 runs of `routes-to-diagnosis-quality` that a sonnet judge and four blind LLM
+  labelers passed. A sonnet judge costs about 2.6x per run ($0.203 vs $0.077). Results before
+  2026-10-31 are haiku-judged, so comparing one with a later run trips `model-bench-diff.py`'s
+  `judgeModel differs` WARN; the script adds `expected: perf-regression-routing is judged by
+  sonnet` when one side ran only listed cases under their listed judge. Every other case stays
+  on haiku (the #510 decision for `backend-architect-security-handoff` was a rubric fix, #511).
 
 ### Fold-vs-keep (one agent)
 
