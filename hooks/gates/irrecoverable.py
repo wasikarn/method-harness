@@ -1117,6 +1117,11 @@ _RUN_WRAPPERS = {
     "watch": (("-n", "--interval", "-q", "--equexit"), 0, (), True),  # watch runs `sh -c "<words>"`
     "script": (("-E", "--echo", "-o", "--output-limit", "-T", "--log-timing", "-I", "--log-in",
                 "-O", "--log-out", "-B", "--log-io", "-m", "--logging-format"), 0, ("-c", "--command"), False),
+    # GH #755: chrt's getopt is "+abdD:fiphmoP:T:rRvV"; the priority is the one positional (-p's pid and -m's
+    # limits run no command). runuser is read with su below, both permuting.
+    "chrt": (("-D", "-P", "-T", "--sched-deadline", "--sched-period", "--sched-runtime"), 1, (), False),
+    "runuser": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment",
+                 "-u", "--user"), 0, ("-c", "--command", "--session-command"), None),
     "su": (("-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"), 0,
            ("-c", "--command", "-C", "--session-command"), None),  # su's words are a user, not a command
     "parallel": (("-j", "--jobs", "-S", "--sshlogin", "-P", "--max-procs", "-n", "--max-args", "-N",
@@ -1165,6 +1170,17 @@ def _past_run_prefix(w, i=0):
                     break
             if b in ("timeout", "gtimeout") and i < len(w):
                 i += 1  # the DURATION positional
+        elif b == "runuser" and any(x in ("-u", "--user") or x.startswith("--user=") for x in w[i + 1:]):
+            # GH #755: runuser -u USER [--] CMD; the common order only (an option after CMD is runuser's)
+            vals, _, bodies, _ = _RUN_WRAPPERS[b]
+            i += 1
+            while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
+                if w[i].split("=", 1)[0] in bodies:
+                    return None
+                done = w[i] == "--"
+                i += 2 if w[i] in vals else 1
+                if done:
+                    break
         elif b in _RUN_WRAPPERS:
             vals, npos, bodies, join = _RUN_WRAPPERS[b]
             i += 1
@@ -4171,7 +4187,7 @@ _BLANKS_RE = re.compile(r"[ \t]*")
 _PREFIX_NEXT_RE = re.compile(r"""[ \t]+(?!\d*[<>])([\w./~"'$-][^\s;&|()<>]*)""")
 _PREFIX_BODY_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "hush", "env", "xargs", "eval", "exec", "sudo", "doas", "su",
                         "nohup", "setsid", "stdbuf", "timeout", "nice", "ionice", "taskset", "chroot", "unshare",
-                        "nsenter", "chpst", "setuidgid",
+                        "nsenter", "chpst", "setuidgid", "chrt", "runuser",
                         "script", "command", "builtin", "time", "find", "watch", "flock", "parallel", "npx",
                         "python", "python3", "perl", "ruby", "node"}
 _DECLARE_TAIL_RE = re.compile(r"(?:^|[\s;&|(){])(?:export|readonly|declare|typeset|local)(?:[ \t]+-\w+)*[ \t]+$")
@@ -4960,6 +4976,40 @@ def _check_window(_wi, w):
                 argv0, o = basename(rest[j]), j + 1
             else:  # an rtk verb that dispatches to the real tool of the same name
                 argv0, o = basename(rest[i]), i + 1
+        elif argv0 in ("su", "runuser"):
+            # GH #755: util-linux su and runuser permute, so an option (a -c BODY too) may follow the user or the
+            # command, up to `--`. With runuser -u USER, the non-option words, in order, then those past `--`,
+            # are the command (`runuser echo -u root -- -n x` runs `echo -n x`); otherwise the first word is a
+            # user and only a body runs.
+            vals, _, bodies, _ = _RUN_WRAPPERS[argv0]
+            i, body, user_mode, words = o, None, False, []
+            while i < len(rest):
+                t = rest[i].replace(PH, "")
+                if t == "--":
+                    words += rest[i + 1:]
+                    break
+                if t.startswith("-") and len(t) > 1:
+                    name = t.split("=", 1)[0]
+                    if name in bodies:
+                        body = t.split("=", 1)[1] if "=" in t else (rest[i + 1] if i + 1 < len(rest) else None)
+                        break
+                    k = next((k for k, ch in enumerate(t[1:], 1) if "-" + ch in bodies), 0) if not t.startswith("--") else 0
+                    if k:
+                        body = t[k + 1:] or (rest[i + 1] if i + 1 < len(rest) else None)
+                        break
+                    user_mode = user_mode or name in ("-u", "--user") or (not t.startswith("--") and "u" in t[1:])
+                    i += 2 if t in vals else 1
+                    continue
+                if t != "-":  # `-` asks for a login shell
+                    words.append(rest[i])
+                i += 1
+            if body is not None:
+                _scan_body(body)
+                o = len(rest)
+                break
+            if argv0 != "runuser" or not user_mode or not words:
+                break  # a user and a login shell, no command
+            rest, argv0, o, via_run_wrapper = words, basename(words[0]), 1, True
         elif argv0 in _RUN_WRAPPERS:  # GH #566
             vals, npos, bodies, join = _RUN_WRAPPERS[argv0]
             i, body = o, None

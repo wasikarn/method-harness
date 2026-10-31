@@ -3631,4 +3631,23 @@ done
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
+# GH #755: chrt runs the command after its options and the priority (getopt "+abdD:fiphmoP:T:rRvV"; -p takes a
+# pid, -m prints limits). runuser -u USER runs the command; without -u it reads as su. util-linux su and
+# runuser permute ("c:fg:G:lmpPs:u:hVw:"): an option, -c BODY included, may follow the user or the command.
+for _c755 in "chrt -o 0 rm -rf b" "chrt 10 rm -rf b" "chrt -f 10 rm -rf b" "chrt -d -T 1000 -P 2000 -D 2000 0 rm -rf b" \
+  "chrt --sched-runtime 1000 -d 0 rm -rf b" "chrt -v -r 5 bash -c 'rm -rf b'" "sudo chrt 10 rm -rf b" \
+  "runuser -u root -- rm -rf b" "runuser -u root dd if=/dev/zero of=/dev/sda" "runuser --user=root -- rm -rf b" "runuser -u root -g wheel -- rm -rf b" \
+  "runuser root -c 'rm -rf b'" "runuser -c 'rm -rf b' root" "runuser - root -c 'rm -rf b'" "runuser -l root --command='rm -rf b'" \
+  "runuser root --session-command 'rm -rf b'" "runuser root -lc 'rm -rf b'" "runuser rm -u root -- -rf b" \
+  "su root -c 'rm -rf b'" "su - root -c 'rm -rf b'" "su -l root --command='rm -rf b'" "su root -lc 'rm -rf b'" \
+  "echo 'rm -rf b' | chrt 10 sh" "echo 'rm -rf b' | runuser -u root -- sh"; do
+  test_deny "$IRRECOVERABLE" "GH #755: $_c755" "$(bash_payload "$_c755")"
+done
+test_deny  "$IRRECOVERABLE" "GH #755: subagent: chrt 10 claude -p x" "$(bash_agent_payload 'chrt 10 claude -p x' fork)"
+for _c755 in "chrt -p 700" "chrt -p 10 700" "chrt -m" "chrt 10 make -j4" "runuser -u bob ls -la" "runuser -u bob -- ls -la" \
+  "runuser root -c 'ls -la'" "runuser - bob" "su - bob" "su root -c 'ls'" "echo runuser -u root -- rm -rf b" \
+  "runuser echo -u root -- rm -rf b" "runuser -u root rm -rf b"; do
+  test_allow "$IRRECOVERABLE" "GH #755 control: $_c755" "$(bash_payload "$_c755")"
+done
+
 gates_summary
