@@ -83,5 +83,14 @@ check_fixture apostrophe 'Bash(git log:*), Read, $(touch${IFS}PWNED), it'\''s' \
 check_fixture no-apostrophe 'Bash(git log:*), Read, $(touch${IFS}PWNED), !!' \
   '!!,$(touch${IFS}PWNED),Bash(git log:*),Read' 'Bash(git log:*),Read,$(touch${IFS}PWNED),!!'
 
+# shell_word itself: every word must read back verbatim, trailing newlines included ($(...) strips
+# them, so a version built on command substitution prints $'x\n' as 'x').
+eval "$(sed -n '/^shell_word() {/,/^}/p' "$ROOT/scripts/eval-changed.sh")"
+for w in '' plain "it's" "''" $'x\n' $'\n\n' $'a\nb' '$(x)' '!!' 'a b'; do
+  eval "got=$(shell_word "$w")"
+  [ "$got" = "$w" ] && ok "shell_word round-trips $(printf '%q' "$w")" \
+    || bad "shell_word: $(printf '%q' "$w") reads back as $(printf '%q' "$got")"
+done
+
 echo "eval-changed print-mode quoting self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
