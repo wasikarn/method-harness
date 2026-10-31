@@ -177,14 +177,15 @@ test_deny "$IRRECOVERABLE" "26 xargs handovers in the main reading leave the ifs
 print("echo a | xargs env true; " * 26 + "rm${IFS}-rf${IFS}/tmp/x", end="")
 PY
 )")"
-# Stripping leading words one slice at a time copied the rest each step: 75k `!` took 19 s, past the 8 s timeout.
+# Stripping leading words one slice at a time copied the rest each step: 75k `!` took 19 s, past the 8 s timeout
+# (28 s for 74900 `!` and 15.7 s for 37450 env on a 4-core host, gate at 9c37835c^, GH #789).
 _quad_tail='rm${IFS}-rf${IFS}/tmp/x a{b} c$d'
 _timed_hook_case "74900 leading ! words before an IFS rm are stripped inside the hook timeout" 2 \
   "$(python3 -c 'import sys; print("! " * 74900 + sys.argv[1], end="")' "$_quad_tail")"
 _timed_hook_case "37450 env wrappers before an IFS rm are unwrapped inside the hook timeout" 2 \
   "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
 # Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
-# four evals took 25 s.
+# four evals took 25 s (over 40 s on the same 4-core host, GH #789).
 _timed_hook_case "a 20 KB ! flood under four evals is denied inside the hook timeout" 2 \
   "$(python3 -c 'import sys; t = sys.argv[1]; print("eval eval eval eval " + "! " * ((20000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail")"
 # Empty alternatives build no new text, so the budget never charged them: 26 groups of {,} made 2^26 empty
