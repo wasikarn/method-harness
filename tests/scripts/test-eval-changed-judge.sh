@@ -86,6 +86,12 @@ cp "$TMP/sidecar.good" "$R/evals/judge-models.tsv"
 mv "$R/scripts/_lib/eval_judge_models.py" "$TMP/"
 expect_no_runs "missing eval_judge_models.py"
 mv "$TMP/eval_judge_models.py" "$R/scripts/_lib/"
+# An unreadable prompt.md passes `check` (it reads only sidecar cases' dirs) but makes the tag's
+# allowed_tools lookup raise: without `|| exit 1` on it the tag would run with no --allow-tools.
+mkdir -p "$R/evals/zz-bad"
+printf -- '---\ntags: [ideate]\nallowed_tools: [Read]\n---\n\xff\xfe\n' >"$R/evals/zz-bad/prompt.md"
+expect_no_runs "non-UTF-8 evals/zz-bad/prompt.md"
+tmp_delete "$R/evals/zz-bad"
 
 PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" >"$TMP/print.out" 2>&1
 p=$(/usr/bin/grep -- "--case zz-case " "$TMP/print.out")
