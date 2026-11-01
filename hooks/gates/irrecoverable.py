@@ -6271,45 +6271,63 @@ def _scan_view_statements(text):
         if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
             _deny_nested_spawn()
 
-_UNSET_RE = re.compile(r"(?<![\w$-])unset((?:[ \t]+-[A-Za-z]+)*)((?:[ \t]+[A-Za-z_]\w*)+)")
+_UNSET_RE = re.compile(r"(?<![\w$-])unset((?:[ \t]+-[A-Za-z]*-?)*)((?:[ \t]+[A-Za-z_]\w*)+)")
 _DECL_WORDS = frozenset(("export", "local", "declare", "typeset", "readonly"))
+_REDIR_RE = re.compile(r"[0-9]*(?:[<>]&?|&>)>?-?[ \t]*(?:[^\s;&|()<>]+)?")
 
-def _subshell_spans(text):
-    # (open, close) offsets of each ( .. ) outside quotes, $( .. ) and <( .. ) included: a value set inside one never
-    # reaches the text after it closes. A `)` with nothing open (a case pattern) closes nothing.
+def _shell_scan(text):
+    # (spans, text_at): spans are the (open, close) offsets of each ( .. ) outside quotes and comments, $( .. ) and
+    # <( .. ) included, as a value set inside one never reaches the text after it closes (a `)` with nothing open, a
+    # case pattern, closes nothing); text_at[i] is 1 where offset i is quoted or in a comment, so a word there is text.
     spans, stack, sq, dq, i, n = [], [], False, False, 0, len(text)
+    text_at = bytearray(n)
     while i < n:
         c = text[i]
         if sq:
+            text_at[i] = 1
             sq = c != "'"
         elif c == "\\":
+            text_at[i:i + 2] = b"\1" * len(text_at[i:i + 2])
             i += 1
         elif c == "'" and not dq:
-            sq = True
+            text_at[i], sq = 1, True
         elif c == '"':
-            dq = not dq
-        elif not dq and c == "(":
+            text_at[i], dq = 1, not dq
+        elif dq:
+            text_at[i] = 1
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            text_at[i:j] = b"\1" * (j - i)
+            i = j
+            continue
+        elif c == "(":
             stack.append(i)
-        elif not dq and c == ")" and stack:
+        elif c == ")" and stack:
             spans.append((stack.pop(), i))
         i += 1
-    return spans
+    return spans, text_at
 
 def _prefix_assign(text, m):
     # True when the assignment is a prefix on a command (`G=-i rm $G b`): bash expands that command's words before the
     # temporary value applies, and it is gone after, so nothing reads it. A chain of assignments with no command after
-    # it (`G=-i F=-r;`) persists, as do the arguments of export/local/declare/typeset/readonly.
+    # it (`G=-i F=-r;`, redirections such as `F=-r 2>/dev/null;` included) persists, as do the arguments of
+    # export/local/declare/typeset/readonly.
+    k = m.end()
     while True:
-        j = m.end()
-        k = j
+        j = k
         while k < len(text) and text[k] in " \t":
             k += 1
-        if k == j or k == len(text) or text[k] in ";&|()\n#}":
+        if k == len(text) or text[k] in ";&|()\n#}":
             return False
-        nxt = _PLAIN_ASSIGN_RE.match(text, k)
-        if nxt is None:
+        if k == j and text[k] not in "<>":
+            return False
+        nxt = _PLAIN_ASSIGN_RE.match(text, k) or _REDIR_RE.match(text, k)
+        if nxt is None or nxt.end() == k:
             break
-        m = nxt
+        if nxt.re is _PLAIN_ASSIGN_RE:
+            m = nxt
+        k = nxt.end()
     head = re.split(r"[;&|(){}\n]", text[:m.start()])[-1].split()
     return not any(w in _DECL_WORDS for w in head)
 
@@ -6324,9 +6342,10 @@ def _ordered_var_text(text, fallback_last=True):
     raw = not fallback_last
     sets = [(m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None))
             for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m))]
+    spans, text_at = _shell_scan(text) if raw else ((), b"")
     if raw:
         for m in _UNSET_RE.finditer(text):
-            if "f" not in m.group(1):
+            if "f" not in m.group(1) and not text_at[m.start()]:
                 base = m.start(2)
                 for w in re.finditer(r"[A-Za-z_]\w*", m.group(2)):
                     sets.append((base + w.end(), w.group(0), None))
@@ -6334,7 +6353,6 @@ def _ordered_var_text(text, fallback_last=True):
     if not sets:
         return text
     lit, keys = _literal_dollars(text), [e for e, _, _ in sets]
-    spans = _subshell_spans(text) if raw else ()
     def sub(m):
         name = m.group(1) or m.group(2)
         if m.start() in lit:
