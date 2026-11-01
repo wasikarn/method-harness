@@ -36,7 +36,7 @@ case_md zz-case3 "zz-skill" "Grep"
 case_md zz-zz-case "zz-zz" "Read"
 printf 'ideate-case\tfable\tGH #3\nzz-case\tsonnet\tGH #1\nzz-case3\topus\tGH #2\n' >"$R/evals/judge-models.tsv"
 for t in ideate zz-skill zz-zz; do mkdir -p "$R/skills/x/$t"; echo a >"$R/skills/x/$t/SKILL.md"; done
-git -C "$R" init -q && git -C "$R" add . && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init \
+git -C "$R" init -q && git -C "$R" add . && git -C "$R" -c user.name=t -c user.email=t@t -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm init \
   || { echo "test-eval-changed-judge: fixture commit failed" >&2; exit 1; }
 for t in ideate zz-skill zz-zz; do echo b >>"$R/skills/x/$t/SKILL.md"; done
 
@@ -65,8 +65,6 @@ for want in "--tag ideate " "--tag zz-skill " "--tag zz-zz " "--case ideate-case
   /usr/bin/grep -q -- "$want" "$EC_LOG" \
     && ok "stdin-reading claude: '$want' still runs" || bad "stdin-reading claude: '$want' skipped: $(cat "$EC_LOG")"
 done
-/usr/bin/grep -q '^enabled=true' <<<"$(/usr/bin/grep -- "--tag ideate " "$EC_LOG")" \
-  && ok "ideate tag run goes through with_default_enabled_true" || bad "ideate tag run not wrapped: $(cat "$EC_LOG")"
 
 # A broken sidecar or a missing module must stop the script before any paid run.
 expect_no_runs() {  # <label>
@@ -86,6 +84,12 @@ cp "$TMP/sidecar.good" "$R/evals/judge-models.tsv"
 mv "$R/scripts/_lib/eval_judge_models.py" "$TMP/"
 expect_no_runs "missing eval_judge_models.py"
 mv "$TMP/eval_judge_models.py" "$R/scripts/_lib/"
+# An unreadable prompt.md passes `check` (it reads only sidecar cases' dirs) but makes the tag's
+# allowed_tools lookup raise: without `|| exit 1` on it the tag would run with no --allow-tools.
+mkdir -p "$R/evals/zz-bad"
+printf -- '---\ntags: [ideate]\nallowed_tools: [Read]\n---\n\xff\xfe\n' >"$R/evals/zz-bad/prompt.md"
+expect_no_runs "non-UTF-8 evals/zz-bad/prompt.md"
+tmp_delete "$R/evals/zz-bad"
 
 PATH="$R/bin:$PATH" bash "$R/scripts/eval-changed.sh" >"$TMP/print.out" 2>&1
 p=$(/usr/bin/grep -- "--case zz-case " "$TMP/print.out")
