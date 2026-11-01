@@ -1610,7 +1610,7 @@ def _nested_spawn_text(c, overlap):
         # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
         # over as words.
         sep = re.match(r"[|;&(){\s]*", lead).group()
-        piped = re.search(r"(?<!\|)\|&?[\s({]*$", c[:a] + sep) is not None or "xargs" in lead_words
+        piped = re.search(r"(?<!\|)\|&?(?:[\s({]|\\\n)*$", c[:a] + sep) is not None or "xargs" in lead_words  # GH #810: | \<newline>
         if _claude_starts_session(stmt, piped):
             return True
     return False
@@ -3646,15 +3646,24 @@ def _view_spawns():
     # variable into claude in one order or the other).
     return _VIEW[0] != "brace-view" and (_VIEW[0] != "var-verb" or _VIEW_TEXT[0] in _VAR_SPAWN_TEXTS)
 
+_PIPE_ONLY_RE = re.compile(r"\s*(\|&?)\s*(?:#.*)?")  # a line holding only a pipe, or a pipe and a comment
+
 def _text_statements(text):
     # The statements of text, split at each unquoted ; & | and newline (_quote_mask). A pipe `|` / `|&` stays at the
     # start of the statement after it, so _nested_spawn's pipe-in check sees a claude that reads stdin (GH #804:
     # `X=claude; echo hi | $X`); `||` is one separator, so `true || $X` is not read as piped.
-    mask, out, start, i = _quote_mask(text), [], 0, 0
+    # A pipe that ends a line goes on past blank lines or a comment: it is carried to the next line's statement as
+    # `| ` (GH #810: `echo hi |` then `$X` on the next line). A backslash-newline is masked, so no split is made there.
+    mask, out, start, i, carry = _quote_mask(text), [], 0, 0, ""
     while i < len(text):
         ch = text[i]
         if ch in ";&|\n" and not mask[i]:
-            out.append(text[start:i])
+            pipe = ch == "\n" and _PIPE_ONLY_RE.fullmatch(carry + text[start:i])
+            if pipe:
+                carry, start, i = pipe.group(1) + " ", i + 1, i + 1
+                continue
+            out.append(carry + text[start:i])
+            carry = ""
             if ch == "|" and text[i + 1:i + 2] == "|":
                 i += 1
                 start = i + 1
@@ -3664,7 +3673,7 @@ def _text_statements(text):
             else:
                 start = i + 1
         i += 1
-    out.append(text[start:])
+    out.append(carry + text[start:])
     return out
 
 
