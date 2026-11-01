@@ -4117,4 +4117,14 @@ for _c in "bash -c 'PAT=\"error|claude\"; grep -E \$PAT log'" 'true && case y in
   'true && [[ y =~ (a|claude) ]]'; do
   test_allow "$IRRECOVERABLE" "GH #812 review 3 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812 review 4: a separator inside ${..} opens no lead, and a pattern word or =~ operand holding a substitution,
+# backtick or brace is read as a pipe.
+for _c in 'git diff ${v//;;/}|claude' 'echo ${v//;&/x}|claude' 'git diff ${v:-;case x in a}|claude' \
+  'echo ${v:-&&case x in a}|claude' 'echo ${v:-;[[ y =~ a}|claude' $'echo ${v:-\ncase x in a}|claude' \
+  '[[ x =~ $(echo|claude) ]]' 'X=claude; [[ x =~ $(echo|$X) ]]'; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 4: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'case "$1" in a|claude) :;; esac' '[[ $y =~ (a|claude) ]]' 'echo ${v} ; case y in a|claude) :;; esac'; do
+  test_allow "$IRRECOVERABLE" "GH #812 review 4 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary

@@ -1623,12 +1623,28 @@ def _nested_spawn_text(c, overlap):
 _KW_LEAD = r"(?:\A|(?<=[;\n])|(?<=&&)|(?<=[^<>&]&)|(?<=[^>|]\|))[ \t]*(?:(?:if|elif|while|until|then|do|else|!)[ \t]+)*"
 _CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|()]+[ \t]+(in))\Z")
 # Its left side holds no ( ) or backtick and no `]]`, so a `[[` closed inside $(..) or a subshell does not count.
-_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`])*?[ \t]=~[ \t]+[^\s;&<>]*\Z")
+# Its operand holds no substitution or brace (`=~ $(echo|claude)` runs a real pipe): only plain chars and $NAME.
+_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`])*?[ \t]=~[ \t]+(?:[^\s;&<>$`{}]|\$\w)*\Z")
+_UNSAFE_PATTERN_WORD = re.compile(r"[{}`]|\$\(")
+
+def _in_open_brace(c, pos, mask):
+    # True when c[pos] sits inside an unclosed ${..} (bounded look back): its ; & or newline is text, no separator
+    # (`echo ${v:-;case x in a}|claude` pipes, GH #812 review 4).
+    depth, i = 0, max(0, pos - 400)
+    while i < pos:
+        if not mask[i]:
+            if c[i] == "$" and c[i + 1:i + 2] == "{":
+                depth += 1
+                i += 1
+            elif c[i] == "}" and depth:
+                depth -= 1
+        i += 1
+    return depth > 0
 
 def _lead_unmasked(m, mask, groups):
     # The separator before the lead, the keywords up to its first group, and each named group: none masked.
     s0 = m.start()
-    if s0 and mask[s0 - 1]:
+    if s0 and (mask[s0 - 1] or _in_open_brace(m.string, s0, mask)):
         return False
     first = min(m.start(g) for g in groups)
     if any(mask[s0:first]):
@@ -1647,6 +1663,8 @@ def _pattern_bar(c, i, mask):
             k -= 1
         if k == j or i - k > 400:  # bounded: a long `a|a|..` chain is read as pipes, as develop did
             break
+        if _UNSAFE_PATTERN_WORD.search(c, k, j):
+            return False  # a word holding a substitution or brace may be one (`${v//;;/}|claude`)
         if k and c[k - 1] == "|" and not mask[k - 1]:  # one more alternative before it
             j = k - 1
             continue
