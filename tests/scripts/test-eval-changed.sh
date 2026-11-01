@@ -6,7 +6,8 @@
 # eval fails or the <ref> does not resolve.
 set -uo pipefail
 # The fixture repo below runs `git init`; a hook-exported GIT_DIR would retarget it at the real repo.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+# BASH_ENV/ENV: a startup file there could put the real, paid claude ahead of the stub (GH #803).
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE BASH_ENV ENV
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"

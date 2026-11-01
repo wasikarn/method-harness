@@ -8,7 +8,8 @@
 # that logs one argument per line.
 set -uo pipefail
 # The fixture repo below runs `git init`; a hook-exported GIT_DIR would retarget it at the real repo.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+# BASH_ENV/ENV: a startup file there could put the real, paid claude ahead of the stub (GH #803).
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE BASH_ENV ENV
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
@@ -33,16 +34,37 @@ mkdir -p "$TMP/stubbin" && cp "$TMP/claude" "$TMP/stubbin/"
 # run in a new session (no controlling terminal): from a terminal's background job (merge-pr.sh &)
 # they would try to take the terminal and be stopped, hanging the gauntlet. python3, as macOS
 # has no setsid(1). It forks first: setsid() fails (EPERM) in a process-group leader.
-no_tty() {
-  python3 -c '
-import os, sys
+NO_TTY='
+import os, signal, sys
+pid = None
+def stop(sig, _):
+    # The shell has its own session, so a Ctrl-C or hangup sent to the test reaches only this parent:
+    # hang up the shell first (an interactive shell ignores TERM), then die of the same signal (GH #806).
+    if pid:
+        for kill in (os.killpg, os.kill):  # os.kill: the child has not run setsid() yet
+            try:
+                kill(pid, signal.SIGHUP); break
+            except OSError:
+                pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+    signal.signal(sig, signal.SIG_DFL); os.kill(os.getpid(), sig)
+sigs = {s for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP) if signal.getsignal(s) != signal.SIG_IGN}
+for s in sigs:
+    signal.signal(s, stop)
+# Blocked across fork(): a signal handled while fork() returns would see pid unset and orphan the child.
+signal.pthread_sigmask(signal.SIG_BLOCK, sigs)
 pid = os.fork()
+signal.pthread_sigmask(signal.SIG_UNBLOCK, sigs)
 if pid == 0:
     os.setsid()
     os.execvp(sys.argv[1], sys.argv[1:])
 _, st = os.waitpid(pid, 0)
-sys.exit(os.WEXITSTATUS(st) if os.WIFEXITED(st) else 1)' "$@"
-}
+pid = None  # reaped: a late signal must not hit a reused pid
+sys.exit(os.WEXITSTATUS(st) if os.WIFEXITED(st) else 1)'
+no_tty() { python3 -c "$NO_TTY" "$@"; }
 paste_in() {
   case "$1" in
     bash-c) bash -c "$2" ;;
@@ -52,6 +74,28 @@ paste_in() {
     zsh-i) HISTFILE=/dev/null no_tty zsh -f -i <<<"PATH=$(printf '%q' "$PATH")"$'\n'"$2" ;;
   esac
 }
+# GH #806: a Ctrl-C or hangup sent to the test reaches only no_tty's python parent, as the shell has
+# its own session. The shell must end with it: an orphan keeps reading the paste after the EXIT trap
+# has deleted the stub claude, so a later line can start a real, paid one. The kill waits until the
+# shell is reading the paste, or it would land before the fork and test nothing.
+mark="$TMP/orphan-ran" started="$TMP/paste-started"
+HISTFILE=/dev/null python3 -c "$NO_TTY" bash --norc --noprofile -i \
+  <<<": >$(printf '%q' "$started"); sleep 1; : >$(printf '%q' "$mark")" >/dev/null 2>&1 &
+p=$!
+for _ in $(seq 50); do [ -e "$started" ] && break; sleep 0.1; done
+[ -e "$started" ] || bad "the no_tty paste did not start within 5 s"
+kill -TERM "$p"; wait "$p"; sleep 1.5
+[ ! -e "$mark" ] && ok "a SIGTERM to no_tty ends the pasted shell too" \
+  || bad "a SIGTERM to no_tty left the pasted shell running: it ran the rest of the paste"
+
+# GH #803: every non-interactive bash reads $BASH_ENV first, so a file there that prepends the real
+# claude's dir to PATH would put it ahead of the stub. All three eval-changed tests must unset it.
+for t in test-eval-changed-print.sh test-eval-changed.sh test-eval-changed-judge.sh; do
+  awk '/^unset / { f = 1; exit !(/ BASH_ENV( |$)/ && / ENV( |$)/) } END { if (!f) exit 1 }' "$HERE/$t" \
+    && ok "$t unsets BASH_ENV and ENV on its first unset line" \
+    || bad "$t does not unset BASH_ENV and ENV on its first unset line"
+done
+
 shells="bash-c bash-i"
 if command -v zsh >/dev/null 2>&1; then shells="$shells zsh-i"; else echo "  SKIP: zsh not installed, no zsh paste"; fi
 
@@ -109,10 +153,9 @@ check_fixture() {
   done
 }
 
-# An interactive paste must reach the stub claude, never a real one: zsh -f still reads
-# /etc/zshenv, and one that rebuilds PATH would make the paste checks below paid eval runs.
+# A paste must reach the stub claude, never a real one: zsh -f still reads /etc/zshenv, and one
+# that rebuilds PATH (or a BASH_ENV file, for bash -c) would make the paste checks below paid eval runs.
 for sh in $shells; do
-  [ "$sh" = bash-c ] && continue
   got=$(PATH="$TMP/stubbin:$PATH" paste_in "$sh" 'command -v claude' 2>&1)
   /usr/bin/grep -qF "$TMP/stubbin/claude" <<<"$got" && ok "$sh resolves claude to the stub on the paste's PATH" \
     || { bad "$sh does not resolve claude to the stub (a zshenv or rc file reset PATH): $got"; exit 1; }
