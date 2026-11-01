@@ -3588,13 +3588,13 @@ def _positional_body(body, rest):
 
 
 _MAIN_STATEMENTS = set()  # GH #798: the statements of each body the main reading spawn-scanned
-_VAR_SPAWN_TEXTS = set()  # GH #798: var-verb's last-value and in-order copies, the ones spawn-scanned
+_VAR_SPAWN_TEXTS = set()  # GH #798: var-verb's in-order copy, the one spawn-scanned
 _VIEW_TEXT = [None]  # the text of the view being read
 
 def _view_spawns():
     # GH #798: the views whose spawns deny: not brace-view (GH #661: its copies spent the budget on legal commands;
-    # a brace-built spawn is GH #731), and of var-verb not the first-value copy (it made
-    # `BIN=claude .. BIN=python3; $BIN -c ..` a spawn).
+    # a brace-built spawn is GH #731), and of var-verb only the in-order copy (each other copy turned a reused
+    # variable into claude in one order or the other).
     return _VIEW[0] != "brace-view" and (_VIEW[0] != "var-verb" or _VIEW_TEXT[0] in _VAR_SPAWN_TEXTS)
 
 def _text_statements(text):
@@ -6062,14 +6062,15 @@ def _views():
     lit = _literal_dollars(cmd) if vals else ()
     # GH #798 review: three copies: the last value (a loop's later pass or a function called after the assignment:
     # `F=-i; for ..; do rm $F b; F=-rf; done`), the first value, and each value in order (the one assigned last before
-    # the reference). The last-value and in-order copies are spawn-scanned (_VAR_SPAWN_TEXTS); the first-value copy
-    # is not (it made `BIN=claude .. BIN=python3; $BIN -c ..` a spawn). rm's rules read all three.
+    # the reference, else the last value). Only the in-order copy is spawn-scanned (_VAR_SPAWN_TEXTS): the first-value
+    # copy made `BIN=claude .. BIN=python3; $BIN -c ..` a spawn, the last-value one `BIN=python3; $BIN -c ..;
+    # BIN=claude; command -v $BIN` (review 5). rm's rules read all three.
     for pick in (-1, 0, None):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
             return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
         v = (_ordered_var_text(cmd) if pick is None else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
-        if pick != 0 and v != cmd:
+        if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
             out.append(("var-verb", v))
@@ -6196,7 +6197,8 @@ def _scan_view_statements(text):
 def _ordered_var_text(text):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it (none: left
     # as written), so `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude.
-    # Order-aware, not scope-aware: a function's or a subshell's value counts from where it is written.
+    # Order-aware, not scope-aware: a function's or a subshell's value counts from where it is written; a reference with
+    # no assignment before it reads the last value.
     sets = sorted((m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None)) for m in _PLAIN_ASSIGN_RE.finditer(text))
     if not sets:
         return text
@@ -6208,7 +6210,10 @@ def _ordered_var_text(text):
         for k in range(bisect.bisect_right(keys, m.start()) - 1, -1, -1):
             if sets[k][1] == name:
                 return sets[k][2]
-        return m.group(0)
+        # No assignment before it: a loop's later pass or a function called after the assignment reads the last
+        # value (`g(){ $X -p x; }; X=claude; g`).
+        return last.get(name, m.group(0))
+    last = {n: v for _, n, v in sets}
     return _VAR_REF_RE.sub(sub, text)
 
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.

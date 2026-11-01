@@ -3882,7 +3882,7 @@ test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then git\$
 test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash -c 'claude -p x' (spawn still denied)" "$(bash_agent_payload "${_pad691}bash -c 'claude -p x'" fork)"
 test_allow "$IRRECOVERABLE" "GH #691 control: subagent, spawn-budget padding, then echo ok" "$(bash_agent_payload "${_pad691}echo ok" fork)"
 # GH #798: a spawn only a view reads denies in a subagent (views scan their own text and the bodies they rewrote, on a
-# budget of their own); a raw ${IFS}--help is not a spawn flag; a spent scan budget says "too dense".
+# budget of their own); a spent scan budget says "too dense".
 test_deny  "$IRRECOVERABLE" 'GH #798: subagent: bash${IFS}-c '"'"'claude -p x'"'"'' "$(bash_agent_payload 'bash${IFS}-c '"'"'claude -p x'"'"'' fork)"
 test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; bash -c "$X -p x"' "$(bash_agent_payload 'X=claude; bash -c "$X -p x"' fork)"
 test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; $X -p x' "$(bash_agent_payload 'X=claude; $X -p x' fork)"
@@ -3922,4 +3922,9 @@ test_deny  "$IRRECOVERABLE" 'GH #798 review 4: F=-i; for i in 1 2; do rm $F b; F
 test_deny  "$IRRECOVERABLE" 'GH #798 review 4: F=-i; g(){ rm $F b; }; F=-rf; g' "$(bash_payload 'F=-i; g(){ rm $F b; }; F=-rf; g')"
 test_deny  "$IRRECOVERABLE" 'GH #798 review 4: subagent: for i in 1 2; do $X -p x; X=claude; done' "$(bash_agent_payload 'for i in 1 2; do $X -p x; X=claude; done' fork)"
 test_deny  "$IRRECOVERABLE" 'GH #798 review 4: subagent: g(){ $X -p x; }; X=claude; g' "$(bash_agent_payload 'g(){ $X -p x; }; X=claude; g' fork)"
+# GH #798 review 5 (operator): only var-verb's in-order copy is spawn-scanned, so a tool variable later set to claude
+# for a lookup is not a spawn.
+test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: BIN=python3; $BIN -c '"'"'print(1)'"'"'; BIN=claude; command -v $BIN' "$(bash_agent_payload 'BIN=python3; $BIN -c '"'"'print(1)'"'"'; BIN=claude; command -v $BIN' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: T=pytest; $T tests/; T=claude; which $T' "$(bash_agent_payload 'T=pytest; $T tests/; T=claude; which $T' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: N=npm; $N run build; N=claude; command -v $N' "$(bash_agent_payload 'N=npm; $N run build; N=claude; command -v $N' fork)"
 gates_summary
