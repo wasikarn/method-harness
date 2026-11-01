@@ -3917,4 +3917,9 @@ test_allow "$IRRECOVERABLE" 'GH #798 review 3 control: subagent: X=claude; X=ech
 test_deny  "$IRRECOVERABLE" 'GH #798 review 3: subagent: X=echo; X=claude; $X -p x' "$(bash_agent_payload 'X=echo; X=claude; $X -p x' fork)"
 test_deny  "$IRRECOVERABLE" 'GH #798 review 3: subagent: X=claude; ( $X -p hi )' "$(bash_agent_payload 'X=claude; ( $X -p hi )' fork)"
 test_deny  "$IRRECOVERABLE" 'GH #798 review 3: subagent: C=claude; ls | xargs $C' "$(bash_agent_payload 'C=claude; ls | xargs $C' fork)"
+# GH #798 review 4: var-verb keeps its last-value copy (a later pass of a loop, a function called after the assignment).
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: F=-i; for i in 1 2; do rm $F b; F=-rf; done' "$(bash_payload 'F=-i; for i in 1 2; do rm $F b; F=-rf; done')"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: F=-i; g(){ rm $F b; }; F=-rf; g' "$(bash_payload 'F=-i; g(){ rm $F b; }; F=-rf; g')"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: subagent: for i in 1 2; do $X -p x; X=claude; done' "$(bash_agent_payload 'for i in 1 2; do $X -p x; X=claude; done' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: subagent: g(){ $X -p x; }; X=claude; g' "$(bash_agent_payload 'g(){ $X -p x; }; X=claude; g' fork)"
 gates_summary

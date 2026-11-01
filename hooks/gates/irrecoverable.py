@@ -3588,14 +3588,14 @@ def _positional_body(body, rest):
 
 
 _MAIN_STATEMENTS = set()  # GH #798: the statements of each body the main reading spawn-scanned
-_VAR_ORDERED = [None]  # GH #798: var-verb's in-order copy of the command
+_VAR_SPAWN_TEXTS = set()  # GH #798: var-verb's last-value and in-order copies, the ones spawn-scanned
 _VIEW_TEXT = [None]  # the text of the view being read
 
 def _view_spawns():
     # GH #798: the views whose spawns deny: not brace-view (GH #661: its copies spent the budget on legal commands;
-    # a brace-built spawn is GH #731), and of var-verb only the in-order copy (its first-value copy made
+    # a brace-built spawn is GH #731), and of var-verb not the first-value copy (it made
     # `BIN=claude .. BIN=python3; $BIN -c ..` a spawn).
-    return _VIEW[0] != "brace-view" and (_VIEW[0] != "var-verb" or _VIEW_TEXT[0] == _VAR_ORDERED[0])
+    return _VIEW[0] != "brace-view" and (_VIEW[0] != "var-verb" or _VIEW_TEXT[0] in _VAR_SPAWN_TEXTS)
 
 def _text_statements(text):
     # The statements of text, split at each unquoted ; & | and newline (_quote_mask).
@@ -6060,15 +6060,17 @@ def _views():
     for m in _PLAIN_ASSIGN_RE.finditer(cmd):
         vals.setdefault(m.group(1), []).append(next(g for g in m.groups()[1:] if g is not None))
     lit = _literal_dollars(cmd) if vals else ()
-    # GH #798 review: the first copy reads each value in order (the one assigned last before the reference), not the
-    # last value anywhere; the second keeps the first value. Only the ordered copy is spawn-scanned (_VAR_ORDERED).
-    for pick in (None, 0):
+    # GH #798 review: three copies: the last value (a loop's later pass or a function called after the assignment:
+    # `F=-i; for ..; do rm $F b; F=-rf; done`), the first value, and each value in order (the one assigned last before
+    # the reference). The last-value and in-order copies are spawn-scanned (_VAR_SPAWN_TEXTS); the first-value copy
+    # is not (it made `BIN=claude .. BIN=python3; $BIN -c ..` a spawn). rm's rules read all three.
+    for pick in (-1, 0, None):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
             return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
         v = (_ordered_var_text(cmd) if pick is None else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
-        if pick is None and v != cmd:
-            _VAR_ORDERED[0] = v
+        if pick != 0 and v != cmd:
+            _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
             out.append(("var-verb", v))
     return out
