@@ -39,7 +39,7 @@ printf -- '---\nname: zz-bare-a\ntags: [zz-bare]\n---\nprompt\n' >"$R/evals/zz-b
 case_md zz-bare-b "zz-bare" ""
 CHANGED="agents/zz-agent.md agents/backend-architect.md agents/zz-bare.md agents/zz-staged.md skills/x/performance-optimizer/SKILL.md"
 for f in $CHANGED; do echo a >"$R/$f"; done
-git -C "$R" init -q && git -C "$R" add agents evals scripts skills .claude-plugin && git -C "$R" -c user.name=t -c user.email=t@t commit -qm init || { echo "test-eval-changed: fixture commit failed" >&2; exit 1; }
+git -C "$R" init -q && git -C "$R" add agents evals scripts skills .claude-plugin && git -C "$R" -c user.name=t -c user.email=t@t -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm init || { echo "test-eval-changed: fixture commit failed" >&2; exit 1; }
 for f in $CHANGED; do echo b >>"$R/$f"; done
 # Staged only: stage the change, then put the work-tree copy back, so only git diff --cached sees it.
 git -C "$R" add agents/zz-staged.md && echo a >"$R/agents/zz-staged.md"

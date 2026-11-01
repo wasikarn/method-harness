@@ -57,6 +57,15 @@ expect_bad "a model naming no known family (a typo)" 'demo-case\tsonet\tGH #1\n'
 expect_bad "shell code in the model (it would run from the printed bash -c line)" 'demo-case\tsonnet$(touch${IFS}PWNED)\tGH #1\n'
 expect_bad "a relative path in the case column" '../evals/demo-case\tsonnet\tGH #1\n'
 expect_bad "an absolute path in the case column" "$TMP/evals/demo-case\tsonnet\tGH #1\n"
+expect_bad "a quote in the model" "demo-case\tsonnet'x\tGH #1\n"
+expect_bad "a space in the model" 'demo-case\tson net\tGH #1\n'
+# GH #788: eval-changed.sh quotes each printed argument, so a context-window suffix or a Bedrock
+# ARN is allowed in the model column.
+for m in 'opus[1m]' 'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-v1:0'; do
+  printf 'demo-case\t%s\tGH #1\n' "$m" > "$TMP/evals/judge-models.tsv"
+  python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 && ok "check accepts model $m" \
+    || bad "check refuses model $m: $(python3 "$PY" check --evals "$TMP/evals" 2>&1)"
+done
 printf 'a..b\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"; mkdir -p "$TMP/evals/a..b"; cp "$TMP/evals/demo-case/prompt.md" "$TMP/evals/a..b/"
 python3 "$PY" check --evals "$TMP/evals" >/dev/null 2>&1 \
   && ok "check accepts a dir name with '..' inside it (the case pattern already bars paths)" \
@@ -75,6 +84,22 @@ out=$(python3 "$PY" for-tag demo --evals "$TMP/evals" 2>&1)
 [ "$out" = "$(printf 'demo-case\tsonnet\t')" ] \
   && ok "for-tag reads the --evals dir's sidecar" \
   || bad "for-tag --evals: got '$out'"
+
+# prompt.md is read as UTF-8 whatever the locale (GH #788 review 3): under an ASCII locale a
+# locale-default open() raised on a valid UTF-8 prompt, and under Latin-1 it would accept bytes
+# the UTF-8 run refuses.
+mkdir -p "$TMP/evals/utf8-case"
+printf -- '---\nname: café\ntags: [utf8]\nallowed_tools: [Read]\n---\nnaïve\n' > "$TMP/evals/utf8-case/prompt.md"
+printf 'utf8-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
+out=$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 python3 "$PY" for-tag utf8 --evals "$TMP/evals" 2>&1)
+[ "$out" = "$(printf 'utf8-case\tsonnet\tRead')" ] \
+  && ok "for-tag reads a UTF-8 prompt.md under an ASCII locale" || bad "for-tag under an ASCII locale: got '$out'"
+
+printf '\xef\xbb\xbf---\nname: bom-case\ntags: [bom]\nallowed_tools: [Grep]\n---\nask\n' > "$TMP/evals/utf8-case/prompt.md"
+printf 'utf8-case\tsonnet\tGH #1\n' > "$TMP/evals/judge-models.tsv"
+out=$(python3 "$PY" for-tag bom --evals "$TMP/evals" 2>&1)
+[ "$out" = "$(printf 'utf8-case\tsonnet\tGrep')" ] \
+  && ok "for-tag reads the frontmatter of a BOM-prefixed prompt.md" || bad "for-tag on a BOM-prefixed prompt.md: got '$out'"
 
 echo "eval_judge_models.py self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
