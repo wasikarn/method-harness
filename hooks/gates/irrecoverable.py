@@ -6118,12 +6118,14 @@ def _views():
     # `F=-i; for ..; do rm $F b; F=-rf; done`), the first value, and each value in order (the one assigned last before
     # the reference, else the last value). Only the in-order copy is spawn-scanned (_VAR_SPAWN_TEXTS): the first-value
     # copy made `BIN=claude .. BIN=python3; $BIN -c ..` a spawn, the last-value one `BIN=python3; $BIN -c ..;
-    # BIN=claude; command -v $BIN` (review 5). rm's rules read all three.
-    for pick in (-1, 0, None):
+    # BIN=claude; command -v $BIN` (review 5). A fourth copy, "raw", is in order with a reference that has no assignment
+    # before it left as written, as bash expands it to nothing: `F=-r; rm $F $G b; G=-i` does not prompt, while the
+    # in-order copy's last-value fallback read it as -i (GH #805). rm's rules read all four; the spawn scan reads only one.
+    for pick in (-1, 0, None, "raw"):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
             return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
-        v = (_ordered_var_text(cmd) if pick is None else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+        v = (_ordered_var_text(cmd, pick is None) if pick in (None, "raw") else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
@@ -6248,11 +6250,11 @@ def _scan_view_statements(text):
         if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
             _deny_nested_spawn()
 
-def _ordered_var_text(text):
-    # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it (none: left
-    # as written), so `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude.
-    # Order-aware, not scope-aware: a function's or a subshell's value counts from where it is written; a reference with
-    # no assignment before it reads the last value.
+def _ordered_var_text(text, fallback_last=True):
+    # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
+    # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
+    # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
+    # before it reads the last value, or with fallback_last false is left as written (GH #805).
     sets = sorted((m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None)) for m in _PLAIN_ASSIGN_RE.finditer(text))
     if not sets:
         return text
@@ -6266,7 +6268,7 @@ def _ordered_var_text(text):
                 return sets[k][2]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
-        return last.get(name, m.group(0))
+        return last.get(name, m.group(0)) if fallback_last else m.group(0)
     last = {n: v for _, n, v in sets}
     return _VAR_REF_RE.sub(sub, text)
 

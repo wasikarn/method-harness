@@ -4048,4 +4048,11 @@ test_deny  "$IRRECOVERABLE" 'GH #798 review 4: subagent: g(){ $X -p x; }; X=clau
 test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: BIN=python3; $BIN -c '"'"'print(1)'"'"'; BIN=claude; command -v $BIN' "$(bash_agent_payload 'BIN=python3; $BIN -c '"'"'print(1)'"'"'; BIN=claude; command -v $BIN' fork)"
 test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: T=pytest; $T tests/; T=claude; which $T' "$(bash_agent_payload 'T=pytest; $T tests/; T=claude; which $T' fork)"
 test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: N=npm; $N run build; N=claude; command -v $N' "$(bash_agent_payload 'N=npm; $N run build; N=claude; command -v $N' fork)"
+# GH #805: rm also reads a fourth copy, in order with a never-yet-assigned reference left as written: bash expands it
+# to nothing, so the -i set after rm runs does not make it prompt. The in-order copy's last-value fallback read it as -i.
+test_deny  "$IRRECOVERABLE" 'GH #805: F=-r; rm $F $G b; G=-i' "$(bash_payload 'F=-r; rm $F $G b; G=-i')"
+test_deny  "$IRRECOVERABLE" 'GH #805: F=-r; for i in 1 2; do rm $F $G b; done; G=-i' "$(bash_payload 'F=-r; for i in 1 2; do rm $F $G b; done; G=-i')"
+test_deny  "$IRRECOVERABLE" 'GH #805: F=-r; g(){ rm $F $G b; }; g; G=-i' "$(bash_payload 'F=-r; g(){ rm $F $G b; }; g; G=-i')"
+test_allow "$IRRECOVERABLE" 'GH #805 control: G=-i; F=-r; rm $F $G b' "$(bash_payload 'G=-i; F=-r; rm $F $G b')"
+test_allow "$IRRECOVERABLE" 'GH #805 control: F=-i; g(){ rm $F b; }; g' "$(bash_payload 'F=-i; g(){ rm $F b; }; g')"
 gates_summary
