@@ -1610,10 +1610,65 @@ def _nested_spawn_text(c, overlap):
         # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
         # over as words.
         sep = re.match(r"[|;&(){\s]*", lead).group()
-        piped = re.search(r"(?<!\|)\|&?(?:[\s({]|\\\n)*$", c[:a] + sep) is not None or "xargs" in lead_words  # GH #810: | \<newline>
+        piped = _pipe_before(c, a + len(sep), mask) or "xargs" in lead_words  # GH #810: | \<newline>, | # comment
         if _claude_starts_session(stmt, piped):
             return True
     return False
+
+_CASE_LEAD_RE = re.compile(r"(?:;;&?|;&|(?<![\w-])case[ \t]+[^\s;&|()]+[ \t]+in)$")
+_REGEX_ALT_RE = re.compile(r"\[\[[ \t][^\n;&|]*?[ \t]=~[ \t]+[^\s;&<>]*$")
+
+def _pattern_bar(c, i, mask):
+    # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
+    # `;;`, `;&` or `;;&`, blanks and newlines allowed around each `|`) or of a [[ =~ ]] regex (`(a|b)`): no pipe.
+    j = i
+    while True:
+        while j and c[j - 1] in " \t":
+            j -= 1
+        k = j
+        while k and c[k - 1] not in " \t\n()|;&<>":
+            k -= 1
+        if k == j or i - k > 400:  # bounded: a long `a|a|..` chain is read as pipes, as develop did
+            break
+        if k and c[k - 1] == "|" and not mask[k - 1]:  # one more alternative before it
+            j = k - 1
+            continue
+        if c[k:j] == "esac":
+            return False  # `;; esac | x` pipes the case's output
+        k -= k > 0 and c[k - 1] == "("
+        while k and c[k - 1] in " \t\n":
+            k -= 1
+        if k and not mask[k - 1] and _CASE_LEAD_RE.search(c[max(0, k - 200):k]):
+            return True
+        break
+    return _REGEX_ALT_RE.search(c[max(0, i - 200):i]) is not None
+
+def _pipe_before(c, end, mask):
+    # True when a pipe (`|` or `|&`, not `||` or a `>|` redirect, not a pattern's `|`) is the last thing before
+    # c[end], past blanks, a `(` or `{` group open, backslash-newlines and comments (GH #810: `| # feed\n claude`).
+    j = end
+    while j:
+        ch = c[j - 1]
+        if ch in " \t\n({":
+            j -= 1
+        elif ch == "\\" and c[j:j + 1] == "\n":
+            j -= 1
+        elif mask[j - 1]:
+            k = j - 1  # the masked run's start: a comment runs from its `#` to the line end
+            while k and mask[k - 1]:
+                k -= 1
+            if c[k] != "#" or (k and c[k - 1] not in " \t\n;&|()") or c[j:j + 1] not in ("\n", ""):
+                return False  # a quoted or escaped word, not a comment
+            if re.search(r"\|&?[ \t]*$", c[k:j]):
+                return True  # a comment that ends in a pipe: develop's raw reading took it as one, kept
+            j = k
+        else:
+            break
+    if j and c[j - 1] == "&" and c[j - 2:j - 1] == "|":
+        j -= 1
+    if not j or c[j - 1] != "|" or c[j - 2:j - 1] in ("|", ">"):
+        return False
+    return not _pattern_bar(c, j - 1, mask)
 
 def _spawn_lead_words(lead):
     # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
@@ -3658,6 +3713,9 @@ def _text_statements(text):
     while i < len(text):
         ch = text[i]
         if ch in ";&|\n" and not mask[i]:
+            if ch == "|" and (text[i - 1:i] == ">" or _pattern_bar(text, i, mask)):  # GH #810 item 3: no pipe
+                i += 1
+                continue
             pipe = ch == "\n" and _PIPE_ONLY_RE.fullmatch(carry + text[start:i])
             if pipe:
                 carry, start, i = pipe.group(1) + " ", i + 1, i + 1
@@ -3676,6 +3734,8 @@ def _text_statements(text):
     out.append(carry + text[start:])
     return out
 
+
+_BODY_VAR_QUEUE = {}  # GH #812: the bodies the main reading scanned, read again with their variables (_scan_body_vars)
 
 def _scan_body(body):
     if not body:
@@ -3706,6 +3766,8 @@ def _scan_body(body):
                 if _spawn_over_budget:
                     _deny_nested_spawn()  # the "too dense" message, not the spawn one (GH #798)
                 deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
+            if "$" in body:
+                _BODY_VAR_QUEUE[body] = None  # a dict: each body once, in order
         elif _view_spawns():
             _scan_view_statements(body)
     readings, blown, bad = _body_readings(body)
@@ -6100,6 +6162,11 @@ def _literal_dollars(text):
             sq = True
         elif c == '"':
             dq = not dq
+        elif c == "#" and not dq and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            # GH #810: a comment, to its line end: its `'` opens no quote (`| # it's fed` then `$X`)
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
         i += 1
     return out
 
@@ -6270,13 +6337,13 @@ def _scan_view_statements(text):
         if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
             _deny_nested_spawn()
 
-def _ordered_var_text(text, fallback_last=True):
+def _ordered_var_text(text, fallback_last=True, outer=None):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
     # before it reads the last value, or with fallback_last false is left as written (GH #805).
     sets = sorted((m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None)) for m in _PLAIN_ASSIGN_RE.finditer(text))
-    if not sets:
+    if not sets and not outer:
         return text
     lit, keys = _literal_dollars(text), [e for e, _, _ in sets]
     def sub(m):
@@ -6288,12 +6355,46 @@ def _ordered_var_text(text, fallback_last=True):
                 return sets[k][2]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
+        # A body's outer value (GH #812: its environment) comes before its own later one.
+        if outer and name in outer:
+            return outer[name]
         return last.get(name, m.group(0)) if fallback_last else m.group(0)
     last = {n: v for _, n, v in sets}
     return _VAR_REF_RE.sub(sub, text)
 
+_CMD_VALS = None
+
+def _scan_body_vars(body):
+    # GH #812 / #810 item 2: a body is a script of its own, so its $NAME reads, in order, the plain value the body
+    # assigns before it (`bash -c 'X=claude; $X -p x'`), else the outer command's last one (the child's environment:
+    # `export X=claude; bash -c '$X -p x'`), else the body's last. A single-quoted body hid both from the views, which
+    # put no value inside '...'. Any outer assignment counts, exported or not (a spawn attempt either way).
+    # Only the statements the substitution changed are read.
+    global _CMD_VALS
+    if len(body) > _VIEW_LEN_CAP:
+        return
+    if _CMD_VALS is None:
+        _CMD_VALS = {} if len(cmd) > _VIEW_LEN_CAP else {
+            m.group(1): next(g for g in m.groups()[1:] if g is not None) for m in _PLAIN_ASSIGN_RE.finditer(cmd)}
+    v = body
+    for _ in range(3):  # `Y=$X; $Y -p x`: a value that is itself a reference
+        w = _ordered_var_text(v, True, _CMD_VALS)
+        if w == v:
+            break
+        v = w
+    if v == body:
+        return
+    seen = set(_text_statements(body))
+    for st in _text_statements(v):
+        if st.strip() and st not in seen and (
+                _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st)):
+            _deny_nested_spawn()
+
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
+if "agent_id" in d:
+    for _body in _BODY_VAR_QUEUE:
+        _scan_body_vars(_body)
 for _VIEW[0], _text in _views():
     try:
         # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.

@@ -4070,4 +4070,25 @@ done
 for _c in $'X=claude; echo hi |\ngrep $X' $'X=claude; echo hi\n$X' $'X=claude; true ||\n$X'; do
   test_allow "$IRRECOVERABLE" "GH #810 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812: a single-quoted bash -c / eval body is a script of its own: its own assignments (GH #812) and the outer
+# command's (GH #810 item 2: `export X=claude`, read as the child's environment) are substituted into it. GH #810
+# item 3: `>|` and a case or [[ =~ ]] pattern `|` are no pipe in. GH #810 comment: a pipe at a line end crosses a
+# comment that holds an apostrophe, and the literal `claude` forms with a comment.
+for _c in "bash -c 'X=claude; \$X -p x'" "bash -c 'X=claude; echo hi | \$X'" "sh -c 'X=claude; \$X -p x'" \
+  "eval 'X=claude; \$X -p x'" "export X=claude; bash -c '\$X -p x'" "export X=claude; bash -c 'echo hi | \$X'" \
+  "X=claude bash -c '\$X -p x'" "export X=claude; bash -c 'Y=\$X; \$Y -p x'" \
+  $'X=claude; echo hi | # it\'s fed\n$X' $'echo hi | # c\nclaude' $'echo hi | # c\n\nclaude' $'echo hi |#c\nclaude' \
+  $'echo hi |& # c\nclaude' $'echo hi | # it\'s\nclaude' $'echo hi | # c\n$(echo claude)' \
+  'case y in a) echo hi | claude;; esac' 'case y in a) ;; esac | claude' '[[ x =~ y ]] && echo hi | claude' \
+  'echo hi >| f | claude' 'X=claude; case y in a) echo hi | $X;; esac' 'X=claude; echo hi >| f | $X' \
+  $'echo hi # c |\nclaude'; do
+  test_deny  "$IRRECOVERABLE" "GH #812: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in "bash -c 'X=claude; \$X --version'" "bash -c 'X=claude; echo \$X'" "export X=claude; bash -c '\$X --version'" \
+  "export X=claude; bash -c 'echo \$X'" "bash -c 'X=python3; \$X -c 1'" 'X=claude; echo hi >| $X' \
+  'X=claude; echo hi 2>| $X' 'echo hi >| claude' 'X=claude; case y in a|$X) echo;; esac' 'case y in a|claude) echo;; esac' \
+  'case y in a) ;; b|claude) echo;; esac' $'case y in\n  a | claude) echo;;\nesac' 'X=claude; [[ y =~ (a|$X) ]]' \
+  '[[ y =~ (a|claude) ]]' $'X=claude; echo hi # it\'s |\n$X'; do
+  test_allow "$IRRECOVERABLE" "GH #812 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
