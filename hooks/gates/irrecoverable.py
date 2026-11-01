@@ -336,6 +336,7 @@ _KEPT_BODY_ENDS = []
 _INTERP_HEREDOC_BODIES = []  # GH #681: quoted bodies python/node reads as its script, scanned like a -c body
 _HEREDOC_UNMATCHED = [False]  # the top-level strip, unsure, never found a delimiter (see _KEPT_MARK)
 _INTERP_PIPED_SHELL = [False]  # GH #741: the top-level strip met a python/node heredoc script piped into a shell
+_CMD_LINES = []  # GH #801: the lines the top-level heredoc strip reads as command lines (no heredoc body line)
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -804,6 +805,8 @@ def _strip_heredocs(cmd, ends=None):
     while i < len(lines):
         line = lines[i]
         out.append(line)
+        if ends is not None:
+            _CMD_LINES.append(line)
         i += 1
         ms = list(_HEREDOC_OPEN_RE.finditer(line))
         if sure:
@@ -830,8 +833,11 @@ def _strip_heredocs(cmd, ends=None):
         ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
         interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
-        pyline = "python" in line or "node" in line  # once per line, not per opener (GH #741 review 5: quadratic)
-        shline = pyline and "sh" in line.translate(_UNQUOTE)  # no shell word anywhere: no stage reads stdin as one
+        # once per line, not per opener (GH #741 review 5: quadratic); quotes and backslashes removed, as the shell
+        # does, so pyth\on3 names python (GH #801)
+        unq = line.translate(_UNQUOTE)
+        pyline = "python" in unq or "node" in unq
+        shline = pyline and "sh" in unq  # no shell word anywhere: no stage reads stdin as one
         for n_m, m in enumerate(ms):
             # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
             # from the line's stages parsed once.
@@ -2933,6 +2939,58 @@ def _decode_quotes(t):
                                            lambda m: m.group(0) if len(m.group(1)) % 2 else m.group(1), t),
                                     live_only=True) if "$" in t else t
 
+# GH #801: a python/node stage that runs an inline script (python3 -c, node -e/-p/--eval/--print), so whatever it
+# prints is unseen, like a GH #741 heredoc script. Read from the stage's words past every wrapper (_past_run_prefix).
+_INLINE_SCRIPT_FLAGS = {"python": ("-c",), "node": ("-e", "-p", "--eval", "--print")}
+_INLINE_VALUE_FLAGS = {"python": ("-W", "-X"),
+                       "node": ("-r", "--require", "--import", "--loader", "--experimental-loader", "--input-type", "-C",
+                                "--conditions")}
+def _runs_inline_interp(seg):
+    if not _PYNODE_NAME_RE.search(seg.translate(_UNQUOTE)):
+        return False
+    w = _split_words(seg)
+    w = _without_out_redirects(w) if w else None
+    i = _past_run_prefix(w) if w else None
+    if i is None or i >= len(w):
+        return False
+    m = _STDIN_INTERP_RE.fullmatch(w[i].rsplit("/", 1)[-1])
+    if not m:
+        return False
+    py = m.group().startswith("python")
+    flags, valued = _INLINE_SCRIPT_FLAGS["python" if py else "node"], _INLINE_VALUE_FLAGS["python" if py else "node"]
+    skip = False
+    for t in w[i + 1:]:
+        if skip:
+            skip = False
+            continue
+        if t == "--" or not t.startswith("-") or t == "-":
+            return False  # a script file or `-`: not an inline script
+        if t.partition("=")[0] in flags:
+            return True
+        if t in valued:
+            skip = True  # its value is the next word (python3 -W ignore -c, node -r ts-node/register -e)
+            continue
+        if py and t[:2] in ("-W", "-X"):
+            continue  # the value attached (-Wignore)
+        # a short cluster holding the script letter (python3 -uc, node -pe)
+        if not t.startswith("--") and any(not f.startswith("--") and f[1] in t[1:] for f in flags):
+            return True
+    return False
+
+def _inline_interp_to_shell(c):
+    # GH #801: some pipeline of c runs an inline python/node script stage and, after it, a shell reading stdin.
+    # Read on the ANSI-C-decoded text: _pieces does not model \' inside $'..', so a quoted probe string
+    # ($'python3 -c \'x\' | bash') would split at its own pipes.
+    c = _normalize_ansi_c_quotes(c) if "$'" in c else c
+    for s, e in _pieces(c):
+        inline = False  # a stage before this one runs an inline python/node script
+        for a, b in _pieces(c[s:e], pipe=True):
+            g = c[s + a:s + b]
+            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g):
+                return True
+            inline = inline or _runs_inline_interp(g)
+    return False
+
 def _shell_stdin_bodies(c):
     # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
     # right upstream of it. printf's format is read with \n as a newline; its other escapes stay literal.
@@ -2961,6 +3019,13 @@ def _shell_stdin_bodies(c):
     return out
 
 _SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
+# Read on the command lines only: a heredoc body is the reader's text, even one kept as code (cat > x.sh <<'EOF'
+# keeps its body, x.sh naming sh), and a script it holds that pipes python -c into bash runs nothing here.
+_CMD_TEXT = "\n".join(_CMD_LINES) if _CMD_LINES else cmd
+if any(sh in _CMD_TEXT for sh in _STDIN_SHELLS) and _PYNODE_NAME_RE.search(_CMD_TEXT.translate(_UNQUOTE)) and (
+        _inline_interp_to_shell(_CMD_TEXT)):
+    deny("a python -c / node -e script pipes its output into a shell, which runs commands the gate cannot see - "
+         "write the commands out, or save the output to a file and read it first", rule="interp-pipe-shell")
 
 _SQL_BODIES_SEEN = set()  # bash -c / eval bodies already checked by _deny_sql_stdin_drop
 
@@ -3308,7 +3373,11 @@ _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)
 # A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review).
 _PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
                  r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)\1)\w+\1\s*[,)])"
-                 r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']")
+                 r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']"
+                 # GH #801: read at once as an attribute that names no process API (__import__('os').path) it is no
+                 # call built at run time; .system, .execvp etc. still count, stored or called (f = ....system)
+                 r"(?!\s*\)\s*\.\s*(?!(?:system|popen\d?|spawn\w*|exec\w*|posix_spawnp?|fork\w*|run|call|check_\w+|"
+                 r"Popen|getoutput|getstatusoutput|create_subprocess_\w+)\b)[A-Za-z])")
 _INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
                              r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`"
                              r"|\b(?:create_subprocess_(?:shell|exec)|posix_spawnp?)\b" + _PROC_BY_NAME)

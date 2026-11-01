@@ -4115,4 +4115,49 @@ for _c in 'echo hi >| claude' 'X=claude; echo hi >| $X' 'X=claude; echo hi 2>| $
   $'bash -c \'cat <<";;"\nx\n;;\ndate|claude\'' 'case y in a) echo hi | claude;; esac' 'case y in a) ;; esac | claude'; do
   test_deny  "$IRRECOVERABLE" "GH #810 item 3 (kept): subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #801: interp-pipe-shell read the python/node word on the raw line, so a backslash in it (pyth\on3) got past;
+# a python -c / node -e|-p script piped into a stdin shell is the same unseen code; and a by-name import read at once
+# as a plain attribute (__import__('os').path) is no process API, so its literals are not read as commands.
+for _c in $'pyth\\on3 - <<\'EOF\' | bash\nprint("ls")\nEOF' $'no\\de - <<\'EOF\' | sh\nconsole.log("ls")\nEOF' \
+  $'cat <<\'EOF\' | py\\thon3 - | bash\nprint("ls")\nEOF' $'\\nod\\e - <<\'EOF\' | zsh\nconsole.log("ls")\nEOF' \
+  $'python3 -c \'print("ls")\' | bash' $'node -e \'console.log("ls")\' | sh' $'node -p \'"ls"\' | bash' \
+  $'python3 -uc \'print("ls")\' | sh' $'cat f | python3 -c \'import sys; print(sys.stdin.read())\' | bash' \
+  $'python3 -c \'print(1)\' | tee log | sudo bash -s' $'node --eval=\'console.log(1)\' | sh' \
+  $'pyth\\on3 -c \'print(1)\' | bash' $'git status; python3 -c "print(1)" 2>/dev/null | dash' \
+  $'python3 -c $\'print(\\\'ls\\\')\' | bash'; do
+  test_deny  "$IRRECOVERABLE" "GH #801: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+for _c in $'pyth\\on3 - <<\'EOF\' | grep x\nprint(1)\nEOF' $'no\\de - <<\'EOF\'\nconsole.log("sh")\nEOF' \
+  $'python3 -c \'print(1)\' | grep 1' $'python3 -c \'print(1)\' | bash x.sh' $'python3 -c \'print(1)\' | sh -c cat' \
+  $'node -e \'console.log("sh")\' | sort' $'python3 -c \'print(1)\'; echo ls | grep sh' \
+  $'bash -c \'echo hi\' | python3 -c \'import sys; print(sys.stdin.read())\'' \
+  $'for c in $\'python3 -W ignore -c \\\'print(1)\\\' | bash\' $\'cat f | python3 -c 1 | bash\' $\'git status; python3 -c "print(1)" 2>/dev/null | dash\'; do ./probe "$c"; done' \
+  $'cat > x.sh <<\'EOF\'\npython3 -c \'print(1)\' | bash\nEOF' $'cat > notes.md <<\'EOF\'\nnode -e 1 | sh\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #801 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+_rows801() { # <journal>: would_ask rows for opaque-var-verb
+  python3 -c 'import json,sys; print(sum(json.loads(l).get("rule") == "opaque-var-verb" for l in open(sys.argv[1])))' "$1"
+}
+for _c in $'for f in a b; do python3 -c "print(__import__(\'os\').path.getsize(\'$f\'))"; done' \
+  $'python3 -c "print(__import__(\'os\').environ.get(\'$K\'))"' \
+  $'python3 - <<\'EOF\'\nimport sys\nprint(__import__("os").path.exists("$f"))\nEOF'; do
+  : > "$_JOURNAL_TMP/a801.jsonl"
+  test_allow "$IRRECOVERABLE" "GH #801: ${_c//$'\n'/ | }" "$(bash_payload "$_c")" "MH_GATE_JOURNAL_PATH=$_JOURNAL_TMP/a801.jsonl"
+  if [[ "$(_rows801 "$_JOURNAL_TMP/a801.jsonl")" == "0" ]]; then
+    echo "  ✅ GH #801 journals no opaque-var-verb row: ${_c//$'\n'/ | }"; pass=$((pass + 1))
+  else
+    echo "  ❌ GH #801 journaled an opaque-var-verb row: ${_c//$'\n'/ | }" >&2; fail=$((fail + 1))
+  fi
+done
+# GH #801 controls: a by-name import not read at once as a plain attribute is still a process API.
+for _c in $'python3 -c "getattr(__import__(\'os\'), \'sys\' + \'tem\')(\'git reset --hard\')"' \
+  $'python3 -c "__import__(\'os\').system(\'git reset --hard\')"' \
+  $'python3 -c "__import__(\'subprocess\').run(\'git reset --hard\', shell=True)"' \
+  $'python3 - <<\'EOF\'\nm = __import__("os")\ngetattr(m, "sys" + "tem")("git reset --hard")\nEOF' \
+  $'python3 - <<\'EOF\'\n__import__("os").system("git reset --hard")\nEOF' \
+  $'python3 - <<\'EOF\'\nf = __import__(\'os\').system\nf(\'git reset --hard\')\nEOF' \
+  $'python3 - <<\'EOF\'\nrun = __import__(\'os\').execvp\nrun(\'git\', [\'git\', \'reset\', \'--hard\'])\nEOF' \
+  $'python3 - <<\'EOF\'\np = __import__(\'os\').popen\np(\'git push --force origin main\')\nEOF'; do
+  test_deny  "$IRRECOVERABLE" "GH #801 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
 gates_summary
