@@ -6120,14 +6120,13 @@ def _subst_literals(text, glued=True):
                     out.append(v)
     return out
 
-def _literal_dollars(text):
+def _literal_dollars(text, comments=False):
     # The offsets of each $ the shell keeps as text: inside '...' (outside "...") or after an odd run of
     # backslashes. var-verb puts no value back there (GH #767 review 6: `rm '$F' x` removes a file named $F).
-    # GH #810: a second reading skips `#` comments (`| # it's fed` then `$X`: the comment's `'` opens no quote). Only a
-    # $ both readings keep as text stays unsubstituted, so a view never substitutes less than develop's reading did
-    # (GH #812 review 10: `echo a\ #'` is no comment in bash, and skipping it hid a later $X).
-    out = _literal_dollars_read(text, False)
-    return out & _literal_dollars_read(text, True) if out and "#" in text else out
+    # comments (GH #810): also skip `#` comments, whose `'` opens no quote (`| # it's fed` then `$X`). Read only by one
+    # extra var-verb copy (_views), never in place of develop's reading: a misread comment (`\ #` is none in bash)
+    # can put a value inside a real '...' and hide a deny (GH #812 reviews 10-11).
+    return _literal_dollars_read(text, comments)
 
 def _literal_dollars_read(text, comments):
     out, sq, dq, i, n = set(), False, False, 0, len(text)
@@ -6200,6 +6199,13 @@ def _views():
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
+            out.append(("var-verb", v))
+    if vals and "#" in cmd:
+        # GH #810: one more in-order copy that reads `#` comments as bash does, so `echo hi | # it's fed` then `$X` puts
+        # claude back; an extra copy, so a misread comment only adds a reading (GH #812 review 11).
+        v = _ordered_var_text(cmd, True, comments=True)
+        if v != cmd and ("var-verb", v) not in out:
+            _VAR_SPAWN_TEXTS.add(v)
             out.append(("var-verb", v))
     return out
 
@@ -6323,7 +6329,7 @@ def _scan_view_statements(text):
 
 _OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
 
-def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False):
+def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
@@ -6331,7 +6337,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False):
     sets = sorted((m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None)) for m in _PLAIN_ASSIGN_RE.finditer(text))
     if not sets and not outer:
         return text
-    lit, by_name = _literal_dollars(text), {}
+    lit, by_name = _literal_dollars(text, comments), {}
     for e, n, v in sets:  # per name, in order: the latest one before a reference is a bisect (GH #812 review 10)
         by_name.setdefault(n, ([], []))
         by_name[n][0].append(e)
@@ -6360,6 +6366,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False):
     return _VAR_REF_RE.sub(sub, text)
 
 _CMD_VALS = None
+_BODY_VAR_WORK, _BODY_VAR_BUDGET = 0, 300_000  # characters substituted, summed over every body and pass
 
 def _scan_body_vars(body):
     # GH #812 / #810 item 2: a body is a script of its own, so its $NAME reads, in order, the plain value the body
@@ -6373,8 +6380,12 @@ def _scan_body_vars(body):
     if _CMD_VALS is None:
         _CMD_VALS = {} if len(cmd) > _VIEW_LEN_CAP else {
             m.group(1): next(g for g in m.groups()[1:] if g is not None) for m in _PLAIN_ASSIGN_RE.finditer(cmd)}
+    global _BODY_VAR_WORK
     v = body
     for _ in range(8):  # `Y=$X; $Y -p x`: a value that is itself a reference, up to 8 links
+        _BODY_VAR_WORK += len(v)
+        if _BODY_VAR_WORK > _BODY_VAR_BUDGET:
+            return  # GH #812 review 11: past one budget across all bodies, the rest keep develop's checks only
         w = _ordered_var_text(v, True, _CMD_VALS, True)
         if w == v or len(w) > _VIEW_LEN_CAP:  # bounded: a value holding refs (`X='$X$X'`) grows each pass
             break

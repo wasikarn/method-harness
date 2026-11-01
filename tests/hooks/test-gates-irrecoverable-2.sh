@@ -4096,6 +4096,13 @@ for _c in $'X=claude\necho a\\ #\'\n\'; $X -p hi' $'X=claude\necho a\\\n#\'\n\';
 done
 test_deny  "$IRRECOVERABLE" 'GH #812 review 10: F=-rf \n echo a\ #'"'"' \n '"'"'; rm $F ~/proj' \
   "$(bash_payload $'F=-rf\necho a\\ #\'\n\'; rm $F ~/proj')"
+# GH #812 review 11: develop's literal-$ reading stays as it was (the comment-aware one is one extra var-verb copy), so a
+# misread `\ #` cannot put a value inside a real '...' and hide -rf; the body scans share one work budget.
+test_deny  "$IRRECOVERABLE" 'GH #812 review 11: G="'"' # '"'"; F=-rf \n rm \ #'"'"' \n $G'"'"' $F ~/proj' \
+  "$(bash_payload "G=\"' # '\"; F=-rf"$'\n'"rm \\ #'"$'\n'"\$G' \$F ~/proj")"
+_c="X='$(printf '$X%.0s' {1..60})'; $(for i in $(seq 700); do printf "bash -c '\$X %s';" "$i"; done) F=-rf; rm \$F b"
+test_deny  "$IRRECOVERABLE" 'GH #812 review 11: 700 bodies of a growing $X, then rm -rf, deny in bounded time' \
+  "$(bash_agent_payload "$_c" fork)"
 # GH #810 item 3 (decision: keep the deny): a `>|` redirect and a case / [[ =~ pattern `|` stay a pipe in. Nine fresh
 # reviews of an exemption each found the text bash parses differ from the text read: a `case` or `[[` as an argument,
 # escaped, quoted, inside ${..} / $[..] / backticks / a heredoc, built by an expansion (`X=; $X case ..`), or an alias
