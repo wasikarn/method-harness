@@ -44,9 +44,10 @@ case "$_norm" in
   *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
 esac
 # GH #741: the one deny with no argv0 in the list: a python/node heredoc script piped into a shell denies whatever
-# it prints, so a heredoc and a pipe on a command naming python or node defer to python.
+# it prints, so a heredoc and a pipe on a command naming python or node defer to python. GH #801: so does a
+# python -c / node -e script piped into a shell: a pipe with a shell word (every _STDIN_SHELLS name holds sh) after it.
 case "$_norm$_norm_nows" in
-  *python*|*node*) case "$_norm" in *'<<'*'|'*|*'|'*'<<'*) _has_subst=1 ;; esac ;;
+  *python*|*node*) case "$_norm" in *'<<'*'|'*|*'|'*'<<'*|*'|'*sh*) _has_subst=1 ;; esac ;;
 esac
 case "$_norm$_norm_nows" in
   *rm*|*find*|*git*|*gp*|*ggf*|*grename*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
