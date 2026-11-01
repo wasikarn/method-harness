@@ -4135,4 +4135,12 @@ for _c in '\case x in a|claude' 'ca\se x in a|claude' 'echo hi; \case x in a|cla
   "echo \${v:-$_P;case x} in a|claude" "echo \${v:-$_P;[[ x} =~ a|claude"; do
   test_deny  "$IRRECOVERABLE" "GH #812 review 5: subagent: ${_c:0:60}" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812 review 6: an expanded value is never a keyword or separator, so a value holding one (`X=case`, `S=';'`)
+# turns pattern bars off in substituted text; a ; inside $[..] or a[..] is no separator; a backslash-newline before a
+# comment after a pipe is crossed.
+for _c in 'X=case; Y=claude; $X y in a|$Y' "X='case y in a'; Y=claude; \$X|\$Y" "Y=claude; X='[['; \$X y =~ a|\$Y" \
+  "S=';'; Y=claude; echo \$S case y in a|\$Y" "bash -c 'X=case; Y=claude; \$X y in a|\$Y'" 'echo $[1;case y in a]|claude' \
+  'echo $[1;[[ y =~ a]|claude' 'a[1;case y in b]=x|claude' $'echo hi | \\\n# c\nclaude'; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 6: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary

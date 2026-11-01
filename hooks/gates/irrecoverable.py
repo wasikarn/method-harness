@@ -1451,6 +1451,18 @@ def _spawn_drop_escapes(c):
     return _SPAWN_WORD_RE.sub(word, c)
 
 _PATTERN_BARS_OK = [True]  # GH #812 review 5: off for a text whose escapes were dropped
+_SUBST_SCAN = [False]  # GH #812 review 6: on while a substituted text (a view, a body's variables) is read
+_KEYWORD_VALUE_RE = re.compile(r"[;&|<>()\[\]{}`\n]|(?<![^\s])(?:case|in|esac|if|elif|then|else|do|while|until|!)(?![^\s])")
+_KEYWORD_VALUES = []
+
+def _keyword_values():
+    # True when a plain assignment in the command gives a value holding an operator, bracket or reserved word: its
+    # expansion is plain words in bash, but substituted text would read it as a keyword or separator
+    # (`X=case; Y=claude; $X y in a|$Y` pipes into claude). Then a substituted text reads every `|` as a pipe.
+    if not _KEYWORD_VALUES:
+        _KEYWORD_VALUES.append(any(_KEYWORD_VALUE_RE.search(next(g for g in m.groups()[1:] if g is not None))
+                                   for m in _PLAIN_ASSIGN_RE.finditer(cmd)))
+    return _KEYWORD_VALUES[0]
 
 def _nested_spawn(c, overlap):
     d = _spawn_drop_escapes(c)
@@ -1631,11 +1643,11 @@ def _nested_spawn_text(c, overlap):
 # A redirect's `&` / `|` (`>& case`, `<& [[`, `>| case`: a file name) opens no command position.
 _KW_LEAD = r"(?:\A|(?<=[;\n])|(?<=&&)|(?<=[^<>&]&)|(?<=[^>|]\|))[ \t]*(?:(?:if|elif|while|until|then|do|else|!)[ \t]+)*"
 # No `{` or `}` in the case word or the [[ left side: a ${..} opened far back may close there.
-_CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|(){}]+[ \t]+(in))\Z")
+_CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|(){}\[\]]+[ \t]+(in))\Z")
 # Its left side holds no ( ) or backtick and no `]]`, so a `[[` closed inside $(..) or a subshell does not count.
 # Its operand holds no substitution or brace (`=~ $(echo|claude)` runs a real pipe): only plain chars and $NAME.
-_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`{}])*?[ \t]=~[ \t]+(?:[^\s;&<>$`{}]|\$\w)*\Z")
-_UNSAFE_PATTERN_WORD = re.compile(r"[{}`]|\$\(")
+_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`{}])*?[ \t]=~[ \t]+(?:[^\s;&<>$`{}\[\]]|\$\w)*\Z")
+_UNSAFE_PATTERN_WORD = re.compile(r"[{}`\[\]]|\$\(")  # [ ]: a ; inside $[..] or a[..] is no separator
 
 def _in_open_brace(c, pos, mask):
     # True when c[pos] sits inside an unclosed ${..} (bounded look back): its ; & or newline is text, no separator
@@ -1664,7 +1676,7 @@ def _lead_unmasked(m, mask, groups):
 def _pattern_bar(c, i, mask):
     # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
     # `;;`, `;&` or `;;&`, blanks and newlines allowed around each `|`) or of a [[ =~ ]] regex (`(a|b)`): no pipe.
-    if not _PATTERN_BARS_OK[0]:
+    if not _PATTERN_BARS_OK[0] or (_SUBST_SCAN[0] and _keyword_values()):
         return False
     j = i
     while True:
@@ -1706,11 +1718,13 @@ def _pipe_before(c, end, mask):
             k = j - 1  # the masked run's start: a comment runs from its `#` to the line end
             while k and mask[k - 1]:
                 k -= 1
-            if c[k] != "#" or (k and c[k - 1] not in " \t\n;&|()") or c[j:j + 1] not in ("\n", ""):
+            esc_nl = c[k] == "\n" and k and c[k - 1] == "\\"  # a backslash-newline just before the comment
+            h = k + 1 if esc_nl else k
+            if c[h:h + 1] != "#" or (h and c[h - 1] not in " \t\n;&|()") or c[j:j + 1] not in ("\n", ""):
                 return False  # a quoted or escaped word, not a comment
-            if re.search(r"\|&?[ \t]*$", c[k:j]):
+            if re.search(r"\|&?[ \t]*$", c[h:j]):
                 return True  # a comment that ends in a pipe: develop's raw reading took it as one, kept
-            j = k
+            j = k - 1 if esc_nl else h
         else:
             break
     if j and c[j - 1] == "&" and c[j - 2:j - 1] == "|":
@@ -6448,6 +6462,7 @@ def _scan_body_vars(body):
 
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
+_SUBST_SCAN[0] = True  # from here on every spawn scan reads substituted text (a body's variables, the views)
 if "agent_id" in d:
     for _body in _BODY_VAR_QUEUE:
         _scan_body_vars(_body)
