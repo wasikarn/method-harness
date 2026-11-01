@@ -3647,12 +3647,23 @@ def _view_spawns():
     return _VIEW[0] != "brace-view" and (_VIEW[0] != "var-verb" or _VIEW_TEXT[0] in _VAR_SPAWN_TEXTS)
 
 def _text_statements(text):
-    # The statements of text, split at each unquoted ; & | and newline (_quote_mask).
-    mask, out, start = _quote_mask(text), [], 0
-    for i, ch in enumerate(text):
+    # The statements of text, split at each unquoted ; & | and newline (_quote_mask). A pipe `|` / `|&` stays at the
+    # start of the statement after it, so _nested_spawn's pipe-in check sees a claude that reads stdin (GH #804:
+    # `X=claude; echo hi | $X`); `||` is one separator, so `true || $X` is not read as piped.
+    mask, out, start, i = _quote_mask(text), [], 0, 0
+    while i < len(text):
+        ch = text[i]
         if ch in ";&|\n" and not mask[i]:
             out.append(text[start:i])
-            start = i + 1
+            if ch == "|" and text[i + 1:i + 2] == "|":
+                i += 1
+                start = i + 1
+            elif ch == "|":
+                start = i
+                i += text[i + 1:i + 2] == "&"
+            else:
+                start = i + 1
+        i += 1
     out.append(text[start:])
     return out
 
