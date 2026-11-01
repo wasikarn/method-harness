@@ -25,12 +25,11 @@ DEFAULT_CASE_FILTER_DISPLAY = "all cases"
 # ponytail: label-text heuristic, since aggregate-result.json records no model; read the model
 # from arm-meta.txt if a label ever stops being the model spec.
 CLASSIFIER_MODEL_RE = re.compile(r"fable|\bbest\b|\bdefault\b|opus(?![-_]?4)", re.IGNORECASE)
-MODEL_FAMILY_RE = re.compile(r"haiku|sonnet|opus|fable", re.IGNORECASE)
 
 
 def model_family(spec):
     """Family word in a model spec or label ('sonnet@high' -> sonnet), or None if it names none."""
-    match = MODEL_FAMILY_RE.search(spec)
+    match = eval_judge_models.MODEL_FAMILY_RE.search(spec)
     return match.group(0).lower() if match else None
 
 

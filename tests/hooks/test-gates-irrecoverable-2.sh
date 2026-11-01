@@ -3434,7 +3434,7 @@ _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
   "echo $(printf '${x:-a %.0s' $(seq 20000))"
 # each nested funsub level appends its body blanked, not raw, so nested text is not read once per level.
 # GH #761: timed against one funsub around the same words, not a fixed 4 s (blanked ~2.7x, raw ~6.1x).
-_timed_ratio_case 'GH #693: 12 nested funsubs around 62 KB of words run within the hook timeout and 4x one funsub' 0 4 \
+_timed_ratio_case 'GH #693: 12 nested funsubs around 62 KB of words run within the gate'"'"'s deadline and 4x one funsub' 0 4 \
   "echo \${ echo $(printf "'a}' x; %.0s" $(seq 7750)); }" \
   "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 7750))$(printf '; }%.0s' $(seq 12))"
 
@@ -3680,15 +3680,18 @@ for _c in 'gp -f' 'gpf' 'ggp -f' 'gpu --force' \
   'ggp --force main' 'gp origin +HEAD:main' 'gp --mirror origin' 'gpod main' 'gp origin :develop' \
   'sudo gp -f origin main' 'env gp -f origin main' "sh -c 'gpf! origin feat'" 'echo x && gp -f origin main' \
   '"gp" -f origin main' 'gp -f origin HEAD:feat' 'ggp -f origin HEAD:feat' \
-  'ggpnp -f' 'grename main foo' 'grename develop x' 'echo x; grename Master y' 'grename feat -f' \
-  'g push -f origin main' 'g push origin :main' 'g push --mirror origin' 'echo x && g reset --hard' 'sudo g clean -fd' \
-  'g>/dev/null push -f origin main' 'g<x push -f origin main' 'g&>/dev/null push -f origin main' 'x;g>&2 push -f origin main'; do
+  'ggpnp -f' 'grename main foo' 'grename develop x' 'echo x; grename Master y' 'grename feat -f'; do
   test_deny "$IRRECOVERABLE" "GH #750 push alias: $_c" "$(bash_payload "$_c")"
 done
 for _c in 'gp' 'gp origin feat' 'gpu' 'ggp' 'ggp feat' 'gpsup' 'gpd origin main' 'gpv' 'ggpush' 'gpoat' \
   'gpod feat' 'gpg --verify x.sig' 'echo gp -f' 'git push origin HEAD:feat' \
-  'ggpnp' 'ggpnp feat' 'grename feat x' 'grename' 'g status' 'g push origin feat' 'echo g push -f' 'ls -g'; do
+  'ggpnp' 'ggpnp feat' 'grename feat x' 'grename'; do
   test_allow "$IRRECOVERABLE" "GH #750 push alias control: $_c" "$(bash_payload "$_c")"
+done
+# Operator 2026-10-31: #750 stays push-only, so `alias g='git'` is not read (the general alias table is #781).
+# These pin that scope; #781 flips them if it widens the table.
+for _c in 'g push -f origin main' 'g reset --hard' 'g>/dev/null push -f origin main'; do
+  test_allow "$IRRECOVERABLE" "GH #750 scope: g is not read as git: $_c" "$(bash_payload "$_c")"
 done
 echo ""
 echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
@@ -3921,4 +3924,128 @@ else
   echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
 fi
 
+# GH #767: rm's rules enforce in var-verb, and a substitution glued to a word splits off output that starts with a blank.
+test_deny  "$IRRECOVERABLE" 'GH #767: F=-rf; rm $F b' "$(bash_payload 'F=-rf; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: F='"'"'-rf'"'"'; rm $F b' "$(bash_payload 'F='"'"'-rf'"'"'; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: F=-r; rm $F b' "$(bash_payload 'F=-r; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: rm \ $(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm \ $(echo '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: rm x$(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm x$(echo '"'"' -rf'"'"') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767: rm '"'"'a'"'"'$(echo '"'"' -rf'"'"') b' "$(bash_payload 'rm '"'"'a'"'"'$(echo '"'"' -rf'"'"') b')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-f; rm $F a.log' "$(bash_payload 'F=-f; rm $F a.log')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-i; rm $F x' "$(bash_payload 'F=-i; rm $F x')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: D=build; rm -f $D/a.o' "$(bash_payload 'D=build; rm -f $D/a.o')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-rf; echo $F' "$(bash_payload 'F=-rf; echo $F')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: F=-rf; grep $F file' "$(bash_payload 'F=-rf; grep $F file')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: echo a\ $(echo '"'"'b'"'"')' "$(bash_payload 'echo a\ $(echo '"'"'b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: rm -f x\ $(echo '"'"'y.log'"'"')' "$(bash_payload 'rm -f x\ $(echo '"'"'y.log'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 control: echo foo$(echo '"'"' a;rm -rf /'"'"')' "$(bash_payload 'echo foo$(echo '"'"' a;rm -rf /'"'"')')"
+# GH #767 review: a glued substitution keeps only its first output word glued; a backslash-newline is a continuation.
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \ $(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\ $(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \\\ $(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\\\\\ $(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \<NL>$(echo '"'"'x -rf'"'"') b' "$(bash_payload $'rm \\\n$(echo \'x -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm \<NL>$(echo '"'"'x --no-preserve-root -r'"'"') /' "$(bash_payload $'rm \\\n$(echo \'x --no-preserve-root -r\') /')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm x$(echo '"'"'a -rf'"'"') b' "$(bash_payload $'rm x$(echo \'a -rf\') b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review: rm '"'"'a'"'"'$(echo '"'"'b -rf'"'"') c' "$(bash_payload $'rm \'a\'$(echo \'b -rf\') c')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: rm -f x\ $(echo '"'"'y z.log'"'"')' "$(bash_payload 'rm -f x\ $(echo '"'"'y z.log'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: touch out$(echo '"'"' a b'"'"').txt' "$(bash_payload 'touch out$(echo '"'"' a b'"'"').txt')"
+test_allow "$IRRECOVERABLE" 'GH #767 review control: echo x$(echo '"'"'a; rm -rf /'"'"')' "$(bash_payload 'echo x$(echo '"'"'a; rm -rf /'"'"')')"
+# GH #767 review 2: bash does not split an assignment's value; an argument holding = does split.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 2: env X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'env X=$(echo '"'"' rm -rf b'"'"')')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 2: rm --one-file-system=$(echo '"'"' -rf b'"'"')' "$(bash_payload 'rm --one-file-system=$(echo '"'"' -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: X=$(echo '"'"' rm -rf /tmp/x'"'"')' "$(bash_payload 'X=$(echo '"'"' rm -rf /tmp/x'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: CMD=$(echo '"'"'sudo rm -rf /tmp/build'"'"')' "$(bash_payload 'CMD=$(echo '"'"'sudo rm -rf /tmp/build'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: P=$(echo '"'"' git push --force origin main'"'"')' "$(bash_payload 'P=$(echo '"'"' git push --force origin main'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: X="a b"$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'X="a b"$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: A=1 X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'A=1 X=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: true && X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'true && X=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 2 control: export X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'export X=$(echo '"'"' rm -rf b'"'"')')"
+# GH #767 review 3 (operator): var-verb's enforced pass, rm-no-preserve-root through a variable, the linear assignment
+# check, and assignment leads, quoted separators and subscripts the split copy reads as assignments.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 3: X=mkfs.ext4; $X /dev/sdb1; F=-rf; rm $F b' "$(bash_payload 'X=mkfs.ext4; $X /dev/sdb1; F=-rf; rm $F b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 3: F=--no-preserve-root; rm -i $F /' "$(bash_payload 'F=--no-preserve-root; rm -i $F /')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: declare -x X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'declare -x X=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: if X=$(echo '"'"' rm -rf b'"'"'); then :; fi' "$(bash_payload 'if X=$(echo '"'"' rm -rf b'"'"'); then :; fi')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: while X=$(echo '"'"' rm -rf b'"'"'); do break; done' "$(bash_payload 'while X=$(echo '"'"' rm -rf b'"'"'); do break; done')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: X[0]=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'X[0]=$(echo '"'"' rm -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 3 control: A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload 'A='"'"'x;y'"'"' X=$(echo '"'"' rm -rf b'"'"')')"
+# GH #767 review 4: the glued split is its own copy, so develop's split copy still denies; continuations and quoted values.
+test_deny  "$IRRECOVERABLE" 'GH #767 review 4: X=`echo '"'"'a b'"'"'` Y=`echo '"'"'a b'"'"'` rm `echo '"'"' -rf'"'"'` b' "$(bash_payload 'X=`echo '"'"'a b'"'"'` Y=`echo '"'"'a b'"'"'` rm `echo '"'"' -rf'"'"'` b')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 4: X=$(echo '"'"'a b'"'"') Y=$(echo '"'"'a b'"'"') rm $(echo '"'"' -rf'"'"') b' "$(bash_payload 'X=$(echo '"'"'a b'"'"') Y=$(echo '"'"'a b'"'"') rm $(echo '"'"' -rf'"'"') b')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: true && \<NL>  X=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload $'true && \\\n  X=$(echo \' rm -rf b\')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: A=1 \<NL>  B=$(echo '"'"' rm -rf b'"'"')' "$(bash_payload $'A=1 \\\n  B=$(echo \' rm -rf b\')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 4 control: X='"'"'a b'"'"' CMD=$(echo '"'"' rm -rf build'"'"')' "$(bash_payload $'X=\'a b\' CMD=$(echo \' rm -rf build\')')"
+# GH #767 review 5: the glued copy stays out of brace-view's copies (shared positional budget); var-verb's structural
+# denies only end its window; $(...) and backticks are one word to the assignment check.
+test_deny  "$IRRECOVERABLE" "GH #767 review 5: a brace, a glued subst and a 5000-argument bash -c still reach git add -A" "$(bash_payload "echo {a,b}x$(echo 'p q'); bash -c 'echo \"\$@\"' _ $(printf 'y %.0s' $(seq 5000)); git add $(echo ' -A')")"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 5: rm $(X=1) Y=$(echo '"'"' -rf b'"'"')' "$(bash_payload 'rm $(X=1) Y=$(echo '"'"' -rf b'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: GREETING="it'"'"'s"; export GREETING; bash -c "echo \$GREETING"' "$(bash_payload 'GREETING="it'"'"'s"; export GREETING; bash -c "echo \$GREETING"')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: TS=$(date +%s) NOTE=build-$(echo '"'"'cleanup: rm -rf dist'"'"')' "$(bash_payload 'TS=$(date +%s) NOTE=build-$(echo '"'"'cleanup: rm -rf dist'"'"')')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 5 control: A="$(pwd)" F=x$(echo '"'"'b rm -rf c'"'"')' "$(bash_payload 'A="$(pwd)" F=x$(echo '"'"'b rm -rf c'"'"')')"
+# GH #767 review 6: the glued copy drops printf's % format; var-verb puts no value in '...' or after \$, nor reads --opt= as NAME=.
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git checkout -b hotfix-$(printf '"'"'%03d'"'"' 7)' "$(bash_payload 'git checkout -b hotfix-$(printf '"'"'%03d'"'"' 7)')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git checkout -b rel-$(printf '"'"'%s'"'"' 2026)' "$(bash_payload 'git checkout -b rel-$(printf '"'"'%s'"'"' 2026)')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: F=-rf; rm '"'"'$F'"'"' x' "$(bash_payload 'F=-rf; rm '"'"'$F'"'"' x')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: X=-r; echo "\$X"; rm \$X y' "$(bash_payload 'X=-r; echo "\$X"; rm \$X y')"
+test_allow "$IRRECOVERABLE" 'GH #767 review 6 control: git log --format=-rf; rm $format x' "$(bash_payload 'git log --format=-rf; rm $format x')"
+test_deny  "$IRRECOVERABLE" 'GH #767 review 6: F=-rf; rm "$F" b' "$(bash_payload 'F=-rf; rm "$F" b')"
+# GH #767 review 7 (operator): the NAME= test runs once per word, so a 40,000-character word before 7000 glued
+# backtick substitutions is read in bounded time (14.6 s before, about 1.5 s after).
+_timed_case "GH #767 review 7: a 40 KB word, then 7000 glued backtick substitutions, then a split-copy target" 2 \
+  "echo $(printf 'a%.0s' $(seq 40000))$(printf '`echo '"'"'p q'"'"'`%.0s' $(seq 7000)); rm \`echo ' -rf'\` b"
+_timed_case "GH #767 review 3: 8900 glued X=\`echo 'a b'\` words, then a split-copy target, denied in bounded time" 2 \
+  "echo x; $(printf 'X=`echo '"'"'a b'"'"'` %.0s' $(seq 8900)); rm \`echo ' -rf'\` b"
+# GH #691: in a subagent, a view no longer re-runs the body spawn scan (it could only end the view), so padding that
+# spends the spawn budget in the main reading no longer stops ifs-split before a later rm${IFS}-rf / git${IFS}reset.
+_pad691="eval '$(printf 'env a b c d e f g h i j k l m n o p q r s t u v w x y z ; %.0s' $(seq 240))true'; "
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then rm\${IFS}-rf b" "$(bash_agent_payload "${_pad691}rm\${IFS}-rf b" fork)"
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash -c 'rm\${IFS}-rf b'" "$(bash_agent_payload "${_pad691}bash -c 'rm\${IFS}-rf b'" fork)"
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then git\${IFS}reset --hard" "$(bash_agent_payload "${_pad691}git\${IFS}reset --hard" fork)"
+test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash -c 'claude -p x' (spawn still denied)" "$(bash_agent_payload "${_pad691}bash -c 'claude -p x'" fork)"
+test_allow "$IRRECOVERABLE" "GH #691 control: subagent, spawn-budget padding, then echo ok" "$(bash_agent_payload "${_pad691}echo ok" fork)"
+# GH #798: a spawn only a view reads denies in a subagent (views scan their own text and the bodies they rewrote, on a
+# budget of their own); a spent scan budget says "too dense".
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: bash${IFS}-c '"'"'claude -p x'"'"'' "$(bash_agent_payload 'bash${IFS}-c '"'"'claude -p x'"'"'' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; bash -c "$X -p x"' "$(bash_agent_payload 'X=claude; bash -c "$X -p x"' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: X=claude; $X -p x' "$(bash_agent_payload 'X=claude; $X -p x' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798: subagent: claude${IFS}-p${IFS}x' "$(bash_agent_payload 'claude${IFS}-p${IFS}x' fork)"
+test_deny  "$IRRECOVERABLE" "GH #798: subagent, spawn-budget padding, then bash\${IFS}-c 'claude -p x'" "$(bash_agent_payload "${_pad691}bash\${IFS}-c 'claude -p x'" fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=echo; bash -c "$X -p x"' "$(bash_agent_payload 'X=echo; bash -c "$X -p x"' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: X=claude; echo $X -p x' "$(bash_agent_payload 'X=claude; echo $X -p x' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 control: subagent: bash${IFS}-c '"'"'echo hi'"'"'' "$(bash_agent_payload 'bash${IFS}-c '"'"'echo hi'"'"'' fork)"
+# GH #798 review: no $IFS re-check drops a raw spawn finding (it hid ${IFS%..}, ${IFS/?/-p hi} and X=a${IFS}b claude -p);
+# the views scan only the statements they changed, so a script changed near each end is not refused as too dense.
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: echo '"'"'${IFS%'"'"' ; claude -p x ; echo '"'"'}'"'"'' "$(bash_agent_payload 'echo '"'"'${IFS%'"'"' ; claude -p x ; echo '"'"'}'"'"'' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: echo \${IFS%; claude -p x; echo }' "$(bash_agent_payload 'echo \${IFS%; claude -p x; echo }' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: claude ${IFS/?/-p hi}' "$(bash_agent_payload 'claude ${IFS/?/-p hi}' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: IFS=-; claude${IFS}--help' "$(bash_agent_payload 'IFS=-; claude${IFS}--help' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review: subagent: claude$IFS'"'"'-p'"'"' hi' "$(bash_agent_payload 'claude$IFS'"'"'-p'"'"' hi' fork)"
+_s798="set -e
+OUT=build
+[ -n \"\$CI\" ] && OUT=dist
+mkdir -p \"\$OUT\"
+$(for i in $(seq 0 135); do printf 'cp src/file_%s.txt "$OUT/" \&\& echo copied %s\n' $i $i; done)"
+test_allow "$IRRECOVERABLE" "GH #798 review control: subagent: a 6 KB script that sets OUT twice" "$(bash_agent_payload "$_s798" fork)"
+test_deny  "$IRRECOVERABLE" "GH #798 review: subagent: the same script, then C=claude; \$C -p x" "$(bash_agent_payload "$_s798"$'\nC=claude; $C -p x' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: X=a${IFS}b claude -p hi' "$(bash_agent_payload 'X=a${IFS}b claude -p hi' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: X=${IFS}z claude -p hi' "$(bash_agent_payload 'X=${IFS}z claude -p hi' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: echo hi | X=a${IFS}b claude -p' "$(bash_agent_payload 'echo hi | X=a${IFS}b claude -p' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 2: subagent: eval '"'"'X=a${IFS}b claude -p hi'"'"'' "$(bash_agent_payload 'eval '"'"'X=a${IFS}b claude -p hi'"'"'' fork)"
+# GH #798 review 3: views scan only the body statements the main reading did not, and var-verb's spawn copy reads
+# each variable in order, so a reused variable and a medium bash -c body are not refused.
+test_allow "$IRRECOVERABLE" 'GH #798 review 3 control: subagent: D=/tmp/w; mkdir -p $D; D=/tmp/w2; bash -c "OUT=$(echo out); ... (60 if-lines)' "$(bash_agent_payload 'D=/tmp/w; mkdir -p $D; D=/tmp/w2; bash -c "OUT=$(echo out); if [ -f $D/f0.txt ]; then cat $D/f0.txt | grep -c foo0 || echo none0; fi; if [ -f $D/f1.txt ]; then cat $D/f1.txt | grep -c foo1 || echo none1; fi; if [ -f $D/f2.txt ]; then cat $D/f2.txt | grep -c foo2 || echo none2; fi; if [ -f $D/f3.txt ]; then cat $D/f3.txt | grep -c foo3 || echo none3; fi; if [ -f $D/f4.txt ]; then cat $D/f4.txt | grep -c foo4 || echo none4; fi; if [ -f $D/f5.txt ]; then cat $D/f5.txt | grep -c foo5 || echo none5; fi; if [ -f $D/f6.txt ]; then cat $D/f6.txt | grep -c foo6 || echo none6; fi; if [ -f $D/f7.txt ]; then cat $D/f7.txt | grep -c foo7 || echo none7; fi; if [ -f $D/f8.txt ]; then cat $D/f8.txt | grep -c foo8 || echo none8; fi; if [ -f $D/f9.txt ]; then cat $D/f9.txt | grep -c foo9 || echo none9; fi; if [ -f $D/f10.txt ]; then cat $D/f10.txt | grep -c foo10 || echo none10; fi; if [ -f $D/f11.txt ]; then cat $D/f11.txt | grep -c foo11 || echo none11; fi; if [ -f $D/f12.txt ]; then cat $D/f12.txt | grep -c foo12 || echo none12; fi; if [ -f $D/f13.txt ]; then cat $D/f13.txt | grep -c foo13 || echo none13; fi; if [ -f $D/f14.txt ]; then cat $D/f14.txt | grep -c foo14 || echo none14; fi; if [ -f $D/f15.txt ]; then cat $D/f15.txt | grep -c foo15 || echo none15; fi; if [ -f $D/f16.txt ]; then cat $D/f16.txt | grep -c foo16 || echo none16; fi; if [ -f $D/f17.txt ]; then cat $D/f17.txt | grep -c foo17 || echo none17; fi; if [ -f $D/f18.txt ]; then cat $D/f18.txt | grep -c foo18 || echo none18; fi; if [ -f $D/f19.txt ]; then cat $D/f19.txt | grep -c foo19 || echo none19; fi; if [ -f $D/f20.txt ]; then cat $D/f20.txt | grep -c foo20 || echo none20; fi; if [ -f $D/f21.txt ]; then cat $D/f21.txt | grep -c foo21 || echo none21; fi; if [ -f $D/f22.txt ]; then cat $D/f22.txt | grep -c foo22 || echo none22; fi; if [ -f $D/f23.txt ]; then cat $D/f23.txt | grep -c foo23 || echo none23; fi; if [ -f $D/f24.txt ]; then cat $D/f24.txt | grep -c foo24 || echo none24; fi; if [ -f $D/f25.txt ]; then cat $D/f25.txt | grep -c foo25 || echo none25; fi; if [ -f $D/f26.txt ]; then cat $D/f26.txt | grep -c foo26 || echo none26; fi; if [ -f $D/f27.txt ]; then cat $D/f27.txt | grep -c foo27 || echo none27; fi; if [ -f $D/f28.txt ]; then cat $D/f28.txt | grep -c foo28 || echo none28; fi; if [ -f $D/f29.txt ]; then cat $D/f29.txt | grep -c foo29 || echo none29; fi; if [ -f $D/f30.txt ]; then cat $D/f30.txt | grep -c foo30 || echo none30; fi; if [ -f $D/f31.txt ]; then cat $D/f31.txt | grep -c foo31 || echo none31; fi; if [ -f $D/f32.txt ]; then cat $D/f32.txt | grep -c foo32 || echo none32; fi; if [ -f $D/f33.txt ]; then cat $D/f33.txt | grep -c foo33 || echo none33; fi; if [ -f $D/f34.txt ]; then cat $D/f34.txt | grep -c foo34 || echo none34; fi; if [ -f $D/f35.txt ]; then cat $D/f35.txt | grep -c foo35 || echo none35; fi; if [ -f $D/f36.txt ]; then cat $D/f36.txt | grep -c foo36 || echo none36; fi; if [ -f $D/f37.txt ]; then cat $D/f37.txt | grep -c foo37 || echo none37; fi; if [ -f $D/f38.txt ]; then cat $D/f38.txt | grep -c foo38 || echo none38; fi; if [ -f $D/f39.txt ]; then cat $D/f39.txt | grep -c foo39 || echo none39; fi; if [ -f $D/f40.txt ]; then cat $D/f40.txt | grep -c foo40 || echo none40; fi; if [ -f $D/f41.txt ]; then cat $D/f41.txt | grep -c foo41 || echo none41; fi; if [ -f $D/f42.txt ]; then cat $D/f42.txt | grep -c foo42 || echo none42; fi; if [ -f $D/f43.txt ]; then cat $D/f43.txt | grep -c foo43 || echo none43; fi; if [ -f $D/f44.txt ]; then cat $D/f44.txt | grep -c foo44 || echo none44; fi; if [ -f $D/f45.txt ]; then cat $D/f45.txt | grep -c foo45 || echo none45; fi; if [ -f $D/f46.txt ]; then cat $D/f46.txt | grep -c foo46 || echo none46; fi; if [ -f $D/f47.txt ]; then cat $D/f47.txt | grep -c foo47 || echo none47; fi; if [ -f $D/f48.txt ]; then cat $D/f48.txt | grep -c foo48 || echo none48; fi; if [ -f $D/f49.txt ]; then cat $D/f49.txt | grep -c foo49 || echo none49; fi; if [ -f $D/f50.txt ]; then cat $D/f50.txt | grep -c foo50 || echo none50; fi; if [ -f $D/f51.txt ]; then cat $D/f51.txt | grep -c foo51 || echo none51; fi; if [ -f $D/f52.txt ]; then cat $D/f52.txt | grep -c foo52 || echo none52; fi; if [ -f $D/f53.txt ]; then cat $D/f53.txt | grep -c foo53 || echo none53; fi; if [ -f $D/f54.txt ]; then cat $D/f54.txt | grep -c foo54 || echo none54; fi; if [ -f $D/f55.txt ]; then cat $D/f55.txt | grep -c foo55 || echo none55; fi; if [ -f $D/f56.txt ]; then cat $D/f56.txt | grep -c foo56 || echo none56; fi; if [ -f $D/f57.txt ]; then cat $D/f57.txt | grep -c foo57 || echo none57; fi; if [ -f $D/f58.txt ]; then cat $D/f58.txt | grep -c foo58 || echo none58; fi; if [ -f $D/f59.txt ]; then cat $D/f59.txt | grep -c foo59 || echo none59; fi; "' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 review 3 control: subagent: BIN=claude; command -v $BIN; BIN=python3; $BIN -c '"'"'print(1)'"'"' input.txt' "$(bash_agent_payload 'BIN=claude; command -v $BIN; BIN=python3; $BIN -c '"'"'print(1)'"'"' input.txt' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 review 3 control: subagent: X=claude; X=echo; $X -p x' "$(bash_agent_payload 'X=claude; X=echo; $X -p x' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 3: subagent: X=echo; X=claude; $X -p x' "$(bash_agent_payload 'X=echo; X=claude; $X -p x' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 3: subagent: X=claude; ( $X -p hi )' "$(bash_agent_payload 'X=claude; ( $X -p hi )' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 3: subagent: C=claude; ls | xargs $C' "$(bash_agent_payload 'C=claude; ls | xargs $C' fork)"
+# GH #798 review 4: var-verb keeps its last-value copy (a later pass of a loop, a function called after the assignment).
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: F=-i; for i in 1 2; do rm $F b; F=-rf; done' "$(bash_payload 'F=-i; for i in 1 2; do rm $F b; F=-rf; done')"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: F=-i; g(){ rm $F b; }; F=-rf; g' "$(bash_payload 'F=-i; g(){ rm $F b; }; F=-rf; g')"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: subagent: for i in 1 2; do $X -p x; X=claude; done' "$(bash_agent_payload 'for i in 1 2; do $X -p x; X=claude; done' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #798 review 4: subagent: g(){ $X -p x; }; X=claude; g' "$(bash_agent_payload 'g(){ $X -p x; }; X=claude; g' fork)"
+# GH #798 review 5 (operator): only var-verb's in-order copy is spawn-scanned, so a tool variable later set to claude
+# for a lookup is not a spawn.
+test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: BIN=python3; $BIN -c '"'"'print(1)'"'"'; BIN=claude; command -v $BIN' "$(bash_agent_payload 'BIN=python3; $BIN -c '"'"'print(1)'"'"'; BIN=claude; command -v $BIN' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: T=pytest; $T tests/; T=claude; which $T' "$(bash_agent_payload 'T=pytest; $T tests/; T=claude; which $T' fork)"
+test_allow "$IRRECOVERABLE" 'GH #798 review 5 control: subagent: N=npm; $N run build; N=claude; command -v $N' "$(bash_agent_payload 'N=npm; $N run build; N=claude; command -v $N' fork)"
 gates_summary

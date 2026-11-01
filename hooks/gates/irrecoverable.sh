@@ -40,11 +40,8 @@ fi
 # GH #592: `.` is source's other spelling. A "." word in command position (after a blank, the JSON key's
 # ":", a separator or a case arm's ")"), ended by a blank or a glued redirection (.<in x.sh, .&>f x.sh),
 # defers to python; a "." inside a word (done. next, ./x.sh) stays on the fast path.
-# GH #750: so does a "g" word there, glued redirection included, oh-my-zsh's `alias g='git'` (ls -g, a g inside
-# a word stay fast).
 case "$_norm" in
   *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
-  *[[:space:]:\;\&\|\(\)\{]g[[:space:]\<\>\&]*) _has_subst=1 ;;
 esac
 # GH #741: the one deny with no argv0 in the list: a python/node heredoc script piped into a shell denies whatever
 # it prints, so a heredoc and a pipe on a command naming python or node defer to python.

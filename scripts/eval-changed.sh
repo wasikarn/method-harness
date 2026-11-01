@@ -45,12 +45,14 @@ python3 scripts/_lib/eval_judge_models.py check || exit 1
 rc=0
 
 # shell_word <arg>: <arg> as one shell word, bare when it holds only safe characters, else
-# single-quoted with each ' written as '\''. print_wrapped <argv...>: the evals/README.md
-# run-block form of `with_default_enabled_true <argv...>`, quoted so the pasted line runs exactly
-# <argv...> (an allowed_tools entry from frontmatter can hold spaces, parens or shell syntax).
+# single-quoted with each ' written as '\'' (a parameter expansion: $(...) would drop trailing
+# newlines). print_wrapped <argv...>: the evals/README.md run-block form of
+# `with_default_enabled_true <argv...>`, quoted so the pasted line runs exactly <argv...>
+# (an allowed_tools entry from frontmatter can hold spaces, parens or shell syntax).
 shell_word() {
+  local sq="'" esc="'\\''"  # variables: quoting inside ${//} differs across bash versions (3.2)
   case "$1" in
-    ''|*[!A-Za-z0-9_./:@,=+-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+    ''|*[!A-Za-z0-9_./:@,=+-]*) printf "'%s'" "${1//$sq/$esc}" ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -98,7 +100,9 @@ print(','.join(sorted(tools)))
       echo "== $tag: $case, judged by $model (evals/judge-models.tsv) =="
       with_default_enabled_true "${jcmd[@]}" </dev/null || rc=1
     else
-      echo "# $case: judged by $model (evals/judge-models.tsv); read its score from this run"
+      # A `:` no-op, not a `#` comment: zsh runs a pasted `#` line as a command unless
+      # interactivecomments is set, and the old hint's `; read ...` then ate the judge line.
+      printf ': %s\n' "$(shell_word "$case: judged by $model (evals/judge-models.tsv); read its score from the next line")"
       # The README run-block form: the helper needs bash, so a zsh user can paste it as-is.
       print_wrapped "${jcmd[@]}"
     fi
