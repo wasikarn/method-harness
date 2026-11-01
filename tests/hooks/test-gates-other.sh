@@ -184,9 +184,14 @@ _timed_case "74900 leading ! words before an IFS rm are stripped in linear time"
 _timed_case "37450 env wrappers before an IFS rm are unwrapped in linear time" 2 \
   "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
 # Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
-# four evals took 25 s.
-_timed_case "a 20 KB ! flood under four evals is denied inside the hook timeout" 2 \
-  "$(python3 -c 'import sys; t = sys.argv[1]; print("eval eval eval eval " + "! " * ((20000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail")"
+# four evals took 25 s. The binding limit is the gate's own 4 s deadline (DEADLINE_SECS; on expiry it asks,
+# rc 0): 20 KB took ~3 s, so a loaded container tipped it past 4 s and the row failed. At 10 KB a healthy run
+# takes ~1.4 s, timed against the same flood under one eval (GH #761 shape; ~2.2-3.3x), and a deadline ask on
+# a loaded try is retried. A quadratic strip is still red: it asks at the deadline on every try, and with the
+# deadline raised it takes ~8-9 s, over 5x the baseline.
+_bang_flood() { python3 -c 'import sys; t = sys.argv[1]; print(sys.argv[2] + "! " * ((10000 - 20 - len(t)) // 2) + t, end="")' "$_quad_tail" "$1"; }
+_timed_ratio_case "a 10 KB ! flood under four evals is denied before the gate deadline and within 5x one eval" 2 5 \
+  "$(_bang_flood 'eval ')" "$(_bang_flood 'eval eval eval eval ')"
 # Empty alternatives build no new text, so the budget never charged them: 26 groups of {,} made 2^26 empty
 # strings (4.7 s, 1.8 GB), and at 27 the gate ran past the 8 s hook timeout and failed open on the raw reset.
 # 28 groups: the old gate does not finish inside the 10 s timeout (rc 124), so the row is red there on any machine.
@@ -249,7 +254,7 @@ while IFS= read -r _line; do
 done < "$_c336"
 # Each view re-reads the whole command (up to _VIEW_LEN_CAP), and a timed-out hook allows.
 _pad336="$(printf 'echo a; %.0s' $(seq 1200))"
-_timed_case "GH #336: var-verb view (shadow), target after 10 KB of statements, read in bounded time" 0 "${_pad336}X=rm; \$X -rf build"
+_timed_case "GH #336: var-verb view (rm rules enforce, GH #767), target after 10 KB of statements, denied in bounded time" 2 "${_pad336}X=rm; \$X -rf build"
 _timed_case "GH #336: ifs-split view, target after 10 KB of statements, denied in bounded time" 2 "${_pad336}rm\${IFS}-rf build"
 _timed_case "GH #336: var-verb view, 1200 references of one benign variable, allowed in bounded time" 0 "X=ls; $(printf 'echo $X %.0s' $(seq 1200))"
 _timed_case "GH #336: chmod with 4000 a+rw words, allowed in bounded time" 0 "chmod -R $(printf 'a+rw %.0s' $(seq 4000))build"

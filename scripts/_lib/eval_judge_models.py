@@ -21,8 +21,14 @@ DEFAULT_EVALS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 SIDECAR = "judge-models.tsv"
 # The CLI's own default judge: a row naming it changes nothing, so it is refused.
 DEFAULT_JUDGE = "haiku"
-# A model must name one of these families, so a typo fails `check`, not a paid run.
+# A model must name one of these families. This catches a model naming no family, not every
+# typo (`sonnett` passes).
 MODEL_FAMILY_RE = re.compile(r"haiku|sonnet|opus|fable", re.IGNORECASE)
+# eval-changed.sh prints rows inside a `bash -c '...'` line, so a case or model is limited to
+# characters that cannot quote, expand or traverse there (a case is one evals/ dir name). The
+# line's --allow-tools value comes from prompt.md frontmatter and is not checked here.
+CASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:-]*")
 
 
 def sidecar_path(evals_dir=DEFAULT_EVALS):
@@ -35,7 +41,7 @@ def load(path):
     if not os.path.exists(path):
         return {}
     rows = {}
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig") as f:
         for n, line in enumerate(f, 1):
             line = line.rstrip("\n")
             if not line.strip() or line.lstrip().startswith("#"):
@@ -44,6 +50,10 @@ def load(path):
             if len(fields) != 3 or not all(x.strip() for x in fields):
                 raise ValueError(f"{path}:{n}: want case<TAB>model<TAB>reason, got {line!r}")
             case, model, reason = (x.strip() for x in fields)
+            if not CASE_RE.fullmatch(case):
+                raise ValueError(f"{path}:{n}: {case!r} is not an evals/ case dir name")
+            if not MODEL_RE.fullmatch(model):
+                raise ValueError(f"{path}:{n}: {case}: model {model!r} has characters this sidecar does not allow ([, /, spaces, shell syntax)")
             if case in rows:
                 raise ValueError(f"{path}:{n}: {case} is listed twice")
             family = MODEL_FAMILY_RE.search(model)

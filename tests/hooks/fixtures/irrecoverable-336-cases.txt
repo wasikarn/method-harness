@@ -31,19 +31,20 @@ ALLOW sh -c 'printf %s ${IFS:-"}" rm'
 # 2. a verb held in a variable assigned earlier on the line. var-verb ships shadow: in a 55,000-command
 # replay it denied one real command (`git -C $R checkout -- <file>`, a true discard develop missed).
 # GH #375 now denies that command through the git rules, before any view runs.
-WOULD_DENY var-verb X=rm; $X -rf build
-WOULD_DENY var-verb X=rm && $X -rf build
+# GH #767: rm's own rules enforce in var-verb (its other rules stay shadow), so an rm built from a variable denies.
+DENY X=rm; $X -rf build
+DENY X=rm && $X -rf build
 # control: develop already denies a ${..} argv0 (it reads as every dangerous verb)
 DENY X=rm; ${X} -rf build
-WOULD_DENY var-verb X="rm -rf"; $X build
-WOULD_DENY var-verb export X=rm; $X -rf build
+DENY X="rm -rf"; $X build
+DENY export X=rm; $X -rf build
 WOULD_DENY var-verb X=git; $X push --force origin main
 WOULD_DENY var-verb F=--force; git push $F origin main
-WOULD_DENY var-verb A=-rf; rm $A build
+DENY A=-rf; rm $A build
 WOULD_DENY var-verb X=mkfs.ext4; $X /dev/sda1
-WOULD_DENY var-verb X=rm; bash -c "$X -rf build"
-WOULD_DENY var-verb X=rm; echo hi; $X -rf build
-WOULD_DENY var-verb X=rm; $X -rf build; X=ls
+DENY X=rm; bash -c "$X -rf build"
+DENY X=rm; echo hi; $X -rf build
+DENY X=rm; $X -rf build; X=ls
 DENY R=/tmp/repo; git -C $R checkout -- notes.txt
 ALLOW X=1; echo $X
 ALLOW R=/tmp/x; RW=$R/w; git -C $RW remote add origin git@example.com:o/r.git
@@ -149,6 +150,16 @@ WOULD_ASK source-file . .venv/bin/activate.d/x.sh
 WOULD_ASK source-file source .venv/bin/activate x.sh
 WOULD_ASK source-file source activate
 WOULD_ASK source-file source .venv/bin/activate && . ./setup.sh
+# GH #768: only one `--` is skipped, and a second word after it still asks
+WOULD_ASK source-file source --
+WOULD_ASK source-file source -- -- x/bin/activate
+WOULD_ASK source-file source -- .venv/bin/activate x.sh
+# GH #768: a word glued to argv0 is one shell word with it; what $X splits into decides what is sourced
+WOULD_ASK source-file source$X/bin/activate
+WOULD_ASK source-file .$X/bin/activate
+# the same through a dash word: bash rejects `--x` as an option, so it sources only when $X splits
+WOULD_ASK source-file source --$X/bin/activate
+WOULD_ASK source-file source -$X/bin/activate
 ALLOW cp -r . /tmp/x
 ALLOW ls -la .
 ALLOW echo done. next

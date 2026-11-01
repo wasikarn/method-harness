@@ -23,6 +23,44 @@ except Exception as _e:
 
 GATE_ID = "gate:bash:irrecoverable"
 
+# GH #771: the gate's own wall-clock limit, well under hooks.json's 8 s timeout (a timed-out PreToolUse
+# hook lets the tool call run). On expiry it asks, never allows; os._exit also cuts short a git call in
+# flight. MH_IRR_DEADLINE_SECS (test-only) can only shorten it.
+DEADLINE_SECS = 4.0
+try:
+    _dl = float(os.environ.get("MH_IRR_DEADLINE_SECS", ""))
+except ValueError:
+    _dl = 0.0
+
+def _deadline_hit(signum, frame):
+    try:
+        if not globals().get("_ASKED"):  # an ask already printed stands; a second JSON object is invalid
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                "permissionDecisionReason": "[mh:gate] irrecoverable: ran out of time (" + format(_DEADLINE, "g")
+                + " s) checking this command - confirm with user first, or split it into smaller commands"}}))
+        sys.stdout.flush()
+        _d = globals().get("d")
+        _d = _d if isinstance(_d, dict) else {}
+        journal(GATE_ID, _d.get("tool_name"), "ask", _d.get("session_id"), rule="deadline")
+    finally:
+        os._exit(0)
+
+_DEADLINE = _dl if 0 < _dl < DEADLINE_SECS else DEADLINE_SECS
+try:
+    import signal
+    signal.signal(signal.SIGALRM, _deadline_hit)
+    signal.setitimer(signal.ITIMER_REAL, _DEADLINE)
+except (ImportError, AttributeError, ValueError, OSError):
+    pass  # no SIGALRM on this platform: onFailure block in hooks.json still stops a timeout from allowing
+
+def _disarm():
+    # Before every exit: a timer firing during shutdown (default SIGALRM, rc 142) or a deny's unwind (ask)
+    # would replace the decision already made.
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except Exception:
+        pass  # fallback: no timer was armed on this platform
+
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -32,10 +70,72 @@ except Exception:
 # tool_input:null). irrecoverable.sh short-circuits empty stdin and payloads
 # with no destructive token before python runs, so those allow by design.
 if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
+    _disarm()
     print("[mh:gate] BLOCKED: malformed PreToolUse payload — failing closed", file=sys.stderr)
     # d may be None or a non-dict here -- pass literals, never d.get(...).
     journal(GATE_ID, None, "deny", None)
     sys.exit(2)
+
+# GH #769/#770: Monitor carries tool_input.command like Bash (a "ws" Monitor has none); context-mode's
+# ctx_execute(_file) runs tool_input.code as shell only for language "shell"; ctx_batch_execute runs each
+# commands[].command, judged one per run so one command can't hide the next (an open heredoc); the strictest wins.
+# Each run gets the outer payload (agent_id, cwd, tool_name) with only tool_input swapped; having no "commands",
+# it takes the plain path below.
+_tn = str(d.get("tool_name") or "")
+_ti = d["tool_input"]
+if _tn.endswith(("__ctx_execute", "__ctx_execute_file")):
+    _ti["command"] = _ti.get("code", "") if _ti.get("language") == "shell" else ""
+elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
+    import subprocess, time
+    # Mirrors context-mode 1.0.169's coerceCommandsArray (src/server.ts): a non-blank string is JSON-parsed
+    # if it gives a list, else lifted to [str]; a string item is its own command.
+    _cmds = _ti["commands"]
+    if isinstance(_cmds, str) and _cmds.strip():
+        try:
+            _p = json.loads(_cmds)
+        except Exception:
+            _p = None
+        _cmds = _p if isinstance(_p, list) else [_cmds]
+    _ask = ""
+    _t0 = time.monotonic()
+    # 4 s of the hook's 8 s timeout. MH_GATE_BATCH_BUDGET_S (tests) only shortens it; a value that is not a
+    # finite number >= 0 falls back to 4. The first command is always judged, so a budget of 0 checks just that one.
+    # A batch padded past the budget turns a later command's deny into an ask, never an allow.
+    _budget = 4.0
+    _bv = os.environ.get("MH_GATE_BATCH_BUDGET_S")
+    if _bv:
+        try:
+            _b = float(_bv)
+        except ValueError:
+            _b = -1.0
+        if 0 <= _b < float("inf"):  # NaN fails both compares
+            _budget = min(_b, 4.0)
+            if _b > 4.0:
+                print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is over 4; using 4 s".format(_bv), file=sys.stderr)
+        else:
+            print("[mh:gate] irrecoverable: MH_GATE_BATCH_BUDGET_S={!r:.40} is not a number >= 0; using 4 s".format(_bv), file=sys.stderr)
+    _n = 0
+    for _c in (_cmds if isinstance(_cmds, list) else []):
+        _c = _c if isinstance(_c, str) else _c.get("command") if isinstance(_c, dict) else None
+        if not isinstance(_c, str):
+            continue
+        _n += 1
+        if _n > 1 and time.monotonic() - _t0 > _budget:
+            _reason = ("[mh:gate] ctx_batch_execute: the gate's %gs time budget ran out before every command was "
+                       "checked; confirm the batch, or split it into smaller batches" % _budget)
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                                     "permissionDecisionReason": _reason}}))
+            journal(GATE_ID, _tn, "ask", d.get("session_id"))  # structural, no rule id (repo-gotchas.md)
+            sys.exit(0)
+        _sub = dict(d, tool_input={"command": _c})
+        _r = subprocess.run([sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"), "irrecoverable"],
+                            input=json.dumps(_sub), capture_output=True, text=True)
+        sys.stderr.write(_r.stderr)
+        if _r.returncode != 0:
+            sys.exit(2)  # a deny, or a crash: fail closed
+        _ask = _ask or _r.stdout
+    sys.stdout.write(_ask)
+    sys.exit(0)
 
 # Force-push spec v3 (2026-10-30): the one allowed force push is a WHOLE command, read before any view,
 # rewrite or tokenizing, that is a single plain `git [-C path] push [opts] <remote> <src:dst>...` over an
@@ -1531,6 +1631,7 @@ def _deny_nested_spawn():
         raise _ViewStop
     if _ONLY_RULE_PASS_ON[0]:
         return  # the enforced view pass reads only the _VIEW_ENFORCED rules: no spawn scan, so no spawn-scan budget (review 8)
+    _disarm()
     if _spawn_over_budget:
         print("[mh:gate] BLOCKED: subagent command is too long or too dense to check safely; write it "
               "to a file with the Write tool and run the file, or split it into smaller commands",
@@ -1617,7 +1718,10 @@ _VIEW_ENFORCED = {"brace-view": frozenset({
     "git-push-force", "git-push-mirror", "git-push-delete-protected",
     "git-reset-hard", "git-clean-force", "git-checkout-discard", "git-restore", "git-stash-drop", "git-switch-force",
     "git-checkout-index-force", "git-read-tree-reset", "git-branch-force-delete", "git-branch-force-move-protected",
-    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"})}
+    "git-worktree-remove-force", "git-reflog-prune", "git-update-ref-delete-protected", "git-rm-force"}),
+    # GH #767: rm's own rules read the value a plain NAME=value assignment puts back (`F=-rf; rm $F b`); every
+    # other var-verb rule stays shadow until /mh:gate-report shows no false positive.
+    "var-verb": frozenset({"rm-rf", "rm-recursive", "rm-no-preserve-root"})}
 
 def _shadowed(rule, decision):
     if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) and rule not in SHADOW_RULES:
@@ -1648,6 +1752,10 @@ def deny(reason, rule=None, hint=None):
             raise _ViewStop
         if rule is not None:
             return
+        if _VIEW[0] == "var-verb":
+            # GH #767 review 5: var-verb's text holds values put back in place (`\$G` too), which can leave a quote
+            # unbalanced where the shell's text is fine; a structural deny there only ends the window.
+            raise _ViewStop
 
     elif _VIEW[0] and rule is None:
         raise _ViewStop
@@ -1663,6 +1771,7 @@ def deny(reason, rule=None, hint=None):
         if rule is None:  # every rule-less confirm deny is a tokenizer/complexity refusal
             reason += "; split it into simpler separate commands"
         reason += "; if nobody can confirm, skip this step, keep going on the rest, and list it for the user in your final report"
+    _disarm()
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
     # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
@@ -1681,10 +1790,12 @@ def ask(reason, rule=None):
     # In a view (GH #336) an ask adds nothing once the command already asks.
     if (_ONLY_RULE[0] is not None and rule not in _ONLY_RULE[0]) or (_VIEW[0] and _ASKED) or _shadowed(rule, "ask") or _ASKED:
         return
-    _ASKED.append(reason)
+    # Print before append (GH #771): a deadline signal between them then emits a second ask, invalid
+    # output that onFailure blocks, instead of seeing _ASKED set and exiting with nothing printed (allow).
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "ask",
                                              "permissionDecisionReason": reason}}))
+    _ASKED.append(reason)
     journal(GATE_ID, d.get("tool_name"), "ask", d.get("session_id"), rule=_VIEW[0] or rule)
 
 def delete_hint():
@@ -3587,6 +3698,24 @@ KNOWN_GIT_SUBS = ("push", "reset", "clean", "restore", "checkout", "switch", "br
 
 _DELETE_PROTECTED = ("main", "master", "develop")
 
+# GH #750 (operator decision 2026-10-31): the Bash tool sources the user's shell snapshot, so oh-my-zsh's git
+# plugin push aliases and functions are live command words. A command word from this fixed list is read as the
+# git push it runs, the user's words appended; PH stands for $(git_current_branch). gpoat runs `git push origin
+# --all && git push origin --tags`: only the second takes the user's words. The strict force-push allow
+# (_FORCE_PUSH_OK) reads the raw text, so a forced alias push never gets it. A user's own alias is not covered.
+# Review of PR #774: `g` is the plugin's `alias g='git'`, so every git rule reads it; ggpnp pulls, then runs ggp
+# with the same words; grename OLD NEW runs `git push origin :OLD`, a remote delete (_check_window builds it).
+_SHELL_PUSH_ALIASES = {
+    "g": [], "ggpnp": ["push", "origin"],
+    "gp": ["push"], "gpd": ["push", "--dry-run"], "gpf!": ["push", "--force"],
+    "gpf": ["push", "--force-with-lease", "--force-if-includes"],
+    "gpsup": ["push", "--set-upstream", "origin", PH],
+    "gpsupf": ["push", "--set-upstream", "origin", PH, "--force-with-lease", "--force-if-includes"],
+    "gpv": ["push", "--verbose"], "gpoat": ["push", "origin", "--tags"], "gpod": ["push", "origin", "--delete"],
+    "ggpush": ["push", "origin", PH], "gpu": ["push", "upstream"],
+    "ggf": ["push", "--force", "origin"], "ggfl": ["push", "--force-with-lease", "origin"], "ggp": ["push", "origin"],
+}
+
 def _protected_ref(name):
     # main/master/develop as the last path part, any case: "origin/main", "refs/heads/Develop".
     return name.rstrip("/").rsplit("/", 1)[-1].lower() in _DELETE_PROTECTED
@@ -4095,9 +4224,14 @@ _VENV_ACTIVATE_RE = re.compile(r"(?:^|/)bin/activate(?:\.fish|\.csh)?\Z")
 
 def _venv_activate(rest):
     # Glued runs joined, so an unquoted `$VENV/bin/activate` is one word; a leading `--` is source's own.
+    # GH #768: a first token glued to argv0 (`source$X/bin/activate`) is one shell word with it, not a path.
+    if isinstance(rest[0], _Glued):
+        return False
     words = _shell_words(rest)
     if words[:1] == ["--"]:
         words = words[1:]
+    elif words[0].startswith("-"):  # an option word (`--$X/bin/activate`): sources only when $X splits
+        return False
     return len(words) == 1 and bool(_VENV_ACTIVATE_RE.search(words[0]))
 
 # trash (trash-put, gio trash) of a whole tree: /, ~, ., .., *, an empty word, $HOME, $PWD, $(pwd) or the home
@@ -5019,6 +5153,12 @@ def _check_window(_wi, w):
             argv0, o = basename(rest[i]), i + 1
 
     rest = rest[o:]
+    if argv0 in _SHELL_PUSH_ALIASES:  # GH #750: after the wrappers, so `sudo gp -f` reads as a git push too
+        argv0, rest = "git", _SHELL_PUSH_ALIASES[argv0] + rest
+    elif argv0 == "grename" and rest:  # its second push takes NEW as one word: `grename x -f` force-pushes
+        _WDEPTH[len(windows)] = _cur_depth
+        windows.append(["git", "push", "--set-upstream", "origin"] + rest[1:2])
+        argv0, rest = "git", ["push", "origin", ":" + rest[0]]
 
     _unwrap_shell(argv0.replace(PH, ""), rest)  # `s$(true)h -c` is still sh
     _ib = _interp_body(argv0.replace(PH, ""), rest)  # GH #608
@@ -5635,7 +5775,7 @@ _run_words()
 # owned by a rule id of its own (so it can ship shadow, GH #337): "ifs-split" reads $IFS / ${IFS} /
 # ${IFS:..} as a blank and drops the empty positionals ($9, $@) used as word ends; "var-verb" reads back
 # `$NAME` / `${NAME}` where the command assigns NAME a plain value (`X=rm; $X -rf x`; the last value,
-# then the first). Views run only after the command passed every check; the shadow var-verb view only
+# then the first). Views run only after the command passed every check; the var-verb view (rm's rules enforce, GH #767) only
 # up to _VIEW_LEN_CAP: each one re-reads the whole text, and a timed-out hook allows.
 # ponytail: one substitution per view, not every combination of values or of the two readings.
 _IFS_RE = re.compile(r"\$(?:\{IFS(?:[:%#/^,][^}]{0,40})?\}|IFS(?![A-Za-z0-9_]))")
@@ -5645,7 +5785,7 @@ _VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
 # ended by a blank or a separator. Read from the raw text (bash -c / eval bodies count too), not from the
 # tokens: they split `RW=$R/x` into "RW=", "$", "R/x", which reads as RW assigned nothing.
 _PLAIN_ASSIGN_RE = re.compile(
-    r"(?<![\w$])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
+    r"(?<![\w$-])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
 _VIEW_LEN_CAP = 20_000
 
 # GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
@@ -5696,6 +5836,39 @@ def _literal_subst_words(e):
     words = (e.group(1) or e.group(2) or "").split()
     return " ".join(words[1:] if words[:1] == ["--"] else words)
 
+_SPLIT_ASSIGN_RE = re.compile(r"[A-Za-z_]\w*(?:\[[^\]\s]*\])?\+?=")
+_SPLIT_ASSIGN_LEAD = frozenset({"export", "local", "declare", "typeset", "readonly", "then", "do", "else", "elif",
+                                "if", "while", "until", "!", "{", "time"})
+
+def _in_assignment_value(text, k, bounds, seps, memo):
+    # True when offset k sits in the value of a NAME= / NAME+= / NAME[i]= word in assignment position (statement start,
+    # after other assignments, a declaration builtin and its options, or a keyword): bash does not split an
+    # assignment's value (GH #767 review 2: `CMD=$(echo 'sudo rm -rf x')` stores text). `env X=$(..)` and
+    # `rm --opt=$(..)` are arguments, and do split. bounds (unquoted blanks, separators and line continuations) and
+    # seps (the separators) are made once per text, so words are read as the shell splits them (`X='a b' CMD=..`);
+    # memo keeps, per statement, how far its words were read and whether all were assignment-position words, so a
+    # long chain of glued `NAME=`...`` words is read once, not once per word.
+    n = bisect.bisect_left(bounds, k)
+    i = bounds[n - 1] + 1 if n else 0
+    w = ("word", i)  # the NAME= test once per word: a long \w run before many glued substs (review 7) is read once
+    if w not in memo:
+        memo[w] = bool(_SPLIT_ASSIGN_RE.match(text, i))
+    if not memo[w]:
+        return False
+    m = bisect.bisect_left(seps, i)
+    j = seps[m - 1] + 1 if m else 0
+    a, ok = memo.get(j, (bisect.bisect_left(bounds, j), True))
+    start = bounds[a - 1] + 1 if a and bounds[a - 1] >= j else j
+    while ok and a < n:
+        t = text[start:bounds[a]]
+        if t and t != "\\" and not (t in _SPLIT_ASSIGN_LEAD or _SPLIT_ASSIGN_RE.match(t)
+                                     or (t[:1] == "-" and t[1:].isalnum())):
+            ok = False
+        start = bounds[a] + 1
+        a += 1
+    memo[j] = (a, ok)
+    return ok
+
 def _literal_subst_split(text):
     # GH #718: the shell splits an unquoted $(...)'s output into words, so `rm $(echo ' -rf') b` is rm -rf b, which
     # the plain rewrite (echo's arguments as written) does not show. This copy is only for a substitution that starts
@@ -5715,10 +5888,66 @@ def _literal_subst_split(text):
         return " ".join(re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w) for w in out)
     return _LITERAL_SUBST_RE.sub(sub, text)
 
+def _split_bounds(text, mask):
+    # The offsets of the unquoted blanks and separators outside $(...) and `...` (GH #767 review 5: `TS=$(date +%s)`
+    # is one word, and its ( starts no statement), and of each line continuation (a blank); seps are the separators.
+    bounds, seps, depth, tick, i, n = [], [], 0, False, 0, len(text)
+    while i < n:
+        c = text[i]
+        if mask[i]:
+            if c == "\n" and i and text[i - 1] == "\\" and not depth and not tick:
+                bounds.append(i)
+        elif c == "`":
+            tick = not tick
+        elif c == "(" and i and text[i - 1] == "$":  # _quote_mask leaves a "$(" in "..." unquoted from its (
+            depth += 1
+        elif c == ")" and depth:
+            depth -= 1
+        elif not depth and not tick and c in " \t\n;&|(":
+            bounds.append(i)
+            if c not in " \t":
+                seps.append(i)
+        i += 1
+    return bounds, seps
+
+def _literal_subst_glued(text):
+    # GH #767: one more copy for a substitution glued to the word before it (`x$(..)`, `\ $(..)`, `'a'$(..)`): bash
+    # glues the output's first word to that word and splits off the rest (`rm \ $(echo 'x -rf') b` is rm ' x' -rf b;
+    # a leading blank makes that first word empty). A backslash-newline before it is a line continuation, and an
+    # assignment's value is not split. Its own copy, so _literal_subst_split's copy, and every deny it gives, stays
+    # as it was (review 4: splitting a glued `Y=..` in that copy hid the rm after it).
+    mask = _quote_mask(text)
+    bounds, seps = _split_bounds(text, mask)
+    memo = {}
+    esc = lambda w: re.sub(r"""([^\w./=:@%+,-])""", r"\\\1", w)
+    def sub(e):
+        k = e.start()
+        if mask[k] or not k:
+            return e.group(0)
+        j = k - 1
+        while j > 0 and text[j - 1] == "\\":  # the backslashes before that char: an odd run escapes it
+            j -= 1
+        if text[k - 1] in " \t\n;&|(" and not ((k - 1 - j) % 2 and text[k - 1] != "\n"):
+            return e.group(0)  # not glued: _literal_subst_split's copy reads it
+        raw = e.group(1) or e.group(2) or ""
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            return e.group(0)
+        words = words[1:] if words[:1] == ["--"] else words
+        if words and "%" in words[0] and "printf" in e.group(0)[:e.group(0).find(raw) if raw else None]:
+            words = words[1:]  # printf's format is not output (review 6: `-b rel-$(printf '%s' 2026)` is one word)
+        out = " ".join(words)
+        if not re.search(r"\s", out) or _in_assignment_value(text, k, bounds, seps, memo):
+            return e.group(0)
+        first, rest = ("", out) if out[:1].isspace() else (out.split(None, 1) + [""])[:2]
+        return esc(first) + " " + " ".join(esc(w) for w in rest.split())
+    return _LITERAL_SUBST_RE.sub(sub, text)
+
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
 
-def _subst_literals(text):
+def _subst_literals(text, glued=True):
     # The text with each literal substitution replaced by what it prints: one copy per quoted mode (see below).
     out = []
     if "$" in text or "`" in text or "<(" in text:
@@ -5732,9 +5961,33 @@ def _subst_literals(text):
             if v != text and v not in out:
                 out.append(v)
         if ("'" in text or '"' in text or "\\" in text) and _LITERAL_SUBST_RE.search(text):
-            v = _literal_subst_split(text)
-            if v != text and v not in out:
-                out.append(v)
+            # GH #767 review 5: brace-view's copies (glued=False) run before the subst-literal views and share their
+            # positional-fill budget, so the glued copy is read only here, after develop's copies.
+            for v in (_literal_subst_split(text),) + ((_literal_subst_glued(text),) if glued else ()):
+                if v != text and v not in out:
+                    out.append(v)
+    return out
+
+def _literal_dollars(text):
+    # The offsets of each $ the shell keeps as text: inside '...' (outside "...") or after an odd run of
+    # backslashes. var-verb puts no value back there (GH #767 review 6: `rm '$F' x` removes a file named $F).
+    out, sq, dq, i, n = set(), False, False, 0, len(text)
+    while i < n:
+        c = text[i]
+        if sq:
+            if c == "'":
+                sq = False
+            elif c == "$":
+                out.add(i)
+        elif c == "\\":
+            if text[i + 1:i + 2] == "$":
+                out.add(i + 1)
+            i += 1
+        elif c == "'" and not dq:
+            sq = True
+        elif c == '"':
+            dq = not dq
+        i += 1
     return out
 
 def _views():
@@ -5748,11 +6001,11 @@ def _views():
     if _BRACEX_TEXT is not None:
         out.append(("brace-view", _BRACEX_TEXT))
         ifs = _ifs_split(_BRACEX_TEXT)
-        for v in _subst_literals(ifs) or [ifs]:
+        for v in _subst_literals(ifs, glued=False) or [ifs]:
             if v != _BRACEX_TEXT and ("brace-view", v) not in out:
                 out.append(("brace-view", v))
     # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
-    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the shadow var-verb view keeps the lower cap.
+    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the var-verb view keeps the lower cap (GH #787 tracks raising it now rm enforces there).
     v = _ifs_split(cmd)
     if v != cmd:
         out.append(("ifs-split", v))
@@ -5767,10 +6020,11 @@ def _views():
     vals = {}
     for m in _PLAIN_ASSIGN_RE.finditer(cmd):
         vals.setdefault(m.group(1), []).append(next(g for g in m.groups()[1:] if g is not None))
+    lit = _literal_dollars(cmd) if vals else ()
     for pick in (-1, 0):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
-            return vals[name][pick] if name in vals else m.group(0)
+            return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
         v = _VAR_REF_RE.sub(_sub, cmd) if vals else cmd
         if v != cmd and ("var-verb", v) not in out:
             out.append(("var-verb", v))
@@ -5881,4 +6135,5 @@ for _VIEW[0], _text in _views():
         if _VIEW[0] in _VIEW_ENFORCED:
             _enforced_pass(_text)
 
+_disarm()
 sys.exit(0)

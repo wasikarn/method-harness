@@ -3,7 +3,8 @@
 set -uo pipefail
 
 # Fast path: skip the python3 cold-start when no deny can match. Every deny in
-# irrecoverable.py dispatches on an argv0 in the case list below (trash covers trash-put and gio trash); wrappers never
+# irrecoverable.py dispatches on an argv0 in the case list below (trash covers trash-put and gio trash; gp and ggf
+# cover the shell push aliases, GH #750); wrappers never
 # hide it. Quote/backslash stripping exposes r""m -> rm, the whitespace-collapsed
 # variant a backslash-newline split argv0, and any bare $ or backtick may be a
 # zero-width splice (gi$(true)t) so it defers to python on its own. False
@@ -39,16 +40,45 @@ fi
 # GH #592: `.` is source's other spelling. A "." word in command position (after a blank, the JSON key's
 # ":", a separator or a case arm's ")"), ended by a blank or a glued redirection (.<in x.sh, .&>f x.sh),
 # defers to python; a "." inside a word (done. next, ./x.sh) stays on the fast path.
+# GH #750: so does a "g" word there, glued redirection included, oh-my-zsh's `alias g='git'` (ls -g, a g inside
+# a word stay fast).
 case "$_norm" in
   *[[:space:]:\;\&\|\(\)\{]'.'[[:space:]\<\>\&]*) _has_subst=1 ;;
+  *[[:space:]:\;\&\|\(\)\{]g[[:space:]\<\>\&]*) _has_subst=1 ;;
 esac
 case "$_norm$_norm_nows" in
-  *rm*|*find*|*git*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
+  *rm*|*find*|*git*|*gp*|*ggf*|*grename*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
   *) [ "$_has_subst" -eq 1 ] || exit 0 ;;                          # no destructive token possible -> allow (unless obfuscated)
 esac
 
 # Portability guard (#93): announced fail-open without python3 (rc=127 would otherwise block every git/rm).
+# GH #771: except a recursive rm or a find delete, which deny on this text check. It over-denies
+# (git rm -r, echo rm -rf), the safe direction on a machine that cannot parse.
 if ! command -v python3 >/dev/null 2>&1; then
+  # --r[a-z]*: rm's only --r option is --recursive, and getopt_long takes any prefix of it. Any rm word
+  # between -exec and its ; or + counts (command rm, env rm, sudo -u x rm, /bin/rm).
+  _rm_re='(^|[^[:alnum:]_.-])rm[[:space:]]([^;&|]*[[:space:]])?-(-r[[:alpha:]]*|[[:alpha:]]*[rR])'
+  _find_re='(^|[^[:alnum:]_.-])find[[:space:]][^;&|]*(-delete|-(exec|execdir|ok|okdir)[[:space:]]([^;+]*[[:space:]/])?rm([[:space:]]|$))'
+  # A quoted ; or | ('a|b') would end the [^;&|]* match once quotes are stripped, so also match copies
+  # with each quoted span blanked, in both orders: an apostrophe inside "it's" pairs with a later ' when
+  # single quotes go first, and a " inside 'it"s' pairs with a later " when double quotes go first.
+  # A quoted flag ('-rf') still matches on $_norm. Any copy that matches denies.
+  _sq="'"
+  _blank_sq="s/${_sq}[^${_sq}]*${_sq}/_/g"
+  _blank_dq='s/\\"[^"]*\\"/_/g'
+  _deny=0
+  for _order in "$_blank_sq; $_blank_dq" "$_blank_dq; $_blank_sq" ''; do
+    if [ -n "$_order" ]; then
+      _q="$(printf '%s' "$_input" | sed "$_order; s/\\\\[nt]/ /g" | tr -s '[:space:]' ' ' | tr -d "\"\\\\")"
+    else
+      _q="$_norm"
+    fi
+    if [[ "$_q" =~ $_rm_re ]] || [[ "$_q" =~ $_find_re ]]; then _deny=1; fi
+  done
+  if [ "$_deny" -eq 1 ]; then
+    echo "[mh:gate] BLOCKED: python3 not found and this command names a recursive rm or a find delete; use trash instead (install python3 to restore the full gate)" >&2
+    exit 2
+  fi
   echo "[mh:gate] python3 not found — irrecoverable-pattern gate cannot run; allowing (install python3 to restore deny coverage)" >&2
   exit 0
 fi
