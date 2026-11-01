@@ -2939,22 +2939,29 @@ def _runs_inline_interp(seg):
             return True
     return False
 
-_INTERP_INLINE_SHELL = [False]  # GH #801: a python -c / node -e|-p stage pipes into a stdin-reading shell
+def _inline_interp_to_shell(c):
+    # GH #801: some pipeline of c runs an inline python/node script stage and, after it, a shell reading stdin.
+    # Read on the ANSI-C-decoded text: _pieces does not model \' inside $'..', so a quoted probe string
+    # ($'python3 -c \'x\' | bash') would split at its own pipes.
+    c = _normalize_ansi_c_quotes(c) if "$'" in c else c
+    for s, e in _pieces(c):
+        inline = False  # a stage before this one runs an inline python/node script
+        for a, b in _pieces(c[s:e], pipe=True):
+            g = c[s + a:s + b]
+            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g):
+                return True
+            inline = inline or _runs_inline_interp(g)
+    return False
 
 def _shell_stdin_bodies(c):
     # GH #567: the text a stdin-reading shell gets from a here-string in its own segment or from an echo/printf
     # right upstream of it. printf's format is read with \n as a newline; its other escapes stay literal.
-    # GH #801: and whether an inline python/node script stage comes before it in its pipeline (_INTERP_INLINE_SHELL).
     out = []
     for s, e in _pieces(c):
         segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
-        inline = False  # a stage before this one runs an inline python/node script
         for k, g in enumerate(segs):
             if not _reads_stdin_shell(g):
-                inline = inline or _runs_inline_interp(g)
                 continue
-            if inline:
-                _INTERP_INLINE_SHELL[0] = True
             if "<<<" in g:
                 w = _split_words(_decode_quotes(g.split("<<<", 1)[1]))
                 if w:
@@ -2974,7 +2981,7 @@ def _shell_stdin_bodies(c):
     return out
 
 _SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
-if _INTERP_INLINE_SHELL[0]:
+if any(sh in cmd for sh in _STDIN_SHELLS) and _PYNODE_NAME_RE.search(cmd.translate(_UNQUOTE)) and _inline_interp_to_shell(cmd):
     deny("a python -c / node -e script pipes its output into a shell, which runs commands the gate cannot see - "
          "write the commands out, or save the output to a file and read it first", rule="interp-pipe-shell")
 
@@ -3325,9 +3332,10 @@ _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)
 _PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
                  r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)\1)\w+\1\s*[,)])"
                  r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']"
-                 # GH #801: read at once as a plain attribute (__import__('os').path) it is no call built at run time;
-                 # a process API named that way (.system, .popen, subprocess) is matched by its own name
-                 r"(?!\s*\)\s*\.\s*[A-Za-z])")
+                 # GH #801: read at once as an attribute that names no process API (__import__('os').path) it is no
+                 # call built at run time; .system, .execvp etc. still count, stored or called (f = ....system)
+                 r"(?!\s*\)\s*\.\s*(?!(?:system|popen\d?|spawn\w*|exec\w*|posix_spawnp?|fork\w*|run|call|check_\w+|"
+                 r"Popen|getoutput|getstatusoutput|create_subprocess_\w+)\b)[A-Za-z])")
 _INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|check_call|Popen|getoutput|getstatusoutput|"
                              r"exec[lv]?[pe]{0,2}|execSync|execFileSync|execFile|spawn\w*|child_process|qx|pty)\b|%x|`"
                              r"|\b(?:create_subprocess_(?:shell|exec)|posix_spawnp?)\b" + _PROC_BY_NAME)

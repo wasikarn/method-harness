@@ -4078,13 +4078,15 @@ for _c in $'pyth\\on3 - <<\'EOF\' | bash\nprint("ls")\nEOF' $'no\\de - <<\'EOF\'
   $'python3 -c \'print("ls")\' | bash' $'node -e \'console.log("ls")\' | sh' $'node -p \'"ls"\' | bash' \
   $'python3 -uc \'print("ls")\' | sh' $'cat f | python3 -c \'import sys; print(sys.stdin.read())\' | bash' \
   $'python3 -c \'print(1)\' | tee log | sudo bash -s' $'node --eval=\'console.log(1)\' | sh' \
-  $'pyth\\on3 -c \'print(1)\' | bash' $'git status; python3 -c "print(1)" 2>/dev/null | dash'; do
+  $'pyth\\on3 -c \'print(1)\' | bash' $'git status; python3 -c "print(1)" 2>/dev/null | dash' \
+  $'python3 -c $\'print(\\\'ls\\\')\' | bash'; do
   test_deny  "$IRRECOVERABLE" "GH #801: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 for _c in $'pyth\\on3 - <<\'EOF\' | grep x\nprint(1)\nEOF' $'no\\de - <<\'EOF\'\nconsole.log("sh")\nEOF' \
   $'python3 -c \'print(1)\' | grep 1' $'python3 -c \'print(1)\' | bash x.sh' $'python3 -c \'print(1)\' | sh -c cat' \
   $'node -e \'console.log("sh")\' | sort' $'python3 -c \'print(1)\'; echo ls | grep sh' \
-  $'bash -c \'echo hi\' | python3 -c \'import sys; print(sys.stdin.read())\''; do
+  $'bash -c \'echo hi\' | python3 -c \'import sys; print(sys.stdin.read())\'' \
+  $'for c in $\'python3 -W ignore -c \\\'print(1)\\\' | bash\' $\'cat f | python3 -c 1 | bash\' $\'git status; python3 -c "print(1)" 2>/dev/null | dash\'; do ./probe "$c"; done'; do
   test_allow "$IRRECOVERABLE" "GH #801 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 _rows801() { # <journal>: would_ask rows for opaque-var-verb
@@ -4106,7 +4108,10 @@ for _c in $'python3 -c "getattr(__import__(\'os\'), \'sys\' + \'tem\')(\'git res
   $'python3 -c "__import__(\'os\').system(\'git reset --hard\')"' \
   $'python3 -c "__import__(\'subprocess\').run(\'git reset --hard\', shell=True)"' \
   $'python3 - <<\'EOF\'\nm = __import__("os")\ngetattr(m, "sys" + "tem")("git reset --hard")\nEOF' \
-  $'python3 - <<\'EOF\'\n__import__("os").system("git reset --hard")\nEOF'; do
+  $'python3 - <<\'EOF\'\n__import__("os").system("git reset --hard")\nEOF' \
+  $'python3 - <<\'EOF\'\nf = __import__(\'os\').system\nf(\'git reset --hard\')\nEOF' \
+  $'python3 - <<\'EOF\'\nrun = __import__(\'os\').execvp\nrun(\'git\', [\'git\', \'reset\', \'--hard\'])\nEOF' \
+  $'python3 - <<\'EOF\'\np = __import__(\'os\').popen\np(\'git push --force origin main\')\nEOF'; do
   test_deny  "$IRRECOVERABLE" "GH #801 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 gates_summary
