@@ -3716,6 +3716,124 @@ else echo "  ❌ deadline/onFailure contract broken" >&2; fail=$((fail + 1)); fi
 # The PATH-stub and gate-copy dirs above (GH #729: they leaked on every run).
 tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 
+# GH #741: a python/node stage that reads its script from a heredoc and pipes its stdout into a shell reading
+# stdin hands that shell code the gate never sees (print("git reset --hard") | bash), so it denies whatever the
+# body prints. A pipe into anything else, or a heredoc python only reads, keeps the GH #681 reading, and so does
+# one inside $( or a backtick (x=$(python3 - <<'EOF' | sh): its re-read timed out (GH #741 review 2), so it was dropped.
+# The rule enforces (operator, 2026-11-01, after the attack review): each row denies.
+_rows741() { # <journal>: would_deny rows for interp-pipe-shell
+  python3 -c 'import json,sys; print(sum(json.loads(l).get("decision") == "would_deny" and json.loads(l).get("rule") == "interp-pipe-shell" for l in open(sys.argv[1])))' "$1"
+}
+_would741() { # <cmd>: interp-pipe-shell enforces -> deny
+  test_deny "$IRRECOVERABLE" "GH #741 interpreter heredoc piped to a shell: ${1//$'\n'/ | }" "$(bash_payload "$1")"
+}
+for _c in $'python3 - <<\'EOF\' | bash\nprint("git reset --hard")\nEOF' \
+  $'python3 - <<\'EOF\' | sh\nprint("ls")\nEOF' $'python3 <<EOF | dash\nprint("ls")\nEOF' \
+  $'node - <<\'EOF\' | zsh\nconsole.log("ls")\nEOF' $'nodejs <<\'EOF\' | ksh\nconsole.log("ls")\nEOF' \
+  $'cat <<\'EOF\' | python3 - | bash\nprint("ls")\nEOF' $'python3 - <<\'EOF\' | tee out.log | bash\nprint("ls")\nEOF' \
+  $'python3 -u - <<\'EOF\' | sudo bash -s\nprint("ls")\nEOF' $'git status; python3 - <<\'EOF\' 2>/dev/null | sh\nprint("ls")\nEOF'; do
+  _would741 "$_c"
+done
+for _c in $'python3 - <<\'EOF\'\nprint("bash")\nEOF' $'python3 - <<\'EOF\' | grep bash\nprint("bash")\nEOF' \
+  $'node - <<\'EOF\' | sort\nconsole.log("sh")\nEOF' $'python3 - <<\'EOF\' | bash x.sh\nprint("ls")\nEOF' \
+  $'cat <<\'EOF\' | bash\nls\nEOF' $'python3 - <<\'EOF\'\nprint(1)\nEOF\necho ok | sh -c cat' \
+  $'x=$(python3 - <<\'EOF\' | sh\nprint("ls")\nEOF\n)' $'echo "`node - <<\'EOF\' | bash\nconsole.log(1)\nEOF\n`"'; do
+  : > "$_JOURNAL_TMP/a741.jsonl"
+  test_allow "$IRRECOVERABLE" "GH #741 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")" "MH_GATE_JOURNAL_PATH=$_JOURNAL_TMP/a741.jsonl"
+  if [[ "$(_rows741 "$_JOURNAL_TMP/a741.jsonl")" == "0" ]]; then
+    echo "  ✅ GH #741 control journals no would_deny: ${_c//$'\n'/ | }"; pass=$((pass + 1))
+  else
+    echo "  ❌ GH #741 control journaled a would_deny row: ${_c//$'\n'/ | }" >&2; fail=$((fail + 1))
+  fi
+done
+# GH #741: the process-API scan (GH #608 -c bodies, GH #681 heredoc scripts) also reads asyncio's
+# create_subprocess_shell/exec, the argv-list exec/spawn forms whose first literal is the path (execvp("git",
+# ["git", ...])), and getattr/importlib.import_module/__import__ next to a process-module name.
+for _p in 'import asyncio; asyncio.run(asyncio.create_subprocess_shell("git reset --hard"))' \
+  'import asyncio; asyncio.run(asyncio.create_subprocess_exec("git", "reset", "--hard"))' \
+  'import os; os.execvp("git", ["git", "reset", "--hard"])' 'import os; os.execv("/usr/bin/git", ["git", "reset", "--hard"])' \
+  'import os; os.spawnlp(os.P_WAIT, "git", "git", "reset", "--hard")' \
+  'import os; os.posix_spawnp("git", ["git", "reset", "--hard"], os.environ)' \
+  'import os; getattr(os, "sys" + "tem")("git reset --hard")' \
+  'import importlib; importlib.import_module("os").__dict__["sys" + "tem"]("git reset --hard")' \
+  '__import__("os").__dict__["sys" + "tem"]("git reset --hard")'; do
+  test_deny "$IRRECOVERABLE" "GH #741 python -c: $_p" "$(bash_payload "python3 -c '$_p'")"
+  test_deny "$IRRECOVERABLE" "GH #741 python heredoc: $_p" "$(bash_payload "python3 - <<'EOF'"$'\n'"${_p//; /$'\n'}"$'\nEOF')"
+done
+for _p in 'import asyncio; print("create_subprocess_shell is async")' 'import os; os.execvp("ls", ["ls", "-l"])' \
+  'import subprocess; subprocess.run(["echo", "rm", "-rf", "build"])' 'import os; print(getattr(os, "sep"), "done")' \
+  'import importlib; importlib.import_module("json"); print("git reset --hard")'; do
+  test_allow "$IRRECOVERABLE" "GH #741 control python -c: $_p" "$(bash_payload "python3 -c '$_p'")"
+  test_allow "$IRRECOVERABLE" "GH #741 control python heredoc: $_p" "$(bash_payload "python3 - <<'EOF'"$'\n'"${_p//; /$'\n'}"$'\nEOF')"
+done
+# GH #741: trash-whole-tree also reads every dotfile of home (~/.*, $HOME/.*). A quoted braced home glob ("${HOME}/"*,
+# "${HOME}/."*) keeps develop's reading: its widened raw regex failed two reviews on time (GH #741 reviews 1 and 3).
+for _c in 'trash ~/.*' 'trash $HOME/.*' 'trash "$HOME"/.*' 'trash ./.*' 'gio trash ~/.*'; do
+  test_deny "$IRRECOVERABLE" "GH #741 trash whole tree: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 'trash "${HOME}/"*.log' 'trash ./.cache' \
+  'trash "${HOME}/"*' 'trash "${HOME}/."*'; do
+  test_allow "$IRRECOVERABLE" "GH #741 trash control: $_c" "$(bash_payload "$_c")"
+done
+# GH #741 review: a full-path argv0 in an exec argv list, and a getattr on a process
+# module whose name is one plain literal (the API it names is read on its own: getattr(os, "system") still is).
+_c="python3 -c 'import os; os.execv(\"/usr/bin/git\", [\"/usr/bin/git\", \"reset\", \"--hard\"])'"
+test_deny "$IRRECOVERABLE" "GH #741 review: $_c" "$(bash_payload "$_c")"
+for _c in "python3 -c 'import os; print(getattr(os, \"sep\")); print(\"rm -rf build\")'" \
+  $'python3 - <<\'EOF\'\nimport os\nprint(getattr(os.path, "sep"))\nprint("rm -rf node_modules is what the docs say")\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #741 review control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+test_deny "$IRRECOVERABLE" "GH #741 review: getattr(os, \"system\") still reads its literals" \
+  "$(bash_payload "python3 -c 'import os; getattr(os, \"system\")(\"git reset --hard\")'")"
+# GH #741 review 3: in a heredoc script (GH #681: read only on a call) the asyncio and posix_spawn names count only
+# when called; a comment or string naming them is prose.
+for _c in $'python3 - <<\'EOF\'\n# docs: posix_spawn is faster\nprint("rm -rf build")\nEOF' \
+  $'python3 - <<\'EOF\'\ns = \'use create_subprocess_exec\'\nprint(\'git reset --hard\')\nEOF'; do
+  test_allow "$IRRECOVERABLE" "GH #741 review 3 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# GH #741 review: each new scan in bounded time (repo-gotchas: time every new regex and scan piece). An unquoted
+# ${HOME} before a long run of slashes (the home regex), and 12000 heredoc openers before 37000 pipe stages (the
+# interpreter-to-shell walk, unquoted delimiters included), the target before the openers (the body lines after
+# them are read as before, GH #681).
+_timed_case 'GH #741 review: ${HOME} before 30000 slashes, then git reset --hard, denies in bounded time' 2 \
+  "chmod 777 \${X} \${HOME}$(printf '/%.0s' $(seq 30000))x; git reset --hard"
+_timed_case 'GH #741 review: trash ${HOME} before 30000 slashes, then git reset --hard, denies in bounded time' 2 \
+  "trash \$(true) \${HOME}$(printf '/%.0s' $(seq 30000))x; git reset --hard"
+_timed_case 'GH #741 review: git reset --hard before 12000 node heredoc openers and 37000 pipe stages denies in bounded time' 2 \
+  "git reset --hard; node x <<A|$(printf '<<A|%.0s' $(seq 12000))$(printf 'x|%.0s' $(seq 37000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 12001))echo ok"
+_timed_case "GH #741 review: git reset --hard before 9000 quoted node heredoc openers and 30000 pipe stages denies in bounded time" 2 \
+  "git reset --hard; node x <<'A'|$(printf "<<'A'|%.0s" $(seq 9000))$(printf 'x|%.0s' $(seq 30000))cat"$'\n'"$(printf 'A\n%.0s' $(seq 9001))echo ok"
+# GH #741 review 3: trash's placeholder words re-read its raw arguments (quadratic since develop); a widened
+# braced-home regex there pushed 48 KB past the hook timeout, so it was dropped. A guard against a slower scan, not a
+# red row: sized well under the gate's own 4 s deadline (GH #771, which asks on expiry) on develop's reading too,
+# since 1500 placeholders already reach that deadline on develop under gauntlet load.
+_timed_case 'GH #741 review 3: trash with 600 placeholders and 430 "${HOME}/" words, then git reset --hard, denies in bounded time' 2 \
+  "trash $(printf '"$(true)" %.0s' $(seq 600))$(printf '"${HOME}/"/x %.0s' $(seq 430))"$'\n'"git reset --hard"
+# GH #741 review 4: a substitution word ending /.* ($(x)/.*) is not a bare placeholder (develop's reading), so it never
+# enters that per-placeholder re-read: 3100 of them took 6 s once the /.* strip made each one bare.
+_timed_case 'GH #741 review 4: trash with 3100 $(x)/.* words, then git reset --hard, denies in bounded time' 2 \
+  "trash $(printf '$(x)/.* %.0s' $(seq 3100)); git reset --hard"
+_timed_case 'GH #741 review 4: trash with 3100 `x`/.* words, then git reset --hard, denies in bounded time' 2 \
+  "trash $(printf '`x`/.* %.0s' $(seq 3100)); git reset --hard"
+# GH #741 review 5: the python/node word test ran once per heredoc opener over the whole line; a cat line of 18000
+# quoted openers took 5.4 s (develop 3 s). It now runs once per line.
+_timed_case "GH #741 review 5: git reset --hard before a cat line of 18000 quoted heredoc openers denies in bounded time" 2 \
+  "git reset --hard"$'\n'"cat $(printf "<<'o' %.0s" $(seq 18000))"$'\n'"$(printf 'o\n%.0s' $(seq 18000))"
+# GH #741 review 6: the shell check split every pipe stage of a python/node heredoc line (two shlex.split calls each),
+# for unquoted delimiters too, about 1 s per 60000 stages; past the 4 s deadline (GH #771) with $( frames added. A
+# stage that names no shell or python/node (quotes and backslashes removed) is no longer split, and a line with no
+# shell word is not walked. Guards, not red rows: the old head took about 2.3 s here, under the 4 s bound.
+_timed_case 'GH #741 review 6: git reset --hard before an unquoted python heredoc of 70000 pipe stages denies in bounded time' 2 \
+  "git reset --hard"$'\n'"python3 - <<Z$(printf '|x%.0s' $(seq 70000))"$'\n'"Z"
+_timed_case 'GH #741 review 6: an unquoted node heredoc of 70000 pipe stages is allowed in bounded time' 0 \
+  "node - <<A$(printf '|x%.0s' $(seq 70000))"$'\n'"A"
+# GH #741 review 2: heredocs nested in ( frames, each piped through many stages, are read in bounded time (a re-read
+# from each frame's ( parsed every stage once per frame: 300 frames of 30 stages took 8-9 s, past the hook timeout).
+_timed_case 'GH #741 review 2: git reset --hard before 300 python heredoc frames of 30 pipe stages denies in bounded time' 2 \
+  "$(python3 -c "n = 300; print('git reset --hard\\n' + ''.join('(python3 - <<A%d' % i + ' | x' * 30 for i in range(n)) + ')' * n + ''.join('\\nx\\nA%d' % i for i in range(n)))")"
+_timed_case 'GH #741 review 2: 1000 python heredoc frames piped into cat are allowed in bounded time' 0 \
+  "$(python3 -c "n = 1000; print(''.join('(python3 - <<A%d | cat' % i for i in range(n)) + ')' * n + ''.join('\\nx\\nA%d' % i for i in range(n)))")"
+
 # GH #718: a view no longer stops on the brace-token ambiguity the main reading already checked, and a literal
 # substitution's unquoted output is split into words as the shell does.
 test_deny  "$IRRECOVERABLE" 'GH #718: echo {a,b}; git${IFS}reset --hard' "$(bash_payload 'echo {a,b}; git${IFS}reset --hard')"
