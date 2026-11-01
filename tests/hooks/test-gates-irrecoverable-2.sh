@@ -4086,7 +4086,8 @@ for _c in $'pyth\\on3 - <<\'EOF\' | grep x\nprint(1)\nEOF' $'no\\de - <<\'EOF\'\
   $'python3 -c \'print(1)\' | grep 1' $'python3 -c \'print(1)\' | bash x.sh' $'python3 -c \'print(1)\' | sh -c cat' \
   $'node -e \'console.log("sh")\' | sort' $'python3 -c \'print(1)\'; echo ls | grep sh' \
   $'bash -c \'echo hi\' | python3 -c \'import sys; print(sys.stdin.read())\'' \
-  $'for c in $\'python3 -W ignore -c \\\'print(1)\\\' | bash\' $\'cat f | python3 -c 1 | bash\' $\'git status; python3 -c "print(1)" 2>/dev/null | dash\'; do ./probe "$c"; done'; do
+  $'for c in $\'python3 -W ignore -c \\\'print(1)\\\' | bash\' $\'cat f | python3 -c 1 | bash\' $\'git status; python3 -c "print(1)" 2>/dev/null | dash\'; do ./probe "$c"; done' \
+  $'cat > x.sh <<\'EOF\'\npython3 -c \'print(1)\' | bash\nEOF' $'cat > notes.md <<\'EOF\'\nnode -e 1 | sh\nEOF'; do
   test_allow "$IRRECOVERABLE" "GH #801 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 _rows801() { # <journal>: would_ask rows for opaque-var-verb

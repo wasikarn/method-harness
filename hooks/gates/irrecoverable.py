@@ -336,6 +336,7 @@ _KEPT_BODY_ENDS = []
 _INTERP_HEREDOC_BODIES = []  # GH #681: quoted bodies python/node reads as its script, scanned like a -c body
 _HEREDOC_UNMATCHED = [False]  # the top-level strip, unsure, never found a delimiter (see _KEPT_MARK)
 _INTERP_PIPED_SHELL = [False]  # GH #741: the top-level strip met a python/node heredoc script piped into a shell
+_CMD_LINES = []  # GH #801: the lines the top-level heredoc strip reads as command lines (no heredoc body line)
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -804,6 +805,8 @@ def _strip_heredocs(cmd, ends=None):
     while i < len(lines):
         line = lines[i]
         out.append(line)
+        if ends is not None:
+            _CMD_LINES.append(line)
         i += 1
         ms = list(_HEREDOC_OPEN_RE.finditer(line))
         if sure:
@@ -2981,7 +2984,11 @@ def _shell_stdin_bodies(c):
     return out
 
 _SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
-if any(sh in cmd for sh in _STDIN_SHELLS) and _PYNODE_NAME_RE.search(cmd.translate(_UNQUOTE)) and _inline_interp_to_shell(cmd):
+# Read on the command lines only: a heredoc body is the reader's text, even one kept as code (cat > x.sh <<'EOF'
+# keeps its body, x.sh naming sh), and a script it holds that pipes python -c into bash runs nothing here.
+_CMD_TEXT = "\n".join(_CMD_LINES) if _CMD_LINES else cmd
+if any(sh in _CMD_TEXT for sh in _STDIN_SHELLS) and _PYNODE_NAME_RE.search(_CMD_TEXT.translate(_UNQUOTE)) and (
+        _inline_interp_to_shell(_CMD_TEXT)):
     deny("a python -c / node -e script pipes its output into a shell, which runs commands the gate cannot see - "
          "write the commands out, or save the output to a file and read it first", rule="interp-pipe-shell")
 
