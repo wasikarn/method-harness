@@ -312,11 +312,11 @@ _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 
 # The time a gate run has before it stops denying, into _HOOK_CEIL: the lower of irrecoverable.sh's hook
 # timeout in hooks/hooks.json (past it the hook blocks) and the gate's own deadline (GH #771: past it the
-# gate asks). On a failure it counts the row failed and returns 1, so it is called bare, never in $(...),
-# which would drop the count: `_hook_ceiling "$name" || return`.
+# gate asks), and the hook timeout alone into _HOOK_TIMEOUT. On a failure it counts the row failed and
+# returns 1, so it is called bare, never in $(...), which would drop the count: `_hook_ceiling "$name" || return`.
 _hook_ceiling() {  # <row name>
   local name="$1" ceil jerr probe
-  _HOOK_CEIL=""
+  _HOOK_CEIL="" _HOOK_TIMEOUT=""
   # a trial run, not `command -v`: a jq on PATH that cannot run (a wrong-architecture binary), or some other
   # program named jq, does not print 3 for 1+2 (one trailing "\r" is dropped: a Windows jq ends lines "\r\n")
   probe=$(jq -n '1+2' 2>/dev/null)
@@ -335,6 +335,7 @@ _hook_ceiling() {  # <row name>
   if [ -z "$ceil" ]; then
     echo "  ❌ $name: no single numeric irrecoverable.sh timeout in hooks/hooks.json" >&2; fail=$((fail + 1)); return 1
   fi
+  _HOOK_TIMEOUT=$ceil
   # DEADLINE_SECS from the gate under test, cut by MH_IRR_DEADLINE_SECS as the gate cuts it; a gate that
   # never names it (before GH #771, or a wrapper) leaves the hook timeout. One that names it but has no
   # single plain numeric assignment fails the row, rather than quietly leaving the longer hook timeout.
@@ -372,7 +373,7 @@ print("%g" % cap)' "${IRRECOVERABLE%.sh}.py" "$ceil" 2>"$_ERRF")
 # follow _timed_ratio_case below: a timing miss is measured once more, and on a row that wants a deny a
 # gate-deadline ask is a timing miss too, with a third try (a real slowdown asks on every try).
 _timed_hook_case() {  # <name> <expected rc> <command>
-  local name="$1" want="$2" cmd="$3" ceil t0 t1 rc secs ok try seen="" out late tries="1 2"
+  local name="$1" want="$2" cmd="$3" ceil cap t0 t1 rc secs ok try seen="" out late tries="1 2"
   _hook_ceiling "$name" || return
   ceil=$_HOOK_CEIL
   [[ "$want" == 0 ]] || tries="1 2 3"
@@ -380,9 +381,11 @@ _timed_hook_case() {  # <name> <expected rc> <command>
     t0=$(_ratio_now)
     out=$(bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" 2>/dev/null); rc=$?
     t1=$(_ratio_now)
+    cap=$ceil
+    [[ "$want" != 0 ]] || case "$out" in *"ran out of time"*) cap=$_HOOK_TIMEOUT ;; esac
     read -r secs ok < <(python3 -c 'import sys
 a, b, cap = map(float, sys.argv[1:])
-print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$ceil")
+print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$cap")
     secs=${secs:-?} ok=${ok:-0} late=""
     [[ "$want" == 0 ]] || case "$out" in *"ran out of time"*) ok=0 late=" (gate deadline)" ;; esac
     seen="$seen${seen:+, then }rc=$rc in ${secs}s$late"
@@ -405,12 +408,13 @@ print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$ceil")
 # also finish under the limit _hook_ceiling reads, past which the gate stops denying: a slowdown both runs
 # share keeps the ratio.
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
-  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil seen="" out bout late
+  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil cap seen="" out bout late
   _hook_ceiling "$name" || return
   ceil=$_HOOK_CEIL
   # The gate's own deadline (DEADLINE_SECS) asks, rc 0, on one loaded run. On a row that wants a deny that
   # is a timing miss too: it gets a third try and never passes, and a real slowdown asks on every try. A row
-  # that wants rc 0 keeps two tries and still reads such an ask as rc 0 (the GH #693 row asks under load).
+  # that wants rc 0 keeps two tries and still reads such an ask as rc 0 (the GH #693 row asks under load);
+  # that try is timed against the hook timeout, since the gate's deadline is what it just reached.
   local tries="1 2"; [[ "$want" == 0 ]] || tries="1 2 3"
   for try in $tries; do
     t0=$(_ratio_now)
@@ -418,9 +422,11 @@ _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <co
     t1=$(_ratio_now)
     out=$(bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" 2>/dev/null); rc=$?
     t2=$(_ratio_now)
+    cap=$ceil
+    [[ "$want" != 0 ]] || case "$bout$out" in *"ran out of time"*) cap=$_HOOK_TIMEOUT ;; esac
     read -r ratio secs ok < <(python3 -c 'import sys
 a, b, c, m, cap = map(float, sys.argv[1:]); r = (c - b) / max(b - a, 0.01)
-print("%.2f %.2f %d" % (r, c - b, r <= m and c - b < cap))' "$t0" "$t1" "$t2" "$max" "$ceil")
+print("%.2f %.2f %d" % (r, c - b, r <= m and c - b < cap))' "$t0" "$t1" "$t2" "$max" "$cap")
     ratio=${ratio:-?} secs=${secs:-?} ok=${ok:-0} late=""
     [[ "$want" == 0 ]] || case "$bout$out" in *"ran out of time"*) ok=0 late=" (gate deadline)" ;; esac
     seen="$seen${seen:+, then }rc=$rc (baseline rc=$brc) in ${secs}s at ${ratio}x$late"
