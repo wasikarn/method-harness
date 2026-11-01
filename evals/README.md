@@ -261,7 +261,7 @@ Every case loads an mh agent (`subagent_type:`) or skill (`skill:`), which needs
 actually loaded in the eval sandbox: sandboxes load no user settings, so `defaultEnabled: false`
 never loads it (silent no-plugin fallback, no error; a `tool_used` grader still passes on the
 failed dispatch), whichever tag you run. The helper needs bash specifically (it relies on
-`BASH_SOURCE`) and silently does nothing under zsh or sh, so each line runs through `bash -c`
+`BASH_SOURCE`) and refuses to run under zsh or sh, so each line runs through `bash -c`
 whatever your login shell; it flips `defaultEnabled` true for the duration and restores it after,
 even on failure, with no manual edit. `scripts/eval-changed.sh` prints lines in this form, each
 with the union of its tag's cases' `allowed_tools` as `--allow-tools`, for just the agents and
