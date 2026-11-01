@@ -1724,7 +1724,7 @@ if ("agent_id" in d) and (_nested_spawn(cmd, False) or _subst_spawn(cmd)):
 # source, never an env var, so a project's settings.json cannot shadow an enforced rule. Only a
 # pattern rule (a `rule=` id at its call site) can be shadowed: a structural deny (length cap,
 # unparsable text, budget, depth) has no id, since returning from it would run the very code it guards.
-SHADOW_RULES = frozenset({"var-verb", "opaque-var-verb", "source-file", "brace-view", "interp-pipe-shell"})
+SHADOW_RULES = frozenset({"var-verb", "opaque-var-verb", "source-file", "brace-view"})
 _SHADOW_LOGGED = set()  # (rule, decision) already journaled this run: window copies re-match a rule
 # GH #336: the rule id of the view (another reading of the command, see _views) now being checked.
 # Inside a view a verdict belongs to the matched rule and to the view's rule: either one being
@@ -2728,8 +2728,9 @@ if _KEPT_BODY_ENDS:
         deny("a heredoc body the gate reads as commands leaves a quote open - confirm with user first")
 if _HEREDOC_UNMATCHED[0]:
     deny("a heredoc the gate reads unsure has no closing delimiter it can find - confirm with user first")
-# GH #741: the shell runs code the gate cannot read. Shadow (GH #337): a safe script can print safe commands
-# (print("ls") | sh), so it journals would_deny until /mh:gate-report shows the hits hold no false positive.
+# GH #741: the shell runs code the gate cannot read. Enforced (operator, 2026-11-01): the attack review found 0
+# regressions and 0 false denies over 139,446 real Bash commands; a safe script that prints safe commands into
+# a shell (print("ls") | sh) is denied too, with a way out in the message.
 if _INTERP_PIPED_SHELL[0]:
     deny("a python/node heredoc script pipes its output into a shell, which runs commands the gate cannot see - "
          "write the commands out, or save the output to a file and read it first", rule="interp-pipe-shell")

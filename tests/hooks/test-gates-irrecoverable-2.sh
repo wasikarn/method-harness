@@ -3717,31 +3717,12 @@ tmp_delete "$NOPY_BIN" "$TRASHLESS_BIN" "$MISSPY_IRR_DIR"
 # stdin hands that shell code the gate never sees (print("git reset --hard") | bash), so it denies whatever the
 # body prints. A pipe into anything else, or a heredoc python only reads, keeps the GH #681 reading, and so does
 # one inside $( or a backtick (x=$(python3 - <<'EOF' | sh): its re-read timed out (GH #741 review 2), so it was dropped.
-# The rule ships shadow (GH #337): each row is allowed with one would_deny interp-pipe-shell row, and denies
-# on a copy of the gates with SHADOW_RULES emptied (promotion, once /mh:gate-report shows no false positive).
-_enf741="$_JOURNAL_TMP/enforced-gates-741"
-mkdir -p "$_enf741" && cp -R "$ROOT/hooks/gates/." "$_enf741/"
-python3 - "$_enf741/irrecoverable.py" <<'EOF'
-import re, sys
-s, n = re.subn(r"^SHADOW_RULES = .*$", "SHADOW_RULES = frozenset()", open(sys.argv[1]).read(), flags=re.M)
-assert n == 1
-open(sys.argv[1], "w").write(s)
-EOF
+# The rule enforces (operator, 2026-11-01, after the attack review): each row denies.
 _rows741() { # <journal>: would_deny rows for interp-pipe-shell
   python3 -c 'import json,sys; print(sum(json.loads(l).get("decision") == "would_deny" and json.loads(l).get("rule") == "interp-pipe-shell" for l in open(sys.argv[1])))' "$1"
 }
-_would741() { # <cmd>: shadowed -> rc 0, no stdout, one would_deny row; enforced copy -> deny
-  local j="$_JOURNAL_TMP/w741.jsonl" out rc rows
-  : > "$j"
-  out=$(bash_payload "$1" | MH_GATE_JOURNAL_PATH="$j" bash "$IRRECOVERABLE" 2>/dev/null); rc=$?
-  rows=$(_rows741 "$j")
-  if [[ "$rc" == "0" && -z "$out" && "$rows" == "1" ]]; then
-    echo "  ✅ SHADOW would_deny interp-pipe-shell: ${1//$'\n'/ | }"; pass=$((pass + 1))
-  else
-    echo "  ❌ SHADOW would_deny interp-pipe-shell expected (rc=0, no stdout, 1 row), got rc=$rc rows=$rows: ${1//$'\n'/ | }" >&2
-    fail=$((fail + 1))
-  fi
-  test_deny "$_enf741/irrecoverable.sh" "GH #741 enforced once promoted: ${1//$'\n'/ | }" "$(bash_payload "$1")"
+_would741() { # <cmd>: interp-pipe-shell enforces -> deny
+  test_deny "$IRRECOVERABLE" "GH #741 interpreter heredoc piped to a shell: ${1//$'\n'/ | }" "$(bash_payload "$1")"
 }
 for _c in $'python3 - <<\'EOF\' | bash\nprint("git reset --hard")\nEOF' \
   $'python3 - <<\'EOF\' | sh\nprint("ls")\nEOF' $'python3 <<EOF | dash\nprint("ls")\nEOF' \
@@ -3761,7 +3742,6 @@ for _c in $'python3 - <<\'EOF\'\nprint("bash")\nEOF' $'python3 - <<\'EOF\' | gre
   else
     echo "  ❌ GH #741 control journaled a would_deny row: ${_c//$'\n'/ | }" >&2; fail=$((fail + 1))
   fi
-  test_allow "$_enf741/irrecoverable.sh" "GH #741 control, enforced copy: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 # GH #741: the process-API scan (GH #608 -c bodies, GH #681 heredoc scripts) also reads asyncio's
 # create_subprocess_shell/exec, the argv-list exec/spawn forms whose first literal is the path (execvp("git",
@@ -3794,9 +3774,8 @@ for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 
 done
 # GH #741 review: a full-path argv0 in an exec argv list, and a getattr on a process
 # module whose name is one plain literal (the API it names is read on its own: getattr(os, "system") still is).
-for _c in "python3 -c 'import os; os.execv(\"/usr/bin/git\", [\"/usr/bin/git\", \"reset\", \"--hard\"])'"; do
-  test_deny "$IRRECOVERABLE" "GH #741 review: $_c" "$(bash_payload "$_c")"
-done
+_c="python3 -c 'import os; os.execv(\"/usr/bin/git\", [\"/usr/bin/git\", \"reset\", \"--hard\"])'"
+test_deny "$IRRECOVERABLE" "GH #741 review: $_c" "$(bash_payload "$_c")"
 for _c in "python3 -c 'import os; print(getattr(os, \"sep\")); print(\"rm -rf build\")'" \
   $'python3 - <<\'EOF\'\nimport os\nprint(getattr(os.path, "sep"))\nprint("rm -rf node_modules is what the docs say")\nEOF'; do
   test_allow "$IRRECOVERABLE" "GH #741 review control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
