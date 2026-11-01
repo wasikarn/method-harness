@@ -368,21 +368,25 @@ print("%g" % cap)' "${IRRECOVERABLE%.sh}.py" "$ceil" 2>"$_ERRF")
 # GH #789: a row whose regression runs well past the gate's deadline is timed sub-second against the limit
 # _hook_ceiling reads (4 s today, the gate's own), not a fixed whole-second 4 s. Its payload is sized so the
 # fixed gate denies in about half that and the regression takes about twice it or more on a 4-core host, so
-# a host about twice as slow still passes and one about twice as fast still fails the regression. A timing
-# miss is measured once more before it fails, as in _timed_ratio_case below.
+# a host about twice as slow still passes and one about twice as fast still fails the regression. Tries
+# follow _timed_ratio_case below: a timing miss is measured once more, and on a row that wants a deny a
+# gate-deadline ask is a timing miss too, with a third try (a real slowdown asks on every try).
 _timed_hook_case() {  # <name> <expected rc> <command>
-  local name="$1" want="$2" cmd="$3" ceil t0 t1 rc secs ok try seen=""
+  local name="$1" want="$2" cmd="$3" ceil t0 t1 rc secs ok try seen="" out late tries="1 2"
   _hook_ceiling "$name" || return
   ceil=$_HOOK_CEIL
-  for try in 1 2; do
+  [[ "$want" == 0 ]] || tries="1 2 3"
+  for try in $tries; do
     t0=$(_ratio_now)
-    bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; rc=$?
+    out=$(bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" 2>/dev/null); rc=$?
     t1=$(_ratio_now)
     read -r secs ok < <(python3 -c 'import sys
 a, b, cap = map(float, sys.argv[1:])
 print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$ceil")
-    secs=${secs:-?} ok=${ok:-0}
-    seen="$seen${seen:+, then }rc=$rc in ${secs}s"
+    secs=${secs:-?} ok=${ok:-0} late=""
+    [[ "$want" == 0 ]] || case "$out" in *"ran out of time"*) ok=0 late=" (gate deadline)" ;; esac
+    seen="$seen${seen:+, then }rc=$rc in ${secs}s$late"
+    [[ -n "$late" ]] && continue
     [[ "$rc" == "$want" ]] || break
     [[ "$ok" == 1 ]] && break
   done
@@ -396,24 +400,31 @@ print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$ceil")
 # GH #761: a cost that must not grow with some factor (nesting depth) is checked against a baseline of
 # the same size run on the same machine, so the budget does not depend on how fast the host is. Timed in
 # python3, as BSD `date` has no %N; its start-up cost falls on both runs alike. Load that lands on one run
-# only skews the ratio, so a timing miss is measured once more before it fails (a wrong rc fails at once,
-# as it does not depend on timing). The command must also finish under the limit _hook_ceiling reads, past
-# which the gate stops denying: a slowdown both runs share keeps the ratio.
+# only skews the ratio, so a timing miss is measured once more before it fails (twice more on a row that
+# wants a deny, see below); a wrong rc fails at once, as it does not depend on timing. The command must
+# also finish under the limit _hook_ceiling reads, past which the gate stops denying: a slowdown both runs
+# share keeps the ratio.
 _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <command>
-  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil seen=""
+  local name="$1" want="$2" max="$3" base="$4" cmd="$5" t0 t1 t2 rc brc ratio secs ok try ceil seen="" out bout late
   _hook_ceiling "$name" || return
   ceil=$_HOOK_CEIL
-  for try in 1 2; do
+  # The gate's own deadline (DEADLINE_SECS) asks, rc 0, on one loaded run. On a row that wants a deny that
+  # is a timing miss too: it gets a third try and never passes, and a real slowdown asks on every try. A row
+  # that wants rc 0 keeps two tries and still reads such an ask as rc 0 (the GH #693 row asks under load).
+  local tries="1 2"; [[ "$want" == 0 ]] || tries="1 2 3"
+  for try in $tries; do
     t0=$(_ratio_now)
-    bash_payload "$base" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; brc=$?
+    bout=$(bash_payload "$base" | timeout 10 bash "$IRRECOVERABLE" 2>/dev/null); brc=$?
     t1=$(_ratio_now)
-    bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; rc=$?
+    out=$(bash_payload "$cmd" | timeout 10 bash "$IRRECOVERABLE" 2>/dev/null); rc=$?
     t2=$(_ratio_now)
     read -r ratio secs ok < <(python3 -c 'import sys
 a, b, c, m, cap = map(float, sys.argv[1:]); r = (c - b) / max(b - a, 0.01)
 print("%.2f %.2f %d" % (r, c - b, r <= m and c - b < cap))' "$t0" "$t1" "$t2" "$max" "$ceil")
-    ratio=${ratio:-?} secs=${secs:-?} ok=${ok:-0}
-    seen="$seen${seen:+, then }rc=$rc (baseline rc=$brc) in ${secs}s at ${ratio}x"
+    ratio=${ratio:-?} secs=${secs:-?} ok=${ok:-0} late=""
+    [[ "$want" == 0 ]] || case "$bout$out" in *"ran out of time"*) ok=0 late=" (gate deadline)" ;; esac
+    seen="$seen${seen:+, then }rc=$rc (baseline rc=$brc) in ${secs}s at ${ratio}x$late"
+    [[ -n "$late" ]] && continue
     [[ "$rc" == "$want" && "$brc" == "$want" ]] || break
     [[ "$ok" == 1 ]] && break
   done

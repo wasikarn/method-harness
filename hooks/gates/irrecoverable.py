@@ -3703,10 +3703,10 @@ _DELETE_PROTECTED = ("main", "master", "develop")
 # git push it runs, the user's words appended; PH stands for $(git_current_branch). gpoat runs `git push origin
 # --all && git push origin --tags`: only the second takes the user's words. The strict force-push allow
 # (_FORCE_PUSH_OK) reads the raw text, so a forced alias push never gets it. A user's own alias is not covered.
-# Review of PR #774: `g` is the plugin's `alias g='git'`, so every git rule reads it; ggpnp pulls, then runs ggp
-# with the same words; grename OLD NEW runs `git push origin :OLD`, a remote delete (_check_window builds it).
+# Review of PR #774: ggpnp pulls, then runs ggp with the same words; grename OLD NEW runs `git push origin :OLD`,
+# a remote delete (_check_window builds it). The plugin's `alias g='git'` is not read: #750 stays push-only (#781).
 _SHELL_PUSH_ALIASES = {
-    "g": [], "ggpnp": ["push", "origin"],
+    "ggpnp": ["push", "origin"],
     "gp": ["push"], "gpd": ["push", "--dry-run"], "gpf!": ["push", "--force"],
     "gpf": ["push", "--force-with-lease", "--force-if-includes"],
     "gpsup": ["push", "--set-upstream", "origin", PH],
