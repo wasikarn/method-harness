@@ -4089,6 +4089,13 @@ for _c in "bash -c 'X=claude; \$X --version'" "bash -c 'X=claude; echo \$X'" "ex
   "X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" $'X=claude; echo hi # it\'s |\n$X' $'echo hi | # c\ngrep claude'; do
   test_allow "$IRRECOVERABLE" "GH #812 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812 review 10: the comment-aware literal-$ reading only adds substitutions: `\ #` and `\<newline>#` are no comment
+# in bash, so the later $X / $F is still read.
+for _c in $'X=claude\necho a\\ #\'\n\'; $X -p hi' $'X=claude\necho a\\\n#\'\n\'; $X -p hi'; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 10: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+test_deny  "$IRRECOVERABLE" 'GH #812 review 10: F=-rf \n echo a\ #'"'"' \n '"'"'; rm $F ~/proj' \
+  "$(bash_payload $'F=-rf\necho a\\ #\'\n\'; rm $F ~/proj')"
 # GH #810 item 3 (decision: keep the deny): a `>|` redirect and a case / [[ =~ pattern `|` stay a pipe in. Nine fresh
 # reviews of an exemption each found the text bash parses differ from the text read: a `case` or `[[` as an argument,
 # escaped, quoted, inside ${..} / $[..] / backticks / a heredoc, built by an expansion (`X=; $X case ..`), or an alias

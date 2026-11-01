@@ -6123,6 +6123,13 @@ def _subst_literals(text, glued=True):
 def _literal_dollars(text):
     # The offsets of each $ the shell keeps as text: inside '...' (outside "...") or after an odd run of
     # backslashes. var-verb puts no value back there (GH #767 review 6: `rm '$F' x` removes a file named $F).
+    # GH #810: a second reading skips `#` comments (`| # it's fed` then `$X`: the comment's `'` opens no quote). Only a
+    # $ both readings keep as text stays unsubstituted, so a view never substitutes less than develop's reading did
+    # (GH #812 review 10: `echo a\ #'` is no comment in bash, and skipping it hid a later $X).
+    out = _literal_dollars_read(text, False)
+    return out & _literal_dollars_read(text, True) if out and "#" in text else out
+
+def _literal_dollars_read(text, comments):
     out, sq, dq, i, n = set(), False, False, 0, len(text)
     while i < n:
         c = text[i]
@@ -6139,7 +6146,7 @@ def _literal_dollars(text):
             sq = True
         elif c == '"':
             dq = not dq
-        elif c == "#" and not dq and (i == 0 or text[i - 1] in " \t\n;&|()"):
+        elif comments and c == "#" and not dq and (i == 0 or text[i - 1] in " \t\n;&|()"):
             # GH #810: a comment, to its line end: its `'` opens no quote (`| # it's fed` then `$X`)
             j = text.find("\n", i)
             i = n if j < 0 else j
@@ -6324,7 +6331,11 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False):
     sets = sorted((m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None)) for m in _PLAIN_ASSIGN_RE.finditer(text))
     if not sets and not outer:
         return text
-    lit, keys = _literal_dollars(text), [e for e, _, _ in sets]
+    lit, by_name = _literal_dollars(text), {}
+    for e, n, v in sets:  # per name, in order: the latest one before a reference is a bisect (GH #812 review 10)
+        by_name.setdefault(n, ([], []))
+        by_name[n][0].append(e)
+        by_name[n][1].append(v)
     def sub(m):
         r = pick(m)
         # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no
@@ -6334,9 +6345,11 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False):
         name = m.group(1) or m.group(2)
         if m.start() in lit:
             return m.group(0)
-        for k in range(bisect.bisect_right(keys, m.start()) - 1, -1, -1):
-            if sets[k][1] == name:
-                return sets[k][2]
+        if name in by_name:
+            ends, vals = by_name[name]
+            k = bisect.bisect_right(ends, m.start()) - 1
+            if k >= 0:
+                return vals[k]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
         # A body's outer value (GH #812: its environment) comes before its own later one.
