@@ -4062,4 +4062,12 @@ test_deny  "$IRRECOVERABLE" 'GH #804: subagent: X=claude; echo hi |& $X' "$(bash
 test_deny  "$IRRECOVERABLE" 'GH #804 control: subagent: echo hi | claude' "$(bash_agent_payload 'echo hi | claude' fork)"
 test_allow "$IRRECOVERABLE" 'GH #804 control: subagent: X=claude; true || $X' "$(bash_agent_payload 'X=claude; true || $X' fork)"
 test_allow "$IRRECOVERABLE" 'GH #804 control: subagent: X=claude; echo hi | grep $X' "$(bash_agent_payload 'X=claude; echo hi | grep $X' fork)"
+# GH #810: a pipe that ends a line goes on to the next line, past blank lines, a comment or a backslash-newline.
+for _c in $'X=claude; echo hi |\n$X' $'X=claude; echo hi |\n\n$X' $'X=claude; echo hi | \\\n$X' \
+  $'X=claude; echo hi | # feed it\n$X' $'X=claude; echo hi |&\n$X'; do
+  test_deny  "$IRRECOVERABLE" "GH #810: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in $'X=claude; echo hi |\ngrep $X' $'X=claude; echo hi\n$X' $'X=claude; true ||\n$X'; do
+  test_allow "$IRRECOVERABLE" "GH #810 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
