@@ -1619,9 +1619,11 @@ def _nested_spawn_text(c, overlap):
 # newline, past keywords chained there (`if [[`, `do case`); never as an argument (`echo test case 3 in prod | claude`,
 # `echo then case ..`). Each lead is anchored at the pipe's end (\Z with endpos), and every structural char of it must
 # be unmasked (not quoted, escaped or in a comment). Anything else is read as a pipe, as develop did.
-_KW_LEAD = r"(?:\A|(?<=[;&|\n]))[ \t]*(?:(?:if|elif|while|until|then|do|else|!)[ \t]+)*"
+# A redirect's `&` / `|` (`>& case`, `<& [[`, `>| case`: a file name) opens no command position.
+_KW_LEAD = r"(?:\A|(?<=[;\n])|(?<=&&)|(?<=[^<>&]&)|(?<=[^>|]\|))[ \t]*(?:(?:if|elif|while|until|then|do|else|!)[ \t]+)*"
 _CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|()]+[ \t]+(in))\Z")
-_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t][^\n;&|]*?[ \t]=~[ \t]+[^\s;&<>]*\Z")
+# Its left side holds no ( ) or backtick and no `]]`, so a `[[` closed inside $(..) or a subshell does not count.
+_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`])*?[ \t]=~[ \t]+[^\s;&<>]*\Z")
 
 def _lead_unmasked(m, mask, groups):
     # The separator before the lead, the keywords up to its first group, and each named group: none masked.
@@ -6354,7 +6356,9 @@ def _scan_view_statements(text):
         if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
             _deny_nested_spawn()
 
-def _ordered_var_text(text, fallback_last=True, outer=None):
+_OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
+
+def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
@@ -6364,6 +6368,11 @@ def _ordered_var_text(text, fallback_last=True, outer=None):
         return text
     lit, keys = _literal_dollars(text), [e for e, _, _ in sets]
     def sub(m):
+        r = pick(m)
+        # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no
+        # pipe (`PAT="error|claude"; grep -E $PAT log`).
+        return m.group(0) if plain_only and _OPERATOR_CHARS.search(r) else r
+    def pick(m):
         name = m.group(1) or m.group(2)
         if m.start() in lit:
             return m.group(0)
@@ -6395,7 +6404,7 @@ def _scan_body_vars(body):
             m.group(1): next(g for g in m.groups()[1:] if g is not None) for m in _PLAIN_ASSIGN_RE.finditer(cmd)}
     v = body
     for _ in range(8):  # `Y=$X; $Y -p x`: a value that is itself a reference, up to 8 links
-        w = _ordered_var_text(v, True, _CMD_VALS)
+        w = _ordered_var_text(v, True, _CMD_VALS, True)
         if w == v or len(w) > _VIEW_LEN_CAP:  # bounded: a value holding refs (`X='$X$X'`) grows each pass
             break
         v = w

@@ -4106,4 +4106,15 @@ for _c in $'case "$1" in\n  review) git diff | claude ;;\nesac' $'case "$1" in\n
 done
 test_allow "$IRRECOVERABLE" "GH #812 review 2 control: subagent: X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" \
   "$(bash_agent_payload "X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" fork)"
+# GH #812 review 3: a redirect's & or | (`>& case`, `>| case`) opens no command position, and a [[ closed inside
+# $(..), backticks or a subshell is no regex lead; a substituted value's `|` is no pipe (it is not an operator).
+for _c in 'echo hi >& case x in a|claude' 'echo hi >| case x in a|claude' 'echo x <& case y in a|claude' \
+  'echo x 2>& [[ y =~ a|claude' 'echo x >& then case y in a|claude' 'echo $(true;[[ 1 ]]) =~ b|claude' \
+  'echo `:;[[ 1 ]]` =~ b|claude' '(:;[[ a ]]) =~ b|claude' $'echo $(\n[[ 1 ]]) =~ b|claude'; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 3: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in "bash -c 'PAT=\"error|claude\"; grep -E \$PAT log'" 'true && case y in a|claude) echo;; esac' \
+  'true && [[ y =~ (a|claude) ]]'; do
+  test_allow "$IRRECOVERABLE" "GH #812 review 3 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
