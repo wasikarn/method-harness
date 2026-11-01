@@ -4081,14 +4081,18 @@ for _c in "bash -c 'X=claude; \$X -p x'" "bash -c 'X=claude; echo hi | \$X'" "sh
   $'echo hi |& # c\nclaude' $'echo hi | # it\'s\nclaude' $'echo hi | # c\n$(echo claude)' \
   'case y in a) echo hi | claude;; esac' 'case y in a) ;; esac | claude' '[[ x =~ y ]] && echo hi | claude' \
   'echo hi >| f | claude' 'X=claude; case y in a) echo hi | $X;; esac' 'X=claude; echo hi >| f | $X' \
-  $'echo hi # c |\nclaude'; do
+  $'echo hi # c |\nclaude' 'echo Fix the failing test case 3 in prod | claude' 'echo case x in a | claude' \
+  'X=claude; echo case x in a | $X' 'echo case x in a|cat|claude' 'case x in a) echo case y in b | claude;; esac' \
+  $'cat notes.txt; echo case 1 in\nstatus | claude' "bash -c 'echo case x in a | claude'" 'echo "case x" in a | claude' \
+  'echo [[ x =~ a|claude' 'echo "[[ x =~ a"|claude' "bash -c 'X=claude; Y=\$X; Z=\$Y; W=\$Z; \$W -p x'"; do
   test_deny  "$IRRECOVERABLE" "GH #812: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in "bash -c 'X=claude; \$X --version'" "bash -c 'X=claude; echo \$X'" "export X=claude; bash -c '\$X --version'" \
   "export X=claude; bash -c 'echo \$X'" "bash -c 'X=python3; \$X -c 1'" 'X=claude; echo hi >| $X' \
   'X=claude; echo hi 2>| $X' 'echo hi >| claude' 'X=claude; case y in a|$X) echo;; esac' 'case y in a|claude) echo;; esac' \
   'case y in a) ;; b|claude) echo;; esac' $'case y in\n  a | claude) echo;;\nesac' 'X=claude; [[ y =~ (a|$X) ]]' \
-  '[[ y =~ (a|claude) ]]' $'X=claude; echo hi # it\'s |\n$X'; do
+  '[[ y =~ (a|claude) ]]' $'X=claude; echo hi # it\'s |\n$X' 'if [[ y =~ (a|claude) ]]; then :; fi' \
+  'echo hi | case y in a|claude) cat;; esac' $'for f in a; do\n  case $f in a|claude) :;; esac\ndone'; do
   test_allow "$IRRECOVERABLE" "GH #812 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
 gates_summary

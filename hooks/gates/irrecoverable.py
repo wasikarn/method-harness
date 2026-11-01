@@ -1615,8 +1615,11 @@ def _nested_spawn_text(c, overlap):
             return True
     return False
 
-_CASE_LEAD_RE = re.compile(r"(?:;;&?|;&|(?<![\w-])case[ \t]+[^\s;&|()]+[ \t]+in)$")
-_REGEX_ALT_RE = re.compile(r"\[\[[ \t][^\n;&|]*?[ \t]=~[ \t]+[^\s;&<>]*$")
+# `case` and `[[` count only as a keyword at a command position (a statement start, or after a keyword that opens one),
+# never as an argument: `echo test case 3 in prod | claude` pipes (review).
+_KW_POS = r"(?:^|(?<=[;&|({\n])|(?<![\w-])(?:then|do|else|elif|if|while|until|!)[ \t])[ \t]*"
+_CASE_LEAD_RE = re.compile(r"(?:;;&?|;&|" + _KW_POS + r"(case)[ \t]+[^\s;&|()]+[ \t]+in)$", re.MULTILINE)
+_REGEX_ALT_RE = re.compile(_KW_POS + r"(\[\[)[ \t][^\n;&|]*?[ \t]=~[ \t]+[^\s;&<>]*$", re.MULTILINE)
 
 def _pattern_bar(c, i, mask):
     # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
@@ -1638,10 +1641,12 @@ def _pattern_bar(c, i, mask):
         k -= k > 0 and c[k - 1] == "("
         while k and c[k - 1] in " \t\n":
             k -= 1
-        if k and not mask[k - 1] and _CASE_LEAD_RE.search(c[max(0, k - 200):k]):
+        m = k and not mask[k - 1] and _CASE_LEAD_RE.search(c, max(0, k - 200), k)
+        if m and not (m.group(1) and mask[m.start(1)]):
             return True
         break
-    return _REGEX_ALT_RE.search(c[max(0, i - 200):i]) is not None
+    m = _REGEX_ALT_RE.search(c, max(0, i - 200), i)
+    return bool(m) and not mask[m.start(1)]
 
 def _pipe_before(c, end, mask):
     # True when a pipe (`|` or `|&`, not `||` or a `>|` redirect, not a pattern's `|`) is the last thing before
@@ -6377,7 +6382,7 @@ def _scan_body_vars(body):
         _CMD_VALS = {} if len(cmd) > _VIEW_LEN_CAP else {
             m.group(1): next(g for g in m.groups()[1:] if g is not None) for m in _PLAIN_ASSIGN_RE.finditer(cmd)}
     v = body
-    for _ in range(3):  # `Y=$X; $Y -p x`: a value that is itself a reference
+    for _ in range(8):  # `Y=$X; $Y -p x`: a value that is itself a reference, up to 8 links
         w = _ordered_var_text(v, True, _CMD_VALS)
         if w == v:
             break
