@@ -1459,13 +1459,16 @@ _SUBST_SCAN = [False]
 
 def _nested_spawn(c, overlap):
     d = _spawn_drop_escapes(c)
-    # A dropped escape leaves no mark in the text read below, so `\case x in a|claude` (a command named case, piped)
-    # would read as a keyword: such a text reads every `|` as a pipe, as develop did.
-    _PATTERN_BARS_OK[0] = d == c
+    j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, d)
+    # A dropped escape or a joined quote leaves no mark in the text read, so `\case x in a|claude` and `"case" y in
+    # a|"claude"` (a command named case, piped) would read as a keyword: such a reading takes every `|` as a pipe, as
+    # develop did (GH #812 reviews 5, 8).
     try:
-        c = d
-        j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, c)
-        return _nested_spawn_text(j, overlap) or (j != c and _nested_spawn_text(c, overlap))
+        _PATTERN_BARS_OK[0] = d == c and j == d
+        if _nested_spawn_text(j, overlap):
+            return True
+        _PATTERN_BARS_OK[0] = d == c
+        return j != d and _nested_spawn_text(d, overlap)
     finally:
         _PATTERN_BARS_OK[0] = True
 
@@ -1666,10 +1669,13 @@ def _lead_unmasked(m, mask, groups):
         return False
     return not any(any(mask[m.start(g):m.end(g)]) for g in groups)
 
+_HEREDOC_OP_RE = re.compile(r"<(?:\\\n)*<")
+
 def _pattern_bar(c, i, mask):
     # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
     # `;;`, `;&` or `;;&`, blanks and newlines allowed around each `|`) or of a [[ =~ ]] regex (`(a|b)`): no pipe.
-    if not _PATTERN_BARS_OK[0] or _SUBST_SCAN[0] or "<<" in c:  # a heredoc's lines may hold any lead (review 7)
+    # A heredoc's lines may hold any lead (review 7); its `<<` may be split by a backslash-newline (review 8).
+    if not _PATTERN_BARS_OK[0] or _SUBST_SCAN[0] or _HEREDOC_OP_RE.search(c):
         return False
     j = i
     while True:

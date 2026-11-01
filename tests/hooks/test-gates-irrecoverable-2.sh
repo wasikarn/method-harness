@@ -4155,4 +4155,11 @@ for _c in 'X=claude; echo hi >| $X' 'X=claude; echo hi 2>| $X' 'X=claude; case y
   $'cat <<\';;\' "a\nb"\n;;\ndate | claude' $'echo hi | \\\n# c \\\nclaude'; do
   test_deny  "$IRRECOVERABLE" "GH #812 review 7: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812 review 8: a reading whose quotes were joined reads no pattern bar (a quoted keyword is a command name), so
+# a quoted word the join changes keeps develop's deny; a heredoc `<<` split by a backslash-newline counts.
+for _c in '"case" y in a|"claude"' 'c"a"se y in a|c"laude"' "\$'case' y in a|\$'claude'" '"if" [[ y =~ a|"claude"' \
+  "bash -c '\"case\" y in a|\"claude\"'" $'cat <\\\n<\';;\'\nx\n;;\ndate|claude' \
+  $'bash -c \'cat <\\\n<";;"\nx\n;;\ndate|claude\''; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 8: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
