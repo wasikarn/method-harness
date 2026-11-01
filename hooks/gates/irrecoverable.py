@@ -1615,11 +1615,23 @@ def _nested_spawn_text(c, overlap):
             return True
     return False
 
-# `case` and `[[` count only as a keyword at a command position (a statement start, or after a keyword that opens one),
-# never as an argument: `echo test case 3 in prod | claude` pipes (review).
-_KW_POS = r"(?:^|(?<=[;&|({\n])|(?<![\w-])(?:then|do|else|elif|if|while|until|!)[ \t])[ \t]*"
-_CASE_LEAD_RE = re.compile(r"(?:;;&?|;&|" + _KW_POS + r"(case)[ \t]+[^\s;&|()]+[ \t]+in)$", re.MULTILINE)
-_REGEX_ALT_RE = re.compile(_KW_POS + r"(\[\[)[ \t][^\n;&|]*?[ \t]=~[ \t]+[^\s;&<>]*$", re.MULTILINE)
+# `case` and `[[` count only as a keyword at a command position: at the text's start or after an unquoted ; & | or
+# newline, past keywords chained there (`if [[`, `do case`); never as an argument (`echo test case 3 in prod | claude`,
+# `echo then case ..`). Each lead is anchored at the pipe's end (\Z with endpos), and every structural char of it must
+# be unmasked (not quoted, escaped or in a comment). Anything else is read as a pipe, as develop did.
+_KW_LEAD = r"(?:\A|(?<=[;&|\n]))[ \t]*(?:(?:if|elif|while|until|then|do|else|!)[ \t]+)*"
+_CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|()]+[ \t]+(in))\Z")
+_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t][^\n;&|]*?[ \t]=~[ \t]+[^\s;&<>]*\Z")
+
+def _lead_unmasked(m, mask, groups):
+    # The separator before the lead, the keywords up to its first group, and each named group: none masked.
+    s0 = m.start()
+    if s0 and mask[s0 - 1]:
+        return False
+    first = min(m.start(g) for g in groups)
+    if any(mask[s0:first]):
+        return False
+    return not any(any(mask[m.start(g):m.end(g)]) for g in groups)
 
 def _pattern_bar(c, i, mask):
     # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
@@ -1641,12 +1653,12 @@ def _pattern_bar(c, i, mask):
         k -= k > 0 and c[k - 1] == "("
         while k and c[k - 1] in " \t\n":
             k -= 1
-        m = k and not mask[k - 1] and _CASE_LEAD_RE.search(c, max(0, k - 200), k)
-        if m and not (m.group(1) and mask[m.start(1)]):
+        m = _CASE_LEAD_RE.search(c, max(0, k - 200), k) if k else None
+        if m and _lead_unmasked(m, mask, (1,) if m.group(1) else (2, 3)):
             return True
         break
     m = _REGEX_ALT_RE.search(c, max(0, i - 200), i)
-    return bool(m) and not mask[m.start(1)]
+    return bool(m) and _lead_unmasked(m, mask, (1,))
 
 def _pipe_before(c, end, mask):
     # True when a pipe (`|` or `|&`, not `||` or a `>|` redirect, not a pattern's `|`) is the last thing before
@@ -1671,7 +1683,7 @@ def _pipe_before(c, end, mask):
             break
     if j and c[j - 1] == "&" and c[j - 2:j - 1] == "|":
         j -= 1
-    if not j or c[j - 1] != "|" or c[j - 2:j - 1] in ("|", ">"):
+    if not j or c[j - 1] != "|" or c[j - 2:j - 1] == "|" or (c[j - 2:j - 1] == ">" and not mask[j - 2]):
         return False
     return not _pattern_bar(c, j - 1, mask)
 
@@ -3718,7 +3730,7 @@ def _text_statements(text):
     while i < len(text):
         ch = text[i]
         if ch in ";&|\n" and not mask[i]:
-            if ch == "|" and (text[i - 1:i] == ">" or _pattern_bar(text, i, mask)):  # GH #810 item 3: no pipe
+            if ch == "|" and ((i and text[i - 1] == ">" and not mask[i - 1]) or _pattern_bar(text, i, mask)):  # GH #810 item 3
                 i += 1
                 continue
             pipe = ch == "\n" and _PIPE_ONLY_RE.fullmatch(carry + text[start:i])
@@ -6384,7 +6396,7 @@ def _scan_body_vars(body):
     v = body
     for _ in range(8):  # `Y=$X; $Y -p x`: a value that is itself a reference, up to 8 links
         w = _ordered_var_text(v, True, _CMD_VALS)
-        if w == v:
+        if w == v or len(w) > _VIEW_LEN_CAP:  # bounded: a value holding refs (`X='$X$X'`) grows each pass
             break
         v = w
     if v == body:

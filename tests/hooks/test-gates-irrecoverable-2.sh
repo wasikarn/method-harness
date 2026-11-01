@@ -4095,4 +4095,15 @@ for _c in "bash -c 'X=claude; \$X --version'" "bash -c 'X=claude; echo \$X'" "ex
   'echo hi | case y in a|claude) cat;; esac' $'for f in a; do\n  case $f in a|claude) :;; esac\ndone'; do
   test_allow "$IRRECOVERABLE" "GH #812 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812 review 2: a case / [[ lead counts only at a real command position, anchored at the pipe, unquoted; an
+# escaped `>` is no redirect; a value that holds references (`X='$X$X'`) stops growing at the view cap.
+for _c in $'case "$1" in\n  review) git diff | claude ;;\nesac' $'case "$1" in\n  *) ;;\nesac\ngit diff | claude' \
+  $'case $x in\n a) echo hi | claude ;; esac' $'echo x;;\ngit diff | claude' 'echo then case 3 in prod | claude' \
+  'echo ! case 3 in a | claude' 'echo if [[ x =~ a|claude' 'echo {case 3 in a | claude' 'echo \(case 3 in a | claude' \
+  'echo a\|case 3 in a | claude' 'echo \;;x|claude' 'echo \;&x|claude' 'echo \>|claude' 'echo x\>|claude' \
+  "X='\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'; Y=claude; \$Y -p x"; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 2: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" "GH #812 review 2 control: subagent: X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" \
+  "$(bash_agent_payload "X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" fork)"
 gates_summary
