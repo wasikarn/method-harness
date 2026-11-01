@@ -4127,4 +4127,12 @@ done
 for _c in 'case "$1" in a|claude) :;; esac' '[[ $y =~ (a|claude) ]]' 'echo ${v} ; case y in a|claude) :;; esac'; do
   test_allow "$IRRECOVERABLE" "GH #812 review 4 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812 review 5: an escaped keyword (`\case`, `ca\se`, `\if`) is a command name, so its `|` pipes; a `}` in the case
+# word or the [[ left side may close a ${..} opened far back.
+_P=$(printf 'A%.0s' {1..420})
+for _c in '\case x in a|claude' 'ca\se x in a|claude' 'echo hi; \case x in a|claude' 'echo; \do case x in a|claude' \
+  '\if [[ x =~ a|claude' "bash -c '\\case x in a|claude'" 'X=claude; \case x in a|$X' \
+  "echo \${v:-$_P;case x} in a|claude" "echo \${v:-$_P;[[ x} =~ a|claude"; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 5: subagent: ${_c:0:60}" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary

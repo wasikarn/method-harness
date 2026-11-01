@@ -1450,10 +1450,19 @@ def _spawn_drop_escapes(c):
         return " " * (len(w) - len(u)) + u
     return _SPAWN_WORD_RE.sub(word, c)
 
+_PATTERN_BARS_OK = [True]  # GH #812 review 5: off for a text whose escapes were dropped
+
 def _nested_spawn(c, overlap):
-    c = _spawn_drop_escapes(c)
-    j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, c)
-    return _nested_spawn_text(j, overlap) or (j != c and _nested_spawn_text(c, overlap))
+    d = _spawn_drop_escapes(c)
+    # A dropped escape leaves no mark in the text read below, so `\case x in a|claude` (a command named case, piped)
+    # would read as a keyword: such a text reads every `|` as a pipe, as develop did.
+    _PATTERN_BARS_OK[0] = d == c
+    try:
+        c = d
+        j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, c)
+        return _nested_spawn_text(j, overlap) or (j != c and _nested_spawn_text(c, overlap))
+    finally:
+        _PATTERN_BARS_OK[0] = True
 
 def _charge_spawn_anchor(c):
     # GH #246: charge one anchor scan of c (about starts x length) to the shared counter. True, with
@@ -1621,10 +1630,11 @@ def _nested_spawn_text(c, overlap):
 # be unmasked (not quoted, escaped or in a comment). Anything else is read as a pipe, as develop did.
 # A redirect's `&` / `|` (`>& case`, `<& [[`, `>| case`: a file name) opens no command position.
 _KW_LEAD = r"(?:\A|(?<=[;\n])|(?<=&&)|(?<=[^<>&]&)|(?<=[^>|]\|))[ \t]*(?:(?:if|elif|while|until|then|do|else|!)[ \t]+)*"
-_CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|()]+[ \t]+(in))\Z")
+# No `{` or `}` in the case word or the [[ left side: a ${..} opened far back may close there.
+_CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|(){}]+[ \t]+(in))\Z")
 # Its left side holds no ( ) or backtick and no `]]`, so a `[[` closed inside $(..) or a subshell does not count.
 # Its operand holds no substitution or brace (`=~ $(echo|claude)` runs a real pipe): only plain chars and $NAME.
-_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`])*?[ \t]=~[ \t]+(?:[^\s;&<>$`{}]|\$\w)*\Z")
+_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`{}])*?[ \t]=~[ \t]+(?:[^\s;&<>$`{}]|\$\w)*\Z")
 _UNSAFE_PATTERN_WORD = re.compile(r"[{}`]|\$\(")
 
 def _in_open_brace(c, pos, mask):
@@ -1654,6 +1664,8 @@ def _lead_unmasked(m, mask, groups):
 def _pattern_bar(c, i, mask):
     # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
     # `;;`, `;&` or `;;&`, blanks and newlines allowed around each `|`) or of a [[ =~ ]] regex (`(a|b)`): no pipe.
+    if not _PATTERN_BARS_OK[0]:
+        return False
     j = i
     while True:
         while j and c[j - 1] in " \t":
