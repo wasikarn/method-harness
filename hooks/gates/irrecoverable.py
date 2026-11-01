@@ -1451,18 +1451,11 @@ def _spawn_drop_escapes(c):
     return _SPAWN_WORD_RE.sub(word, c)
 
 _PATTERN_BARS_OK = [True]  # GH #812 review 5: off for a text whose escapes were dropped
-_SUBST_SCAN = [False]  # GH #812 review 6: on while a substituted text (a view, a body's variables) is read
-_KEYWORD_VALUE_RE = re.compile(r"[;&|<>()\[\]{}`\n]|(?<![^\s])(?:case|in|esac|if|elif|then|else|do|while|until|!)(?![^\s])")
-_KEYWORD_VALUES = []
-
-def _keyword_values():
-    # True when a plain assignment in the command gives a value holding an operator, bracket or reserved word: its
-    # expansion is plain words in bash, but substituted text would read it as a keyword or separator
-    # (`X=case; Y=claude; $X y in a|$Y` pipes into claude). Then a substituted text reads every `|` as a pipe.
-    if not _KEYWORD_VALUES:
-        _KEYWORD_VALUES.append(any(_KEYWORD_VALUE_RE.search(next(g for g in m.groups()[1:] if g is not None))
-                                   for m in _PLAIN_ASSIGN_RE.finditer(cmd)))
-    return _KEYWORD_VALUES[0]
+# GH #812 reviews 6-7: on while a substituted text (a view, a body's variables) is read. There no `|` is a pattern bar
+# or a `>|` redirect: an expansion is plain words in bash, never a keyword, separator or redirect, and the text cannot
+# show which part came from one (`X=case; $X y in a|$Y`, `X=; $X case ..`, `${X}se ..`, `E=; echo hi >$E| $Y`).
+# So the variable forms keep develop's deny (`X=claude; case y in a|$X) ..`); only the literal forms allow.
+_SUBST_SCAN = [False]
 
 def _nested_spawn(c, overlap):
     d = _spawn_drop_escapes(c)
@@ -1676,7 +1669,7 @@ def _lead_unmasked(m, mask, groups):
 def _pattern_bar(c, i, mask):
     # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
     # `;;`, `;&` or `;;&`, blanks and newlines allowed around each `|`) or of a [[ =~ ]] regex (`(a|b)`): no pipe.
-    if not _PATTERN_BARS_OK[0] or (_SUBST_SCAN[0] and _keyword_values()):
+    if not _PATTERN_BARS_OK[0] or _SUBST_SCAN[0] or "<<" in c:  # a heredoc's lines may hold any lead (review 7)
         return False
     j = i
     while True:
@@ -1712,7 +1705,7 @@ def _pipe_before(c, end, mask):
         ch = c[j - 1]
         if ch in " \t\n({":
             j -= 1
-        elif ch == "\\" and c[j:j + 1] == "\n":
+        elif ch == "\\" and c[j:j + 1] == "\n" and not mask[j - 1]:  # a comment's last `\` continues nothing
             j -= 1
         elif mask[j - 1]:
             k = j - 1  # the masked run's start: a comment runs from its `#` to the line end
@@ -1729,7 +1722,7 @@ def _pipe_before(c, end, mask):
             break
     if j and c[j - 1] == "&" and c[j - 2:j - 1] == "|":
         j -= 1
-    if not j or c[j - 1] != "|" or c[j - 2:j - 1] == "|" or (c[j - 2:j - 1] == ">" and not mask[j - 2]):
+    if not j or c[j - 1] != "|" or c[j - 2:j - 1] == "|" or (c[j - 2:j - 1] == ">" and not mask[j - 2] and not _SUBST_SCAN[0]):
         return False
     return not _pattern_bar(c, j - 1, mask)
 
@@ -3776,7 +3769,8 @@ def _text_statements(text):
     while i < len(text):
         ch = text[i]
         if ch in ";&|\n" and not mask[i]:
-            if ch == "|" and ((i and text[i - 1] == ">" and not mask[i - 1]) or _pattern_bar(text, i, mask)):  # GH #810 item 3
+            if ch == "|" and ((i and text[i - 1] == ">" and not mask[i - 1] and not _SUBST_SCAN[0])
+                              or _pattern_bar(text, i, mask)):  # GH #810 item 3: no pipe
                 i += 1
                 continue
             pipe = ch == "\n" and _PIPE_ONLY_RE.fullmatch(carry + text[start:i])

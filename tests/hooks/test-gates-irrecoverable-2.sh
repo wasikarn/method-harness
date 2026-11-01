@@ -4088,9 +4088,9 @@ for _c in "bash -c 'X=claude; \$X -p x'" "bash -c 'X=claude; echo hi | \$X'" "sh
   test_deny  "$IRRECOVERABLE" "GH #812: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in "bash -c 'X=claude; \$X --version'" "bash -c 'X=claude; echo \$X'" "export X=claude; bash -c '\$X --version'" \
-  "export X=claude; bash -c 'echo \$X'" "bash -c 'X=python3; \$X -c 1'" 'X=claude; echo hi >| $X' \
-  'X=claude; echo hi 2>| $X' 'echo hi >| claude' 'X=claude; case y in a|$X) echo;; esac' 'case y in a|claude) echo;; esac' \
-  'case y in a) ;; b|claude) echo;; esac' $'case y in\n  a | claude) echo;;\nesac' 'X=claude; [[ y =~ (a|$X) ]]' \
+  "export X=claude; bash -c 'echo \$X'" "bash -c 'X=python3; \$X -c 1'" \
+  'echo hi >| claude' 'case y in a|claude) echo;; esac' \
+  'case y in a) ;; b|claude) echo;; esac' $'case y in\n  a | claude) echo;;\nesac' \
   '[[ y =~ (a|claude) ]]' $'X=claude; echo hi # it\'s |\n$X' 'if [[ y =~ (a|claude) ]]; then :; fi' \
   'echo hi | case y in a|claude) cat;; esac' $'for f in a; do\n  case $f in a|claude) :;; esac\ndone'; do
   test_allow "$IRRECOVERABLE" "GH #812 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
@@ -4142,5 +4142,17 @@ for _c in 'X=case; Y=claude; $X y in a|$Y' "X='case y in a'; Y=claude; \$X|\$Y" 
   "S=';'; Y=claude; echo \$S case y in a|\$Y" "bash -c 'X=case; Y=claude; \$X y in a|\$Y'" 'echo $[1;case y in a]|claude' \
   'echo $[1;[[ y =~ a]|claude' 'a[1;case y in b]=x|claude' $'echo hi | \\\n# c\nclaude'; do
   test_deny  "$IRRECOVERABLE" "GH #812 review 6: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+# GH #812 review 7 (decision): substituted text (a view, a body's variables) cannot show which part came from an
+# expansion, which bash never reads as a keyword, separator or redirect (`X=; $X case ..`, `${X}se ..`), so there no
+# `|` is a pattern bar or `>|`: GH #810 item 3's variable forms keep develop's deny; the literal forms allow. A text
+# holding a heredoc (`<<`) reads no pattern bar either: its lines may hold any lead. A comment's last `\` continues
+# nothing.
+for _c in 'X=claude; echo hi >| $X' 'X=claude; echo hi 2>| $X' 'X=claude; case y in a|$X) echo;; esac' \
+  'X=claude; [[ y =~ (a|$X) ]]' 'X=; Y=claude; $X case y in a|$Y' "X=' '; Y=claude; case\$X y in a|\$Y" \
+  'E=; Y=claude; $E [[ y =~ a|$Y' 'X=ca; Y=claude; ${X}se y in a|$Y' 'E=; Y=claude; echo hi >$E| $Y' \
+  $'bash -c \'cat <<";;"\nx\n;;\ndate|claude\'' $'cat <<EOF\n$(date)\nEOF\ncat <<\';;\'\nx\n;;\ndate|claude' \
+  $'cat <<\';;\' "a\nb"\n;;\ndate | claude' $'echo hi | \\\n# c \\\nclaude'; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 7: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
 gates_summary
