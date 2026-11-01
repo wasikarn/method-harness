@@ -6134,13 +6134,14 @@ def _views():
     for m in _PLAIN_ASSIGN_RE.finditer(cmd):
         vals.setdefault(m.group(1), []).append(next(g for g in m.groups()[1:] if g is not None))
     lit = _literal_dollars(cmd) if vals else ()
-    # GH #798 review: three copies: the last value (a loop's later pass or a function called after the assignment:
-    # `F=-i; for ..; do rm $F b; F=-rf; done`), the first value, and each value in order (the one assigned last before
-    # the reference, else the last value). Only the in-order copy is spawn-scanned (_VAR_SPAWN_TEXTS): the first-value
-    # copy made `BIN=claude .. BIN=python3; $BIN -c ..` a spawn, the last-value one `BIN=python3; $BIN -c ..;
-    # BIN=claude; command -v $BIN` (review 5). A fourth copy, "raw", is in order with a reference that has no assignment
+    # GH #798 review: four copies: the last value (a loop's later pass or a function called after the assignment:
+    # `F=-i; for ..; do rm $F b; F=-rf; done`), the first value, each value in order (the one assigned last before
+    # the reference, else the last value), and "raw". Only the in-order copy is spawn-scanned (_VAR_SPAWN_TEXTS): the
+    # first-value copy made `BIN=claude .. BIN=python3; $BIN -c ..` a spawn, the last-value one `BIN=python3; $BIN -c ..;
+    # BIN=claude; command -v $BIN` (review 5). The raw copy is in order with a reference that has no assignment
     # before it left as written, as bash expands it to nothing: `F=-r; rm $F $G b; G=-i` does not prompt, while the
-    # in-order copy's last-value fallback read it as -i (GH #805). rm's rules read all four; the spawn scan reads only one.
+    # in-order copy's last-value fallback read it as -i (GH #805); it also drops an unset, subshell or prefix value
+    # (GH #808). rm's rules read all four copies; the spawn scan skips all but the in-order one.
     for pick in (-1, 0, None, "raw"):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
@@ -6270,26 +6271,84 @@ def _scan_view_statements(text):
         if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
             _deny_nested_spawn()
 
+_UNSET_RE = re.compile(r"(?<![\w$-])unset((?:[ \t]+-[A-Za-z]+)*)((?:[ \t]+[A-Za-z_]\w*)+)")
+_DECL_WORDS = frozenset(("export", "local", "declare", "typeset", "readonly"))
+
+def _subshell_spans(text):
+    # (open, close) offsets of each ( .. ) outside quotes, $( .. ) and <( .. ) included: a value set inside one never
+    # reaches the text after it closes. A `)` with nothing open (a case pattern) closes nothing.
+    spans, stack, sq, dq, i, n = [], [], False, False, 0, len(text)
+    while i < n:
+        c = text[i]
+        if sq:
+            sq = c != "'"
+        elif c == "\\":
+            i += 1
+        elif c == "'" and not dq:
+            sq = True
+        elif c == '"':
+            dq = not dq
+        elif not dq and c == "(":
+            stack.append(i)
+        elif not dq and c == ")" and stack:
+            spans.append((stack.pop(), i))
+        i += 1
+    return spans
+
+def _prefix_assign(text, m):
+    # True when the assignment is a prefix on a command (`G=-i rm $G b`): bash expands that command's words before the
+    # temporary value applies, and it is gone after, so nothing reads it. A chain of assignments with no command after
+    # it (`G=-i F=-r;`) persists, as do the arguments of export/local/declare/typeset/readonly.
+    while True:
+        j = m.end()
+        k = j
+        while k < len(text) and text[k] in " \t":
+            k += 1
+        if k == j or k == len(text) or text[k] in ";&|()\n#}":
+            return False
+        nxt = _PLAIN_ASSIGN_RE.match(text, k)
+        if nxt is None:
+            break
+        m = nxt
+    head = re.split(r"[;&|(){}\n]", text[:m.start()])[-1].split()
+    return not any(w in _DECL_WORDS for w in head)
+
 def _ordered_var_text(text, fallback_last=True):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
     # before it reads the last value, or with fallback_last false is left as written (GH #805).
-    sets = sorted((m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None)) for m in _PLAIN_ASSIGN_RE.finditer(text))
+    # GH #808: with fallback_last false (the raw copy) a value bash never expands at the reference is dropped too: one
+    # `unset` since (left as written, as bash expands it to nothing), one set in a subshell that closed before it, and a
+    # prefix assignment on a command. Dropping only ever leaves a reference as written, so this copy reads more -r, not less.
+    raw = not fallback_last
+    sets = [(m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None))
+            for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m))]
+    if raw:
+        for m in _UNSET_RE.finditer(text):
+            if "f" not in m.group(1):
+                base = m.start(2)
+                for w in re.finditer(r"[A-Za-z_]\w*", m.group(2)):
+                    sets.append((base + w.end(), w.group(0), None))
+    sets.sort(key=lambda e: e[0])
     if not sets:
         return text
     lit, keys = _literal_dollars(text), [e for e, _, _ in sets]
+    spans = _subshell_spans(text) if raw else ()
     def sub(m):
         name = m.group(1) or m.group(2)
         if m.start() in lit:
             return m.group(0)
         for k in range(bisect.bisect_right(keys, m.start()) - 1, -1, -1):
             if sets[k][1] == name:
-                return sets[k][2]
+                at = sets[k][0]
+                if any(o < at <= c and not o < m.start() < c for o, c in spans):
+                    continue  # set inside a subshell the reference is not in
+                return m.group(0) if sets[k][2] is None else sets[k][2]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
         return last.get(name, m.group(0)) if fallback_last else m.group(0)
-    last = {n: v for _, n, v in sets}
+    last = {n: v for _, n, v in sets if v is not None}
     return _VAR_REF_RE.sub(sub, text)
 
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.

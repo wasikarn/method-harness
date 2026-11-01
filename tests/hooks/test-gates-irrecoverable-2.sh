@@ -4070,4 +4070,15 @@ done
 for _c in $'X=claude; echo hi |\ngrep $X' $'X=claude; echo hi\n$X' $'X=claude; true ||\n$X'; do
   test_allow "$IRRECOVERABLE" "GH #810 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #808: the raw copy drops a value bash never expands there: one `unset` after it is set, one set inside a
+# subshell that closed before the reference, and a prefix assignment on a command (bash expands the words first).
+for _c in 'G=-i; F=-r; unset G; rm $F $G b' 'F=-r; G=-i; unset -v X G; rm $F $G b' '(G=-i); F=-r; rm $F $G b' \
+  'F=-r; (G=-i; true) && rm $F $G b' 'F=-r; G=-i rm $F $G b' 'F=-r; G=-i H=1 rm $F $G b' 'F=-r; G=-i; (G=-i); unset G; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #808: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'G=-i; F=-r; unset X; rm $F $G b' 'G=-i; F=-r; unset -f G; rm $F $G b' '(G=-i; F=-r; rm $F $G b)' \
+  'G=-i; (F=-r; rm $F $G b)' 'G=-i; F=-r; (unset G); rm $F $G b' 'G=-i; F=-r; X=1 rm $F $G b' 'G=-i; F=-r; G=-i rm $F $G b' \
+  'export G=-i F=-r; rm $F $G b' 'G=-i F=-r; rm $F $G b' 'F=-r; unset G; G=-i; rm $F $G b'; do
+  test_allow "$IRRECOVERABLE" "GH #808 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary
