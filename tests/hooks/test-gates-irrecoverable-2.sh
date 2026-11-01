@@ -4055,4 +4055,11 @@ test_deny  "$IRRECOVERABLE" 'GH #805: F=-r; for i in 1 2; do rm $F $G b; done; G
 test_deny  "$IRRECOVERABLE" 'GH #805: F=-r; g(){ rm $F $G b; }; g; G=-i' "$(bash_payload 'F=-r; g(){ rm $F $G b; }; g; G=-i')"
 test_allow "$IRRECOVERABLE" 'GH #805 control: G=-i; F=-r; rm $F $G b' "$(bash_payload 'G=-i; F=-r; rm $F $G b')"
 test_allow "$IRRECOVERABLE" 'GH #805 control: F=-i; g(){ rm $F b; }; g' "$(bash_payload 'F=-i; g(){ rm $F b; }; g')"
+# GH #804: a view's statements keep the `|` / `|&` before them, so the pipe-in check sees a claude that reads
+# stdin; `||` stays one separator, so a claude after it is not read as piped.
+test_deny  "$IRRECOVERABLE" 'GH #804: subagent: X=claude; echo hi | $X' "$(bash_agent_payload 'X=claude; echo hi | $X' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #804: subagent: X=claude; echo hi |& $X' "$(bash_agent_payload 'X=claude; echo hi |& $X' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #804 control: subagent: echo hi | claude' "$(bash_agent_payload 'echo hi | claude' fork)"
+test_allow "$IRRECOVERABLE" 'GH #804 control: subagent: X=claude; true || $X' "$(bash_agent_payload 'X=claude; true || $X' fork)"
+test_allow "$IRRECOVERABLE" 'GH #804 control: subagent: X=claude; echo hi | grep $X' "$(bash_agent_payload 'X=claude; echo hi | grep $X' fork)"
 gates_summary
