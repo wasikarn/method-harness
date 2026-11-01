@@ -1450,27 +1450,10 @@ def _spawn_drop_escapes(c):
         return " " * (len(w) - len(u)) + u
     return _SPAWN_WORD_RE.sub(word, c)
 
-_PATTERN_BARS_OK = [True]  # GH #812 review 5: off for a text whose escapes were dropped
-# GH #812 reviews 6-7: on while a substituted text (a view, a body's variables) is read. There no `|` is a pattern bar
-# or a `>|` redirect: an expansion is plain words in bash, never a keyword, separator or redirect, and the text cannot
-# show which part came from one (`X=case; $X y in a|$Y`, `X=; $X case ..`, `${X}se ..`, `E=; echo hi >$E| $Y`).
-# So the variable forms keep develop's deny (`X=claude; case y in a|$X) ..`); only the literal forms allow.
-_SUBST_SCAN = [False]
-
 def _nested_spawn(c, overlap):
-    d = _spawn_drop_escapes(c)
-    j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, d)
-    # A dropped escape or a joined quote leaves no mark in the text read, so `\case x in a|claude` and `"case" y in
-    # a|"claude"` (a command named case, piped) would read as a keyword: such a reading takes every `|` as a pipe, as
-    # develop did (GH #812 reviews 5, 8).
-    try:
-        _PATTERN_BARS_OK[0] = d == c and j == d
-        if _nested_spawn_text(j, overlap):
-            return True
-        _PATTERN_BARS_OK[0] = d == c
-        return j != d and _nested_spawn_text(d, overlap)
-    finally:
-        _PATTERN_BARS_OK[0] = True
+    c = _spawn_drop_escapes(c)
+    j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, c)
+    return _nested_spawn_text(j, overlap) or (j != c and _nested_spawn_text(c, overlap))
 
 def _charge_spawn_anchor(c):
     # GH #246: charge one anchor scan of c (about starts x length) to the shared counter. True, with
@@ -1632,80 +1615,17 @@ def _nested_spawn_text(c, overlap):
             return True
     return False
 
-# `case` and `[[` count only as a keyword at a command position: at the text's start or after an unquoted ; & | or
-# newline, past keywords chained there (`if [[`, `do case`); never as an argument (`echo test case 3 in prod | claude`,
-# `echo then case ..`). Each lead is anchored at the pipe's end (\Z with endpos), and every structural char of it must
-# be unmasked (not quoted, escaped or in a comment). Anything else is read as a pipe, as develop did.
-# A redirect's `&` / `|` (`>& case`, `<& [[`, `>| case`: a file name) opens no command position.
-_KW_LEAD = r"(?:\A|(?<=[;\n])|(?<=&&)|(?<=[^<>&]&)|(?<=[^>|]\|))[ \t]*(?:(?:if|elif|while|until|then|do|else|!)[ \t]+)*"
-# No `{` or `}` in the case word or the [[ left side: a ${..} opened far back may close there.
-_CASE_LEAD_RE = re.compile(r"(?:(;;&?|;&)|" + _KW_LEAD + r"(case)[ \t]+[^\s;&|(){}\[\]]+[ \t]+(in))\Z")
-# Its left side holds no ( ) or backtick and no `]]`, so a `[[` closed inside $(..) or a subshell does not count.
-# Its operand holds no substitution or brace (`=~ $(echo|claude)` runs a real pipe): only plain chars and $NAME.
-_REGEX_ALT_RE = re.compile(_KW_LEAD + r"(\[\[)[ \t](?:(?!\]\])[^\n;&|()`{}])*?[ \t]=~[ \t]+(?:[^\s;&<>$`{}\[\]]|\$\w)*\Z")
-_UNSAFE_PATTERN_WORD = re.compile(r"[{}`\[\]]|\$\(")  # [ ]: a ; inside $[..] or a[..] is no separator
-
-def _in_open_brace(c, pos, mask):
-    # True when c[pos] sits inside an unclosed ${..} (bounded look back): its ; & or newline is text, no separator
-    # (`echo ${v:-;case x in a}|claude` pipes, GH #812 review 4).
-    depth, i = 0, max(0, pos - 400)
-    while i < pos:
-        if not mask[i]:
-            if c[i] == "$" and c[i + 1:i + 2] == "{":
-                depth += 1
-                i += 1
-            elif c[i] == "}" and depth:
-                depth -= 1
-        i += 1
-    return depth > 0
-
-def _lead_unmasked(m, mask, groups):
-    # The separator before the lead, the keywords up to its first group, and each named group: none masked.
-    s0 = m.start()
-    if s0 and (mask[s0 - 1] or _in_open_brace(m.string, s0, mask)):
-        return False
-    first = min(m.start(g) for g in groups)
-    if any(mask[s0:first]):
-        return False
-    return not any(any(mask[m.start(g):m.end(g)]) for g in groups)
-
-_HEREDOC_OP_RE = re.compile(r"<(?:\\\n)*<")
-
-def _pattern_bar(c, i, mask):
-    # GH #810 item 3: a `|` at c[i] that separates the alternatives of a case pattern (`a|b)` after `case W in`,
-    # `;;`, `;&` or `;;&`, blanks and newlines allowed around each `|`) or of a [[ =~ ]] regex (`(a|b)`): no pipe.
-    # A heredoc's lines may hold any lead (review 7); its `<<` may be split by a backslash-newline (review 8).
-    if not _PATTERN_BARS_OK[0] or _SUBST_SCAN[0] or _HEREDOC_OP_RE.search(c):
-        return False
-    j = i
-    while True:
-        while j and c[j - 1] in " \t":
-            j -= 1
-        k = j
-        while k and c[k - 1] not in " \t\n()|;&<>":
-            k -= 1
-        if k == j or i - k > 400:  # bounded: a long `a|a|..` chain is read as pipes, as develop did
-            break
-        if _UNSAFE_PATTERN_WORD.search(c, k, j):
-            return False  # a word holding a substitution or brace may be one (`${v//;;/}|claude`)
-        if k and c[k - 1] == "|" and not mask[k - 1]:  # one more alternative before it
-            j = k - 1
-            continue
-        if c[k:j] == "esac":
-            return False  # `;; esac | x` pipes the case's output
-        k -= k > 0 and c[k - 1] == "("
-        while k and c[k - 1] in " \t\n":
-            k -= 1
-        m = _CASE_LEAD_RE.search(c, max(0, k - 200), k) if k else None
-        if m and _lead_unmasked(m, mask, (1,) if m.group(1) else (2, 3)):
-            return True
-        break
-    m = _REGEX_ALT_RE.search(c, max(0, i - 200), i)
-    return bool(m) and _lead_unmasked(m, mask, (1,))
+_RAW_PIPE_RE = re.compile(r"(?<!\|)\|&?(?:[\s({]|\\\n)*$")  # develop's reading: | \<newline> (GH #810)
 
 def _pipe_before(c, end, mask):
-    # True when a pipe (`|` or `|&`, not `||` or a `>|` redirect, not a pattern's `|`) is the last thing before
-    # c[end], past blanks, a `(` or `{` group open, backslash-newlines and comments (GH #810: `| # feed\n claude`).
+    # True when a pipe (`|` or `|&`, not `||`) is the last thing before c[end], past blanks, a `(` or `{` group open,
+    # backslash-newlines and, beyond develop's raw reading (kept whole), comments (GH #810: `| # feed\n claude`).
+    # A `>|` redirect or a case / [[ =~ pattern `|` stays a pipe (GH #810 item 3, kept deny): an alias (bash expands
+    # one even on a reserved word, and the shell snapshot turns expand_aliases on), a backtick or an expansion can
+    # make the text bash parses differ from the text read (GH #812 reviews 1-9).
+    return _RAW_PIPE_RE.search(c, 0, end) is not None or _pipe_past_comments(c, end, mask)
+
+def _pipe_past_comments(c, end, mask):
     j = end
     while j:
         ch = c[j - 1]
@@ -1728,9 +1648,7 @@ def _pipe_before(c, end, mask):
             break
     if j and c[j - 1] == "&" and c[j - 2:j - 1] == "|":
         j -= 1
-    if not j or c[j - 1] != "|" or c[j - 2:j - 1] == "|" or (c[j - 2:j - 1] == ">" and not mask[j - 2] and not _SUBST_SCAN[0]):
-        return False
-    return not _pattern_bar(c, j - 1, mask)
+    return bool(j) and c[j - 1] == "|" and c[j - 2:j - 1] != "|"
 
 def _spawn_lead_words(lead):
     # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
@@ -3775,10 +3693,6 @@ def _text_statements(text):
     while i < len(text):
         ch = text[i]
         if ch in ";&|\n" and not mask[i]:
-            if ch == "|" and ((i and text[i - 1] == ">" and not mask[i - 1] and not _SUBST_SCAN[0])
-                              or _pattern_bar(text, i, mask)):  # GH #810 item 3: no pipe
-                i += 1
-                continue
             pipe = ch == "\n" and _PIPE_ONLY_RE.fullmatch(carry + text[start:i])
             if pipe:
                 carry, start, i = pipe.group(1) + " ", i + 1, i + 1
@@ -6462,7 +6376,6 @@ def _scan_body_vars(body):
 
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
-_SUBST_SCAN[0] = True  # from here on every spawn scan reads substituted text (a body's variables, the views)
 if "agent_id" in d:
     for _body in _BODY_VAR_QUEUE:
         _scan_body_vars(_body)

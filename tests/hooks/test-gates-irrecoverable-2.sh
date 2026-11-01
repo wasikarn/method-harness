@@ -4071,95 +4071,34 @@ for _c in $'X=claude; echo hi |\ngrep $X' $'X=claude; echo hi\n$X' $'X=claude; t
   test_allow "$IRRECOVERABLE" "GH #810 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
 # GH #812: a single-quoted bash -c / eval body is a script of its own: its own assignments (GH #812) and the outer
-# command's (GH #810 item 2: `export X=claude`, read as the child's environment) are substituted into it. GH #810
-# item 3: `>|` and a case or [[ =~ ]] pattern `|` are no pipe in. GH #810 comment: a pipe at a line end crosses a
-# comment that holds an apostrophe, and the literal `claude` forms with a comment.
+# command's (GH #810 item 2: `export X=claude`, read as the child's environment) are substituted into it, in order and
+# up to 8 links, bounded in size. GH #810 comment: a pipe at a line end crosses a comment, one holding an apostrophe or
+# after a backslash-newline too, to the next line's `claude` or `$X`.
 for _c in "bash -c 'X=claude; \$X -p x'" "bash -c 'X=claude; echo hi | \$X'" "sh -c 'X=claude; \$X -p x'" \
   "eval 'X=claude; \$X -p x'" "export X=claude; bash -c '\$X -p x'" "export X=claude; bash -c 'echo hi | \$X'" \
   "X=claude bash -c '\$X -p x'" "export X=claude; bash -c 'Y=\$X; \$Y -p x'" \
+  "bash -c 'X=claude; Y=\$X; Z=\$Y; W=\$Z; \$W -p x'" \
+  "X='\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'; Y=claude; \$Y -p x" \
   $'X=claude; echo hi | # it\'s fed\n$X' $'echo hi | # c\nclaude' $'echo hi | # c\n\nclaude' $'echo hi |#c\nclaude' \
-  $'echo hi |& # c\nclaude' $'echo hi | # it\'s\nclaude' $'echo hi | # c\n$(echo claude)' \
-  'case y in a) echo hi | claude;; esac' 'case y in a) ;; esac | claude' '[[ x =~ y ]] && echo hi | claude' \
-  'echo hi >| f | claude' 'X=claude; case y in a) echo hi | $X;; esac' 'X=claude; echo hi >| f | $X' \
-  $'echo hi # c |\nclaude' 'echo Fix the failing test case 3 in prod | claude' 'echo case x in a | claude' \
-  'X=claude; echo case x in a | $X' 'echo case x in a|cat|claude' 'case x in a) echo case y in b | claude;; esac' \
-  $'cat notes.txt; echo case 1 in\nstatus | claude' "bash -c 'echo case x in a | claude'" 'echo "case x" in a | claude' \
-  'echo [[ x =~ a|claude' 'echo "[[ x =~ a"|claude' "bash -c 'X=claude; Y=\$X; Z=\$Y; W=\$Z; \$W -p x'"; do
+  $'echo hi |& # c\nclaude' $'echo hi | # it\'s\nclaude' $'echo hi | # c\n$(echo claude)' $'echo hi # c |\nclaude' \
+  $'echo hi | \\\n# c\nclaude' $'echo hi | \\\n# c \\\nclaude'; do
   test_deny  "$IRRECOVERABLE" "GH #812: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in "bash -c 'X=claude; \$X --version'" "bash -c 'X=claude; echo \$X'" "export X=claude; bash -c '\$X --version'" \
-  "export X=claude; bash -c 'echo \$X'" "bash -c 'X=python3; \$X -c 1'" \
-  'echo hi >| claude' 'case y in a|claude) echo;; esac' \
-  'case y in a) ;; b|claude) echo;; esac' $'case y in\n  a | claude) echo;;\nesac' \
-  '[[ y =~ (a|claude) ]]' $'X=claude; echo hi # it\'s |\n$X' 'if [[ y =~ (a|claude) ]]; then :; fi' \
-  'echo hi | case y in a|claude) cat;; esac' $'for f in a; do\n  case $f in a|claude) :;; esac\ndone'; do
+  "export X=claude; bash -c 'echo \$X'" "bash -c 'X=python3; \$X -c 1'" "bash -c 'PAT=\"error|claude\"; grep -E \$PAT log'" \
+  "X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" $'X=claude; echo hi # it\'s |\n$X' $'echo hi | # c\ngrep claude'; do
   test_allow "$IRRECOVERABLE" "GH #812 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
-# GH #812 review 2: a case / [[ lead counts only at a real command position, anchored at the pipe, unquoted; an
-# escaped `>` is no redirect; a value that holds references (`X='$X$X'`) stops growing at the view cap.
-for _c in $'case "$1" in\n  review) git diff | claude ;;\nesac' $'case "$1" in\n  *) ;;\nesac\ngit diff | claude' \
-  $'case $x in\n a) echo hi | claude ;; esac' $'echo x;;\ngit diff | claude' 'echo then case 3 in prod | claude' \
-  'echo ! case 3 in a | claude' 'echo if [[ x =~ a|claude' 'echo {case 3 in a | claude' 'echo \(case 3 in a | claude' \
-  'echo a\|case 3 in a | claude' 'echo \;;x|claude' 'echo \;&x|claude' 'echo \>|claude' 'echo x\>|claude' \
-  "X='\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'; Y=claude; \$Y -p x"; do
-  test_deny  "$IRRECOVERABLE" "GH #812 review 2: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
-done
-test_allow "$IRRECOVERABLE" "GH #812 review 2 control: subagent: X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" \
-  "$(bash_agent_payload "X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" fork)"
-# GH #812 review 3: a redirect's & or | (`>& case`, `>| case`) opens no command position, and a [[ closed inside
-# $(..), backticks or a subshell is no regex lead; a substituted value's `|` is no pipe (it is not an operator).
-for _c in 'echo hi >& case x in a|claude' 'echo hi >| case x in a|claude' 'echo x <& case y in a|claude' \
-  'echo x 2>& [[ y =~ a|claude' 'echo x >& then case y in a|claude' 'echo $(true;[[ 1 ]]) =~ b|claude' \
-  'echo `:;[[ 1 ]]` =~ b|claude' '(:;[[ a ]]) =~ b|claude' $'echo $(\n[[ 1 ]]) =~ b|claude'; do
-  test_deny  "$IRRECOVERABLE" "GH #812 review 3: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
-done
-for _c in "bash -c 'PAT=\"error|claude\"; grep -E \$PAT log'" 'true && case y in a|claude) echo;; esac' \
-  'true && [[ y =~ (a|claude) ]]'; do
-  test_allow "$IRRECOVERABLE" "GH #812 review 3 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
-done
-# GH #812 review 4: a separator inside ${..} opens no lead, and a pattern word or =~ operand holding a substitution,
-# backtick or brace is read as a pipe.
-for _c in 'git diff ${v//;;/}|claude' 'echo ${v//;&/x}|claude' 'git diff ${v:-;case x in a}|claude' \
-  'echo ${v:-&&case x in a}|claude' 'echo ${v:-;[[ y =~ a}|claude' $'echo ${v:-\ncase x in a}|claude' \
-  '[[ x =~ $(echo|claude) ]]' 'X=claude; [[ x =~ $(echo|$X) ]]'; do
-  test_deny  "$IRRECOVERABLE" "GH #812 review 4: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
-done
-for _c in 'case "$1" in a|claude) :;; esac' '[[ $y =~ (a|claude) ]]' 'echo ${v} ; case y in a|claude) :;; esac'; do
-  test_allow "$IRRECOVERABLE" "GH #812 review 4 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
-done
-# GH #812 review 5: an escaped keyword (`\case`, `ca\se`, `\if`) is a command name, so its `|` pipes; a `}` in the case
-# word or the [[ left side may close a ${..} opened far back.
-_P=$(printf 'A%.0s' {1..420})
-for _c in '\case x in a|claude' 'ca\se x in a|claude' 'echo hi; \case x in a|claude' 'echo; \do case x in a|claude' \
-  '\if [[ x =~ a|claude' "bash -c '\\case x in a|claude'" 'X=claude; \case x in a|$X' \
-  "echo \${v:-$_P;case x} in a|claude" "echo \${v:-$_P;[[ x} =~ a|claude"; do
-  test_deny  "$IRRECOVERABLE" "GH #812 review 5: subagent: ${_c:0:60}" "$(bash_agent_payload "$_c" fork)"
-done
-# GH #812 review 6: an expanded value is never a keyword or separator, so a value holding one (`X=case`, `S=';'`)
-# turns pattern bars off in substituted text; a ; inside $[..] or a[..] is no separator; a backslash-newline before a
-# comment after a pipe is crossed.
-for _c in 'X=case; Y=claude; $X y in a|$Y' "X='case y in a'; Y=claude; \$X|\$Y" "Y=claude; X='[['; \$X y =~ a|\$Y" \
-  "S=';'; Y=claude; echo \$S case y in a|\$Y" "bash -c 'X=case; Y=claude; \$X y in a|\$Y'" 'echo $[1;case y in a]|claude' \
-  'echo $[1;[[ y =~ a]|claude' 'a[1;case y in b]=x|claude' $'echo hi | \\\n# c\nclaude'; do
-  test_deny  "$IRRECOVERABLE" "GH #812 review 6: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
-done
-# GH #812 review 7 (decision): substituted text (a view, a body's variables) cannot show which part came from an
-# expansion, which bash never reads as a keyword, separator or redirect (`X=; $X case ..`, `${X}se ..`), so there no
-# `|` is a pattern bar or `>|`: GH #810 item 3's variable forms keep develop's deny; the literal forms allow. A text
-# holding a heredoc (`<<`) reads no pattern bar either: its lines may hold any lead. A comment's last `\` continues
-# nothing.
-for _c in 'X=claude; echo hi >| $X' 'X=claude; echo hi 2>| $X' 'X=claude; case y in a|$X) echo;; esac' \
-  'X=claude; [[ y =~ (a|$X) ]]' 'X=; Y=claude; $X case y in a|$Y' "X=' '; Y=claude; case\$X y in a|\$Y" \
-  'E=; Y=claude; $E [[ y =~ a|$Y' 'X=ca; Y=claude; ${X}se y in a|$Y' 'E=; Y=claude; echo hi >$E| $Y' \
-  $'bash -c \'cat <<";;"\nx\n;;\ndate|claude\'' $'cat <<EOF\n$(date)\nEOF\ncat <<\';;\'\nx\n;;\ndate|claude' \
-  $'cat <<\';;\' "a\nb"\n;;\ndate | claude' $'echo hi | \\\n# c \\\nclaude'; do
-  test_deny  "$IRRECOVERABLE" "GH #812 review 7: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
-done
-# GH #812 review 8: a reading whose quotes were joined reads no pattern bar (a quoted keyword is a command name), so
-# a quoted word the join changes keeps develop's deny; a heredoc `<<` split by a backslash-newline counts.
-for _c in '"case" y in a|"claude"' 'c"a"se y in a|c"laude"' "\$'case' y in a|\$'claude'" '"if" [[ y =~ a|"claude"' \
-  "bash -c '\"case\" y in a|\"claude\"'" $'cat <\\\n<\';;\'\nx\n;;\ndate|claude' \
-  $'bash -c \'cat <\\\n<";;"\nx\n;;\ndate|claude\''; do
-  test_deny  "$IRRECOVERABLE" "GH #812 review 8: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+# GH #810 item 3 (decision: keep the deny): a `>|` redirect and a case / [[ =~ pattern `|` stay a pipe in. Nine fresh
+# reviews of an exemption each found the text bash parses differ from the text read: a `case` or `[[` as an argument,
+# escaped, quoted, inside ${..} / $[..] / backticks / a heredoc, built by an expansion (`X=; $X case ..`), or an alias
+# (bash expands one even on a reserved word; the shell snapshot turns expand_aliases on). None is realistic.
+for _c in 'echo hi >| claude' 'X=claude; echo hi >| $X' 'X=claude; echo hi 2>| $X' 'case y in a|claude) echo;; esac' \
+  'X=claude; case y in a|$X) echo;; esac' '[[ y =~ (a|claude) ]]' 'X=claude; [[ y =~ (a|$X) ]]' \
+  'echo test case 3 in prod | claude' 'echo hi >& case x in a|claude' '\case x in a|claude' '"case" y in a|"claude"' \
+  'X=; Y=claude; $X case y in a|$Y' 'echo ${v:-;case x in a}|claude' '[[ x =~ $(echo|claude) ]]' \
+  'echo `true;case x` in a|claude' $'shopt -s expand_aliases; alias case=echo\ncase y in a|claude' \
+  $'bash -c \'cat <<";;"\nx\n;;\ndate|claude\'' 'case y in a) echo hi | claude;; esac' 'case y in a) ;; esac | claude'; do
+  test_deny  "$IRRECOVERABLE" "GH #810 item 3 (kept): subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
 gates_summary
