@@ -178,11 +178,13 @@ print("echo a | xargs env true; " * 26 + "rm${IFS}-rf${IFS}/tmp/x", end="")
 PY
 )")"
 # Stripping leading words one slice at a time copied the rest each step: 75k `!` took 19 s, past the 8 s timeout.
+# GH #789: sized against the gate's 4 s deadline (GH #771). On a 4-core host the fixed gate denies 41200 `!` in
+# 1.6-1.7 s and 26200 env in 1.6-2.0 s; the gate at 9c37835c^ took 9.1 s and 7.6 s.
 _quad_tail='rm${IFS}-rf${IFS}/tmp/x a{b} c$d'
-_timed_case "74900 leading ! words before an IFS rm are stripped in linear time" 2 \
-  "$(python3 -c 'import sys; print("! " * 74900 + sys.argv[1], end="")' "$_quad_tail")"
-_timed_case "37450 env wrappers before an IFS rm are unwrapped in linear time" 2 \
-  "$(python3 -c 'import sys; print("env " * 37450 + sys.argv[1], end="")' "$_quad_tail")"
+_timed_hook_case "41200 leading ! words before an IFS rm are stripped inside the gate's deadline" 2 \
+  "$(python3 -c 'import sys; print("! " * 41200 + sys.argv[1], end="")' "$_quad_tail")"
+_timed_hook_case "26200 env wrappers before an IFS rm are unwrapped inside the gate's deadline" 2 \
+  "$(python3 -c 'import sys; print("env " * 26200 + sys.argv[1], end="")' "$_quad_tail")"
 # Each eval level re-read the same body from scratch, and stripped its `!` words quadratically: 20 KB under
 # four evals took 25 s. The binding limit is the gate's own 4 s deadline (DEADLINE_SECS; on expiry it asks,
 # rc 0): 20 KB took ~3 s, so a loaded container tipped it past 4 s and the row failed. At 10 KB a healthy run
