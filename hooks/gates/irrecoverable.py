@@ -6308,28 +6308,35 @@ def _shell_scan(text):
         i += 1
     return spans, text_at
 
-def _prefix_assign(text, m):
+def _prefix_assign(text, m, memo):
     # True when the assignment is a prefix on a command (`G=-i rm $G b`): bash expands that command's words before the
     # temporary value applies, and it is gone after, so nothing reads it. A chain of assignments with no command after
     # it (`G=-i F=-r;`, redirections such as `F=-r 2>/dev/null;` included) persists, as do the arguments of
-    # export/local/declare/typeset/readonly.
-    k = m.end()
-    while True:
+    # export/local/declare/typeset/readonly. memo maps each chain offset walked to the answer, so a long chain is
+    # walked once, not once per assignment in it.
+    k, seen, out = m.end(), [], None
+    while out is None:
+        if k in memo:
+            out = memo[k]
+            break
+        seen.append(k)
         j = k
         while k < len(text) and text[k] in " \t":
             k += 1
-        if k == len(text) or text[k] in ";&|()\n#}":
-            return False
-        if k == j and text[k] not in "<>":
-            return False
+        if k == len(text) or text[k] in ";&|()\n#}" or (k == j and text[k] not in "<>"):
+            out = False
+            break
         nxt = _PLAIN_ASSIGN_RE.match(text, k) or _REDIR_RE.match(text, k)
         if nxt is None or nxt.end() == k:
+            head = re.split(r"[;&|(){}\n]", text[:m.start()])[-1].split()
+            out = not any(w in _DECL_WORDS for w in head)
             break
         if nxt.re is _PLAIN_ASSIGN_RE:
             m = nxt
         k = nxt.end()
-    head = re.split(r"[;&|(){}\n]", text[:m.start()])[-1].split()
-    return not any(w in _DECL_WORDS for w in head)
+    for k in seen:
+        memo[k] = out
+    return out
 
 def _ordered_var_text(text, fallback_last=True):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
@@ -6340,8 +6347,9 @@ def _ordered_var_text(text, fallback_last=True):
     # `unset` since (left as written, as bash expands it to nothing), one set in a subshell that closed before it, and a
     # prefix assignment on a command. Dropping only ever leaves a reference as written, so this copy reads more -r, not less.
     raw = not fallback_last
+    memo = {}
     sets = [(m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None))
-            for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m))]
+            for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m, memo))]
     spans, text_at = _shell_scan(text) if raw else ((), b"")
     if raw:
         for m in _UNSET_RE.finditer(text):
