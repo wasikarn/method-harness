@@ -6581,6 +6581,9 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                 if body:
                     base = m.start(3)
                     for w in re.finditer(r"[A-Za-z_]\w*", m.group(3)):
+                        if re.search(r"(?<![\w$-])(?:local|declare|typeset)[ \t][^;&|\n]*(?<![\w$-])" + w.group(0) + "=",
+                                     text[body[0]:m.start()]):
+                            continue  # GH #818 review 5: already local with a value, which a bare `local` keeps
                         scope[base + w.end()] = body
                         sets.append((base + w.end(), w.group(0), None))
     sets.sort(key=lambda e: e[0])
@@ -6630,7 +6633,11 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             return False
         # A value in a function body only once a call is written; an unset too for the loop rule (strict), never in
         # the walk-back below, so an unset reads as develop read it.
-        return (v is None and not strict) or all(o < ref < c or first < ref for o, c, first in fl)
+        # GH #818 review 5: a reference inside a body runs when that body is called, which the text order does not
+        # show (functions first, calls at the bottom), so the rule reads only a reference outside every body.
+        return (v is None and not strict) or not fl or in_body(ref) or all(o < ref < c or first < ref for o, c, first in fl)
+    def in_body(ref):
+        return any(o < ref < c for o, c, _, _ in groups["fn"])
     def sub(m):
         r = pick(m)
         # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no

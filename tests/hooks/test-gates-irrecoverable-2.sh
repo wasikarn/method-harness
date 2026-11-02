@@ -4238,4 +4238,10 @@ for _c in 'G=-i; F=-r; unset G; for i in 1; do rm $F $G b; unset F; done' \
   'G=-i; F=-r & unset G; wait; rm $F $G b'; do
   test_deny  "$IRRECOVERABLE" "GH #818 review 4: $_c" "$(bash_payload "$_c")"
 done
+# GH #818 review 5: a reference inside a function body runs when that function is called, so the function rule reads
+# only a reference outside every body; a second `local` of a name the body already made local keeps its value.
+for _c in $'set -e\nFLAGS=-r\nconfigure() {\n  SAFE=-i\n}\nremove_build() {\n  rm $FLAGS $SAFE build\n}\nconfigure\nremove_build' \
+  'R=-r; main(){ I=-i; run; }; run(){ rm $R $I d; }; main "$@"' 'R=-r; f(){ local I=-i; local I; rm $R $I d; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 5 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
 gates_summary
