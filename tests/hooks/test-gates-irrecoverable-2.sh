@@ -4363,4 +4363,12 @@ for _c in 'F=-r; n=0; next_opt(){ n=$((n+1)); [ $n -le 2 ] && G=-i; }; while nex
   'set -u; F=-r; G=-i; f(){ local G; rm $F $G b; }; f'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 9 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #818 review 10: a call whose name is built at run time ("${a}_cmd", "$fn", $fn) turns the function rule off; for the
+# loop rule an unset in a background list the reference is not in, or one that is no command, does not count.
+for _c in $'F=-r\nsafe_cmd() { G=-i; }\naction=safe\n"${action}_cmd"\nrm $F $G b' $'F=-r\nsafe_init() { G=-i; }\nprintf -v fn \'%s_init\' safe\n"$fn"\nrm $F $G b' \
+  $'F=-r\nsafe_init() { G=-i; }\nfn=$(printf \'%s_%s\' safe init)\n$fn\nrm $F $G b' \
+  'F=-r; G=-i; for d in a b; do rm $F $G b; { unset G; echo "$d"; } & done; wait' \
+  'F=-r; G=-i; for d in a b; do rm $F $G b; kubectl config unset G; done'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 10 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
 gates_summary

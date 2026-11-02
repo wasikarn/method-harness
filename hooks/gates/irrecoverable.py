@@ -6619,7 +6619,10 @@ _LOCAL_RE = re.compile(r"(?<![\w$-])(local|declare|typeset)((?:[ \t]+[-+][A-Za-z
 _DECL_WORDS = frozenset(("export", "local", "declare", "typeset", "readonly"))
 _REDIR_RE = re.compile(r"[0-9]*(?:[<>]&?|&>)>?-?[ \t]*(?:[^\s;&|()<>]+)?")
 
-_DYN_CALL_RE = re.compile(r"(?<![\w$-])eval(?![\w-])|[\w-]['\"]?\$\{?[A-Za-z_]|\w['\"]\w")
+# A call the text does not name: eval, an expansion joined to a word (`x_$y`, `${y}_x`, `"a"b`), or a command word that
+# starts with an expansion (`"$fn"`, `$(get)`; GH #818 review 10).
+_DYN_CALL_RE = re.compile(r"(?<![\w$-])eval(?![\w-])|[\w-]['\"]?\$\{?[A-Za-z_]|\w['\"]\w|\}['\"]?[\w-]"
+                          r"|(?:^|[;&|(){}\n`]|(?<![\w-])(?:then|do|else|elif|if|while|until|!))[ \t]*['\"]?\$", re.M)
 _LOOP_KW_RE = re.compile(r"(?<![\w$-])(for|while|until|select)(?![\w-])")
 _NOUNSET_RE = re.compile(r"(?<![\w-])set[ \t]+(?:-[A-Za-z]*u|-o[ \t]+nounset)")
 _FN_ANY_HEAD_RE = re.compile(r"(?<![\w.:$-])(?:function[ \t]+[^\s()<>;&|]+|[A-Za-z_][\w.:-]*[ \t]*\([ \t]*\))")
@@ -6789,12 +6792,16 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     groups = {"fn": (), "loop": (), "bg": (), "fn_ok": False}
     spans, text_at = _shell_scan(text, groups if scoped else None) if raw else ((), b"")
     scope = {}  # GH #818: an entry's end -> the (open, close) only references inside which it reaches
+    no_cmd = set()  # GH #818 review 10: an unset that is no command (`kubectl config unset G`), for the loop rule
     if raw:
         for m in _UNSET_RE.finditer(text):
             if "f" not in m.group(1) and not text_at[m.start()]:
                 base = m.start(2)
+                ok = not scoped or _cmd_pos(text, m.start())
                 for w in re.finditer(r"[A-Za-z_]\w*", m.group(2)):
                     sets.append((base + w.end(), w.group(0), None))
+                    if not ok:
+                        no_cmd.add(base + w.end())
         # GH #818: a quoted name (`unset 'G'`) or one after an expansion (`unset ${X} G`).
         for m in _UNSET_MORE_RE.finditer(text) if scoped else ():
             if "f" not in m.group(1) and not text_at[m.start()] and _cmd_pos(text, m.start()):
@@ -6885,8 +6892,10 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             spend(1 + len(sp) + len(bg) + len(fl))
         if any(not o < ref < c for o, c in sp):
             return False  # set inside a subshell the reference is not in
-        if v is not None and any(not o < ref < c for o, c in bg):
+        if (v is not None or strict) and any(not o < ref < c for o, c in bg):
             return False  # GH #818: a value set in a background list; an unset there still counts, as develop read it
+        if strict and v is None and at in no_cmd:
+            return False
         sc = scope.get(at)
         if sc and (slow[0] or not sc[0] < ref < sc[1] or (at < ref and may_set(name, at, ref))):
             return False
