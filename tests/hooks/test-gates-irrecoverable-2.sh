@@ -4181,6 +4181,54 @@ for _c in 'G=-i; F=-r; unset X; rm $F $G b' 'G=-i; F=-r; unset -f G; rm $F $G b'
   'export G=-i F=-r; rm $F $G b' 'G=-i F=-r; rm $F $G b' 'F=-r; unset G; G=-i; rm $F $G b'; do
   test_allow "$IRRECOVERABLE" "GH #808 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #816/#820: a double-quoted bash -c / eval body keeps the outer shell's `\$` (shlex leaves it), which the child
+# reads as `$`: a copy of the body with `\$` / `\`` unescaped is substituted too, at every nesting level (GH #816:
+# `bash -c 'bash -c "\$X -p x"'`, the innermost body read with the enclosing body's assignments). A single-quoted body
+# keeps its backslash (`bash -c '\$Y -p x'` runs a command named `$Y`). A pipe into a compound command (case, if,
+# while, until, for, select) feeds every claude inside it (GH #820 item 3); `>(claude)` reads what is written to it
+# (GH #820 item 4).
+for _c in "export X=claude; bash -c 'bash -c \"\\\$X -p x\"'" "export X=claude; bash -c 'bash -c \"echo hi | \\\$X\"'" \
+  "bash -c 'export X=claude; bash -c \"\\\$X -p x\"'" "bash -c 'X=claude; bash -c \"\\\$X -p x\"'" \
+  "export X=claude; bash -c 'export Y=\$X; bash -c \"\\\$Y -p x\"'" \
+  'export Y=claude; bash -c "date|\$Y"' 'export Y=claude; bash -c "\$Y -p x"' 'Y=claude bash -c "\$Y -p x"' \
+  'export Y=claude; eval "\$Y -p x"' 'export Y=claude; sh -c "echo hi | \$Y"' 'Y=claude; bash -c "Z=\$Y; \$Z -p x"' \
+  'echo hi | case a in a) claude;; esac' 'echo hi | case a in (a) claude;; esac' 'echo hi | case a in a) true; claude;; esac' \
+  'echo hi | case a in b) true;; a) claude;; esac' 'echo hi | if true; then claude; fi' \
+  'echo hi | while read l; do claude; done' 'ls | for f in 1; do claude; done' 'X=claude; echo hi | if true; then $X; fi' \
+  'echo hi > >(claude)' 'echo hi | tee >(claude)' 'echo hi | tee >( claude ) >/dev/null' 'X=claude; echo hi > >($X)'; do
+  test_deny  "$IRRECOVERABLE" "GH #816/#820: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in "export X=claude; bash -c 'bash -c \"\\\$X --version\"'" "export X=claude; bash -c 'bash -c \"echo \\\$X\"'" \
+  'export Y=claude; bash -c "\$Y --version"' 'export Y=claude; bash -c "echo \$Y"' "export Y=claude; bash -c '\\\$Y -p x'" \
+  'export B=python3; bash -c "\$B -c 1"' 'export Y=claude; bash -c "command -v \$Y"' \
+  'echo hi | case a in a) claude --version;; esac' 'case a in a) claude;; esac' 'true || case a in a) claude;; esac' \
+  'echo hi | if true; then true; fi; claude' 'echo hi | while read l; do echo $l; done; claude mcp list' \
+  'echo hi | case "$x" in done) true;; esac; claude' 'echo hi > >(claude --version)' 'diff <(claude --version) f' \
+  'echo hi > >(grep claude)'; do
+  test_allow "$IRRECOVERABLE" "GH #816/#820 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+# GH #816/#820 review: every body as written is read before any unescaped copy, so 25 copies of a 15 KB value cannot
+# spend the shared budget before a later `$X -p x` body; a `}` before done / fi closes, and `if)` is a case pattern.
+_c="H=$(printf 'y%.0s' $(seq 15000)); $(for i in $(seq 0 24); do printf 'bash -c "echo \\$H %s"; ' "$i"; done)export X=claude; bash -c '\$X -p x'"
+test_deny  "$IRRECOVERABLE" 'GH #816/#820 review: subagent: 25 double-quoted bodies of a 15 KB $H, then export X=claude; bash -c '"'"'$X -p x'"'"'' \
+  "$(bash_agent_payload "$_c" fork)"
+for _c in 'echo hi | while read l; do { echo "$l"; } done; claude --continue' 'echo hi | if true; then { :; } fi; claude --resume' \
+  'echo hi | case a in a|if) true;; esac; claude --continue'; do
+  test_allow "$IRRECOVERABLE" "GH #816/#820 review control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+# GH #816/#820 review 2: a body's assignments reach only the unescaped copies, never a sibling body as written (its own
+# later value stays read); `done>file` and `fi done` close; a `$((..))` / `<(..)` close is no case arm.
+for _c in "bash -c 'echo \$HOME; Y=python3'; bash -c 'f(){ \$Y -p x; }; trap f EXIT; Y=claude'" \
+  "W=python3; X=claude; bash -c 'Y=\$W'; bash -c 'f(){ \$Y -p x; }; trap f EXIT; Y=\$X; true'" \
+  "echo $(printf 'a%.0s' $(seq 21000)); bash -c 'X=python3; echo \$X'; bash -c 'f(){ \$X -p x; }; X=claude; f'"; do
+  test_deny  "$IRRECOVERABLE" "GH #816/#820 review 2: subagent: ${_c:0:120}" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'git log --oneline | while read l; do echo "$l"; done>log.txt; claude --continue' \
+  'git log | if grep -q x; then echo y; fi>/dev/null; claude --resume' \
+  'echo hi | while read l; do if [ x ]; then echo; fi done; claude --continue' \
+  'echo | case a in a) echo $((1+2)) claude;; esac' 'echo | case a in a) cat <(ls) claude;; esac'; do
+  test_allow "$IRRECOVERABLE" "GH #816/#820 review 2 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
 # GH #815: interp-pipe-shell gaps left after GH #801. An inline python/node/perl/ruby script piped into a shell
 # is read past a project runner (uv/poetry/pipenv/pdm/hatch/rye/conda run), in a { } or ( ) group, past more node
 # value flags, with the shell or interpreter name spelled s\h, s''h or $'\x73h', across a backslash-newline after
