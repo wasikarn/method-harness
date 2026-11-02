@@ -337,6 +337,13 @@ _INTERP_HEREDOC_BODIES = []  # GH #681: quoted bodies python/node reads as its s
 _HEREDOC_UNMATCHED = [False]  # the top-level strip, unsure, never found a delimiter (see _KEPT_MARK)
 _INTERP_PIPED_SHELL = [False]  # GH #741: the top-level strip met a python/node heredoc script piped into a shell
 _CMD_LINES = []  # GH #801: the lines the top-level heredoc strip reads as command lines (no heredoc body line)
+# GH #815: more text a shell runs, read by the interp-pipe-shell check after _CMD_LINES: a body a stdin shell reads
+# (bash <<'EOF', cat <<'EOF' | bash; its own data heredocs stripped), and a data body put back as text (its
+# delimiter not found, ended early, or unsure). _CMD_EXPANDING: a sure data body that expands, of which only the
+# $(..) and backtick bodies run.
+_CMD_EXTRA = []
+_CMD_EXPANDING = []
+_CMD_EXTRA_BUDGET = [1_000_000]  # chars of shell-read bodies stripped again; past it, the rest are not read
 
 def _pieces(text, pipe=False):
     # (start, end) of each piece of text split at an unquoted separator: ; & && || and a newline, or with
@@ -565,6 +572,12 @@ class _HeredocLine:
             self.stages[(k, "sh")] = shell
         return self.stages[(k, "sh")][j + 1]
 
+    def shell_reads(self, pos):
+        # GH #815: the heredoc's own stage is a shell reading stdin (bash <<'EOF'), or one downstream reads it.
+        k, j, st, _ = self._stage(pos)
+        seg = self.line[st[j][0]:st[j][1]]
+        return ("sh" in seg.translate(_UNQUOTE) and _reads_stdin_shell(seg)) or self.piped_shell(pos)
+
     def stdin_interp(self, pos):
         # GH #681: (the heredoc's own stage, a later stage) runs python/node reading its script on stdin.
         k, j, st, _ = self._stage(pos)
@@ -776,7 +789,7 @@ def _in_subscript(line, mask, starts):
             br = line[k] == "["
     return False
 
-def _strip_heredocs(cmd, ends=None):
+def _strip_heredocs(cmd, ends=None, shell_code=False):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
     # (bash <<EOF / python3 <<EOF), where the body IS code and stays scannable.
@@ -800,6 +813,8 @@ def _strip_heredocs(cmd, ends=None):
     # delimiter with $ or a backtick is still searched for with its quotes removed (bash never expands
     # it), and an unsure body whose delimiter is never found denies (_HEREDOC_UNMATCHED): bash may end it
     # elsewhere. Sure and not found keeps the put-back.
+    # GH #815 (shell_code): a body counts as code only when a shell reads it (shell_reads), for the re-strip of a
+    # shell-read body: `cat > y.sh <<'IN'` in it is data, though y.sh names sh.
     lines = cmd.split("\n")
     out, i, stack, sure = [], 0, [None], True
     while i < len(lines):
@@ -841,7 +856,8 @@ def _strip_heredocs(cmd, ends=None):
         for n_m, m in enumerate(ms):
             # GH #567: or a shell reading stdin downstream of it in its pipeline (cat <<EOF | bash), read
             # from the line's stages parsed once.
-            code = bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start())
+            code = ctx.shell_reads(m.start()) if shell_code else (
+                bool(interp) and interp.start() < m.start() or ctx.piped_shell(m.start()))
             feeds = has_client and _heredoc_feeds_sql_client(ctx, openers, views, m.start())
             strip_tabs, (delim, quoted) = bool(m.group(1)), _heredoc_delim(m.group(2)) or (
                 _heredoc_delim(m.group(2), True)[0], True)
@@ -871,6 +887,8 @@ def _strip_heredocs(cmd, ends=None):
                 _INTERP_HEREDOC_BODIES.append(body)
             if sql_code and not _SQL_HEREDOC_DROP[0] and _SQL_CLIENT_RE.search(body) and _sql_drops(body):
                 _SQL_HEREDOC_DROP[0] = True  # its own heredocs are not read, so a client in it reads its drop
+            if ends is not None and not code and (early or not found or not sure):
+                _CMD_EXTRA.append("\n".join(lines[body_start:i - 1 if early else i]))
             if early:
                 # Unsure from here: the body is kept and the EOF) line is read again as a command line.
                 out.extend(lines[body_start:i - 1])
@@ -886,6 +904,15 @@ def _strip_heredocs(cmd, ends=None):
                 if ends is not None and not sure:
                     _HEREDOC_UNMATCHED[0] = True
                 break
+            if ends is not None and found and code and ctx.shell_reads(m.start()) and (
+                    _CMD_EXTRA_BUDGET[0] >= i - body_start):
+                inner = "\n".join(lines[body_start:i - 1])
+                _CMD_EXTRA_BUDGET[0] -= len(inner)
+                drop = _SQL_HEREDOC_DROP[0]
+                _CMD_EXTRA.append(_strip_heredocs(inner, shell_code=True))
+                _SQL_HEREDOC_DROP[0] = drop
+            elif ends is not None and found and not code and sure and expands:
+                _CMD_EXPANDING.append("\n".join(lines[body_start:i - 1]))
             sure = sure and not expands
             if code or not sure:
                 out.extend(lines[body_start:i])
@@ -2941,23 +2968,66 @@ def _decode_quotes(t):
 
 # GH #801: a python/node stage that runs an inline script (python3 -c, node -e/-p/--eval/--print), so whatever it
 # prints is unseen, like a GH #741 heredoc script. Read from the stage's words past every wrapper (_past_run_prefix).
-_INLINE_SCRIPT_FLAGS = {"python": ("-c",), "node": ("-e", "-p", "--eval", "--print")}
+# GH #815: perl -e/-E and ruby -e too. A short cluster is read letter by letter: a letter in `rest` takes the rest of
+# the word as its value (perl -Mfeature=say, -I/opt/e; python -mcProfile), so an e or c inside a value is no flag.
+_INLINE_SCRIPT_FLAGS = {"python": ("-c",), "node": ("-e", "-p", "--eval", "--print"), "perl": ("-e", "-E"),
+                        "ruby": ("-e",)}
 _INLINE_VALUE_FLAGS = {"python": ("-W", "-X"),
                        "node": ("-r", "--require", "--import", "--loader", "--experimental-loader", "--input-type", "-C",
-                                "--conditions")}
+                                "--conditions", "--title", "--env-file", "--env-file-if-exists", "--redirect-warnings",
+                                "--openssl-config", "--icu-data-dir", "--disable-warning", "--watch-path",
+                                "--diagnostic-dir", "--report-dir", "--report-directory", "--report-filename",
+                                "--unhandled-rejections", "--dns-result-order", "--cpu-prof-dir", "--heap-prof-dir",
+                                "--trace-event-categories", "--trace-event-file-pattern", "--heapsnapshot-signal",
+                                "--secure-heap", "--secure-heap-min", "--localstorage-file", "--experimental-config-file"),
+                       "perl": ("-I",), "ruby": ("-I", "-r", "-C", "-E", "--encoding", "--external-encoding",
+                                                 "--internal-encoding", "--enable", "--disable")}
+_INLINE_REST_LETTERS = {"python": "WXmQ", "node": "rC", "perl": "IMmxiFCdD", "ruby": "IrCEFixKWT"}
+_INLINE_INTERP_RE = re.compile(r"python[23]?(?:\.\d+)?|node(?:js)?|perl(?:5[\d.]*)?|ruby(?:\d[\d.]*)?")
+_INLINE_NAME_RE = re.compile(r"python|node|perl|ruby")
+# GH #815: a project runner runs its program in the project's environment: `uv run [opts] python -c ..`. Its value
+# options (a word of their own) are skipped; an unknown one leaves its value as the program, which names no python.
+_PROJECT_RUNNERS = {
+    "uv": ("--with", "--with-editable", "--with-requirements", "--python", "-p", "--project", "--directory", "--package",
+           "--extra", "--group", "--only-group", "--no-group", "--env-file", "--index", "--default-index", "--index-url",
+           "-i", "--extra-index-url", "--find-links", "-f", "--config-file", "--cache-dir", "--index-strategy",
+           "--keyring-provider", "--resolution", "--prerelease", "--exclude-newer", "--link-mode", "--refresh-package",
+           "--reinstall-package", "--upgrade-package", "-P", "--no-binary-package", "--no-build-package",
+           "--config-setting", "-C", "--color", "--allow-insecure-host", "--python-preference", "--python-platform"),
+    "poetry": ("-C", "--directory", "-P", "--project"), "pipenv": (), "pdm": ("-p", "--project", "-r", "--root"),
+    "hatch": ("-e", "--env"), "rye": ("--pyproject",), "conda": ("-n", "--name", "-p", "--prefix", "--cwd"),
+    "mamba": ("-n", "--name", "-p", "--prefix", "--cwd"), "micromamba": ("-n", "--name", "-p", "--prefix", "--cwd"),
+}
+
+def _past_project_runner(w, i):
+    # GH #815: the program word past a project runner's `run` and its options (and past any wrapper after them).
+    for _ in range(4):
+        if i is None or i + 1 >= len(w) or w[i].rsplit("/", 1)[-1] not in _PROJECT_RUNNERS or w[i + 1] != "run":
+            return i
+        vals = _PROJECT_RUNNERS[w[i].rsplit("/", 1)[-1]]
+        i += 2
+        while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
+            done = w[i] == "--"
+            i += 2 if w[i] in vals else 1
+            if done:
+                break
+        i = _past_run_prefix(w, i) if i < len(w) else None
+    return i
+
 def _runs_inline_interp(seg):
-    if not _PYNODE_NAME_RE.search(seg.translate(_UNQUOTE)):
+    if not _INLINE_NAME_RE.search(seg.translate(_UNQUOTE)):
         return False
     w = _split_words(seg)
     w = _without_out_redirects(w) if w else None
-    i = _past_run_prefix(w) if w else None
+    i = _past_project_runner(w, _past_run_prefix(w)) if w else None
     if i is None or i >= len(w):
         return False
-    m = _STDIN_INTERP_RE.fullmatch(w[i].rsplit("/", 1)[-1])
+    m = _INLINE_INTERP_RE.fullmatch(w[i].rsplit("/", 1)[-1])
     if not m:
         return False
-    py = m.group().startswith("python")
-    flags, valued = _INLINE_SCRIPT_FLAGS["python" if py else "node"], _INLINE_VALUE_FLAGS["python" if py else "node"]
+    kind = next(k for k in _INLINE_SCRIPT_FLAGS if m.group().startswith(k))
+    flags, valued, rest = _INLINE_SCRIPT_FLAGS[kind], _INLINE_VALUE_FLAGS[kind], _INLINE_REST_LETTERS[kind]
+    letters = {f[1] for f in flags if not f.startswith("--")}
     skip = False
     for t in w[i + 1:]:
         if skip:
@@ -2970,25 +3040,75 @@ def _runs_inline_interp(seg):
         if t in valued:
             skip = True  # its value is the next word (python3 -W ignore -c, node -r ts-node/register -e)
             continue
-        if py and t[:2] in ("-W", "-X"):
-            continue  # the value attached (-Wignore)
-        # a short cluster holding the script letter (python3 -uc, node -pe)
-        if not t.startswith("--") and any(not f.startswith("--") and f[1] in t[1:] for f in flags):
-            return True
+        if t.startswith("--"):
+            continue
+        # a short cluster holding the script letter (python3 -uc, node -pe, perl -lne), read up to a letter
+        # that takes the rest of the word (-Wignore, -Mstrict)
+        for ch in t[1:]:
+            if ch in letters:
+                return True
+            if ch in rest:
+                break
     return False
+
+def _join_continuations(c):
+    # GH #815: a backslash-newline outside quotes is no character to the shell (`| \` then `bash` on the next line
+    # is `| bash`). Inside quotes the pair stays, which only changes how a quoted probe string reads.
+    return re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", c) if "\\\n" in c else c
+
+def _group_ends(g):
+    # GH #815: (leading closers, opens, core, trailing closers) of a pipe stage in a { } or ( ) group, which _pieces
+    # does not model: `{ python3 -c 1; } | bash` splits at the `;` into `{ python3 -c 1` and `} | bash`, and
+    # `(python3 -c 1) | bash` keeps `(python3 -c 1)` as one stage. A trailing ) counts only past the stage's own
+    # unquoted ( ones, so `$(date)` closes nothing.
+    t, lead, opens = g.strip(), 0, 0
+    while t[:1] in ("}", ")"):
+        lead, t = lead + 1, t[1:].lstrip()
+    while (t[:1] == "(" and t[1:2] != "(") or (t[:1] == "{" and t[1:2] in (" ", "\t", "\n")):
+        opens, t = opens + 1, t[1:].lstrip()
+    mask = _quote_mask(t)
+    depth = trail = 0
+    for k, ch in enumerate(t):
+        if mask[k]:
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth:
+                depth -= 1
+            else:
+                trail += 1
+    if trail:
+        cut = len(t)
+        for _ in range(trail):
+            cut = t.rindex(")", 0, cut)
+        t = t[:cut]
+    return lead, opens, t, trail
 
 def _inline_interp_to_shell(c):
     # GH #801: some pipeline of c runs an inline python/node script stage and, after it, a shell reading stdin.
     # Read on the ANSI-C-decoded text: _pieces does not model \' inside $'..', so a quoted probe string
     # ($'python3 -c \'x\' | bash') would split at its own pipes.
-    c = _normalize_ansi_c_quotes(c) if "$'" in c else c
+    # GH #815: a { } or ( ) group whose commands run one is such a stage (groups: one flag per open group), and a
+    # shell whose stdin is a heredoc or here-string reads no pipe.
+    c = _join_continuations(_normalize_ansi_c_quotes(c) if "$'" in c else c)
+    groups = []
     for s, e in _pieces(c):
-        inline = False  # a stage before this one runs an inline python/node script
+        inline = False  # a stage before this one runs an inline script
         for a, b in _pieces(c[s:e], pipe=True):
             g = c[s + a:s + b]
-            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g):
+            lead, opens, g, trail = _group_ends(g) if any(ch in g for ch in "(){}") else (0, 0, g, 0)
+            for _ in range(lead):
+                inline = (groups.pop() if groups else False) or inline
+            groups.extend([False] * opens)
+            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g) and not any(
+                    t.startswith("<<") for t in (_split_words(g) or ())):
                 return True
-            inline = inline or _runs_inline_interp(g)
+            if _runs_inline_interp(g):
+                inline = True
+                groups[:] = [True] * len(groups)
+            for _ in range(trail):
+                inline = (groups.pop() if groups else False) or inline
     return False
 
 def _shell_stdin_bodies(c):
@@ -3018,14 +3138,35 @@ def _shell_stdin_bodies(c):
                 out.append(" ".join(args).replace("\\n", "\n") if name == "printf" else " ".join(args))
     return out
 
-_SHELL_STDIN_BODIES = _shell_stdin_bodies(cmd) if any(sh in cmd for sh in _STDIN_SHELLS) else []
+def _as_words(t):
+    # GH #815: the text with $'..' decoded and quotes and backslashes removed, for a name prefilter (s\\h, s''h,
+    # $'\\x73h' all name sh; $'\\x70ython3' names python).
+    return (_normalize_ansi_c_quotes(t) if "$'" in t else t).translate(_UNQUOTE)
+
+_SHELL_STDIN_BODIES = _shell_stdin_bodies(_join_continuations(cmd)) if any(
+    sh in cmd.translate(_UNQUOTE) for sh in _STDIN_SHELLS) else []
 # Read on the command lines only: a heredoc body is the reader's text, even one kept as code (cat > x.sh <<'EOF'
 # keeps its body, x.sh naming sh), and a script it holds that pipes python -c into bash runs nothing here.
-_CMD_TEXT = "\n".join(_CMD_LINES) if _CMD_LINES else cmd
-if any(sh in _CMD_TEXT for sh in _STDIN_SHELLS) and _PYNODE_NAME_RE.search(_CMD_TEXT.translate(_UNQUOTE)) and (
-        _inline_interp_to_shell(_CMD_TEXT)):
-    deny("a python -c / node -e script pipes its output into a shell, which runs commands the gate cannot see - "
-         "write the commands out, or save the output to a file and read it first", rule="interp-pipe-shell")
+# GH #815: plus the text a shell runs besides them (_CMD_EXTRA, the $(..) bodies of _CMD_EXPANDING), each after a
+# `;` line so a trailing | does not join them, and the $(..) and backtick bodies of all of it.
+def _interp_pipe_text():
+    t = "\n;\n".join((["\n".join(_CMD_LINES)] if _CMD_LINES else [cmd]) + _CMD_EXTRA)
+    for b in _CMD_EXPANDING:
+        subs = []
+        _scan_once(b, subs)
+        t += "".join("\n;\n" + x for x in subs)
+    return t
+
+_CMD_TEXT = _interp_pipe_text()
+_CMD_WORDS = _as_words(_CMD_TEXT)
+if any(sh in _CMD_WORDS for sh in _STDIN_SHELLS) and _INLINE_NAME_RE.search(_CMD_WORDS):
+    _blown = _DEPTH_BUDGET_BLOWN[0]
+    _t = _blank_substitutions(_CMD_TEXT) if ("$(" in _CMD_TEXT or "`" in _CMD_TEXT) else _CMD_TEXT
+    _DEPTH_BUDGET_BLOWN[0] = _blown  # this reading leaves the rule loop's budget as it was
+    if _inline_interp_to_shell(_t):
+        deny("a python -c / node -e / perl -e script pipes its output into a shell, which runs commands the gate "
+             "cannot see - write the commands out, or save the output to a file and read it first",
+             rule="interp-pipe-shell")
 
 _SQL_BODIES_SEEN = set()  # bash -c / eval bodies already checked by _deny_sql_stdin_drop
 
@@ -3387,6 +3528,9 @@ _INTERP_PROC_RE = re.compile(r"\b(?:system|popen\d?|subprocess|check_output|chec
 _PYNODE_PROC_RE = re.compile(r"\b(?:subprocess|child_process|execSync|execFileSync|execFile|spawnSync|getoutput|"
                              r"getstatusoutput|check_output|check_call|Popen|pty)\b"
                              r"|\b(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?|create_subprocess_(?:shell|exec))\s*\("
+                             # GH #815: stored and called later (f = os.system; from os import system as run)
+                             r"|\b(?:os|posix)\s*\.\s*(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?)\b"
+                             r"|\bfrom\s+(?:os|posix)\s+import\b[^\n]*\b(?:system|popen\d?|spawn\w*|exec[lv]p?e?|posix_spawnp?)\b"
                              + _PROC_BY_NAME)
 _INTERP_LIT_RE = re.compile("'''(?:.|\\n)*?'''|\"\"\"(?:.|\\n)*?\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`[^`]*`"
                             r"|\bqx\s*([{(\[<|/!])|%x\s*([{(\[<|/!])")

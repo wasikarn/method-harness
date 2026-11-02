@@ -4181,4 +4181,37 @@ for _c in 'G=-i; F=-r; unset X; rm $F $G b' 'G=-i; F=-r; unset -f G; rm $F $G b'
   'export G=-i F=-r; rm $F $G b' 'G=-i F=-r; rm $F $G b' 'F=-r; unset G; G=-i; rm $F $G b'; do
   test_allow "$IRRECOVERABLE" "GH #808 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #815: interp-pipe-shell gaps left after GH #801. An inline python/node/perl/ruby script piped into a shell
+# is read past a project runner (uv/poetry/pipenv/pdm/hatch/rye/conda run), in a { } or ( ) group, past more node
+# value flags, with the shell or interpreter name spelled s\h, s''h or $'\x73h', across a backslash-newline after
+# the pipe, inside $(..) or a backtick, in a body a stdin shell reads (bash <<'EOF', cat <<'EOF' | bash) and in the
+# $(..) of an unquoted data body; a stored os.system / from-os import is a process API in a heredoc script.
+for _c in $'uv run python -c \'print(1)\' | bash' $'poetry run python3 -c 1 | sh' \
+  $'uv run --with requests --python 3.12 python3 -c 1 | bash' $'pipenv run python -c 1 | sh' \
+  $'conda run -n base python -c 1 | bash' $'{ python3 -c \'print(1)\'; } | bash' $'(python3 -c \'print(1)\') | bash' \
+  $'(cd /tmp && node -e 1) | sh' $'{ echo x\npython3 -c 1\n} | bash' $'node --title x -e 1 | bash' \
+  $'node --env-file f -e 1 | sh' $'python3 -c 1 | s\\h' $'python3 -c 1 | s\'\'h' $'python3 -c 1 | $\'\\x73h\'' \
+  $'echo \'git reset --hard\' | s\\h' $'$\'\\x70ython3\' -c 1 | bash' $'$\'pyth\\157n3\' -c 1 | sh' \
+  $'python3 -c 1 | \\\nbash' $'echo \'git reset --hard\' | \\\nbash' $'x=$(python3 -c 1 | sh)' \
+  $'echo `python3 -c 1 | sh`' $'bash <<\'EOF\'\npython3 -c 1 | sh\nEOF' $'cat <<\'EOF\' | bash\nnode -e 1 | sh\nEOF' \
+  $'perl -e \'print "ls"\' | sh' $'perl -lne \'print\' f | bash' $'ruby -e \'puts 1\' | bash' \
+  $'python3 - <<\'EOF\'\nimport os\nf = os.system\nf(\'git reset --hard\')\nEOF' \
+  $'python3 - <<\'EOF\'\nfrom os import system as run\nrun(\'git reset --hard\')\nEOF' \
+  $'cat <<EOF\n$(python3 -c 1 | bash)\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | bash'; do
+  test_deny  "$IRRECOVERABLE" "GH #815: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+# GH #815 controls: the same shapes with no shell reading the script's output, a script file (not read either way),
+# a value word naming sh or holding e, a code body's own data heredoc, an expanding body's literal text, and a
+# shell whose stdin is a heredoc or here-string (the NIT: it reads no pipe).
+for _c in $'uv run python -c \'print(1)\' | grep 1' $'uv run --with sh python3 -c 1 | tee log' \
+  $'{ python3 -c 1; } | grep x' $'(python3 -c 1); bash x.sh' $'(cd /tmp && python3 -c 1) > out.txt; echo ls | grep sh' \
+  $'node --env-file .env -e 1 | jq .' $'python3 -c 1 | s\\ort' $'$\'\\x70ython3\' -c 1 | wc -l' \
+  $'python3 -c 1 | \\\ngrep sh' $'x=$(python3 -c \'print(1)\'); bash -c \'echo hi\'' \
+  $'bash <<\'EOF\'\npython3 -c 1 | grep 1\nEOF' $'bash <<\'EOF\'\ncat > y.sh <<\'IN\'\npython3 -c 1 | sh\nIN\nEOF' \
+  $'perl -e \'print 1\' | wc -l' $'perl -Mfeature=say x.pl | sh' \
+  $'python3 - <<\'EOF\'\nimport os\nf = os.path.join\nprint(f(\'a\', \'git reset --hard\'))\nEOF' \
+  $'cat > notes.md <<EOF\nbuilt $(date)\nrun python3 -c 1 | bash\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | wc -l' \
+  $'python3 -c 1 | bash <<EOF\nx\nEOF' $'python3 -c 1 | bash <<< \'echo hi\''; do
+  test_allow "$IRRECOVERABLE" "GH #815 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
 gates_summary
