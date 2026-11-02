@@ -6626,7 +6626,7 @@ _DYN_CALL_RE = re.compile(r"(?<![\w$-])eval(?![\w-])|[\w-]['\"]?\$\{?[A-Za-z_]|\
 _LOOP_KW_RE = re.compile(r"(?<![\w$-])(for|while|until|select)(?![\w-])")
 _NOUNSET_RE = re.compile(r"(?<![\w-])set[ \t]+(?:-[A-Za-z]*u|-o[ \t]+nounset)")
 _FN_ANY_HEAD_RE = re.compile(r"(?<![\w.:$-])(?:function[ \t]+[^\s()<>;&|]+|[A-Za-z_][\w.:-]*[ \t]*\([ \t]*\))")
-_FN_HEAD_RE = re.compile(r"(?:(?<![\w-])function[ \t]+([^\s()<>;&|]+)(?:[ \t]*\([ \t]*\))?|([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\))[ \t\n]*$")
+_FN_HEAD_RE = re.compile(r"(?:(?<![\w-])function[ \t]+([^\s()<>;&|]+)(?:[ \t]*\([ \t]*\))?|(?<![\w.:-])([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\))[ \t\n]*$")
 
 def _cmd_pos(text, i, seps=";\n&|(){"):
     # True when offset i starts a command word: after a separator (or `f()`), at the start, or after do/then/else.
@@ -6702,7 +6702,7 @@ def _shell_scan(text, groups=None):
             elif not (i and text[i - 1] in "<>|;") and text[i + 1:i + 2] != ">" and not (exp or bt or brk):
                 bg.append((seg[-1], i))  # GH #818: the list before a lone `&` runs in a subshell
                 seg[-1] = i
-        elif c in "{}d" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+        elif groups is not None and c in "{}d" and (i == 0 or text[i - 1] in " \t\n;&|()"):
             w = re.match(r"(?:\{|\}|done|do)(?=[\s;&|)<>]|$)", text[i:i + 5])
             w = w and w.group(0)
             if w == "{" and text[i + 1:i + 2].isspace() and (_cmd_pos(text, i) or _FN_HEAD_RE.search(text, max(0, i - 200), i)):
@@ -6843,8 +6843,8 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     def cond_reads(name, a, b):
         if (name, a, b, 0) not in sets_memo:
             spend(b - a)
-            sets_memo[(name, a, b, 0)] = re.search(
-                r"\$\{?[#!]?" + name + r"(?![\w])|-v[ \t]+['\"]?" + name + r"(?![\w])", text[a:b]) is not None
+            # GH #818 review 12: any word naming G (`declare -p G`, `printenv G`), not only $G / -v G
+            sets_memo[(name, a, b, 0)] = re.search(r"(?<![\w])" + name + r"(?![\w])", text[a:b]) is not None
         return sets_memo[(name, a, b, 0)]
     def may_set(name, a, b):
         if (name, a, b) not in sets_memo:
@@ -6857,7 +6857,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         t = text[a:b]
         return not groups["fn_ok"] or bool(
             (fn_call_re and fn_call_re.search(t)) or _MAY_SET_RE.search(t) or re.search(
-                r"(?<![\w$-])" + name + r"(?:\[[^\]\n]{0,80}\])?\+?=|\$\{" + name + r":?=|(?<![\w-])(?:read|mapfile|readarray|getopts|for)"
+                r"(?<![\w$-])" + name + r"(?:\[[^\]\n]{0,80}\])?\+?=|\$\{" + name + r":?=|(?<![\w-])(?:read|mapfile|readarray|getopts|for|select)"
                 r"(?![\w-])[^;&|\n]{0,300}?(?<![\w$-])" + name + r"(?![\w-])|-v[ \t]+" + name + r"(?![\w-])", t))
     def spend(n):
         # GH #818 review 2: past one budget the scoped copy is read as the raw one (paren subshells only, no background

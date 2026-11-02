@@ -4375,4 +4375,9 @@ done
 for _c in $'F=-r; G=-i\nfor f in a b; do (cd /tmp && rm $F $G x; unset G); done' $'F=-r; G=-i\nf(){ local G; G[0]=-i; rm $F $G d; }\nf'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 11 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #818 review 12: select may set G; a loop condition naming G in any form (declare -p G) may end the loop.
+for _c in 'R=-r; I=-i; f(){ local I; select I in -i; do break; done; rm $R $I x; }; f' \
+  'R=-r; I=-i; while declare -p I >/dev/null 2>&1; do rm $R $I a; unset I; done'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 12 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary
