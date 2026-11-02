@@ -4446,4 +4446,14 @@ test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo a #'"'"' \n $X -
 test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo $(date) #; $X -rf /' "$(bash_payload 'X=rm; echo $(date) #; $X -rf /')"
 test_deny  "$SUBAGENT_GIT_GUARD" 'GH #820 item 5: subagent: echo $(date)#; git stash' "$(bash_agent_payload 'echo $(date)#; git stash' fork)"
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #820 item 5 control: subagent: echo $(date) #; git stash' "$(bash_agent_payload 'echo $(date) #; git stash' fork)"
+# GH #787: the var-verb view's enforced rm rules read as far as the parser does (_CMD_LEN_CAP), like ifs-split; it
+# stopped at _VIEW_LEN_CAP (20 KB), so padding in front of `F=-rf; rm $F b` allowed it. Timed: a timed-out hook allows.
+_pad787="$(printf 'echo a; %.0s' $(seq 3000))"
+test_deny  "$IRRECOVERABLE" 'GH #787: 24 KB of statements, then F=-rf; rm $F b' "$(bash_payload "${_pad787}F=-rf; rm \$F b")"
+test_deny  "$IRRECOVERABLE" 'GH #787: F=-rf, 24 KB of statements, then rm $F b' "$(bash_payload "F=-rf; ${_pad787}rm \$F b")"
+test_allow "$IRRECOVERABLE" 'GH #787 control: 24 KB of statements, then F=-f; rm $F b' "$(bash_payload "${_pad787}F=-f; rm \$F b")"
+_timed_case 'GH #787: F=-rf; rm $F b after 48 KB of statements, denied in bounded time' 2 \
+  "$(printf 'echo a; %.0s' $(seq 6000))F=-rf; rm \$F b"
+_timed_case 'GH #787 control: 1200 F=x assignments and $F references after 24 KB of statements, allowed in bounded time' 0 \
+  "${_pad787}$(printf 'F=x; echo $F; %.0s' $(seq 1200))"
 gates_summary
