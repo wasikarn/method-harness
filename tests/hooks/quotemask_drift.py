@@ -49,6 +49,15 @@ CORPUS = [
     "bash -\\\nc \"git \\\nstash\"",
     "eval 'g\\\nit stash'",
     "$'a'\\\nb c",
+    # GH #820 item 5: a ")" closing $( <( >( =( keeps the word; a subshell ")" ends it
+    "echo $(date)#|git stash",
+    "echo $((1))#x; git stash",
+    "cat <(ls)#x; git stash",
+    "a=(x)#y; git stash",
+    "echo $( (ls) )#x; git stash",
+    "(ls)#x\ngit stash",
+    "((1))#x\ngit stash",
+    "case a in a)#x\ngit stash",
 ]
 
 
