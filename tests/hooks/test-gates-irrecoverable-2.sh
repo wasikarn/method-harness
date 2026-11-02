@@ -4199,4 +4199,17 @@ for _c in "G=-i; F=-r; unset 'X'; rm \$F \$G b" 'G=-i; F=-r; unset ${X} H; rm $F
   'F=-r; f(){ G=-i; }; g(){ f; }; g; rm $F $G b' 'F=-r; f(){ G=-i; rm $F $G b; }; f'; do
   test_allow "$IRRECOVERABLE" "GH #818 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #818 review: an `&` inside ${..}, backticks, $[..] or a [..] subscript is no background list; a call written inside
+# another function's body counts; an unset in a function never called is no unset for the loop rule.
+for _c in 'G=-i; F=-r; unset G && T=${S//&/and}; rm $F $G b' 'G=-i; F=-r; unset G && echo `true & true`; rm $F $G b' \
+  'G=-i; F=-r; unset G && T=$[ 3 & 1 ]; rm $F $G b' 'G=-i; F=-r; unset G && a[1&1]=1; rm $F $G b' \
+  'G=-i; F=-r; unset G && echo ${S:-&}; rm $F $G b' 'G=-i; F=-r; unset G ${Z//x/&}; rm $F $G b' \
+  'G=-i; F=-r; unset G ${Z:+a&b}; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #818 review: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'F=-r; G=-i && T=${S//&/x}; rm $F $G b' 'F=-r; G=-i && echo `date & wait`; rm $F $G b' \
+  'F=-r; main(){ init; }; init(){ G=-i; }; main; rm $F $G b' \
+  'G=-i; F=-r; for x in a b; do rm $F $G b; f(){ unset G; }; done'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary

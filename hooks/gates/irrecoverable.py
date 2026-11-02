@@ -6422,12 +6422,13 @@ def _shell_scan(text, groups=None):
     # <( .. ) included, as a value set inside one never reaches the text after it closes (a `)` with nothing open, a
     # case pattern, closes nothing); text_at[i] is 1 where offset i is quoted or in a comment, so a word there is text.
     # GH #818: a list run in the background (`G=-i & ..`, `{ ..; } &`) is a subshell too, so it is a span from the
-    # separator before it to its `&`. With groups (a dict), groups["fn"] gets (open, close, name) for each function
+    # separator before it to its `&`. With groups (a dict), groups["fn"] gets (open, close, name, head) for each function
     # body `name() { .. }` / `function name { .. }` and groups["loop"] (open, close) for each `do .. done`.
     spans, stack, sq, dq, i, n = [], [], False, False, 0, len(text)
     text_at = bytearray(n)
     seg, braces, loops = [-1], [], []
     fns, loop_spans = [], []
+    exp, bt, brk = 0, False, 0  # inside ${..}, backticks, $[..] / [..]: an `&` there is text (GH #818 review)
     while i < n:
         c = text[i]
         if sq:
@@ -6448,6 +6449,17 @@ def _shell_scan(text, groups=None):
             text_at[i:j] = b"\1" * (j - i)
             i = j
             continue
+        elif c == "$" and text[i + 1:i + 2] == "{":
+            exp += 1
+            i += 1
+        elif c == "}" and exp:
+            exp -= 1
+        elif c == "`":
+            bt = not bt
+        elif c == "[":
+            brk += 1
+        elif c == "]" and brk:
+            brk -= 1
         elif c == "(":
             stack.append(i)
             seg.append(i)
@@ -6460,7 +6472,7 @@ def _shell_scan(text, groups=None):
         elif c == "&":
             if text[i + 1:i + 2] == "&":
                 i += 1
-            elif not (i and text[i - 1] in "<>|;") and text[i + 1:i + 2] != ">":
+            elif not (i and text[i - 1] in "<>|;") and text[i + 1:i + 2] != ">" and not (exp or bt or brk):
                 spans.append((seg[-1], i))  # GH #818: the list before a lone `&` runs in a subshell
                 seg[-1] = i
         elif c in "{}d" and (i == 0 or text[i - 1] in " \t\n;&|()"):
@@ -6468,11 +6480,11 @@ def _shell_scan(text, groups=None):
             w = w and w.group(0)
             if w == "{" and text[i + 1:i + 2].isspace() and (_cmd_pos(text, i) or _FN_HEAD_RE.search(text, max(0, i - 200), i)):
                 f = _FN_HEAD_RE.search(text, max(0, i - 200), i)
-                braces.append((i, seg[-1], f and (f.group(1) or f.group(2))))
+                braces.append((i, seg[-1], f and (f.group(1) or f.group(2), f.start())))
             elif w == "}" and braces and _cmd_pos(text, i, ";\n&"):
                 o, seg[-1], name = braces.pop()  # the group's list goes on past it: `{ ..; } &` is one background list
                 if name:
-                    fns.append((o, i, name))
+                    fns.append((o, i, name[0], name[1]))
             elif w == "do" and _cmd_pos(text, i, ";\n&"):
                 loops.append((i, seg[-1]))
             elif w == "done" and loops and _cmd_pos(text, i, ";\n&"):
@@ -6547,7 +6559,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         # GH #818: `local G` / `declare G` with no value, inside a function: G is unset there, for that body only.
         for m in _LOCAL_RE.finditer(text):
             if not text_at[m.start()] and not set(m.group(2)) & set("gpfFn"):
-                body = min(((o, c) for o, c, _ in groups["fn"] if o < m.start() < c), key=lambda b: b[1] - b[0],
+                body = min(((o, c) for o, c, _, _ in groups["fn"] if o < m.start() < c), key=lambda b: b[1] - b[0],
                            default=None)
                 if body:
                     base = m.start(3)
@@ -6562,26 +6574,33 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         by_name.setdefault(n, ([], []))
         by_name[n][0].append(e)
         by_name[n][1].append(v)
-    calls = {}
-    def called(at, ref):
-        # GH #818: a value set in a function body reaches a reference outside it only once a call is written between
-        # the body's end and the reference. Any word of the function's name counts as a call, quoted or not.
-        for o, c, name in groups["fn"]:
-            if o < at < c and not o < ref < c:
-                if name not in calls:
-                    calls[name] = [w.start() for w in re.finditer(r"(?<![\w.:-])" + re.escape(name) + r"(?![\w.:-])", text)]
-                pos = calls[name]
-                k = bisect.bisect_right(pos, c)
-                if not (k < len(pos) and pos[k] < ref):
-                    return False
-        return True
-    def usable(at, v, ref):
-        if any(o < at <= c and not o < ref < c for o, c in spans):
+    first_call, enclosing = {}, {}
+    def encl(at):
+        # The spans and function bodies holding an entry, once per entry (GH #818 review: per reference was slow).
+        if at not in enclosing:
+            fl = []
+            for o, c, name, head in groups["fn"]:
+                if o < at < c:
+                    if (o, name) not in first_call:
+                        # GH #818: a body's value reaches a reference outside it once its name is written as a word
+                        # anywhere outside its own definition before the reference (`main(){ init; }; init(){ G=x; }; main`),
+                        # quoted or not.
+                        first_call[(o, name)] = next(
+                            (w.start() for w in re.finditer(r"(?<![\w.:-])" + re.escape(name) + r"(?![\w.:-])", text)
+                             if not head <= w.start() <= c), len(text))
+                    fl.append((o, c, first_call[(o, name)]))
+            enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], fl)
+        return enclosing[at]
+    def usable(at, v, ref, strict=False):
+        sp, fl = encl(at)
+        if any(not o < ref < c for o, c in sp):
             return False  # set inside a subshell the reference is not in
         sc = scope.get(at)
         if sc and not sc[0] < ref < sc[1]:
             return False
-        return v is None or not groups["fn"] or called(at, ref)
+        # A value in a function body only once a call is written; an unset too for the loop rule (strict), never in
+        # the walk-back below, so an unset reads as develop read it.
+        return (v is None and not strict) or all(o < ref < c or first < ref for o, c, first in fl)
     def sub(m):
         r = pick(m)
         # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no
@@ -6598,10 +6617,12 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                 # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
                 # sets nothing before it: an unset there leaves the reference as written.
                 if lo < ref < lc:
-                    inner = [k for k in range(bisect.bisect_right(ends, lo), bisect.bisect_left(ends, lc))
-                             if usable(ends[k], vals[k], ref)]
-                    if inner and ends[inner[0]] > ref and vals[inner[-1]] is None:
-                        return m.group(0)
+                    ks = range(bisect.bisect_right(ends, lo), bisect.bisect_left(ends, lc))
+                    first = next((k for k in ks if usable(ends[k], vals[k], ref, True)), None)
+                    if first is not None and ends[first] > ref:
+                        lk = next(k for k in reversed(ks) if usable(ends[k], vals[k], ref, True))
+                        if vals[lk] is None:
+                            return m.group(0)
             for k in range(bisect.bisect_right(ends, ref) - 1, -1, -1):
                 if usable(ends[k], vals[k], ref):
                     return m.group(0) if vals[k] is None else vals[k]
