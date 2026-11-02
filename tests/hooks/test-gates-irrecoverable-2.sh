@@ -4446,4 +4446,24 @@ test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo a #'"'"' \n $X -
 test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo $(date) #; $X -rf /' "$(bash_payload 'X=rm; echo $(date) #; $X -rf /')"
 test_deny  "$SUBAGENT_GIT_GUARD" 'GH #820 item 5: subagent: echo $(date)#; git stash' "$(bash_agent_payload 'echo $(date)#; git stash' fork)"
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #820 item 5 control: subagent: echo $(date) #; git stash' "$(bash_agent_payload 'echo $(date) #; git stash' fork)"
+# GH #731: a claude spawn built by a brace (`cl{aude,aude} -p x` runs `claude -p x claude -p x`), with or without
+# ${IFS}, denies in a subagent; brace-view's copies are spawn-scanned, statement by statement, where they name claude.
+# (`cl{aude,aude}${IFS}-p x` itself denies on develop as git-restore, a brace-view misread of `W{,}${IFS}a b` in any
+# session: the follow-up issue; the `${IFS}x` rows here read as the spawn only.)
+for _c in 'cl{aude,aude} -p x' 'cl{aude,aude}${IFS}-p x' 'cl{aude,aude}${IFS}-p${IFS}x' 'c{l,l}aude -p x' \
+    'true; cl{aude,} -p x' 'echo hi | cl{aude,aude}' "cla\$'u'de{,} -p x" "cl{\$'a',}ude -p x"; do
+  test_deny  "$IRRECOVERABLE" "GH #731: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'cl{aude,aude} -p x' 'cl{aude,aude}${IFS}-p${IFS}x'; do
+  test_allow "$IRRECOVERABLE" "GH #731 control: main session: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'echo cl{aude,aude} -p x' 'grep -r cl{aude,aude} {a,b}/' 'mkdir -p {a,b}/claude' 'cl{aude,aude} --version'; do
+  test_allow "$IRRECOVERABLE" "GH #731 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+# brace text in a subagent (300 #690 words: more spends the main reading's spawn budget on develop): bounded and
+# allowed, and the spawn after it denies
+_timed_case 'GH #731: subagent: 300 {a,b}${IFS}$(echo c) words are read in bounded time' 0 \
+  "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 300))" fork
+_timed_case 'GH #731: subagent: cl{aude,aude}${IFS}-p${IFS}x after 300 brace words denies in bounded time' 2 \
+  "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 300)); cl{aude,aude}\${IFS}-p\${IFS}x" fork
 gates_summary
