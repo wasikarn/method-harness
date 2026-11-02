@@ -4253,4 +4253,15 @@ for _c in 'F=-r; init() { G=-i; }; run() ( rm $F $G b ); init; run' \
   'F=-r; G=-i; f(){ local G; G=-i; local G; rm $F $G b; }; f' 'F=-r; G=-i; f(){ local -I G; rm $F $G b; }; f'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 6 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #818 review 7: a function called between `local G` (or a loop's unset) and the reference may set G (bash's dynamic
+# scope), so may source, eval, read G or any G= there; a loop body that can stop early is no later pass; a dynamic call
+# (`setup_$mode`) turns the function rule off; a scoped `unset`/`local` is a command, not an argument.
+for _c in $'RFLAG=-r\nload_defaults() {\n  CONFIRM=-i\n  TARGET=build\n}\nmain() {\n  local CONFIRM TARGET\n  load_defaults\n  rm $RFLAG $CONFIRM "$TARGET"\n}\nmain "$@"' \
+  'F=-r; set_g() { G=-i; }; clean() { local G; set_g; rm $F $G build; }; clean' \
+  $'F=-r\nset_confirm() { G=-i; }\nfor d in a b; do\n  set_confirm\n  rm $F $G x\n  unset G\ndone' \
+  $'F=-r\nset_confirm() { G=-i; }\nset_confirm\nfor d in a b; do\n  rm $F $G x\n  unset G\n  set_confirm\ndone' \
+  'G=-i; F=-r; while true; do rm $F $G x; break; unset G; done' $'F=-r\nsetup_safe() { G=-i; }\nmode=safe\nsetup_$mode\nrm $F $G x' \
+  'F=-r; G=-i; echo unset "G"; rm $F $G x'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 7 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
 gates_summary

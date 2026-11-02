@@ -6408,6 +6408,7 @@ _LOCAL_RE = re.compile(r"(?<![\w$-])(local|declare|typeset)((?:[ \t]+[-+][A-Za-z
 _DECL_WORDS = frozenset(("export", "local", "declare", "typeset", "readonly"))
 _REDIR_RE = re.compile(r"[0-9]*(?:[<>]&?|&>)>?-?[ \t]*(?:[^\s;&|()<>]+)?")
 
+_DYN_CALL_RE = re.compile(r"(?<![\w$-])eval(?![\w-])|[\w-]['\"]?\$\{?[A-Za-z_]|\w['\"]\w")
 _FN_ANY_HEAD_RE = re.compile(r"(?<![\w.:$-])(?:function[ \t]+[^\s()<>;&|]+|[A-Za-z_][\w.:-]*[ \t]*\([ \t]*\))")
 _FN_HEAD_RE = re.compile(r"(?:(?<![\w-])function[ \t]+([^\s()<>;&|]+)(?:[ \t]*\([ \t]*\))?|([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\))[ \t\n]*$")
 
@@ -6507,7 +6508,8 @@ def _shell_scan(text, groups=None):
         # GH #818 review 6: every function head has a body the scan recorded (not `f() ( .. )`, a `}` right after `fi`,
         # or a comment before the `{`), else the function rule is off.
         heads = sum(1 for m in _FN_ANY_HEAD_RE.finditer(text) if not text_at[m.start()])
-        groups["fn_ok"] = not braces and not brace_bad and heads == len(fns)
+        # GH #818 review 7: nor with a call the text does not name (`setup_$mode`, `"set"up`, eval).
+        groups["fn_ok"] = not braces and not brace_bad and heads == len(fns) and not _DYN_CALL_RE.search(text)
     # GH #818 review 2/3: the scan does not follow the quotes nested in "$( .. )", "` .. `" or "${X:-".."}", where an inner "a & b" read
     # as a bare `&`; with one in the text no background list is read, as before GH #818.
     if groups is not None:
@@ -6547,6 +6549,9 @@ def _prefix_assign(text, m, memo):
 class _SlowCopy(Exception):
     pass
 
+_MAY_SET_RE = re.compile(r"(?<![\w$-])(?:source|\.|eval)[ \t]")
+_LOOP_STOP_RE = re.compile(r"(?<![\w$-])(?:break|continue|return|exit)(?![\w-])")
+
 _OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
 
 def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False, scoped=False):
@@ -6575,7 +6580,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                     sets.append((base + w.end(), w.group(0), None))
         # GH #818: a quoted name (`unset 'G'`) or one after an expansion (`unset ${X} G`).
         for m in _UNSET_MORE_RE.finditer(text) if scoped else ():
-            if "f" not in m.group(1) and not text_at[m.start()]:
+            if "f" not in m.group(1) and not text_at[m.start()] and _cmd_pos(text, m.start()):
                 base = m.start(2)
                 for w in _UNSET_WORD_RE.finditer(m.group(2)):
                     if w.group(1) or w.group(2) or w.group(3):
@@ -6583,7 +6588,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         # GH #818: `local G` / `declare G` with no value, inside a function: G is unset there, for that body only.
         locs = list(_LOCAL_RE.finditer(text)) if scoped else ()
         for m in locs if len(locs) <= 200 else ():  # GH #818 review 6: a bound, as each one searches its body
-            if not text_at[m.start()] and not set(m.group(2)) & set("gpfFnI"):
+            if not text_at[m.start()] and not set(m.group(2)) & set("gpfFnI") and _cmd_pos(text, m.start()):
                 body = min(((o, c) for o, c, _, _ in groups["fn"] if o < m.start() < c), key=lambda b: b[1] - b[0],
                            default=None)
                 if body:
@@ -6602,11 +6607,24 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         by_name[n][0].append(e)
         by_name[n][1].append(v)
     first_call, enclosing, work, slow = {}, {}, [0], [not scoped]
+    fn_call_re = re.compile(r"(?<![\w.:$-])(?:" + "|".join(sorted({re.escape(f[2]) for f in groups["fn"]})) + r")(?![\w.:-])"
+                            ) if groups["fn"] else None
+    def may_set(name, a, b):
+        # GH #818 review 7: text between a and b that may set name: a call to a function (bash's dynamic scope lets it
+        # fill a caller's local), source / . / eval, or any NAME=, NAME+=, read/mapfile/getopts/printf -v/for NAME.
+        spend(b - a)
+        t = text[a:b]
+        return not groups["fn_ok"] or bool(
+            (fn_call_re and fn_call_re.search(t)) or _MAY_SET_RE.search(t) or re.search(
+                r"(?<![\w$-])" + name + r"\+?=|\$\{" + name + r":?=|(?<![\w-])(?:read|mapfile|readarray|getopts|for)(?![\w-])"
+                r"[^;&|\n]*(?<![\w$-])" + name + r"(?![\w-])|-v[ \t]+" + name + r"(?![\w-])", t))
     def spend(n):
         # GH #818 review 2: past one budget the scoped copy is read as the raw one (paren subshells only, no background
         # list, function or loop rule), which then adds nothing.
+        if slow[0]:
+            return
         work[0] += n
-        if work[0] > 400_000:
+        if work[0] > 100_000:
             raise _SlowCopy
     def encl(at):
         # The spans and function bodies holding an entry, once per entry (GH #818 review: per reference was slow).
@@ -6627,7 +6645,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                     fl.append((o, c, first_call[(o, name)]))
             enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], [(o, c) for o, c in groups["bg"] if o < at <= c], fl)
         return enclosing[at]
-    def usable(at, v, ref, strict=False):
+    def usable(at, v, ref, strict=False, name=None):
         sp, bg, fl = encl(at)
         if not slow[0]:
             spend(1 + len(sp) + len(bg) + len(fl))
@@ -6636,7 +6654,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         if v is not None and any(not o < ref < c for o, c in bg):
             return False  # GH #818: a value set in a background list; an unset there still counts, as develop read it
         sc = scope.get(at)
-        if sc and not sc[0] < ref < sc[1]:
+        if sc and (slow[0] or not sc[0] < ref < sc[1] or (at < ref and may_set(name, at, ref))):
             return False
         # A value in a function body only once a call is written; an unset too for the loop rule (strict), never in
         # the walk-back below, so an unset reads as develop read it.
@@ -6663,15 +6681,15 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             for lo, lc in groups["loop"]:
                 # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
                 # sets nothing before it: an unset there leaves the reference as written.
-                if lo < ref < lc and not slow[0]:
+                if lo < ref < lc and not slow[0] and not _LOOP_STOP_RE.search(text, lo, lc) and not may_set(name, lo, lc):
                     ks = range(bisect.bisect_right(ends, lo), bisect.bisect_left(ends, lc))
-                    first = next((k for k in ks if usable(ends[k], vals[k], ref, True)), None)
+                    first = next((k for k in ks if usable(ends[k], vals[k], ref, True, name)), None)
                     if first is not None and ends[first] > ref:
-                        lk = next(k for k in reversed(ks) if usable(ends[k], vals[k], ref, True))
+                        lk = next(k for k in reversed(ks) if usable(ends[k], vals[k], ref, True, name))
                         if vals[lk] is None:
                             return m.group(0)
             for k in range(bisect.bisect_right(ends, ref) - 1, -1, -1):
-                if usable(ends[k], vals[k], ref):
+                if usable(ends[k], vals[k], ref, name=name):
                     return m.group(0) if vals[k] is None else vals[k]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
