@@ -6446,6 +6446,9 @@ def _shell_scan(text, groups=None):
             text_at[i] = 1
             if c == "`" or (c == "$" and text[i + 1:i + 2] == "("):
                 dq_sub = True
+            elif c == "$" and text[i + 1:i + 2] == "{":
+                j = text.find("}", i)
+                dq_sub = dq_sub or j < 0 or '"' in text[i:j]  # "${X:-"a & b"}": its inner quotes
         elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
             j = text.find("\n", i)
             j = n if j < 0 else j
@@ -6496,7 +6499,7 @@ def _shell_scan(text, groups=None):
         i += 1
     if groups is not None:
         groups["fn"], groups["loop"] = fns, loop_spans
-    # GH #818 review 2: the scan does not follow the quotes nested in "$( .. )" or "` .. `", where an inner "a & b" read
+    # GH #818 review 2/3: the scan does not follow the quotes nested in "$( .. )", "` .. `" or "${X:-".."}", where an inner "a & b" read
     # as a bare `&`; with one in the text no background list is read, as before GH #818.
     if groups is not None:
         groups["bg"] = [] if dq_sub else bg
@@ -6634,6 +6637,8 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         if name in by_name:  # the latest assignment before it by bisect, past any set in a closed subshell (GH #808)
             ends, vals = by_name[name]
             ref = m.start()
+            if groups["loop"] and not slow[0]:
+                spend(len(groups["loop"]))
             for lo, lc in groups["loop"]:
                 # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
                 # sets nothing before it: an unset there leaves the reference as written.
