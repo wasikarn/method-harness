@@ -232,11 +232,12 @@ except Exception:
             return False
 
         out = []
-        pad = {}  # GH #306: out index -> blank pairs to put in front of that piece
+        pad = {}  # GH #306, #833: out index -> blanks to put in front of that piece
         word_start = 0
         ng = 0  # GH #833: how many entries of parens are True
         ie = -1  # GH #833 review 3: end of the unsure line, where quotes and "<" are inert
         unsure = -2  # GH #833 review 2: index in s of the last ")" read while a case marker was on top
+        pd, au = -1, False  # GH #833 review 9: parens depth at an unsure "#", and whether every later ")" is unsure
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
         at_word_start = True
@@ -249,6 +250,7 @@ except Exception:
                 if i >= ie:
                     ie = s.find("\n", i)
                     ie = n if ie < 0 else ie
+                pd = len(parens) if pd < 0 else min(pd, len(parens))
                 out.append(c)
                 i += 1
                 at_word_start = False
@@ -335,6 +337,9 @@ except Exception:
                 at_word_start = c in set(" \t\n;&|()")
                 if at_word_start:
                     word_start = len(out)
+                # GH #833 review 9: a ")" inside an unsure "#" line popping below the depth at its "#" closes something the
+                # comment reading still has open, so from there on the stack is unknown: every later ")" is unsure
+                au = au or c == ")" and i - 1 < ie and len(parens) <= pd
                 if c == "(":
                     k, e = _back(i - 1, False)  # GH #833: steps over a continuation ($\<nl>()
                     g = k >= 0 and not e
@@ -351,6 +356,8 @@ except Exception:
                 elif c == ")" and parens and parens.pop():
                     ng -= 1
                     at_word_start = False  # GH #820 item 5: $(..)# is one word, never a comment
+                if au and c == ")":
+                    unsure = i - 1
         return "".join(" " * pad.get(k, 0) + p for k, p in enumerate(out)) + " " * pad.get(len(out), 0)
 
 def check_helper_body(text):

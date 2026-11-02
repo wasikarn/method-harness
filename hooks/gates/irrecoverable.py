@@ -754,12 +754,16 @@ def _quote_mask(c, stack=None, hd=False):
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
+    pd, au = -1, False  # GH #833 review 9: po's depth at an unsure #, and whether every later ) is unsure
     while i < n:
         ch, q = c[i], stack[-1]
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
         if q not in (SQ, '"', "$'"):
+            # GH #833 review 9: a ) inside an unsure # line that pops below the depth at its # closes something the
+            # comment reading still has open, so from there on the stack is unknown: every later ) is unsure
+            au = au or ch == ")" and i < ie and len(po) <= pd
             if ch == "(":
                 p = _prev_char(c, i, esc)
                 g = p >= 0 and not esc[p]
@@ -775,6 +779,7 @@ def _quote_mask(c, stack=None, hd=False):
                 po.append("c")
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
+            uc = i if au and ch == ")" else uc
         if q in _HD_OFF or ch == "<" and i < ie:
             mask[i] = 1
             if ch == "<" and i < ie:  # an inert <: from here on the quote state is unknown (see above)
@@ -827,6 +832,7 @@ def _quote_mask(c, stack=None, hd=False):
             if i >= ie:  # GH #833 review 2-4: an unsure #, read both ways (see above)
                 ie = c.find("\n", i)
                 ie = n if ie < 0 else ie
+            pd = len(po) if pd < 0 else min(pd, len(po))
         elif ch == "#" and i >= ie and ((p := _prev_char(c, i, esc)) < 0 or not esc[p] and (c[p] in " \t\n;&|(" or c[p] == ")" and gc != p)):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
@@ -863,9 +869,10 @@ def _quote_mask(c, stack=None, hd=False):
         elif q == "((" and ch == ")" and c[i + 1:i + 2] == ")":
             stack.pop()
             i += 1
+            au = au or i < ie and len(po) <= pd
             x = po.pop() if po else False  # GH #833 review 8: !((1)) with extglob off is ! and an arithmetic command
             gc = i if x is True else gc
-            uc = i if x == "x" else uc
+            uc = i if x == "x" or au else uc
         elif ch == "(" and q in ("((", "a("):
             stack.append("a(")  # a ( inside arithmetic: its ) closes it, not the (( frame
         elif ch == "(" and q == "(":

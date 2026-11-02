@@ -117,6 +117,10 @@ CORPUS = [
     "f@()#\"\ngit stash\n#\"",
     "echo @(a|b)#; git stash",
     "echo !(a) #'\ngit stash",
+    # GH #833 review 9: a ")" on an unsure "#" line popping below its depth makes every later ")" unsure
+    "echo $(!(true)#)\n)#; git stash",
+    "echo $(f+()#)\n{ :; }\n)#; git stash",
+    "echo $(!(true)#x)\n(ls)#; git stash",
 ]
 
 

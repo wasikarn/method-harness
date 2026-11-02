@@ -4630,4 +4630,16 @@ test_deny  "$IRRECOVERABLE" 'GH #833 review 8: subagent: !((1))#<<E \n claude -p
   "$(bash_agent_payload $'!((1))#<<E\nclaude -p hi\nE' fork)"
 test_allow "$IRRECOVERABLE" 'GH #833 review 8 control: subagent: !((1))#<<E \n claude --version \n E' \
   "$(bash_agent_payload $'!((1))#<<E\nclaude --version\nE' fork)"
+# GH #833 review 9: a ) on an unsure # line that pops below the depth at its # closes what the comment reading still
+# has open, so every later ) is unsure (fail safe): the real closer's # is read both ways.
+for _c in $'echo $(!(true)#)\n)#|claude' $'X=claude; echo $(!(true)#)\n)#|$X' $'echo $(!((1))#)\n)#|claude' \
+    $'echo $(f+()#)\n{ :; }\n)#|claude'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 9: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 9 control: subagent: echo $(!(true)#) \n )#|claude --version' \
+  "$(bash_agent_payload $'echo $(!(true)#)\n)#|claude --version' fork)"
+test_deny  "$SUBAGENT_GIT_GUARD" 'GH #833 review 9: subagent: echo $(!(true)#) \n )#; git stash' \
+  "$(bash_agent_payload $'echo $(!(true)#)\n)#; git stash' fork)"
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 9 control: subagent: echo $(!(true)#) \n )#; git status' \
+  "$(bash_agent_payload $'echo $(!(true)#)\n)#; git status' fork)"
 gates_summary
