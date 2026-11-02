@@ -4160,4 +4160,25 @@ for _c in $'python3 -c "getattr(__import__(\'os\'), \'sys\' + \'tem\')(\'git res
   $'python3 - <<\'EOF\'\np = __import__(\'os\').popen\np(\'git push --force origin main\')\nEOF'; do
   test_deny  "$IRRECOVERABLE" "GH #801 control: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
+# GH #808: the raw copy drops a value bash never expands there: one `unset` after it is set, one set inside a
+# subshell that closed before the reference, and a prefix assignment on a command (bash expands the words first).
+for _c in 'G=-i; F=-r; unset G; rm $F $G b' 'F=-r; G=-i; unset -v X G; rm $F $G b' '(G=-i); F=-r; rm $F $G b' \
+  'F=-r; (G=-i; true) && rm $F $G b' 'F=-r; G=-i rm $F $G b' 'F=-r; G=-i H=1 rm $F $G b' 'F=-r; G=-i; (G=-i); unset G; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #808: $_c" "$(bash_payload "$_c")"
+done
+# GH #808 review: a redirection after an assignment is no command (`F=-r 2>/dev/null;` keeps F), and an unset or a
+# paren inside quotes or a comment is text.
+for _c in 'F=-r 2>/dev/null; rm $F $G b; G=-i' 'F=-r >/dev/null; rm $F $G b; G=-i' 'F=-r; G=-i 2>/dev/null rm $F $G b' \
+  'F=-r; G=-i; unset -- G; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #808 review: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'G=-i; F=-r; echo "run unset G later"; rm $F $G b' 'G=-i; F=-r; echo '"'"'unset G'"'"'; rm $F $G b' \
+  $'G=-i; F=-r; # then unset G\nrm $F $G b' $'F=-r\n# prompt (interactive mode\nG=-i\n# end)\nrm $F $G b'; do
+  test_allow "$IRRECOVERABLE" "GH #808 review control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+for _c in 'G=-i; F=-r; unset X; rm $F $G b' 'G=-i; F=-r; unset -f G; rm $F $G b' '(G=-i; F=-r; rm $F $G b)' \
+  'G=-i; (F=-r; rm $F $G b)' 'G=-i; F=-r; (unset G); rm $F $G b' 'G=-i; F=-r; X=1 rm $F $G b' 'G=-i; F=-r; G=-i rm $F $G b' \
+  'export G=-i F=-r; rm $F $G b' 'G=-i F=-r; rm $F $G b' 'F=-r; unset G; G=-i; rm $F $G b'; do
+  test_allow "$IRRECOVERABLE" "GH #808 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary
