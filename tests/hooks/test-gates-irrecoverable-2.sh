@@ -4642,4 +4642,18 @@ test_deny  "$SUBAGENT_GIT_GUARD" 'GH #833 review 9: subagent: echo $(!(true)#) \
   "$(bash_agent_payload $'echo $(!(true)#)\n)#; git stash' fork)"
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 9 control: subagent: echo $(!(true)#) \n )#; git status' \
   "$(bash_agent_payload $'echo $(!(true)#)\n)#; git status' fork)"
+# GH #833 review 10: what the unsure line does (quote frames, an esac, an opened ( or $(, a continuation) outlives it,
+# so from an unsure # to the end the state is unknown: no quote or comment opens and every later ) is unsure.
+for _c in $'X=claude; echo "$(!(true)#)"\n)" | $X' $'X=claude; echo $(!(true)#(\n)#|$X' $'X=claude; !(true)#\\\n#\'\necho hi |$X #\'' \
+    $'X=claude; echo "$(!(true)#)\nclaude -p hi)"'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 10: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 10 control: subagent: X=claude; echo "$(!(true)#)" \n )" | $X --version' \
+  "$(bash_agent_payload $'X=claude; echo "$(!(true)#)"\n)" | $X --version' fork)"
+for _c in $'echo $(case a in a) !(true)#;esac\n;; b)#\'\n;; esac); git stash\n\'' $'( !(true)#$(\n)#\'\ngit stash\n\'' \
+    $'echo $(!(true)#(\n)#; git stash' $'!(true)#\\\n#\'\ngit stash #\''; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 10: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 10 control: subagent: !(true)#\ \n #'"'"' \n git status #'"'" \
+  "$(bash_agent_payload $'!(true)#\\\n#\'\ngit status #\'' fork)"
 gates_summary

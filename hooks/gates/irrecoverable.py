@@ -743,27 +743,24 @@ def _quote_mask(c, stack=None, hd=False):
     # po holds one flag per open unquoted (, whether its ) ends mid-word; gc is the index of the last such ).
     # GH #833: a `case` read as a command pushes "c" onto po until its `esac`: a pattern's ) then pops nothing, so it
     # cannot close the $( around it early. Fail safe: a "c" pushed by mistake (`echo do case`) or never closed leaves
-    # every ) after it unsure (uc) while any glued ( is open. A # right after an unsure ) is read both ways: as a word,
-    # so the rest of its line is scanned with its frames, parens and continuations, but up to the end of that line (ie)
-    # no quote or comment opens and every < is masked (as a comment nothing there would open, and as a word a quote or
-    # << could hide the lines below). Once such an inert quote or < shows up, bash's quote state past the line is
-    # unknown, so ie moves to the end of c: everything after reads as visible code (hd: a "!" frame, so _strip_heredocs
-    # strips nothing more). The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
+    # every ) after it unsure (uc) while any glued ( is open. A # right after an unsure ) is read both ways: as a
+    # comment it hides the rest of its line, and as a word what that line does (frames, parens, quotes, a case, an esac,
+    # a continuation) changes how everything after it reads. Neither reading is safe, so from that # to the end of c the
+    # state is unknown (ie = n): the text is scanned as a word, but no quote or comment opens, every < is masked, a ".."
+    # opened before it is no longer masked, and every later ) is unsure too (au); hd mode pushes a "!" frame, so
+    # _strip_heredocs strips nothing more. Over-reading only, and only after an unsure #. The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
     # separator is part of its word, and an escaped newline is a line continuation (_prev_char). The ) of an
     # extglob candidate @( !( ?( *( +( is unsure too ("x" on po, _EXTGLOB_OPEN).
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
-    pd, au = -1, False  # GH #833 review 9: po's depth at an unsure #, and whether every later ) is unsure
+    au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
     while i < n:
         ch, q = c[i], stack[-1]
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
         if q not in (SQ, '"', "$'"):
-            # GH #833 review 9: a ) inside an unsure # line that pops below the depth at its # closes something the
-            # comment reading still has open, so from there on the stack is unknown: every later ) is unsure
-            au = au or ch == ")" and i < ie and len(po) <= pd
             if ch == "(":
                 p = _prev_char(c, i, esc)
                 g = p >= 0 and not esc[p]
@@ -790,7 +787,7 @@ def _quote_mask(c, stack=None, hd=False):
             if ch == SQ:
                 stack.pop()
         elif q == '"':
-            mask[i] = 1
+            mask[i] = i >= ie  # GH #833 review 10: past an unsure #, a ".." opened before it may be a $( still
             if ch == "\\" and i + 1 < n:
                 mask[i + 1] = 1
                 i += 1
@@ -829,10 +826,9 @@ def _quote_mask(c, stack=None, hd=False):
                 ie = n
                 stack += ["!"] if hd else []
         elif ch == "#" and uc >= 0 and _prev_char(c, i, esc) == uc:
-            if i >= ie:  # GH #833 review 2-4: an unsure #, read both ways (see above)
-                ie = c.find("\n", i)
-                ie = n if ie < 0 else ie
-            pd = len(po) if pd < 0 else min(pd, len(po))
+            if i >= ie:  # GH #833 review 2-10: an unsure #, read both ways (see above)
+                ie, au = n, True
+                stack += ["!"] if hd else []
         elif ch == "#" and i >= ie and ((p := _prev_char(c, i, esc)) < 0 or not esc[p] and (c[p] in " \t\n;&|(" or c[p] == ")" and gc != p)):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
@@ -869,7 +865,6 @@ def _quote_mask(c, stack=None, hd=False):
         elif q == "((" and ch == ")" and c[i + 1:i + 2] == ")":
             stack.pop()
             i += 1
-            au = au or i < ie and len(po) <= pd
             x = po.pop() if po else False  # GH #833 review 8: !((1)) with extglob off is ! and an arithmetic command
             gc = i if x is True else gc
             uc = i if x == "x" or au else uc

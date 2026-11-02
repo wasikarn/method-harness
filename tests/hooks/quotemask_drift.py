@@ -121,6 +121,10 @@ CORPUS = [
     "echo $(!(true)#)\n)#; git stash",
     "echo $(f+()#)\n{ :; }\n)#; git stash",
     "echo $(!(true)#x)\n(ls)#; git stash",
+    # GH #833 review 10: from an unsure "#" to the end the state is unknown
+    "echo $(case a in a) !(true)#;esac\n;; b)#'\n;; esac); git stash\n'",
+    "( !(true)#$(\n)#'\ngit stash\n'",
+    "!(true)#\\\n#'\ngit stash #'",
 ]
 
 

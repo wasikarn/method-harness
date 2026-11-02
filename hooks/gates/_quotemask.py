@@ -52,9 +52,10 @@ def mask_quotes(s):
     # extglob candidate @( !( ?( *( +( is unsure ("x": a group with extglob
     # on, an operator with it off); a line continuation between "$" and its
     # "(" is stepped over (_back). Fail safe: a "c" pushed by mistake
-    # (`echo do case`) or never closed leaves each ")" after it unsure, so
-    # while one is on top a ")" keeps "#" in its word whenever a glued "("
-    # is still open (ng); that only reads more, never less.
+    # (`echo do case`) or never closed leaves each ")" after it unsure while
+    # a glued "(" is open (ng). A "#" right after an unsure ")" is read both
+    # ways: from it to the end the state is unknown (see the loop's first
+    # branch), which only reads more, never less.
     def _back(k, blanks):
         # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
         # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -97,20 +98,18 @@ def mask_quotes(s):
     ng = 0  # GH #833: how many entries of parens are True
     ie = -1  # GH #833 review 3: end of the unsure line, where quotes and "<" are inert
     unsure = -2  # GH #833 review 2: index in s of the last ")" read while a case marker was on top
-    pd, au = -1, False  # GH #833 review 9: parens depth at an unsure "#", and whether every later ")" is unsure
+    au = False  # GH #833 review 9/10: every ")" after an unsure "#" is unsure too
     parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued
     i, n = 0, len(s)
     at_word_start = True
     while i < n:
         c = s[i]
         if c == "#" and unsure >= 0 and _back(i, False)[0] == unsure:
-            # GH #833 review 2-4: as a comment the line hides nothing below it, and as a word a quote or "<<" in it
-            # could; so it is read as a word, but up to its end (ie) no quote or comment opens and each "<" masks to
-            # Q. Once such an inert quote or "<" shows up, the quote state past the line is unknown: ie moves to the end
-            if i >= ie:
-                ie = s.find("\n", i)
-                ie = n if ie < 0 else ie
-            pd = len(parens) if pd < 0 else min(pd, len(parens))
+            # GH #833 review 2-10: as a comment it hides the rest of its line, and as a word what that line does
+            # (parens, quotes, a case, an esac, a continuation) changes how all after it reads; neither is safe, so
+            # from here to the end the state is unknown (ie = n): read as a word, but no quote or comment opens, each
+            # "<" masks to Q, an inert quote mark is dropped, and every later ")" is unsure (au). Over-reading only.
+            ie, au = n, True
             out.append(c)
             i += 1
             at_word_start = False
@@ -232,9 +231,6 @@ def mask_quotes(s):
             at_word_start = c in _WORD_BOUNDARY_CHARS
             if at_word_start:
                 word_start = len(out)
-            # GH #833 review 9: a ")" inside an unsure "#" line popping below the depth at its "#" closes something the
-            # comment reading still has open, so from there on the stack is unknown: every later ")" is unsure
-            au = au or c == ")" and i - 1 < ie and len(parens) <= pd
             if c == "(":
                 k, e = _back(i - 1, False)  # GH #833: steps over a continuation ($\<nl>()
                 g = k >= 0 and not e
