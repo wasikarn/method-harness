@@ -58,6 +58,24 @@ CORPUS = [
     "(ls)#x\ngit stash",
     "((1))#x\ngit stash",
     "case a in a)#x\ngit stash",
+    # GH #833: a case pattern's ")" inside $( keeps the $( open; a continuation inside $\<nl>( is stepped over;
+    # an extglob group glues as $( does
+    "echo $(case a in a) :;; esac)#; git stash",
+    "echo $(case a in (a) :;; esac)#; git stash",
+    "echo $(case a in\n a|b) :;;\n esac)#; git stash",
+    "echo $(if true; then case a in a) :;; esac; fi)#; git stash",
+    "echo $(case a in esac)#; git stash",
+    "echo $(case a in a) :;; esac) #; git stash",
+    "echo $(echo case)#; git stash",
+    "echo case a in a)#x\ngit stash",
+    "echo $\\\n(date)#; git stash",
+    "echo \\$(date)#; git stash",
+    "echo @(a)#; git stash",
+    "echo !(a)#; git stash",
+    "echo ?(a)#; git stash",
+    "echo *(a)#; git stash",
+    "echo +(a)#; git stash",
+    "echo @(a) #; git stash",
 ]
 
 

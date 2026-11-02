@@ -47,6 +47,35 @@ def mask_quotes(s):
     # "=" ($(..) $((..) <(..) >(..) name=(..)) ends inside its word, so a "#"
     # right after it is no comment (`echo $(date)#|claude` pipes); a subshell
     # ")" or an unmatched one (a case pattern) still ends the word.
+    # GH #833: a case read as a command pushes "c" until its esac, so a
+    # pattern's ")" inside $(..) cannot pop the $( flag; an extglob group
+    # @( !( ?( *( +( glues as $( does; a line continuation between "$" and
+    # its "(" is stepped over (_back).
+    def _back(k, blanks):
+        # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
+        # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
+        k -= 1
+        while k >= 0:
+            r = k - 1
+            while r >= 0 and s[r] == "\\":
+                r -= 1
+            if s[k] == "\n" and (k - 1 - r) % 2 == 1:
+                k -= 2
+            elif blanks and s[k] in " \t" and (k - 1 - r) % 2 == 0:
+                k -= 1
+            else:
+                return k, (k - 1 - r) % 2 == 1
+        return k, False
+
+    def _cmd_word(i, word, after, leads):
+        # GH #833: whether s[i:] starts the reserved word `word` where bash reads it: at the start, after a char in
+        # after, or after a word in leads; a blank, a separator or the end follows it
+        if not s.startswith(word, i) or s[i + len(word):i + len(word) + 1] not in ("", " ", "\t", "\n", ";", "&", "|", ")"):
+            return False
+        k, e = _back(i, True)
+        return k < 0 or not e and (s[k] in after or any(
+            s.endswith(w, 0, k + 1) and (k + 1 == len(w) or s[k - len(w)] in " \t\n;&|(") for w in leads))
+
     out = []
     pad = {}  # out index -> blank pairs to put in front of that piece (GH #306)
     word_start = 0  # out index where the current word begins
@@ -148,13 +177,18 @@ def mask_quotes(s):
             i = j
             at_word_start = False
         else:
+            if c == "c" and at_word_start and _cmd_word(i, "case", ";&|(\n", ("then", "do", "else", "elif", "{", "!", "time")):
+                parens.append("c")  # GH #833: a case pattern's ")" closes nothing until its esac
+            elif c == "e" and parens and parens[-1] == "c" and _cmd_word(i, "esac", ";&)\n", ("in",)):
+                parens.pop()
             out.append(c)
             i += 1
             at_word_start = c in _WORD_BOUNDARY_CHARS
             if at_word_start:
                 word_start = len(out)
             if c == "(":
-                parens.append(i > 1 and s[i - 2] in "$<>=")
-            elif c == ")" and parens and parens.pop():
+                k, e = _back(i - 1, False)  # GH #833: extglob @( !( ?( *( +( glue as $( does
+                parens.append(k >= 0 and not e and s[k] in "$<>=@!?*+")
+            elif c == ")" and parens and parens[-1] != "c" and parens.pop():
                 at_word_start = False  # GH #820 item 5: $(..)# is one word
     return "".join("  " * pad.get(k, 0) + p for k, p in enumerate(out))

@@ -687,6 +687,28 @@ def _reads_stdin_interp(seg):
     return (not rest or rest[0] == "-") and not any(t.startswith("<") for t in rest)
 
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
+_GLUE_OPEN = "$<>=@!?*+"  # GH #820 item 5, #833: a ( after one of these ($( <( >( name=( and extglob @( !( ?( *( +()
+# closes inside its word
+_CASE_LEAD_RE = re.compile(r"(?:^|[\s;&|(])(?:then|do|else|elif|\{|!|time)$")  # reserved words a command follows
+_ESAC_LEAD_RE = re.compile(r"(?:^|\s)in$")  # `case a in esac`: no pattern at all
+
+def _prev_char(c, k, esc):
+    # GH #833: the index of the char bash reads right before c[k] (-1 at the start). A backslash-newline the unquoted
+    # scan escaped (esc) is a line continuation the shell deletes, so it is stepped over.
+    k -= 1
+    while k > 0 and c[k] == "\n" and esc[k]:
+        k -= 2
+    return k
+
+def _cmd_word(c, i, word, esc, after, lead):
+    # GH #833: whether c[i:] starts the reserved word `word` where bash reads it (after one of the chars in after, a
+    # word lead matches, or at the start), followed by a blank, a separator or the end.
+    if not c.startswith(word, i) or c[i + len(word):i + len(word) + 1] not in ("", " ", "\t", "\n", ";", "&", "|", ")"):
+        return False
+    k = _prev_char(c, i, esc)
+    while k >= 0 and c[k] in " \t" and not esc[k]:
+        k = _prev_char(c, k, esc)
+    return k < 0 or not esc[k] and (c[k] in after or bool(lead.search(c, max(0, k - 5), k + 1)))
 
 def _quote_mask(c, stack=None, hd=False):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
@@ -698,19 +720,31 @@ def _quote_mask(c, stack=None, hd=False):
     # GH #820 item 5: the ) of $(..) $((..)) <(..) >(..) name=(..) ends inside its word, so a # glued after it is
     # no comment (`echo $(date)#|claude` pipes); the ) of a subshell, of ((..)) or an unmatched one ends the word.
     # po holds one flag per open unquoted (, whether its ) ends mid-word; gc is the index of the last such ).
+    # GH #833: a `case` read as a command pushes "c" onto po until its `esac`: a pattern's ) then pops nothing, so it
+    # cannot close the $( around it early. esc flags each char an unquoted backslash escapes: an escaped blank or
+    # separator is part of its word, and an escaped newline is a line continuation (_prev_char). Extglob @( !( ?(
+    # *( +( are glued as $( is.
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
-    po, gc = [], -2
+    po, gc, esc = [], -2, bytearray(len(c))
     while i < n:
         ch, q = c[i], stack[-1]
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
+        pat = False  # GH #833: a case pattern's )
         if q not in (SQ, '"', "$'"):
             if ch == "(":
-                po.append(i > 0 and c[i - 1] in "$<>=")
+                p = _prev_char(c, i, esc)
+                po.append(p >= 0 and not esc[p] and c[p] in _GLUE_OPEN)
+            elif ch == ")" and po and po[-1] == "c":
+                pat = True
             elif ch == ")" and po and po.pop():
                 gc = i
+            elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|(\n", _CASE_LEAD_RE):
+                po.append("c")
+            elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE):
+                po.pop()
         if q in _HD_OFF:
             mask[i] = 1
         if q == SQ:
@@ -743,7 +777,7 @@ def _quote_mask(c, stack=None, hd=False):
             elif ch == SQ:
                 stack.pop()
         elif ch == "\\" and i + 1 < n:
-            mask[i + 1] = 1
+            mask[i + 1] = esc[i + 1] = 1
             i += 1
         elif ch == "$" and c[i + 1:i + 2] == SQ:
             mask[i] = mask[i + 1] = 1
@@ -752,14 +786,14 @@ def _quote_mask(c, stack=None, hd=False):
         elif ch in (SQ, '"'):
             mask[i] = 1
             stack.append(ch)
-        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|(" or c[i - 1] == ")" and gc != i - 1):
+        elif ch == "#" and ((p := _prev_char(c, i, esc)) < 0 or not esc[p] and (c[p] in " \t\n;&|(" or c[p] == ")" and gc != p)):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
             mask[i:j] = b"\1" * (j - i)
             i = j
             continue
         elif not hd:
-            if q == "(" and ch in "()":
+            if q == "(" and ch in "()" and not pat:
                 stack.append(ch) if ch == "(" else stack.pop()
             elif q == "`" and ch == "`":
                 stack.pop()
