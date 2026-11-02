@@ -4393,9 +4393,10 @@ for _c in 'if true; then python3 -c 1; fi | bash' 'while read l; do python3 -c 1
   'python3 -c 1 | tee >(bash)' 'python3 -c 1 | tee >(bash) | wc -l' 'python3 -c 1 > >(sh)' 'x=$(date); python3 -c 1 | tee >(bash)' \
   'uvx python -c 1 | bash' 'uvx python@3.12 -c 1 | bash' 'uvx --from x python3 -c 1 | bash' \
   'npx -y node@18 -e 1 | sh' 'pipx run python -c 1 | bash' 'pipx run --spec x python3 -c 1 | sh' \
-  'uv tool run python -c 1 | bash' $'echo \'git reset --hard\' | $\'\\x73h\'' $'printf \'git reset --hard\' | $\'\\163h\''\
+  'uv tool run python -c 1 | bash' $'echo \'git reset --hard\' | $\'\\x73h\'' $'printf \'git reset --hard\' | $\'\\163h\'' \
   'for ((i=0;i<2;i++)); do python3 -c 1; done | bash' 'for((i=0;i<2;i++)); do node -e 1; done | sh' \
-  'while(true); do python3 -c 1; done | bash' 'if(true); then python3 -c 1; fi | bash'; do
+  'while(true); do python3 -c 1; done | bash' 'if(true); then python3 -c 1; fi | bash' \
+  'for ((i=0; i<1; i++)) { python3 -c 1; } | bash'; do
   test_deny  "$IRRECOVERABLE" "GH #823: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
 # GH #823 review 2: only a real ((..)) arithmetic command is blanked: a quoted or commented (( .. )) pair hides no pipe,

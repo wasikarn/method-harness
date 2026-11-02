@@ -3129,6 +3129,8 @@ def _join_continuations(c):
 _STAGE_KEYWORD_RE = re.compile(r"(if|while|until|for|select|fi|done|then|else|elif|do|!|coproc)(?=[ \t\n()]|$)")
 _FUNC_HEAD_RE = re.compile(r"function[ \t]+([^\s(){}<>;&|'\"\\$`]+)(?:[ \t]*\(\))?|([A-Za-z_][\w.:-]*)[ \t]*\(\)")
 
+_BLANKED_ARITH_RE = re.compile(r"\(\( *\)\)")
+
 def _group_ends(g):
     # GH #815: (events, core, trailing closers) of a pipe stage in a { } or ( ) group, which _pieces does not model:
     # `{ python3 -c 1; } | bash` splits at the `;` into `{ python3 -c 1` and `} | bash`, and `(python3 -c 1) | bash`
@@ -3146,6 +3148,8 @@ def _group_ends(g):
         elif (ch == "(" and t[i + 1:i + 2] != "(") or (ch == "{" and t[i + 1:i + 2] in (" ", "\t", "\n", "")):
             events.append(("open",))
             i += 1
+        elif t.startswith("((", i) and (m := _BLANKED_ARITH_RE.match(t, i)):
+            i = m.end()  # GH #823 review 4: a ((..)) _blank_arith emptied (for ((..)) { ..; }) leads its body
         else:
             m = _STAGE_KEYWORD_RE.match(t, i)
             if m:
