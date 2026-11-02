@@ -6406,6 +6406,9 @@ _PLAIN_ASSIGN_RE = re.compile(
     r"(?<![\w$-])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
 _VIEW_LEN_CAP = 20_000
 _VAR_RM_ONLY = len(cmd) > _VIEW_LEN_CAP  # GH #787: past the cap, var-verb's copies are read by rm's enforced rules alone
+# GH #787: past the cap, the characters all of var-verb's rm-only passes read together; also the most one copy may grow to
+# while it is built (a long value put back at many references built gigabytes before any check).
+_VAR_LONG_READ = 450_000
 
 # GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
 # `command echo`, `/bin/echo`) and the backtick forms (WORDS with no further substitution in them) print WORDS; `${X:-W}`, `${X-W}`, `${X:=W}`,
@@ -6660,9 +6663,14 @@ def _views():
     # (GH #808). A fifth, scoped copy (GH #818) is the raw one that also reads a background list, a function body, a
     # `local` and a loop's later pass as bash scopes them. rm's rules read all five; the spawn scan only the in-order one.
     for pick in (-1, 0, None, "raw", "scoped"):
-        def _sub(m, pick=pick):
+        grown = [len(cmd)]
+        def _sub(m, pick=pick, grown=grown):
             name = m.group(1) or m.group(2)
-            return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
+            r = vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
+            grown[0] += len(r) - len(m.group(0))
+            if _VAR_RM_ONLY and grown[0] > _VAR_LONG_READ:
+                raise _LongCopy
+            return r
         try:
             v = (_ordered_var_text(cmd, pick is None, scoped=pick == "scoped", long=_VAR_RM_ONLY and "raise")
                  if pick in (None, "raw", "scoped")
@@ -6677,7 +6685,11 @@ def _views():
     if vals and "#" in cmd:
         # GH #810: one more in-order copy that reads `#` comments as bash does, so `echo hi | # it's fed` then `$X` puts
         # claude back; an extra copy, so a misread comment only adds a reading (GH #812 review 11).
-        v = _ordered_var_text(cmd, True, comments=True)
+        try:
+            v = _ordered_var_text(cmd, True, comments=True, long=_VAR_RM_ONLY and "raise")
+        except _LongCopy:
+            _VAR_LONG_CUT[0] = True
+            v = cmd
         if v != cmd and ("var-verb", v) not in out:
             _VAR_SPAWN_TEXTS.add(v)
             out.append(("var-verb", v))
@@ -6971,7 +6983,7 @@ class _LongCopy(Exception):
 # GH #787: past _VIEW_LEN_CAP the raw and scoped copies scan their subshell spans per entry and walk back per reference,
 # which grows with the square of the text; one budget of that work per copy. A copy past it is not read, and the
 # command asks (_VAR_LONG_CUT), as the same text under the cap could deny.
-_LONG_COPY_BUDGET = 1_500_000
+_LONG_COPY_BUDGET = 4_000_000
 _VAR_LONG_CUT = [False]
 
 _MAY_SET_RE = re.compile(r"(?<![\w$-])(?:source|\.|eval)[ \t]")
@@ -7121,11 +7133,17 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             o < ref < c or first < ref for o, c, first in fl)
     def in_body(ref):
         return any(o < ref < c for o, c, _, _ in groups["fn"])
+    grown = [len(text)]
     def sub(m):
         r = pick(m)
         # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no
         # pipe (`PAT="error|claude"; grep -E $PAT log`).
-        return m.group(0) if plain_only and _OPERATOR_CHARS.search(r) else r
+        r = m.group(0) if plain_only and _OPERATOR_CHARS.search(r) else r
+        if long:
+            grown[0] += len(r) - len(m.group(0))
+            if grown[0] > _VAR_LONG_READ:
+                raise _LongCopy
+        return r
     def pick(m):
         name = m.group(1) or m.group(2)
         if m.start() in lit:
@@ -7172,7 +7190,9 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         try:
             return _VAR_REF_RE.sub(sub, text)
         except _SlowCopy:
-            slow[0] = True
+            # The retry reads what the raw copy reads; its scan work stays counted (it is at most the 100k spend
+            # budget), its output starts again.
+            slow[0], grown[0] = True, len(text)
             return _VAR_REF_RE.sub(sub, text)
     except _LongCopy:
         if long == "raise":
@@ -7252,7 +7272,6 @@ if "agent_id" in d:
 # GH #787: past _VIEW_LEN_CAP the var-verb copies skip the full pass (every rule, the spawn scan) and get the
 # enforced pass only. Each pass re-reads the whole text, so they share one read budget; a copy past it is not read
 # and the command asks, never allows (a dropped copy may be the only one that reads the rm as bash runs it).
-_VAR_LONG_READ = 300_000
 _var_long_read = 0
 for _VIEW[0], _text in _views():
     if _VAR_RM_ONLY and _VIEW[0] == "var-verb":

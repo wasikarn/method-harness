@@ -4456,11 +4456,23 @@ _timed_case 'GH #787: F=-rf; rm $F b after 48 KB of statements, denied in bounde
   "$(printf 'echo a; %.0s' $(seq 6000))F=-rf; rm \$F b"
 _timed_case 'GH #787 control: 1200 F=x assignments and $F references after 24 KB of statements, allowed in bounded time' 0 \
   "${_pad787}$(printf 'F=x; echo $F; %.0s' $(seq 1200))"
+test_allow "$IRRECOVERABLE" 'GH #787 control: 1200 F=x assignments and $F references after 24 KB of statements' \
+  "$(bash_payload "${_pad787}$(printf 'F=x; echo $F; %.0s' $(seq 1200))")"
 # GH #787 review: past the cap a var-verb copy that would cost more than its budget is not read, so the command asks
 # (300 subshell assignments and 100 references spend the raw copy's scan budget, which alone reads `rm -r $G b`).
-test_ask   "$IRRECOVERABLE" 'GH #787 review: a raw copy past its budget asks: F=-r; rm $F $G b; G=-i' \
-  "$(bash_payload "${_pad787}$(printf '(H=1); %.0s' $(seq 300))$(printf 'echo $H; %.0s' $(seq 100))F=-r; rm \$F \$G b; G=-i")"
+# 1500 subshells and 3000 references (6.7 M of scan work) spend the raw copy's scan budget; 1500 of each (73 KB) do not.
+test_ask_says "$IRRECOVERABLE" 'GH #787 review: a raw copy past its budget asks: F=-r; rm $F $G b; G=-i' \
+  "$(bash_payload "${_pad787}$(printf '(H=1); %.0s' $(seq 1500))$(printf 'echo $H; %.0s' $(seq 3000))F=-r; rm \$F \$G b; G=-i")" \
+  'too many variable readings'
+_log787="LOG=build.log; rm -f \$LOG; $(printf 'cc -c f.c -o f.o 2>>$LOG || (echo fail; exit 1); %.0s' $(seq 1500))"
+test_allow "$IRRECOVERABLE" 'GH #787 review control: a 73 KB build script, 1500 subshells and $LOG references' "$(bash_payload "$_log787")"
+# A copy is bounded while it is built: a 5 KB value at 6000 references would be 30 MB (70 KB at 25000 took 9 s, 1.7 GB).
+test_ask_says "$IRRECOVERABLE" 'GH #787 review: a copy over the read budget while built asks (5 KB value, 6000 references)' \
+  "$(bash_payload "${_pad787}F='$(printf 'a%.0s' $(seq 5000))'; rm a; $(printf '$F;%.0s' $(seq 6000))F=b")" \
+  'too many variable readings'
 # GH #787 review: a prefix assignment's statement start is a bisect, not a split of the whole text before it.
 _timed_case 'GH #787 review control: 130 KB of LC_ALL=C sort prefix assignments, allowed in bounded time' 0 \
   "$(printf 'LC_ALL=C sort file > out; %.0s' $(seq 5000))X=1; echo \$X"
+test_allow "$IRRECOVERABLE" 'GH #787 review control: 130 KB of LC_ALL=C sort prefix assignments' \
+  "$(bash_payload "$(printf 'LC_ALL=C sort file > out; %.0s' $(seq 5000))X=1; echo \$X")"
 gates_summary
