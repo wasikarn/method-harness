@@ -107,6 +107,10 @@ CORPUS = [
     "echo $(echo do case)#; $$$'git' stash",
     "echo $(echo do case)#\"",
     "echo $(echo do case)#<x; git stash",
+    # GH #833 review 6: an inert $".." drops its $ too
+    "echo $(echo do case)#; $\"git\" stash",
+    "echo $(echo do case)#; g$\"it\" stash",
+    "echo $(echo do case)#; git $\"reset\" --hard",
 ]
 
 

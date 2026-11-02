@@ -139,8 +139,9 @@ def mask_quotes(s):
             while j < n and s[j] == "$":
                 out.append("$")
                 j += 1
-            if (j - i) % 2 == 1 and i < j < ie and s[j] == "'":
-                out.pop()  # GH #833 review 5: an inert $'..' drops its $ as bash does; the blank goes to the word front
+            if (j - i) % 2 == 1 and i < j < ie and s[j] in "'\"":
+                out.pop()  # GH #833 review 5/6: an inert $'..' or $".." drops its $ as bash does (the blank goes to the word
+                           # front); dash's $ + 'x' reading of $'..' is not kept on an inert line
                 pad[word_start] = pad.get(word_start, 0) + 1
                 i = j
                 continue

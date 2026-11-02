@@ -4597,4 +4597,12 @@ for _c in 'echo $(echo do case)#; "git" stash' 'echo $(echo do case)#; git "stas
 done
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 5 control: subagent: echo $(echo do case)#; "git" status' \
   "$(bash_agent_payload 'echo $(echo do case)#; "git" status' fork)"
+# GH #833 review 6: the $ of an inert $".." is dropped too ($"git" is git in bash).
+for _c in 'echo $(echo do case)#; $"git" stash' 'echo $(echo do case)#; x=1 $"git" stash' 'echo $(echo do case)#; $"g"it stash' \
+    'echo $(echo do case)#; g$"it" stash' 'echo $(echo do case)#; $"g"$"it" stash' 'echo $(echo do case)#"a"; $"git" stash' \
+    'echo $(echo do case)#; git $"reset" --hard'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 6: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 6 control: subagent: echo $(echo do case)#; $"git" status' \
+  "$(bash_agent_payload 'echo $(echo do case)#; $"git" status' fork)"
 gates_summary
