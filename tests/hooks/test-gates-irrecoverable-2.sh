@@ -3310,9 +3310,7 @@ test_allow "$IRRECOVERABLE" 'GH #663 control: sh -c '"'"'echo '"'"'"'"'"'"'"'"'$
 # the filled text is capped across the whole command: 20 bodies of 300 "$@" x 245 words each fill ~3 MB
 _f663="$(printf '"$@" %.0s' $(seq 300))"; _a663="$(printf 'a %.0s' $(seq 245))"
 _s663=""; for _i in $(seq 20); do _s663+="sh -c 'echo $_f663' _ $_a663; "; done
-_t0=$(date +%s); bash_agent_payload "${_s663}rm -rf b" fork | timeout 10 bash "$IRRECOVERABLE" >/dev/null 2>&1; _rc=$?; _t1=$(( $(date +%s) - _t0 ))
-if [[ "$_rc" == 2 ]] && [ "$_t1" -le 4 ]; then echo "  ✅ GH #663: subagent flood of filled bodies denied in bounded time (rc=2 in ${_t1}s)"; pass=$((pass + 1))
-else echo "  ❌ GH #663: subagent flood of filled bodies: expected rc=2 within 4s, got rc=$_rc in ${_t1}s" >&2; fail=$((fail + 1)); fi
+_timed_case 'GH #663: subagent flood of filled bodies denied in bounded time' 2 "${_s663}rm -rf b" fork
 # GH #663 review 3: default words, shift past $#, ${!#}, pattern quoting, anchors, comments, $'...'
 test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${1+"$@"}'"'"' _ -rf b' "$(bash_payload 'sh -c '"'"'rm ${1+"$@"}'"'"' _ -rf b')"
 test_deny  "$IRRECOVERABLE" 'GH #663: sh -c '"'"'rm ${3:-$2} b'"'"' _ x -rf' "$(bash_payload 'sh -c '"'"'rm ${3:-$2} b'"'"' _ x -rf')"
@@ -3433,10 +3431,12 @@ _timed_case 'GH #693: a ${x:-$(rm -rf ~/x)} target after 9000 padding words deni
 _timed_case 'GH #693: a flood of unclosed ${ is read in bounded time' 2 \
   "echo $(printf '${x:-a %.0s' $(seq 20000))"
 # each nested funsub level appends its body blanked, not raw, so nested text is not read once per level.
-# GH #761: timed against one funsub around the same words, not a fixed 4 s (blanked ~2.7x, raw ~6.1x).
-_timed_ratio_case 'GH #693: 12 nested funsubs around 62 KB of words run within the gate'"'"'s deadline and 4x one funsub' 0 4 \
-  "echo \${ echo $(printf "'a}' x; %.0s" $(seq 7750)); }" \
-  "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 7750))$(printf '; }%.0s' $(seq 12))"
+# GH #761: timed against one funsub around the same words, not a fixed 4 s. GH #800: 7750 words took ~2.2 s
+# and asked at the 4 s deadline under load; at 4000 (32 KB) the fixed gate takes ~1.1 s at ~2.4x and raw
+# bodies ~3 s at 5.4-7.7x on a 4-core host, so the regression fails the ratio before the deadline.
+_timed_ratio_case 'GH #693: 12 nested funsubs around 32 KB of words run within the gate'"'"'s deadline and 4x one funsub' 0 4 \
+  "echo \${ echo $(printf "'a}' x; %.0s" $(seq 4000)); }" \
+  "echo $(printf '${ echo %.0s' $(seq 12))$(printf "'a}' x; %.0s" $(seq 4000))$(printf '; }%.0s' $(seq 12))"
 
 # GH #702: the ${...} closer counted every "{" and ignored quotes, escapes and nested $(...)/backtick, so it
 # ended the word before bash (a "}" in a nested substitution) or after it (a "\{", a bare "{"), and a "#"
