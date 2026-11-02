@@ -4264,4 +4264,120 @@ for _c in $'uv run python -c \'print(1)\' | grep 1' $'uv run --with sh python3 -
   $'cat > notes.md <<EOF\nbuilt $(date)\nrun python3 -c 1 | bash\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | wc -l'; do
   test_allow "$IRRECOVERABLE" "GH #815 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #818: more values the raw copy drops: an `unset` whose name is quoted or comes after an expansion, an assignment
+# in a background job (a subshell), `local`/`declare` with no value in the function the reference is in, an unset later
+# in the loop body a later pass reads, and a value set in a function not called before the reference.
+for _c in "G=-i; F=-r; unset 'G'; rm \$F \$G b" 'G=-i; F=-r; unset "G"; rm $F $G b' 'G=-i; F=-r; unset ${X} G; rm $F $G b' \
+  'G=-i & F=-r; rm $F $G b' 'F=-r; G=-i & rm $F $G b' 'G=-i; F=-r; f(){ local G; rm $F $G b; }; f' \
+  'G=-i; F=-r; f() { declare G; rm $F $G b; }; f' 'G=-i; F=-r; for i in 1 2; do rm $F $G b; unset G; done' \
+  'G=-i; F=-r; while true; do rm $F $G b; unset G; done' 'F=-r; f(){ G=-i; }; rm $F $G b' \
+  'F=-r; function f { G=-i; }; rm $F $G b; f'; do
+  test_deny  "$IRRECOVERABLE" "GH #818: $_c" "$(bash_payload "$_c")"
+done
+for _c in "G=-i; F=-r; unset 'X'; rm \$F \$G b" 'G=-i; F=-r; unset ${X} H; rm $F $G b' 'G=-i && F=-r; rm $F $G b' \
+  'G=-i 2>&1; F=-r; rm $F $G b' 'F=-r; sleep 1 & G=-i; rm $F $G b' 'G=-i; F=-r; f(){ local G; }; f; rm $F $G b' \
+  'G=-i; F=-r; f(){ local X; rm $F $G b; }; f' 'G=-i; F=-r; declare G; rm $F $G b' \
+  'G=-i; F=-r; for i in 1 2; do G=-i; rm $F $G b; unset G; done' 'G=-i; F=-r; for i in 1 2; do unset X; rm $F $G b; done' \
+  'G=-i; F=-r; for i in 1 2; do rm $F $G b; done; unset G' 'F=-r; f(){ G=-i; }; f; rm $F $G b' \
+  'F=-r; f(){ G=-i; }; g(){ f; }; g; rm $F $G b' 'F=-r; f(){ G=-i; rm $F $G b; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 control: $_c" "$(bash_payload "$_c")"
+done
+# GH #818 review: an `&` inside ${..}, backticks, $[..] or a [..] subscript is no background list; a call written inside
+# another function's body counts; an unset in a function never called is no unset for the loop rule.
+for _c in 'G=-i; F=-r; unset G && T=${S//&/and}; rm $F $G b' 'G=-i; F=-r; unset G && echo `true & true`; rm $F $G b' \
+  'G=-i; F=-r; unset G && T=$[ 3 & 1 ]; rm $F $G b' 'G=-i; F=-r; unset G && a[1&1]=1; rm $F $G b' \
+  'G=-i; F=-r; unset G && echo ${S:-&}; rm $F $G b' 'G=-i; F=-r; unset G ${Z//x/&}; rm $F $G b' \
+  'G=-i; F=-r; unset G ${Z:+a&b}; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #818 review: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'F=-r; G=-i && T=${S//&/x}; rm $F $G b' 'F=-r; G=-i && echo `date & wait`; rm $F $G b' \
+  'F=-r; main(){ init; }; init(){ G=-i; }; main; rm $F $G b' \
+  'G=-i; F=-r; for x in a b; do rm $F $G b; f(){ unset G; }; done'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review control: $_c" "$(bash_payload "$_c")"
+done
+# GH #818 review 2: the scan does not follow quotes nested in "$( .. )" or "` .. `", so with one in the text no `&` is read
+# as a background list.
+for _c in 'G=-i; F=-r; unset G && echo "$(printf "%s & %s" a b)"; rm $F $G b' \
+  'G=-i; F=-r; unset G && msg="$(git log -1 --format="%an & %ae")"; rm $F $G b' \
+  $'G=-i; F=-r\nunset G && echo "`date "+%a & %b"`"\nrm $F $G b' 'G=-i; F=-r; unset G "$(echo "a & b")"; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #818 review 2: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+for _c in 'F=-r; G=-i && T="$(sed "s/&/and/" f)"; rm $F $G b' 'F=-r; G=-i && echo "$(printf "%s & %s" a b)"; rm $F $G b' \
+  'F=-r; export G=-i X="$(fmt "a & b")"; rm $F $G b'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 2 control: $_c" "$(bash_payload "$_c")"
+done
+# GH #818 review 3: the same for a "${X:-"default"}" (its inner quotes). A background list drops a value only: an unset
+# there still counts (develop's reading), so the raw copy never reads less than develop's did.
+for _c in 'G=-i; F=-r; unset G && echo "${X:-"Tom & Jerry"}"; rm $F $G b' 'F=-r; G=-i; unset G & wait; rm $F $G b' \
+  'G=-i; F=-r; unset G && echo "${MSG:-"build & test"}" >&2; rm $F $G b' \
+  'G=-i; F=-r; unset G && echo "${X:+"a & b"}" "${Y:-"$Z"}"; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #818 review 3: $_c" "$(bash_payload "$_c")"
+done
+# GH #818 review 4: the scoped reading is one more copy, not a change to the raw one, so a first loop pass, a value set in a
+# function a later body reads, and an earlier value past a dropped one all keep develop's reading.
+for _c in 'G=-i; F=-r; unset G; for i in 1; do rm $F $G b; unset F; done' \
+  'G=-i; F=-r; unset G; while true; do rm $F $G b; unset F; break; done' \
+  'init(){ F=-r; }; main(){ rm $F $G b; }; G=-i; unset G; init; main' 'G=-i; unset G; f(){ F=-r; }; g(){ rm $F $G b; }; f; g' \
+  'G=-i; F=-r & unset G; wait; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #818 review 4: $_c" "$(bash_payload "$_c")"
+done
+# GH #818 review 5: a reference inside a function body runs when that function is called, so the function rule reads
+# only a reference outside every body; a second `local` of a name the body already made local keeps its value.
+for _c in $'set -e\nFLAGS=-r\nconfigure() {\n  SAFE=-i\n}\nremove_build() {\n  rm $FLAGS $SAFE build\n}\nconfigure\nremove_build' \
+  'R=-r; main(){ I=-i; run; }; run(){ rm $R $I d; }; main "$@"' 'R=-r; f(){ local I=-i; local I; rm $R $I d; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 5 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+# GH #818 review 6: the function rule is off unless every function head has a body the scan recorded (a `f() ( .. )`
+# body, a `}` right after `fi`, or a comment before the `{` is not one).
+for _c in 'F=-r; init() { G=-i; }; run() ( rm $F $G b ); init; run' \
+  'F=-r; setup() { G=-i; }; clean() { if [ -d b ]; then rm $F $G b; fi }; setup; clean' \
+  'F=-r; setup() { G=-i; }; clean() { (cd /tmp && rm $F $G b) }; setup; clean' \
+  $'RFLAG=-r\nparse_opts() {\n  CONFIRM=-i\n}\nclean_build()  # remove the build dir\n{\n  rm $RFLAG $CONFIRM build\n}\nparse_opts\nclean_build' \
+  'F=-r; G=-i; f(){ local G; G=-i; local G; rm $F $G b; }; f' 'F=-r; G=-i; f(){ local -I G; rm $F $G b; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 6 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+# GH #818 review 7: a function called between `local G` (or a loop's unset) and the reference may set G (bash's dynamic
+# scope), so may source, eval, read G or any G= there; a loop body that can stop early is no later pass; a dynamic call
+# (`setup_$mode`) turns the function rule off; a scoped `unset`/`local` is a command, not an argument.
+for _c in $'RFLAG=-r\nload_defaults() {\n  CONFIRM=-i\n  TARGET=build\n}\nmain() {\n  local CONFIRM TARGET\n  load_defaults\n  rm $RFLAG $CONFIRM "$TARGET"\n}\nmain "$@"' \
+  'F=-r; set_g() { G=-i; }; clean() { local G; set_g; rm $F $G build; }; clean' \
+  $'F=-r\nset_confirm() { G=-i; }\nfor d in a b; do\n  set_confirm\n  rm $F $G x\n  unset G\ndone' \
+  $'F=-r\nset_confirm() { G=-i; }\nset_confirm\nfor d in a b; do\n  rm $F $G x\n  unset G\n  set_confirm\ndone' \
+  'G=-i; F=-r; while true; do rm $F $G x; break; unset G; done' $'F=-r\nsetup_safe() { G=-i; }\nmode=safe\nsetup_$mode\nrm $F $G x' \
+  'F=-r; G=-i; echo unset "G"; rm $F $G x'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 7 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+# GH #818 review 8: past a value the scoped copy drops (an uncalled body, a background list) it skips that scope's earlier
+# entries too, so an unset there does not count; an unset in a body that is all there is still counts, as develop read it.
+for _c in $'RFLAG=-r\nCONFIRM=-i\nreset_confirm() {\n  unset CONFIRM\n  CONFIRM=-i\n}\nrm $RFLAG $CONFIRM build\nreset_confirm' \
+  'F=-r; G=-i; reset(){ unset G; G=-i; }; rm $F $G b; reset; rm $F $G b' 'F=-r; G=-i; { unset G; G=-i; sleep 1; } & wait; rm $F $G b'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 8 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+test_deny  "$IRRECOVERABLE" "GH #818 review 8: an unset alone in a body (develop's reading)" \
+  "$(bash_payload 'F=-r; G=-i; f(){ unset G; }; rm $F $G b')"
+# GH #818 review 9: a while/until condition runs before each pass: the loop rule's scans start at the loop keyword, and a
+# condition that reads G (it may end the loop) turns the rule off; under set -u an unset G aborts bash before rm, so the
+# local and loop rules are off.
+for _c in 'F=-r; n=0; next_opt(){ n=$((n+1)); [ $n -le 2 ] && G=-i; }; while next_opt; do rm $F $G b; unset G; done' \
+  'F=-r; G=-i; while [ -n "$G" ]; do rm $F $G b; unset G; done' 'F=-r; G=-i; until [ -z "$G" ]; do rm $F $G b; unset G; done' \
+  'set -u; F=-r; G=-i; f(){ local G; rm $F $G b; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 9 control: $_c" "$(bash_payload "$_c")"
+done
+# GH #818 review 10: a call whose name is built at run time ("${a}_cmd", "$fn", $fn) turns the function rule off; for the
+# loop rule an unset in a background list the reference is not in, or one that is no command, does not count.
+for _c in $'F=-r\nsafe_cmd() { G=-i; }\naction=safe\n"${action}_cmd"\nrm $F $G b' $'F=-r\nsafe_init() { G=-i; }\nprintf -v fn \'%s_init\' safe\n"$fn"\nrm $F $G b' \
+  $'F=-r\nsafe_init() { G=-i; }\nfn=$(printf \'%s_%s\' safe init)\n$fn\nrm $F $G b' \
+  'F=-r; G=-i; for d in a b; do rm $F $G b; { unset G; echo "$d"; } & done; wait' \
+  'F=-r; G=-i; for d in a b; do rm $F $G b; kubectl config unset G; done'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 10 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+# GH #818 review 11: an unset in a ( .. ) that closes within the loop body never reaches a later pass; G[0]= may set G.
+for _c in $'F=-r; G=-i\nfor f in a b; do (cd /tmp && rm $F $G x; unset G); done' $'F=-r; G=-i\nf(){ local G; G[0]=-i; rm $F $G d; }\nf'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 11 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+# GH #818 review 12: select may set G; a loop condition naming G in any form (declare -p G) may end the loop.
+for _c in 'R=-r; I=-i; f(){ local I; select I in -i; do break; done; rm $R $I x; }; f' \
+  'R=-r; I=-i; while declare -p I >/dev/null 2>&1; do rm $R $I a; unset I; done'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 12 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary

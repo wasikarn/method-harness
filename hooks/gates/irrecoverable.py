@@ -6471,12 +6471,14 @@ def _views():
     # BIN=claude; command -v $BIN` (review 5). The raw copy is in order with a reference that has no assignment
     # before it left as written, as bash expands it to nothing: `F=-r; rm $F $G b; G=-i` does not prompt, while the
     # in-order copy's last-value fallback read it as -i (GH #805); it also drops an unset, subshell or prefix value
-    # (GH #808). rm's rules read all four copies; the spawn scan skips all but the in-order one.
-    for pick in (-1, 0, None, "raw"):
+    # (GH #808). A fifth, scoped copy (GH #818) is the raw one that also reads a background list, a function body, a
+    # `local` and a loop's later pass as bash scopes them. rm's rules read all five; the spawn scan only the in-order one.
+    for pick in (-1, 0, None, "raw", "scoped"):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
             return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
-        v = (_ordered_var_text(cmd, pick is None) if pick in (None, "raw") else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+        v = (_ordered_var_text(cmd, pick is None, scoped=pick == "scoped") if pick in (None, "raw", "scoped")
+             else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
@@ -6609,15 +6611,46 @@ def _scan_view_statements(text):
             _deny_nested_spawn()
 
 _UNSET_RE = re.compile(r"(?<![\w$-])unset((?:[ \t]+-[A-Za-z]*-?)*)((?:[ \t]+[A-Za-z_]\w*)+)")
+_UNSET_MORE_RE = re.compile(
+    r"(?<![\w$-])unset((?:[ \t]+-[A-Za-z]*-?)*)((?:[ \t]+(?:'[A-Za-z_]\w*'|\"[A-Za-z_]\w*\"|\$\{?[A-Za-z_]\w*\}?|[A-Za-z_]\w*)"
+    r"(?=[\s;&|)]|$))+)")
+_UNSET_WORD_RE = re.compile(r"'([A-Za-z_]\w*)'|\"([A-Za-z_]\w*)\"|\$\{?[A-Za-z_]\w*\}?|([A-Za-z_]\w*)")
+_LOCAL_RE = re.compile(r"(?<![\w$-])(local|declare|typeset)((?:[ \t]+[-+][A-Za-z]*)*)((?:[ \t]+[A-Za-z_]\w*(?=[\s;&|)]|$))+)")
 _DECL_WORDS = frozenset(("export", "local", "declare", "typeset", "readonly"))
 _REDIR_RE = re.compile(r"[0-9]*(?:[<>]&?|&>)>?-?[ \t]*(?:[^\s;&|()<>]+)?")
 
-def _shell_scan(text):
+# A call the text does not name: eval, an expansion joined to a word (`x_$y`, `${y}_x`, `"a"b`), or a command word that
+# starts with an expansion (`"$fn"`, `$(get)`; GH #818 review 10).
+_DYN_CALL_RE = re.compile(r"(?<![\w$-])eval(?![\w-])|[\w-]['\"]?\$\{?[A-Za-z_]|\w['\"]\w|\}['\"]?[\w-]"
+                          r"|(?:^|[;&|(){}\n`]|(?<![\w-])(?:then|do|else|elif|if|while|until|!))[ \t]*['\"]?\$", re.M)
+_LOOP_KW_RE = re.compile(r"(?<![\w$-])(for|while|until|select)(?![\w-])")
+_NOUNSET_RE = re.compile(r"(?<![\w-])set[ \t]+(?:-[A-Za-z]*u|-o[ \t]+nounset)")
+_FN_ANY_HEAD_RE = re.compile(r"(?<![\w.:$-])(?:function[ \t]+[^\s()<>;&|]+|[A-Za-z_][\w.:-]*[ \t]*\([ \t]*\))")
+_FN_HEAD_RE = re.compile(r"(?:(?<![\w-])function[ \t]+([^\s()<>;&|]+)(?:[ \t]*\([ \t]*\))?|(?<![\w.:-])([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\))[ \t\n]*$")
+
+def _cmd_pos(text, i, seps=";\n&|(){"):
+    # True when offset i starts a command word: after a separator (or `f()`), at the start, or after do/then/else.
+    j = i - 1
+    while j >= 0 and text[j] in " \t":
+        j -= 1
+    if j < 0 or text[j] in seps:
+        return True
+    return re.search(r"(?:^|[\s;&|()])(?:do|then|else)$", text[max(0, j - 5):j + 1]) is not None
+
+def _shell_scan(text, groups=None):
     # (spans, text_at): spans are the (open, close) offsets of each ( .. ) outside quotes and comments, $( .. ) and
     # <( .. ) included, as a value set inside one never reaches the text after it closes (a `)` with nothing open, a
     # case pattern, closes nothing); text_at[i] is 1 where offset i is quoted or in a comment, so a word there is text.
+    # GH #818: a list run in the background (`G=-i & ..`, `{ ..; } &`) is a subshell too, so it is a span from the
+    # separator before it to its `&`, in groups["bg"] (groups is a dict). groups["fn"] gets (open, close, name, head) for each function
+    # body `name() { .. }` / `function name { .. }` and groups["loop"] (open, close, keyword, keyword offset) for each
+    # `do .. done`.
     spans, stack, sq, dq, i, n = [], [], False, False, 0, len(text)
     text_at = bytearray(n)
+    seg, braces, loops = [-1], [], []
+    fns, loop_spans = [], []
+    exp, bt, brk = 0, False, 0  # inside ${..}, backticks, $[..] / [..]: an `&` there is text (GH #818 review)
+    bg, dq_sub, brace_bad = [], False, False
     while i < n:
         c = text[i]
         if sq:
@@ -6632,17 +6665,75 @@ def _shell_scan(text):
             text_at[i], dq = 1, not dq
         elif dq:
             text_at[i] = 1
+            if c == "`" or (c == "$" and text[i + 1:i + 2] == "("):
+                dq_sub = True
+            elif c == "$" and text[i + 1:i + 2] == "{":
+                j = text.find("}", i)
+                dq_sub = dq_sub or j < 0 or '"' in text[i:j]  # "${X:-"a & b"}": its inner quotes
         elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
             j = text.find("\n", i)
             j = n if j < 0 else j
             text_at[i:j] = b"\1" * (j - i)
             i = j
             continue
+        elif c == "$" and text[i + 1:i + 2] == "{":
+            exp += 1
+            i += 1
+        elif c == "}" and exp:
+            exp -= 1
+        elif c == "`":
+            bt = not bt
+        elif c == "[":
+            brk += 1
+        elif c == "]" and brk:
+            brk -= 1
         elif c == "(":
             stack.append(i)
+            seg.append(i)
         elif c == ")" and stack:
             spans.append((stack.pop(), i))
+            if len(seg) > 1:
+                seg.pop()
+        elif c in ";\n":
+            seg[-1] = i
+        elif c == "&":
+            if text[i + 1:i + 2] == "&":
+                i += 1
+            elif not (i and text[i - 1] in "<>|;") and text[i + 1:i + 2] != ">" and not (exp or bt or brk):
+                bg.append((seg[-1], i))  # GH #818: the list before a lone `&` runs in a subshell
+                seg[-1] = i
+        elif groups is not None and c in "{}d" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            w = re.match(r"(?:\{|\}|done|do)(?=[\s;&|)<>]|$)", text[i:i + 5])
+            w = w and w.group(0)
+            if w == "{" and text[i + 1:i + 2].isspace() and (_cmd_pos(text, i) or _FN_HEAD_RE.search(text, max(0, i - 200), i)):
+                f = _FN_HEAD_RE.search(text, max(0, i - 200), i)
+                braces.append((i, seg[-1], f and (f.group(1) or f.group(2), f.start())))
+            elif w == "}" and braces and _cmd_pos(text, i, ";\n&"):
+                o, seg[-1], name = braces.pop()  # the group's list goes on past it: `{ ..; } &` is one background list
+                if name:
+                    fns.append((o, i, name[0], name[1]))
+            elif w == "}":
+                brace_bad = True  # a `}` the scan did not match (`fi }`, `) }`)
+            elif w == "do" and _cmd_pos(text, i, ";\n&"):
+                kw = None
+                for kw in _LOOP_KW_RE.finditer(text, max(0, i - 2000), i):
+                    pass
+                loops.append((i, seg[-1], kw and kw.group(1), kw.start() if kw else i))
+            elif w == "done" and loops and _cmd_pos(text, i, ";\n&"):
+                o, seg[-1], kw, head = loops.pop()
+                loop_spans.append((o, i, kw, head))
         i += 1
+    if groups is not None:
+        groups["fn"], groups["loop"] = fns, loop_spans
+        # GH #818 review 6: every function head has a body the scan recorded (not `f() ( .. )`, a `}` right after `fi`,
+        # or a comment before the `{`), else the function rule is off.
+        heads = sum(1 for m in _FN_ANY_HEAD_RE.finditer(text) if not text_at[m.start()])
+        # GH #818 review 7: nor with a call the text does not name (`setup_$mode`, `"set"up`, eval).
+        groups["fn_ok"] = not braces and not brace_bad and heads == len(fns) and not _DYN_CALL_RE.search(text)
+    # GH #818 review 2/3: the scan does not follow the quotes nested in "$( .. )", "` .. `" or "${X:-".."}", where an inner "a & b" read
+    # as a bare `&`; with one in the text no background list is read, as before GH #818.
+    if groups is not None:
+        groups["bg"] = [] if dq_sub else bg
     return spans, text_at
 
 def _prefix_assign(text, m, memo):
@@ -6675,9 +6766,15 @@ def _prefix_assign(text, m, memo):
         memo[k] = out
     return out
 
+class _SlowCopy(Exception):
+    pass
+
+_MAY_SET_RE = re.compile(r"(?<![\w$-])(?:source|\.|eval)[ \t]")
+_LOOP_STOP_RE = re.compile(r"(?<![\w$-])(?:break|continue|return|exit)(?![\w-])")
+
 _OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
 
-def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False):
+def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False, scoped=False):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
@@ -6686,16 +6783,45 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     # `unset` since (left as written, as bash expands it to nothing), one set in a subshell that closed before it, and a
     # prefix assignment on a command. Dropping only ever leaves a reference as written, so this copy reads more -r, not less.
     raw = not fallback_last
+    # GH #818: scoped (with raw) is one more copy that also reads the shapes below as bash scopes them; the raw copy
+    # without it stays as it was, so this copy only adds a reading.
+    scoped = raw and scoped
     memo = {}
     sets = [(m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None))
             for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m, memo))]
-    spans, text_at = _shell_scan(text) if raw else ((), b"")
+    groups = {"fn": (), "loop": (), "bg": (), "fn_ok": False}
+    spans, text_at = _shell_scan(text, groups if scoped else None) if raw else ((), b"")
+    scope = {}  # GH #818: an entry's end -> the (open, close) only references inside which it reaches
+    no_cmd = set()  # GH #818 review 10: an unset that is no command (`kubectl config unset G`), for the loop rule
     if raw:
         for m in _UNSET_RE.finditer(text):
             if "f" not in m.group(1) and not text_at[m.start()]:
                 base = m.start(2)
+                ok = not scoped or _cmd_pos(text, m.start())
                 for w in re.finditer(r"[A-Za-z_]\w*", m.group(2)):
                     sets.append((base + w.end(), w.group(0), None))
+                    if not ok:
+                        no_cmd.add(base + w.end())
+        # GH #818: a quoted name (`unset 'G'`) or one after an expansion (`unset ${X} G`).
+        for m in _UNSET_MORE_RE.finditer(text) if scoped else ():
+            if "f" not in m.group(1) and not text_at[m.start()] and _cmd_pos(text, m.start()):
+                base = m.start(2)
+                for w in _UNSET_WORD_RE.finditer(m.group(2)):
+                    if w.group(1) or w.group(2) or w.group(3):
+                        sets.append((base + w.end(), w.group(1) or w.group(2) or w.group(3), None))
+        # GH #818: `local G` / `declare G` with no value, inside a function: G is unset there, for that body only.
+        locs = list(_LOCAL_RE.finditer(text)) if scoped and not _NOUNSET_RE.search(text) else ()
+        for m in locs if len(locs) <= 200 else ():  # GH #818 review 6: a bound, as each one searches its body
+            if not text_at[m.start()] and not set(m.group(2)) & set("gpfFnI") and _cmd_pos(text, m.start()):
+                body = min(((o, c) for o, c, _, _ in groups["fn"] if o < m.start() < c), key=lambda b: b[1] - b[0],
+                           default=None)
+                if body:
+                    base = m.start(3)
+                    for w in re.finditer(r"[A-Za-z_]\w*", m.group(3)):
+                        if re.search(r"(?<![\w$-])" + w.group(0) + "=", text[body[0]:m.start()]):
+                            continue  # GH #818 review 5/6: set in the body before, maybe local, which a bare `local` keeps
+                        scope[base + w.end()] = body
+                        sets.append((base + w.end(), w.group(0), None))
     sets.sort(key=lambda e: e[0])
     if not sets and not outer:
         return text
@@ -6704,6 +6830,83 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         by_name.setdefault(n, ([], []))
         by_name[n][0].append(e)
         by_name[n][1].append(v)
+    first_call, enclosing, work, slow = {}, {}, [0], [not scoped]
+    nounset = scoped and _NOUNSET_RE.search(text) is not None  # GH #818 review 9: an unset G aborts bash there
+    fn_call_re = re.compile(r"(?<![\w.:$-])(?:" + "|".join(sorted({re.escape(f[2]) for f in groups["fn"]})) + r")(?![\w.:-])"
+                            ) if groups["fn"] else None
+    stops, sets_memo = {}, {}
+    def loop_stops(a, b):
+        if (a, b) not in stops:
+            spend(b - a)
+            stops[(a, b)] = _LOOP_STOP_RE.search(text, a, b) is not None
+        return stops[(a, b)]
+    def cond_reads(name, a, b):
+        if (name, a, b, 0) not in sets_memo:
+            spend(b - a)
+            # GH #818 review 12: any word naming G (`declare -p G`, `printenv G`), not only $G / -v G
+            sets_memo[(name, a, b, 0)] = re.search(r"(?<![\w])" + name + r"(?![\w])", text[a:b]) is not None
+        return sets_memo[(name, a, b, 0)]
+    def may_set(name, a, b):
+        if (name, a, b) not in sets_memo:
+            sets_memo[(name, a, b)] = _may_set(name, a, b)
+        return sets_memo[(name, a, b)]
+    def _may_set(name, a, b):
+        # GH #818 review 7: text between a and b that may set name: a call to a function (bash's dynamic scope lets it
+        # fill a caller's local), source / . / eval, or any NAME=, NAME+=, read/mapfile/getopts/printf -v/for NAME.
+        spend(b - a)
+        t = text[a:b]
+        return not groups["fn_ok"] or bool(
+            (fn_call_re and fn_call_re.search(t)) or _MAY_SET_RE.search(t) or re.search(
+                r"(?<![\w$-])" + name + r"(?:\[[^\]\n]{0,80}\])?\+?=|\$\{" + name + r":?=|(?<![\w-])(?:read|mapfile|readarray|getopts|for|select)"
+                r"(?![\w-])[^;&|\n]{0,300}?(?<![\w$-])" + name + r"(?![\w-])|-v[ \t]+" + name + r"(?![\w-])", t))
+    def spend(n):
+        # GH #818 review 2: past one budget the scoped copy is read as the raw one (paren subshells only, no background
+        # list, function or loop rule), which then adds nothing.
+        if slow[0]:
+            return
+        work[0] += n
+        if work[0] > 100_000:
+            raise _SlowCopy
+    def encl(at):
+        # The spans and function bodies holding an entry, once per entry (GH #818 review: per reference was slow).
+        if slow[0]:
+            return [(o, c) for o, c in spans if o < at <= c], (), ()
+        if at not in enclosing:
+            spend(len(spans) + len(groups["bg"]) + len(groups["fn"]))
+            fl = []
+            for o, c, name, head in groups["fn"]:
+                if o < at < c:
+                    if (o, name) not in first_call:
+                        # GH #818: a body's value reaches a reference outside it once its name is written as a word
+                        # anywhere outside its own definition before the reference (`main(){ init; }; init(){ G=x; }; main`),
+                        # quoted or not.
+                        first_call[(o, name)] = next(
+                            (w.start() for w in re.finditer(r"(?<![\w.:-])" + re.escape(name) + r"(?![\w.:-])", text)
+                             if not head <= w.start() <= c), len(text))
+                    fl.append((o, c, first_call[(o, name)]))
+            enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], [(o, c) for o, c in groups["bg"] if o < at <= c], fl)
+        return enclosing[at]
+    def usable(at, v, ref, strict=False, name=None):
+        sp, bg, fl = encl(at)
+        if not slow[0]:
+            spend(1 + len(sp) + len(bg) + len(fl))
+        if any(not o < ref < c for o, c in sp):
+            return False  # set inside a subshell the reference is not in
+        if (v is not None or strict) and any(not o < ref < c for o, c in bg):
+            return False  # GH #818: a value set in a background list; an unset there still counts, as develop read it
+        if strict and v is None and at in no_cmd:
+            return False
+        sc = scope.get(at)
+        if sc and (slow[0] or not sc[0] < ref < sc[1] or (at < ref and may_set(name, at, ref))):
+            return False
+        # A value in a function body only once a call is written; an unset too for the loop rule (strict), never in
+        # the walk-back below, so an unset reads as develop read it.
+        # GH #818 review 5: a reference inside a body runs when that body is called, which the text order does not
+        # show (functions first, calls at the bottom), so the rule reads only a reference outside every body.
+        return (v is None and not strict) or not fl or not groups["fn_ok"] or in_body(ref) or all(
+            o < ref < c or first < ref for o, c, first in fl)
+    def in_body(ref):
+        return any(o < ref < c for o, c, _, _ in groups["fn"])
     def sub(m):
         r = pick(m)
         # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no
@@ -6715,11 +6918,35 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             return m.group(0)
         if name in by_name:  # the latest assignment before it by bisect, past any set in a closed subshell (GH #808)
             ends, vals = by_name[name]
-            for k in range(bisect.bisect_right(ends, m.start()) - 1, -1, -1):
+            ref = m.start()
+            if groups["loop"] and not slow[0]:
+                spend(len(groups["loop"]))
+            for lo, lc, kw, head in groups["loop"] if not nounset else ():
+                # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
+                # sets nothing before it: an unset there leaves the reference as written. Review 9: a while/until
+                # condition runs before each pass, so the scans start at the loop's keyword, and one that reads G may end
+                # the loop once G is unset.
+                if lo < ref < lc and not slow[0] and (kw == "for" or kw in ("while", "until") and not cond_reads(
+                        name, head, lo)) and not loop_stops(head, lc) and not may_set(name, head, lc):
+                    ks = range(bisect.bisect_right(ends, lo), bisect.bisect_left(ends, lc))
+                    first = next((k for k in ks if usable(ends[k], vals[k], ref, True, name)), None)
+                    if first is not None and ends[first] > ref:
+                        lk = next(k for k in reversed(ks) if usable(ends[k], vals[k], ref, True, name))
+                        # GH #818 review 11: an unset in a ( .. ) that closes within the body never reaches a later pass
+                        if vals[lk] is None and not any(lo < o and c < lc for o, c in encl(ends[lk])[0]):
+                            return m.group(0)
+            skip = []
+            for k in range(bisect.bisect_right(ends, ref) - 1, -1, -1):
                 at = ends[k]
-                if any(o < at <= c and not o < m.start() < c for o, c in spans):
-                    continue  # set inside a subshell the reference is not in
-                return m.group(0) if vals[k] is None else vals[k]
+                if skip and any(o < at <= c for o, c in skip):
+                    continue  # GH #818 review 8: in a scope a later value of it was dropped for, an unset too
+                if usable(at, vals[k], ref, name=name):
+                    return m.group(0) if vals[k] is None else vals[k]
+                if vals[k] is not None and not slow[0]:
+                    _, bg, fl = encl(at)
+                    skip += [(o, c) for o, c in bg if not o < ref < c]
+                    if groups["fn_ok"] and not in_body(ref):
+                        skip += [(o, c) for o, c, first in fl if not (o < ref < c or first < ref)]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
         # A body's outer value (GH #812: its environment) comes before its own later one.
@@ -6727,7 +6954,11 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             return outer[name]
         return last.get(name, m.group(0)) if fallback_last else m.group(0)
     last = {n: v for _, n, v in sets if v is not None}
-    return _VAR_REF_RE.sub(sub, text)
+    try:
+        return _VAR_REF_RE.sub(sub, text)
+    except _SlowCopy:
+        slow[0] = True
+        return _VAR_REF_RE.sub(sub, text)
 
 _CMD_VALS = None
 _NESTED_VALS = {}  # GH #816: the bodies' own plain assignments, read only by the unescaped copies
