@@ -4197,7 +4197,8 @@ for _c in $'uv run python -c \'print(1)\' | bash' $'poetry run python3 -c 1 | sh
   $'perl -e \'print "ls"\' | sh' $'perl -lne \'print\' f | bash' $'ruby -e \'puts 1\' | bash' \
   $'python3 - <<\'EOF\'\nimport os\nf = os.system\nf(\'git reset --hard\')\nEOF' \
   $'python3 - <<\'EOF\'\nfrom os import system as run\nrun(\'git reset --hard\')\nEOF' \
-  $'cat <<EOF\n$(python3 -c 1 | bash)\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | bash'; do
+  $'cat <<EOF\n$(python3 -c 1 | bash)\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | bash' \
+  $'python3 -c \'print("git reset --hard")\' | bash -s \\<\\<'; do
   test_deny  "$IRRECOVERABLE" "GH #815: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
 # GH #815 controls: the same shapes with no shell reading the script's output, a script file (not read either way),

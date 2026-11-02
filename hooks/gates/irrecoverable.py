@@ -3086,6 +3086,14 @@ def _group_ends(g):
                 cut = min(cut, k)
     return lead, opens, t[:cut], trail
 
+def _heredoc_stdin(g):
+    # GH #815: an unquoted, unescaped << (a heredoc or here-string) gives the stage's shell its stdin, so it reads
+    # no pipe. Read on the raw stage: `bash -s \\<\\<` passes a literal word and still reads the pipe.
+    if "<<" not in g:
+        return False
+    mask = _quote_mask(g)
+    return any(g.startswith("<<", k) and not mask[k] and not mask[k + 1] for k in range(len(g) - 1))
+
 def _inline_interp_to_shell(c):
     # GH #801: some pipeline of c runs an inline python/node script stage and, after it, a shell reading stdin.
     # Read on the ANSI-C-decoded text: _pieces does not model \' inside $'..', so a quoted probe string
@@ -3104,8 +3112,7 @@ def _inline_interp_to_shell(c):
                     depth -= 1
                     inline, marked = inline or depth < marked, min(marked, depth)
             depth += opens
-            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g) and not any(
-                    t.startswith("<<") for t in (_split_words(g) or ())):
+            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g) and not _heredoc_stdin(g):
                 return True
             if _runs_inline_interp(g):
                 inline, marked = True, depth
