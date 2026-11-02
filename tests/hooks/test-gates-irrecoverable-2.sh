@@ -4181,4 +4181,22 @@ for _c in 'G=-i; F=-r; unset X; rm $F $G b' 'G=-i; F=-r; unset -f G; rm $F $G b'
   'export G=-i F=-r; rm $F $G b' 'G=-i F=-r; rm $F $G b' 'F=-r; unset G; G=-i; rm $F $G b'; do
   test_allow "$IRRECOVERABLE" "GH #808 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #818: more values the raw copy drops: an `unset` whose name is quoted or comes after an expansion, an assignment
+# in a background job (a subshell), `local`/`declare` with no value in the function the reference is in, an unset later
+# in the loop body a later pass reads, and a value set in a function not called before the reference.
+for _c in "G=-i; F=-r; unset 'G'; rm \$F \$G b" 'G=-i; F=-r; unset "G"; rm $F $G b' 'G=-i; F=-r; unset ${X} G; rm $F $G b' \
+  'G=-i & F=-r; rm $F $G b' 'F=-r; G=-i & rm $F $G b' 'G=-i; F=-r; f(){ local G; rm $F $G b; }; f' \
+  'G=-i; F=-r; f() { declare G; rm $F $G b; }; f' 'G=-i; F=-r; for i in 1 2; do rm $F $G b; unset G; done' \
+  'G=-i; F=-r; while true; do rm $F $G b; unset G; done' 'F=-r; f(){ G=-i; }; rm $F $G b' \
+  'F=-r; function f { G=-i; }; rm $F $G b; f'; do
+  test_deny  "$IRRECOVERABLE" "GH #818: $_c" "$(bash_payload "$_c")"
+done
+for _c in "G=-i; F=-r; unset 'X'; rm \$F \$G b" 'G=-i; F=-r; unset ${X} H; rm $F $G b' 'G=-i && F=-r; rm $F $G b' \
+  'G=-i 2>&1; F=-r; rm $F $G b' 'F=-r; sleep 1 & G=-i; rm $F $G b' 'G=-i; F=-r; f(){ local G; }; f; rm $F $G b' \
+  'G=-i; F=-r; f(){ local X; rm $F $G b; }; f' 'G=-i; F=-r; declare G; rm $F $G b' \
+  'G=-i; F=-r; for i in 1 2; do G=-i; rm $F $G b; unset G; done' 'G=-i; F=-r; for i in 1 2; do unset X; rm $F $G b; done' \
+  'G=-i; F=-r; for i in 1 2; do rm $F $G b; done; unset G' 'F=-r; f(){ G=-i; }; f; rm $F $G b' \
+  'F=-r; f(){ G=-i; }; g(){ f; }; g; rm $F $G b' 'F=-r; f(){ G=-i; rm $F $G b; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary
