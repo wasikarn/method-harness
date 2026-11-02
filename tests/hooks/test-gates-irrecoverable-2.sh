@@ -4307,4 +4307,11 @@ for _c in $'RFLAG=-r\nCONFIRM=-i\nreset_confirm() {\n  unset CONFIRM\n  CONFIRM=
 done
 test_deny  "$IRRECOVERABLE" "GH #818 review 8: an unset alone in a body (develop's reading)" \
   "$(bash_payload 'F=-r; G=-i; f(){ unset G; }; rm $F $G b')"
+# GH #818 review 9: a while/until condition runs before each pass (and may set G or end the loop), so the loop rule reads
+# for loops only; under set -u an unset G aborts bash before rm, so the local and loop rules are off.
+for _c in 'F=-r; n=0; next_opt(){ n=$((n+1)); [ $n -le 2 ] && G=-i; }; while next_opt; do rm $F $G b; unset G; done' \
+  'F=-r; G=-i; while [ -n "$G" ]; do rm $F $G b; unset G; done' 'F=-r; G=-i; until [ -z "$G" ]; do rm $F $G b; unset G; done' \
+  'set -u; F=-r; G=-i; f(){ local G; rm $F $G b; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 9 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary

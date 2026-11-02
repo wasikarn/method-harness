@@ -6558,6 +6558,8 @@ _DECL_WORDS = frozenset(("export", "local", "declare", "typeset", "readonly"))
 _REDIR_RE = re.compile(r"[0-9]*(?:[<>]&?|&>)>?-?[ \t]*(?:[^\s;&|()<>]+)?")
 
 _DYN_CALL_RE = re.compile(r"(?<![\w$-])eval(?![\w-])|[\w-]['\"]?\$\{?[A-Za-z_]|\w['\"]\w")
+_LOOP_KW_RE = re.compile(r"(?<![\w$-])(for|while|until|select)(?![\w-])")
+_NOUNSET_RE = re.compile(r"(?<![\w-])set[ \t]+(?:-[A-Za-z]*u|-o[ \t]+nounset)")
 _FN_ANY_HEAD_RE = re.compile(r"(?<![\w.:$-])(?:function[ \t]+[^\s()<>;&|]+|[A-Za-z_][\w.:-]*[ \t]*\([ \t]*\))")
 _FN_HEAD_RE = re.compile(r"(?:(?<![\w-])function[ \t]+([^\s()<>;&|]+)(?:[ \t]*\([ \t]*\))?|([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\))[ \t\n]*$")
 
@@ -6576,7 +6578,8 @@ def _shell_scan(text, groups=None):
     # case pattern, closes nothing); text_at[i] is 1 where offset i is quoted or in a comment, so a word there is text.
     # GH #818: a list run in the background (`G=-i & ..`, `{ ..; } &`) is a subshell too, so it is a span from the
     # separator before it to its `&`, in groups["bg"] (groups is a dict). groups["fn"] gets (open, close, name, head) for each function
-    # body `name() { .. }` / `function name { .. }` and groups["loop"] (open, close) for each `do .. done`.
+    # body `name() { .. }` / `function name { .. }` and groups["loop"] (open, close, keyword, keyword offset) for each
+    # `do .. done`.
     spans, stack, sq, dq, i, n = [], [], False, False, 0, len(text)
     text_at = bytearray(n)
     seg, braces, loops = [-1], [], []
@@ -6647,10 +6650,13 @@ def _shell_scan(text, groups=None):
             elif w == "}":
                 brace_bad = True  # a `}` the scan did not match (`fi }`, `) }`)
             elif w == "do" and _cmd_pos(text, i, ";\n&"):
-                loops.append((i, seg[-1]))
+                kw = None
+                for kw in _LOOP_KW_RE.finditer(text, max(0, i - 2000), i):
+                    pass
+                loops.append((i, seg[-1], kw and kw.group(1), kw.start() if kw else i))
             elif w == "done" and loops and _cmd_pos(text, i, ";\n&"):
-                o, seg[-1] = loops.pop()
-                loop_spans.append((o, i))
+                o, seg[-1], kw, head = loops.pop()
+                loop_spans.append((o, i, kw, head))
         i += 1
     if groups is not None:
         groups["fn"], groups["loop"] = fns, loop_spans
@@ -6735,7 +6741,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                     if w.group(1) or w.group(2) or w.group(3):
                         sets.append((base + w.end(), w.group(1) or w.group(2) or w.group(3), None))
         # GH #818: `local G` / `declare G` with no value, inside a function: G is unset there, for that body only.
-        locs = list(_LOCAL_RE.finditer(text)) if scoped else ()
+        locs = list(_LOCAL_RE.finditer(text)) if scoped and not _NOUNSET_RE.search(text) else ()
         for m in locs if len(locs) <= 200 else ():  # GH #818 review 6: a bound, as each one searches its body
             if not text_at[m.start()] and not set(m.group(2)) & set("gpfFnI") and _cmd_pos(text, m.start()):
                 body = min(((o, c) for o, c, _, _ in groups["fn"] if o < m.start() < c), key=lambda b: b[1] - b[0],
@@ -6756,9 +6762,26 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         by_name[n][0].append(e)
         by_name[n][1].append(v)
     first_call, enclosing, work, slow = {}, {}, [0], [not scoped]
+    nounset = scoped and _NOUNSET_RE.search(text) is not None  # GH #818 review 9: an unset G aborts bash there
     fn_call_re = re.compile(r"(?<![\w.:$-])(?:" + "|".join(sorted({re.escape(f[2]) for f in groups["fn"]})) + r")(?![\w.:-])"
                             ) if groups["fn"] else None
+    stops, sets_memo = {}, {}
+    def loop_stops(a, b):
+        if (a, b) not in stops:
+            spend(b - a)
+            stops[(a, b)] = _LOOP_STOP_RE.search(text, a, b) is not None
+        return stops[(a, b)]
+    def cond_reads(name, a, b):
+        if (name, a, b, 0) not in sets_memo:
+            spend(b - a)
+            sets_memo[(name, a, b, 0)] = re.search(
+                r"\$\{?[#!]?" + name + r"(?![\w])|-v[ \t]+['\"]?" + name + r"(?![\w])", text[a:b]) is not None
+        return sets_memo[(name, a, b, 0)]
     def may_set(name, a, b):
+        if (name, a, b) not in sets_memo:
+            sets_memo[(name, a, b)] = _may_set(name, a, b)
+        return sets_memo[(name, a, b)]
+    def _may_set(name, a, b):
         # GH #818 review 7: text between a and b that may set name: a call to a function (bash's dynamic scope lets it
         # fill a caller's local), source / . / eval, or any NAME=, NAME+=, read/mapfile/getopts/printf -v/for NAME.
         spend(b - a)
@@ -6827,10 +6850,13 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             ref = m.start()
             if groups["loop"] and not slow[0]:
                 spend(len(groups["loop"]))
-            for lo, lc in groups["loop"]:
+            for lo, lc, kw, head in groups["loop"] if not nounset else ():
                 # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
-                # sets nothing before it: an unset there leaves the reference as written.
-                if lo < ref < lc and not slow[0] and not _LOOP_STOP_RE.search(text, lo, lc) and not may_set(name, lo, lc):
+                # sets nothing before it: an unset there leaves the reference as written. Review 9: a while/until
+                # condition runs before each pass, so the scans start at the loop's keyword, and one that reads G may end
+                # the loop once G is unset.
+                if lo < ref < lc and not slow[0] and (kw == "for" or kw in ("while", "until") and not cond_reads(
+                        name, head, lo)) and not loop_stops(head, lc) and not may_set(name, head, lc):
                     ks = range(bisect.bisect_right(ends, lo), bisect.bisect_left(ends, lc))
                     first = next((k for k in ks if usable(ends[k], vals[k], ref, True, name)), None)
                     if first is not None and ends[first] > ref:
