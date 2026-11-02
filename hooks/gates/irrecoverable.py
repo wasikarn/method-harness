@@ -6791,14 +6791,14 @@ def _view_spawn_statements(text):
 def _scan_view_statements(text, named=False):
     # A spawn in a statement only a view reads denies (_deny_nested_spawn exits; in a view a rule-less deny() only
     # ended the view, so `bash${IFS}-c 'claude -p x'` and `X=claude; bash -c "$X -p x"` passed).
-    # named: only a statement that names claude once quotes and backslashes are dropped is read (GH #731, brace-view).
+    # named: only a statement that names claude once _UNQUOTED_RE drops its quoting is read (GH #731, brace-view).
     for st in _view_spawn_statements(text):
         if named and "claude" not in _UNQUOTED_RE.sub("", st):
             continue
         if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
             _deny_nested_spawn()
 
-_UNQUOTED_RE = re.compile(r"[\"'\\]")
+_UNQUOTED_RE = re.compile(r"\$?[\"']|\\")  # quotes, the $ of $'..' / $"..", backslashes
 
 _UNSET_RE = re.compile(r"(?<![\w$-])unset((?:[ \t]+-[A-Za-z]*-?)*)((?:[ \t]+[A-Za-z_]\w*)+)")
 _UNSET_MORE_RE = re.compile(

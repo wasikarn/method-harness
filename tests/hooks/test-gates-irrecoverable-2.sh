@@ -4451,7 +4451,7 @@ test_allow "$SUBAGENT_GIT_GUARD" 'GH #820 item 5 control: subagent: echo $(date)
 # (`cl{aude,aude}${IFS}-p x` itself denies on develop as git-restore, a brace-view misread of `W{,}${IFS}a b` in any
 # session: the follow-up issue; the `${IFS}x` rows here read as the spawn only.)
 for _c in 'cl{aude,aude} -p x' 'cl{aude,aude}${IFS}-p x' 'cl{aude,aude}${IFS}-p${IFS}x' 'c{l,l}aude -p x' \
-    'true; cl{aude,} -p x' 'echo hi | cl{aude,aude}'; do
+    'true; cl{aude,} -p x' 'echo hi | cl{aude,aude}' "cla\$'u'de{,} -p x" "cl{\$'a',}ude -p x"; do
   test_deny  "$IRRECOVERABLE" "GH #731: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in 'cl{aude,aude} -p x' 'cl{aude,aude}${IFS}-p${IFS}x'; do
