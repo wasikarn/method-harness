@@ -3213,15 +3213,20 @@ def _paren_pairs(t, mask=None):
             pairs[stack.pop()] = k
     return pairs
 
+# GH #823 review 2: a (( opens arithmetic only after $ or in command position (after a separator or a keyword).
+_ARITH_LEAD_RE = re.compile(r"(?:^|[;&|(\n]|(?:^|[\s;&|(])(?:for|while|until|if|elif|then|do|else|!))[ \t]*$")
+
 def _blank_arith(c):
     # GH #823 review: a ((..)) arithmetic command (for ((i=0;i<2;i++)), $((1+2))) blanked, so its ; and ) are no
-    # separator or group closer to _pieces and _group_ends.
+    # separator or group closer to _pieces and _group_ends. Review 2: its parens unquoted and uncommented (a quoted
+    # "((" .. "))" pair hid the pipe between them), its (( after $ or in command position.
     if "((" not in c:
         return c
-    pairs, out, done = _paren_pairs(c), list(c), -1
+    pairs, out, done = _paren_pairs(c, _quote_mask(c)), list(c), -1
     for o in sorted(pairs):
         e = pairs[o]
-        if o > done and c[o + 1:o + 2] == "(" and pairs.get(o + 1) == e - 1:
+        if o > done and c[o + 1:o + 2] == "(" and pairs.get(o + 1) == e - 1 and (
+                c[o - 1:o] == "$" or _ARITH_LEAD_RE.search(c, max(0, o - 16), o)):
             out[o + 2:e - 1] = " " * (e - o - 3)
             done = e  # a pair inside is blanked already: each character once
     return "".join(out)

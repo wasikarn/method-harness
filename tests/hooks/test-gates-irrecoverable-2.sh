@@ -4398,6 +4398,13 @@ for _c in 'if true; then python3 -c 1; fi | bash' 'while read l; do python3 -c 1
   'while(true); do python3 -c 1; done | bash' 'if(true); then python3 -c 1; fi | bash'; do
   test_deny  "$IRRECOVERABLE" "GH #823: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #823 review 2: only a real ((..)) arithmetic command is blanked: a quoted or commented (( .. )) pair hides no pipe.
+for _c in 'echo "((" ; python3 -c 1 | bash ; echo "))"' "echo '((' ; python3 -c 1 | bash ; echo '))'" \
+  'x="((";python3 -c 1|bash;y="))"' $'echo hi # ((\npython3 -c 1 | bash\n# ))' 'echo a((b; python3 -c 1 | bash; echo c))'; do
+  test_deny  "$IRRECOVERABLE" "GH #823 review 2: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" "GH #823 review 2 control: a quoted (( .. )) and no shell" \
+  "$(bash_payload 'echo "((" ; python3 -c 1 | grep x ; echo "))"')"
 # GH #823 review: many >(..) cost one paren pass, not a scan per opener (the deny comes inside the deadline).
 _c="python3 -c 1 | tee $(printf '>(%.0s' $(seq 6000))sh"
 test_deny  "$IRRECOVERABLE" "GH #823 review: 6000 nested >( (fast)" "$(bash_payload "$_c")"
