@@ -4456,4 +4456,11 @@ _timed_case 'GH #787: F=-rf; rm $F b after 48 KB of statements, denied in bounde
   "$(printf 'echo a; %.0s' $(seq 6000))F=-rf; rm \$F b"
 _timed_case 'GH #787 control: 1200 F=x assignments and $F references after 24 KB of statements, allowed in bounded time' 0 \
   "${_pad787}$(printf 'F=x; echo $F; %.0s' $(seq 1200))"
+# GH #787 review: past the cap a var-verb copy that would cost more than its budget is not read, so the command asks
+# (300 subshell assignments and 100 references spend the raw copy's scan budget, which alone reads `rm -r $G b`).
+test_ask   "$IRRECOVERABLE" 'GH #787 review: a raw copy past its budget asks: F=-r; rm $F $G b; G=-i' \
+  "$(bash_payload "${_pad787}$(printf '(H=1); %.0s' $(seq 300))$(printf 'echo $H; %.0s' $(seq 100))F=-r; rm \$F \$G b; G=-i")"
+# GH #787 review: a prefix assignment's statement start is a bisect, not a split of the whole text before it.
+_timed_case 'GH #787 review control: 130 KB of LC_ALL=C sort prefix assignments, allowed in bounded time' 0 \
+  "$(printf 'LC_ALL=C sort file > out; %.0s' $(seq 5000))X=1; echo \$X"
 gates_summary

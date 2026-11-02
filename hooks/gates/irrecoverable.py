@@ -6405,6 +6405,7 @@ _VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
 _PLAIN_ASSIGN_RE = re.compile(
     r"(?<![\w$-])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
 _VIEW_LEN_CAP = 20_000
+_VAR_RM_ONLY = len(cmd) > _VIEW_LEN_CAP  # GH #787: past the cap, var-verb's copies are read by rm's enforced rules alone
 
 # GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
 # `command echo`, `/bin/echo`) and the backtick forms (WORDS with no further substitution in them) print WORDS; `${X:-W}`, `${X-W}`, `${X:=W}`,
@@ -6662,9 +6663,13 @@ def _views():
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
             return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
-        v = (_ordered_var_text(cmd, pick is None, scoped=pick == "scoped", long=len(cmd) > _VIEW_LEN_CAP)
-             if pick in (None, "raw", "scoped")
-             else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+        try:
+            v = (_ordered_var_text(cmd, pick is None, scoped=pick == "scoped", long=_VAR_RM_ONLY and "raise")
+                 if pick in (None, "raw", "scoped")
+                 else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+        except _LongCopy:
+            _VAR_LONG_CUT[0] = True
+            continue
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
@@ -6942,7 +6947,12 @@ def _prefix_assign(text, m, memo):
             break
         nxt = _PLAIN_ASSIGN_RE.match(text, k) or _REDIR_RE.match(text, k)
         if nxt is None or nxt.end() == k:
-            head = re.split(r"[;&|(){}\n]", text[:m.start()])[-1].split()
+            # The words since the last separator: a bisect into the separators found once per text (GH #787: a split
+            # of the whole prefix per assignment grew with the square of the text past _VIEW_LEN_CAP).
+            if "seps" not in memo:
+                memo["seps"] = [i for i, ch in enumerate(text) if ch in ";&|(){}\n"]
+            n = bisect.bisect_left(memo["seps"], m.start())
+            head = text[memo["seps"][n - 1] + 1 if n else 0:m.start()].split()
             out = not any(w in _DECL_WORDS for w in head)
             break
         if nxt.re is _PLAIN_ASSIGN_RE:
@@ -6959,9 +6969,10 @@ class _LongCopy(Exception):
     pass
 
 # GH #787: past _VIEW_LEN_CAP the raw and scoped copies scan their subshell spans per entry and walk back per reference,
-# which grows with the square of the text; one budget of that work per copy, past which the copy is dropped (the
-# last, first and in-order copies, which do no such scan, still read the text).
+# which grows with the square of the text; one budget of that work per copy. A copy past it is not read, and the
+# command asks (_VAR_LONG_CUT), as the same text under the cap could deny.
 _LONG_COPY_BUDGET = 1_500_000
+_VAR_LONG_CUT = [False]
 
 _MAY_SET_RE = re.compile(r"(?<![\w$-])(?:source|\.|eval)[ \t]")
 _LOOP_STOP_RE = re.compile(r"(?<![\w$-])(?:break|continue|return|exit)(?![\w-])")
@@ -7164,6 +7175,8 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             slow[0] = True
             return _VAR_REF_RE.sub(sub, text)
     except _LongCopy:
+        if long == "raise":
+            raise
         return text
 
 _CMD_VALS = None
@@ -7237,10 +7250,16 @@ if "agent_id" in d:
         for _body in _BODY_VAR_QUEUE:
             _scan_body_vars(_body, _unesc)
 # GH #787: past _VIEW_LEN_CAP the var-verb copies skip the full pass (every rule, the spawn scan) and get the
-# enforced pass only, so the cost stays that of rm's rules over the text, as for the ifs-split view.
-_VAR_RM_ONLY = len(cmd) > _VIEW_LEN_CAP
+# enforced pass only. Each pass re-reads the whole text, so they share one read budget; a copy past it is not read
+# and the command asks, never allows (a dropped copy may be the only one that reads the rm as bash runs it).
+_VAR_LONG_READ = 300_000
+_var_long_read = 0
 for _VIEW[0], _text in _views():
     if _VAR_RM_ONLY and _VIEW[0] == "var-verb":
+        if _var_long_read + len(_text) > _VAR_LONG_READ:
+            _VAR_LONG_CUT[0] = True
+            continue
+        _var_long_read += len(_text)
         _enforced_pass(_text)
         continue
     try:
@@ -7258,6 +7277,10 @@ for _VIEW[0], _text in _views():
         del _WORDS[:]
         if _VIEW[0] in _VIEW_ENFORCED:
             _enforced_pass(_text)
+if _VAR_LONG_CUT[0]:
+    _VIEW[0] = None
+    ask("[mh:gate] irrecoverable: too many variable readings to check past " + format(_VIEW_LEN_CAP, ",")
+        + " characters - confirm with user first, or split it into smaller commands")
 
 _disarm()
 sys.exit(0)
