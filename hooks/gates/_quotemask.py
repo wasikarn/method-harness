@@ -94,6 +94,7 @@ def mask_quotes(s):
     pad = {}  # out index -> blank pairs to put in front of that piece (GH #306)
     word_start = 0  # out index where the current word begins
     ng = 0  # GH #833: how many entries of parens are True
+    ie = -1  # GH #833 review 3: end of the unsure line, where quotes and "<" are inert
     unsure = -2  # GH #833 review 2: index in s of the last ")" read while a case marker was on top
     parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued
     i, n = 0, len(s)
@@ -101,18 +102,20 @@ def mask_quotes(s):
     while i < n:
         c = s[i]
         if c == "#" and unsure >= 0 and _back(i, False)[0] == unsure:
-            # GH #833 review 2: as a comment the line hides nothing below it, and as a word a quote or "<<" in it
-            # could, so it stays visible with no quote or "<" opening anything
-            while i < n and s[i] != "\n":
-                out.append("Q" if s[i] in "'\"`<" else s[i])
-                i += 1
+            # GH #833 review 2/3: as a comment the line hides nothing below it, and as a word a quote or "<<" in it
+            # could; so it is read as a word, but up to its end (ie) no quote opens and each "<" masks to Q
+            ie = s.find("\n", i)
+            ie = n if ie < 0 else ie
+            out.append(c)
+            i += 1
+            at_word_start = False
             continue
         if c == "#" and at_word_start:
             while i < n and s[i] != "\n":
                 out.append(" ")
                 i += 1
             continue
-        if c == "'":
+        if c == "'" and i >= ie:
             out.append(" ")
             i += 1
             while i < n and s[i] != "'":
@@ -134,7 +137,7 @@ def mask_quotes(s):
             while j < n and s[j] == "$":
                 out.append("$")
                 j += 1
-            if (j - i) % 2 == 0 or j >= n or s[j] != "'":
+            if (j - i) % 2 == 0 or j >= n or s[j] != "'" or j < ie:
                 i = j
                 at_word_start = False
                 continue
@@ -153,7 +156,7 @@ def mask_quotes(s):
                 out.append(" ")
                 i += 1
             at_word_start = False
-        elif c == '"':
+        elif c == '"' and i >= ie:
             out.append(" ")
             i += 1
             while i < n and s[i] != '"':
@@ -204,7 +207,7 @@ def mask_quotes(s):
                 parens.append("c")  # GH #833: a case pattern's ")" closes nothing until its esac
             elif c == "e" and parens and parens[-1] == "c" and _cmd_word(i, "esac", ";&)\n", ("in", "}", "fi", "done", "esac")):
                 parens.pop()
-            out.append(c)
+            out.append("Q" if i < ie and c in "'\"<" else c)
             i += 1
             at_word_start = c in _WORD_BOUNDARY_CHARS
             if at_word_start:

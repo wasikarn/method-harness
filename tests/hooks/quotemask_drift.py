@@ -90,6 +90,11 @@ CORPUS = [
     "a=(do case); case a in a)#\"\n;; esac; git stash\n#\"",
     "a=(do case); case a in a)#<<E\n;; esac; git stash\nE",
     "echo $(echo do case); case a in a)\\\n#'x'; git stash",
+    # GH #833 review 3: the unsure line keeps its frames and continuations; only quotes and "<" are inert
+    "echo $(echo do case)#\\\n#; git stash",
+    "echo $(echo do case)#$(\ncat <<E\nhi\nE)\ngit stash\nE",
+    "echo $(echo do case)#x'y' ; git stash",
+    "echo $(echo do case)#$'a\\'; git stash",
 ]
 
 

@@ -4554,4 +4554,21 @@ for _c in $'a=(do case); case a in a)#\'\n;; esac; git stash\n#\'' $'a=(do case)
 done
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 2 control: subagent: ...)#'"'"' \n ;; esac; git status \n #'"'" \
   "$(bash_agent_payload $'a=(do case); case a in a)#\'\n;; esac; git status\n#\'' fork)"
+# GH #833 review 3: the unsure line is still read as a word (frames, parens, continuations), with only its quotes and
+# < inert, so a $( opened on it or a backslash-newline ending it carries on as in bash.
+test_deny  "$IRRECOVERABLE" 'GH #833 review 3: echo $(echo do case)#$( \n cat <<E \n hi \n E) \n rm -rf ~/ \n E' \
+  "$(bash_payload $'echo $(echo do case)#$(\ncat <<E\nhi\nE)\nrm -rf ~/\nE')"
+test_deny  "$IRRECOVERABLE" "GH #833 review 3: echo \$(echo do case)#\$( \\n cat <<'E' ... rm -rf ~/" \
+  "$(bash_payload $'echo $(echo do case)#$(\ncat <<\'E\'\nhi\nE)\nrm -rf ~/\nE')"
+test_allow "$IRRECOVERABLE" 'GH #833 review 3 control: echo $(echo do case)#$( \n cat <<E \n hi \n E) \n ls x \n E' \
+  "$(bash_payload $'echo $(echo do case)#$(\ncat <<E\nhi\nE)\nls x\nE')"
+for _c in $'X=claude; echo $(echo do case)#$(\ncat <<E\nhi\nE)\n$X -p hi\nE' $'X=claude; echo $(echo do case)#\\\n#|$X'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 3: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 3 control: subagent: X=claude; echo $(echo do case)#\ \n #|$X --version' \
+  "$(bash_agent_payload $'X=claude; echo $(echo do case)#\\\n#|$X --version' fork)"
+test_deny  "$SUBAGENT_GIT_GUARD" 'GH #833 review 3: subagent: echo $(echo do case)#\ \n #; git stash' \
+  "$(bash_agent_payload $'echo $(echo do case)#\\\n#; git stash' fork)"
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 3 control: subagent: echo $(echo do case)#\ \n #; git status' \
+  "$(bash_agent_payload $'echo $(echo do case)#\\\n#; git status' fork)"
 gates_summary
