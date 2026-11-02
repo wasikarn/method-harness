@@ -3695,8 +3695,9 @@ for _c in 'g push -f origin main' 'g reset --hard' 'g>/dev/null push -f origin m
 done
 echo ""
 echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
+# "ran out of time" in full: _timed_case and _timed_ratio_case find a deadline ask by it (GH #800)
 MH_IRR_DEADLINE_SECS=0.001 test_ask_says "$IRRECOVERABLE" "forced deadline expiry on an allowed candidate command asks, reason says time" \
-  "$(bash_payload 'git status && git log -1')" "time"
+  "$(bash_payload 'git status && git log -1')" "ran out of time"
 MH_IRR_DEADLINE_SECS=0.001 test_ask "$IRRECOVERABLE" "forced deadline expiry emits exactly one ask JSON" "$(bash_payload 'git status')"
 if python3 - "$ROOT/hooks/gates/irrecoverable.py" "$ROOT/hooks/hooks.json" <<'PY'
 import json, re, sys
