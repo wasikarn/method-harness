@@ -6788,12 +6788,17 @@ def _view_spawn_statements(text):
             out.append(st)
     return out
 
-def _scan_view_statements(text):
+def _scan_view_statements(text, named=False):
     # A spawn in a statement only a view reads denies (_deny_nested_spawn exits; in a view a rule-less deny() only
     # ended the view, so `bash${IFS}-c 'claude -p x'` and `X=claude; bash -c "$X -p x"` passed).
+    # named: only a statement that names claude once quotes and backslashes are dropped is read (GH #731, brace-view).
     for st in _view_spawn_statements(text):
+        if named and "claude" not in _UNQUOTED_RE.sub("", st):
+            continue
         if _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st):
             _deny_nested_spawn()
+
+_UNQUOTED_RE = re.compile(r"[\"'\\]")
 
 _UNSET_RE = re.compile(r"(?<![\w$-])unset((?:[ \t]+-[A-Za-z]*-?)*)((?:[ \t]+[A-Za-z_]\w*)+)")
 _UNSET_MORE_RE = re.compile(
@@ -7218,11 +7223,14 @@ if "agent_id" in d:
 for _VIEW[0], _text in _views():
     try:
         # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.
-        # Not brace-view (GH #661: its expansion copies a body many times, which spent the budget on legal commands);
-        # a brace-built spawn is GH #731.
+        # brace-view (GH #731: `cl{aude,aude} -p x`, `cl{aude,aude}${IFS}-p x`) reads only its statements that name
+        # claude: GH #661's expansions copy a body many times, which spent the budget on legal commands. Its bodies
+        # are still not scanned (_view_spawns).
         _VIEW_TEXT[0] = _text
         if "agent_id" in d and _view_spawns():
             _scan_view_statements(_text)
+        elif "agent_id" in d and _VIEW[0] == "brace-view" and "claude" in _UNQUOTED_RE.sub("", _text):
+            _scan_view_statements(_text, named=True)
         _start = len(windows)
         windows.extend(_view_windows(_text))
         _run_windows(_start)
