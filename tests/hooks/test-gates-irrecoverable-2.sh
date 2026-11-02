@@ -4380,4 +4380,33 @@ for _c in 'R=-r; I=-i; f(){ local I; select I in -i; do break; done; rm $R $I x;
   'R=-r; I=-i; while declare -p I >/dev/null 2>&1; do rm $R $I a; unset I; done'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 12 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #823: interp-pipe-shell gaps left after GH #815. An inline script piped into a shell is read out of a compound
+# command (if/while/until/for, and a function whose body runs one, called later), past `!` and `coproc`, into a shell
+# reached through xargs or a >(..) process substitution, past the uvx / npx / pipx run runners (a name@version
+# program too), and an echo piped into a shell spelled $'\x73h'.
+for _c in 'if true; then python3 -c 1; fi | bash' 'while read l; do python3 -c 1; done < f | bash' \
+  'f() { python3 -c 1; }; f | bash' 'until false; do node -e 1; done | sh' 'for x in a b; do python3 -c 1; done | bash' \
+  'if python3 -c 1; then :; fi | bash' $'function f {\n  python3 -c 1\n}\nf | bash' 'g() ( perl -e 1 ); g | sh' \
+  'f() { python3 -c 1; }; h() { f; }; h | bash' '{ if true; then python3 -c 1; fi; } | bash' \
+  '! python3 -c 1 | bash' 'coproc python3 -c 1 | bash' '! { python3 -c 1; } | bash' \
+  'python3 -c 1 | xargs bash' 'python3 -c 1 | xargs -n 1 -I{} sh -c {}' 'python3 -c 1 | xargs -0 sudo bash' \
+  'python3 -c 1 | tee >(bash)' 'python3 -c 1 | tee >(bash) | wc -l' 'python3 -c 1 > >(sh)' 'x=$(date); python3 -c 1 | tee >(bash)' \
+  'uvx python -c 1 | bash' 'uvx python@3.12 -c 1 | bash' 'uvx --from x python3 -c 1 | bash' \
+  'npx -y node@18 -e 1 | sh' 'pipx run python -c 1 | bash' 'pipx run --spec x python3 -c 1 | sh' \
+  'uv tool run python -c 1 | bash' $'echo \'git reset --hard\' | $\'\\x73h\'' $'printf \'git reset --hard\' | $\'\\163h\''; do
+  test_deny  "$IRRECOVERABLE" "GH #823: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+# GH #823 controls: the same shapes with no shell reading the script's output, a function whose body runs none (or one
+# not called before the pipe), xargs running no shell, a >(..) that is no shell, a runner running no inline script,
+# and $'..' naming no shell.
+for _c in 'if true; then python3 -c 1; fi | grep x' 'while read l; do python3 -c 1; done < f | wc -l' \
+  'f() { python3 -c 1; }; f | grep 1' 'if true; then python3 -c 1; fi; echo ls | bash' \
+  'f() { echo ls; }; python3 -c 1; f | bash' 'for x in a b; do echo $x; done | bash' 'g() { python3 -c 1; }; echo hi | bash' \
+  '! python3 -c 1 | grep x' 'coproc python3 -c 1 | wc -l' '! python3 -c 1; echo ls | bash' \
+  'python3 -c 1 | xargs echo' 'python3 -c 1 | xargs -n 1 grep bash' 'echo ls | xargs bash' \
+  'python3 -c 1 | tee >(gzip > out.gz)' 'python3 -c 1 | tee >(wc -l) | grep sh' 'x=$(date); python3 -c 1 | tee >(wc -l)' \
+  'uvx ruff check . | bash' 'uvx python x.py | sh' 'npx -y node@18 x.js | sh' 'pipx run black . | bash' \
+  $'echo \'git status\' | $\'\\x73h\'' $'echo \'git reset --hard\' | $\'\\x67rep\' x'; do
+  test_allow "$IRRECOVERABLE" "GH #823 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
 gates_summary

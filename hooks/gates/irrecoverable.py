@@ -3056,13 +3056,23 @@ _PROJECT_RUNNERS = {
     "mamba": ("-n", "--name", "-p", "--prefix", "--cwd"), "micromamba": ("-n", "--name", "-p", "--prefix", "--cwd"),
 }
 
+# GH #823: a tool runner runs the program it names with no `run` word (uvx, `uv tool run`); pipx needs `run`. npx and
+# bunx are _RUN_WRAPPERS already. The program may carry a version (uvx python@3.12, npx node@18).
+_TOOL_RUN_VALUES = _PROJECT_RUNNERS["uv"] + ("--from",)
+_PROJECT_RUNNERS["pipx"] = ("--spec", "--python", "--pip-args", "--index-url", "--fetch-python")
+
 def _past_project_runner(w, i):
     # GH #815: the program word past a project runner's `run` and its options (and past any wrapper after them).
     for _ in range(4):
-        if i is None or i + 1 >= len(w) or w[i].rsplit("/", 1)[-1] not in _PROJECT_RUNNERS or w[i + 1] != "run":
+        b = w[i].rsplit("/", 1)[-1] if i is not None and i < len(w) else None
+        if b == "uvx":
+            vals, i = _TOOL_RUN_VALUES, i + 1
+        elif b == "uv" and w[i + 1:i + 3] == ["tool", "run"]:
+            vals, i = _TOOL_RUN_VALUES, i + 3
+        elif b in _PROJECT_RUNNERS and i + 1 < len(w) and w[i + 1] == "run":
+            vals, i = _PROJECT_RUNNERS[b], i + 2
+        else:
             return i
-        vals = _PROJECT_RUNNERS[w[i].rsplit("/", 1)[-1]]
-        i += 2
         while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
             done = w[i] == "--"
             i += 2 if w[i] in vals else 1
@@ -3079,7 +3089,7 @@ def _runs_inline_interp(seg):
     i = _past_project_runner(w, _past_run_prefix(w)) if w else None
     if i is None or i >= len(w):
         return False
-    m = _INLINE_INTERP_RE.fullmatch(w[i].rsplit("/", 1)[-1])
+    m = _INLINE_INTERP_RE.fullmatch(w[i].rsplit("/", 1)[-1].split("@", 1)[0])
     if not m:
         return False
     kind = next(k for k in _INLINE_SCRIPT_FLAGS if m.group().startswith(k))
@@ -3113,19 +3123,44 @@ def _join_continuations(c):
     # is `| bash`). Inside quotes the pair stays, which only changes how a quoted probe string reads.
     return re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", c) if "\\\n" in c else c
 
+# GH #823: the reserved words a pipe stage may start with: a compound command opens (if/while/until/for/select) or
+# closes (fi/done) like a group; then/else/elif/do and `!`/`coproc` only lead the command after them. A function head
+# (`f()`, `function f`) names the group that opens next as its body. `case` is not read (its `pat)` closes nothing).
+_STAGE_KEYWORD_RE = re.compile(r"(if|while|until|for|select|fi|done|then|else|elif|do|!|coproc)(?=[ \t\n)]|$)")
+_FUNC_HEAD_RE = re.compile(r"function[ \t]+([^\s(){}<>;&|'\"\\$`]+)(?:[ \t]*\(\))?|([A-Za-z_][\w.:-]*)[ \t]*\(\)")
+
 def _group_ends(g):
-    # GH #815: (leading closers, opens, core, trailing closers) of a pipe stage in a { } or ( ) group, which _pieces
-    # does not model: `{ python3 -c 1; } | bash` splits at the `;` into `{ python3 -c 1` and `} | bash`, and
-    # `(python3 -c 1) | bash` keeps `(python3 -c 1)` as one stage. A trailing ) counts only past the stage's own
+    # GH #815: (events, core, trailing closers) of a pipe stage in a { } or ( ) group, which _pieces does not model:
+    # `{ python3 -c 1; } | bash` splits at the `;` into `{ python3 -c 1` and `} | bash`, and `(python3 -c 1) | bash`
+    # keeps `(python3 -c 1)` as one stage. events, in order: "close", ("open",) and ("func", name), read from the
+    # stage's front (GH #823: compound keywords and function heads too). A trailing ) counts only past the stage's own
     # unquoted ( ones, so `$(date)` closes nothing; the core ends at the first one. Index scans: linear.
-    t, i, n, lead, opens = g, 0, len(g), 0, 0
-    while i < n and (t[i] in " \t\n" or t[i] in "})"):
-        lead += t[i] in "})"
-        i += 1
-    while i < n and ((t[i] == "(" and t[i + 1:i + 2] != "(") or (t[i] == "{" and t[i + 1:i + 2] in (" ", "\t", "\n"))
-                     or (opens and t[i] in " \t\n")):
-        opens += t[i] in "({"
-        i += 1
+    t, i, n, events = g, 0, len(g), []
+    while i < n:
+        ch = t[i]
+        if ch in " \t\n":
+            i += 1
+        elif ch in "})":
+            events.append("close")
+            i += 1
+        elif (ch == "(" and t[i + 1:i + 2] != "(") or (ch == "{" and t[i + 1:i + 2] in (" ", "\t", "\n", "")):
+            events.append(("open",))
+            i += 1
+        else:
+            m = _STAGE_KEYWORD_RE.match(t, i)
+            if m:
+                k = m.group(1)
+                if k in ("if", "while", "until", "for", "select"):
+                    events.append(("open",))
+                elif k in ("fi", "done"):
+                    events.append("close")
+                i = m.end()
+                continue
+            m = _FUNC_HEAD_RE.match(t, i)
+            if not m:
+                break
+            events.append(("func", m.group(1) or m.group(2)))
+            i = m.end()
     t = t[i:]
     mask = _quote_mask(t)
     depth = trail = 0
@@ -3141,7 +3176,74 @@ def _group_ends(g):
             else:
                 trail += 1
                 cut = min(cut, k)
-    return lead, opens, t[:cut], trail
+    return events, t[:cut], trail
+
+# GH #823: xargs runs its command with the words it reads from the pipe (`| xargs bash` runs a script the pipe names,
+# `| xargs -I{} sh -c {}` the pipe's text), so a shell after xargs and its options reads the pipe.
+_XARGS_VALUE_FLAGS = ("-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L", "-n", "--max-args", "-P", "--max-procs",
+                      "-s", "--max-chars", "--process-slot-var")
+
+def _xargs_shell(g):
+    w = _split_words(g)
+    w = _without_out_redirects(w) if w else None
+    i = _past_run_prefix(w) if w else None
+    if i is None or i >= len(w) or w[i].rsplit("/", 1)[-1] != "xargs":
+        return False
+    i += 1
+    while i < len(w) and w[i].startswith("-") and len(w[i]) > 1:
+        t = w[i]
+        if t == "--":
+            i += 1
+            break
+        # a short cluster takes the next word when its last letter does and no letter before it does (-0n 1)
+        i += 2 if t in _XARGS_VALUE_FLAGS or (not t.startswith("--") and "-" + t[-1] in _XARGS_VALUE_FLAGS and not any(
+            "-" + ch in _XARGS_VALUE_FLAGS for ch in t[1:-1])) else 1
+    i = _past_run_prefix(w, i) if i < len(w) else None
+    return i is not None and i < len(w) and w[i].rsplit("/", 1)[-1] in _STDIN_SHELLS
+
+def _psub_shell(g):
+    # GH #823: a >(..) process substitution of the stage runs a shell reading stdin (tee >(bash), > >(sh)): it reads
+    # what the stage writes there.
+    k = g.find(">(")
+    if k < 0:
+        return False
+    mask = _quote_mask(g)
+    while k >= 0:
+        if not mask[k]:
+            depth, j = 0, k + 1
+            while j < len(g):
+                if not mask[j]:
+                    depth += {"(": 1, ")": -1}.get(g[j], 0)
+                    if not depth:
+                        break
+                j += 1
+            body = g[k + 2:j]
+            if "sh" in body.translate(_UNQUOTE) and any(_reads_stdin_shell(body[x:y]) for x, y in _pieces(body)):
+                return True
+        k = g.find(">(", k + 1)
+    return False
+
+def _calls_func(g, funcs):
+    # GH #823: the stage calls a function whose body ran an inline script.
+    w = _split_words(g) if funcs else None
+    w = _without_out_redirects(w) if w else None
+    i = _past_run_prefix(w) if w else None
+    return i is not None and i < len(w) and w[i] in funcs
+
+def _close_frame(frames, funcs):
+    # GH #823: one group or compound command ends. True when it ran an inline script (its output goes on down the pipe);
+    # a function body's instead names the function, whose output is a later call's.
+    if not frames:
+        return False
+    ran, fname = frames.pop()
+    if not ran:
+        return False
+    if fname:
+        funcs.add(fname)
+        return False
+    if frames:
+        frames[-1][0] = True
+    return True
 
 def _inline_interp_to_shell(c):
     # GH #801: some pipeline of c runs an inline python/node script stage and, after it, a shell reading stdin.
@@ -3149,28 +3251,39 @@ def _inline_interp_to_shell(c):
     # ($'python3 -c \'x\' | bash') would split at its own pipes.
     # GH #815: a { } or ( ) group whose commands run one is such a stage. A shell given a heredoc or here-string
     # (`| bash <<EOF`) is still read as reading the pipe: an over-deny, kept, since a << that is no stdin redirect
-    # (2<<, \<\<, ${x:-<<}, $[1<<2], <(cat <<<x)) let a reading of it through. depth: the open groups; the first
-    # `marked` of them ran an inline script.
+    # (2<<, \<\<, ${x:-<<}, $[1<<2], <(cat <<<x)) let a reading of it through.
+    # GH #823: so is a compound command (if/while/until/for), a call of a function whose body runs one, and a stage
+    # led by `!` or `coproc`; a shell reached through xargs or a >(..) reads the pipe too. frames: one [ran an inline
+    # script, function name or None] per open group or compound command.
     c = _join_continuations(_normalize_ansi_c_quotes(c) if "$'" in c else c)
-    depth = marked = 0
+    frames, funcs, pending = [], set(), None
     for s, e in _pieces(c):
         inline = False  # a stage before this one runs an inline script
         for a, b in _pieces(c[s:e], pipe=True):
             g = c[s + a:s + b]
-            lead, opens, g, trail = _group_ends(g) if any(ch in g for ch in "(){}") else (0, 0, g, 0)
-            for _ in range(lead):
-                if depth:
-                    depth -= 1
-                    inline, marked = inline or depth < marked, min(marked, depth)
-            depth += opens
-            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g):
+            events, g, trail = _group_ends(g) if any(ch in g for ch in "(){}!") or _STAGE_KEYWORD_RE.match(
+                g.lstrip()) else ([], g, 0)
+            for ev in events:
+                if ev == "close":
+                    inline = _close_frame(frames, funcs) or inline
+                elif ev[0] == "open":
+                    frames.append([False, pending])
+                    pending = None
+                else:
+                    pending = ev[1]
+            if g.strip():
+                pending = None
+            if inline and "sh" in g.translate(_UNQUOTE) and (_reads_stdin_shell(g) or _xargs_shell(g)):
                 return True
-            if _runs_inline_interp(g):
-                inline, marked = True, depth
+            here = _runs_inline_interp(g) or _calls_func(g, funcs)
+            if (inline or here) and _psub_shell(g):
+                return True
+            if here:
+                inline = True
+                if frames:
+                    frames[-1][0] = True
             for _ in range(trail):
-                if depth:
-                    depth -= 1
-                    inline, marked = inline or depth < marked, min(marked, depth)
+                inline = _close_frame(frames, funcs) or inline
     return False
 
 def _shell_stdin_bodies(c):
@@ -3180,7 +3293,8 @@ def _shell_stdin_bodies(c):
     for s, e in _pieces(c):
         segs = [c[s + a:s + b] for a, b in _pieces(c[s:e], pipe=True)]
         for k, g in enumerate(segs):
-            if not _reads_stdin_shell(g):
+            # GH #823: the shell's name decoded first ($'\x73h' is sh; shlex reads it as $\x73h)
+            if not _reads_stdin_shell(_decode_quotes(g) if "$'" in g else g):
                 continue
             if "<<<" in g:
                 w = _split_words(_decode_quotes(g.split("<<<", 1)[1]))
@@ -3205,8 +3319,9 @@ def _as_words(t):
     # $'\\x73h' all name sh; $'\\x70ython3' names python).
     return (_normalize_ansi_c_quotes(t) if "$'" in t else t).translate(_UNQUOTE)
 
+_CMD_NAMES = _as_words(cmd)  # GH #823: $'\x73h' names sh
 _SHELL_STDIN_BODIES = _shell_stdin_bodies(_join_continuations(cmd)) if any(
-    sh in cmd.translate(_UNQUOTE) for sh in _STDIN_SHELLS) else []
+    sh in _CMD_NAMES for sh in _STDIN_SHELLS) else []
 # Read on the command lines only: a heredoc body is the reader's text, even one kept as code (cat > x.sh <<'EOF'
 # keeps its body, x.sh naming sh), and a script it holds that pipes python -c into bash runs nothing here.
 # GH #815: plus the text a shell runs besides them (_CMD_EXTRA, the $(..) bodies of _CMD_EXPANDING), each after a
@@ -3225,7 +3340,9 @@ if any(sh in _CMD_WORDS for sh in _STDIN_SHELLS) and _INLINE_NAME_RE.search(_CMD
     _blown = _DEPTH_BUDGET_BLOWN[0]
     _t = _blank_substitutions(_CMD_TEXT) if ("$(" in _CMD_TEXT or "`" in _CMD_TEXT) else _CMD_TEXT
     _DEPTH_BUDGET_BLOWN[0] = _blown  # this reading leaves the rule loop's budget as it was
-    if _inline_interp_to_shell(_t):
+    # GH #823: the blanking turns a >(..) into a placeholder (its body a statement of its own), so a text with one is
+    # read unblanked too: a deny in either reading wins.
+    if _inline_interp_to_shell(_t) or (_t is not _CMD_TEXT and ">(" in _CMD_TEXT and _inline_interp_to_shell(_CMD_TEXT)):
         deny("a python -c / node -e / perl -e script pipes its output into a shell, which runs commands the gate "
              "cannot see - write the commands out, or save the output to a file and read it first",
              rule="interp-pipe-shell")
