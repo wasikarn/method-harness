@@ -6408,7 +6408,7 @@ _VIEW_LEN_CAP = 20_000
 _VAR_RM_ONLY = len(cmd) > _VIEW_LEN_CAP  # GH #787: past the cap, var-verb's copies are read by rm's enforced rules alone
 # GH #787: past the cap, the characters all of var-verb's rm-only passes read together; also the most one copy may grow to
 # while it is built (a long value put back at many references built gigabytes before any check).
-_VAR_LONG_READ = 450_000
+_VAR_LONG_READ = 900_000
 
 # GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
 # `command echo`, `/bin/echo`) and the backtick forms (WORDS with no further substitution in them) print WORDS; `${X:-W}`, `${X-W}`, `${X:=W}`,
@@ -7084,7 +7084,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         work[0] += n
         if work[0] > 100_000:
             raise _SlowCopy
-    long_work = [0]
+    long_work, slow_enclosing = [0], {}
     def long_spend(n):
         if long:
             long_work[0] += n
@@ -7093,8 +7093,11 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     def encl(at):
         # The spans and function bodies holding an entry, once per entry (GH #818 review: per reference was slow).
         if slow[0]:
-            long_spend(1 + len(spans))
-            return [(o, c) for o, c in spans if o < at <= c], (), ()
+            # GH #787 review 3: once per entry here too (per reference grew with references x spans past the cap)
+            if at not in slow_enclosing:
+                long_spend(1 + len(spans))
+                slow_enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], (), ())
+            return slow_enclosing[at]
         if at not in enclosing:
             long_spend(1 + len(spans) + len(groups["bg"]) + len(groups["fn"]))
             spend(len(spans) + len(groups["bg"]) + len(groups["fn"]))
@@ -7153,7 +7156,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             ref = m.start()
             if groups["loop"] and not slow[0]:
                 spend(len(groups["loop"]))
-            for lo, lc, kw, head in groups["loop"] if not nounset else ():
+            for lo, lc, kw, head in groups["loop"] if not nounset and not slow[0] else ():  # its body needs not slow
                 # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
                 # sets nothing before it: an unset there leaves the reference as written. Review 9: a while/until
                 # condition runs before each pass, so the scans start at the loop's keyword, and one that reads G may end
@@ -7270,16 +7273,27 @@ if "agent_id" in d:
         for _body in _BODY_VAR_QUEUE:
             _scan_body_vars(_body, _unesc)
 # GH #787: past _VIEW_LEN_CAP the var-verb copies skip the full pass (every rule, the spawn scan) and get the
-# enforced pass only. Each pass re-reads the whole text, so they share one read budget; a copy past it is not read
-# and the command asks, never allows (a dropped copy may be the only one that reads the rm as bash runs it).
-_var_long_read = 0
+# enforced pass only. Each pass re-reads the whole text, so they share one read budget, and a pass starts only while
+# the deadline timer leaves the slowest pass so far (a pass that still overruns meets the deadline, which asks too);
+# a copy not read makes the command ask, never allow (it may be the only one that reads the rm as bash runs it).
+def _var_long_time_left():
+    try:
+        left = signal.getitimer(signal.ITIMER_REAL)[0]
+    except Exception:
+        return None
+    return left or None  # 0: no timer armed on this platform; the read budget alone bounds the passes
+
+_var_long_read, _var_long_slowest = 0, 0.3
 for _VIEW[0], _text in _views():
     if _VAR_RM_ONLY and _VIEW[0] == "var-verb":
-        if _var_long_read + len(_text) > _VAR_LONG_READ:
+        _left = _var_long_time_left()
+        if _var_long_read + len(_text) > _VAR_LONG_READ or (_left is not None and _left < _var_long_slowest):
             _VAR_LONG_CUT[0] = True
             continue
         _var_long_read += len(_text)
         _enforced_pass(_text)
+        if _left is not None:
+            _var_long_slowest = max(_var_long_slowest, _left - (_var_long_time_left() or 0))
         continue
     try:
         # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.
