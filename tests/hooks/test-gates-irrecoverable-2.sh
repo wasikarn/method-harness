@@ -4299,4 +4299,12 @@ for _c in $'RFLAG=-r\nload_defaults() {\n  CONFIRM=-i\n  TARGET=build\n}\nmain()
   'F=-r; G=-i; echo unset "G"; rm $F $G x'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 7 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #818 review 8: past a value the scoped copy drops (an uncalled body, a background list) it skips that scope's earlier
+# entries too, so an unset there does not count; an unset in a body that is all there is still counts, as develop read it.
+for _c in $'RFLAG=-r\nCONFIRM=-i\nreset_confirm() {\n  unset CONFIRM\n  CONFIRM=-i\n}\nrm $RFLAG $CONFIRM build\nreset_confirm' \
+  'F=-r; G=-i; reset(){ unset G; G=-i; }; rm $F $G b; reset; rm $F $G b' 'F=-r; G=-i; { unset G; G=-i; sleep 1; } & wait; rm $F $G b'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 8 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+test_deny  "$IRRECOVERABLE" "GH #818 review 8: an unset alone in a body (develop's reading)" \
+  "$(bash_payload 'F=-r; G=-i; f(){ unset G; }; rm $F $G b')"
 gates_summary

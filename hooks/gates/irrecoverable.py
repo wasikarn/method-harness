@@ -6837,9 +6837,18 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                         lk = next(k for k in reversed(ks) if usable(ends[k], vals[k], ref, True, name))
                         if vals[lk] is None:
                             return m.group(0)
+            skip = []
             for k in range(bisect.bisect_right(ends, ref) - 1, -1, -1):
-                if usable(ends[k], vals[k], ref, name=name):
+                at = ends[k]
+                if skip and any(o < at <= c for o, c in skip):
+                    continue  # GH #818 review 8: in a scope a later value of it was dropped for, an unset too
+                if usable(at, vals[k], ref, name=name):
                     return m.group(0) if vals[k] is None else vals[k]
+                if vals[k] is not None and not slow[0]:
+                    _, bg, fl = encl(at)
+                    skip += [(o, c) for o, c in bg if not o < ref < c]
+                    if groups["fn_ok"] and not in_body(ref):
+                        skip += [(o, c) for o, c, first in fl if not (o < ref < c or first < ref)]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
         # A body's outer value (GH #812: its environment) comes before its own later one.
