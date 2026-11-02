@@ -194,15 +194,17 @@ except Exception:
         while i < n:
             c = s[i]
             if c == "#" and unsure >= 0 and _back(i, False)[0] == unsure:
-                # GH #833 review 2/3: as a comment the line hides nothing below it, and as a word a quote or "<<" in it
-                # could; so it is read as a word, but up to its end (ie) no quote opens and each "<" masks to Q
-                ie = s.find("\n", i)
-                ie = n if ie < 0 else ie
+                # GH #833 review 2-4: as a comment the line hides nothing below it, and as a word a quote or "<<" in it
+                # could; so it is read as a word, but up to its end (ie) no quote or comment opens and each "<" masks to
+                # Q. Once such an inert quote or "<" shows up, the quote state past the line is unknown: ie moves to the end
+                if i >= ie:
+                    ie = s.find("\n", i)
+                    ie = n if ie < 0 else ie
                 out.append(c)
                 i += 1
                 at_word_start = False
                 continue
-            if c == "#" and at_word_start:
+            if c == "#" and at_word_start and i >= ie:
                 while i < n and s[i] != "\n":
                     out.append(" "); i += 1
                 continue
@@ -264,7 +266,12 @@ except Exception:
                     parens.append("c")  # GH #833: a case pattern's ")" closes nothing until its esac
                 elif c == "e" and parens and parens[-1] == "c" and _cmd_word(i, "esac", ";&)\n", ("in", "}", "fi", "done", "esac")):
                     parens.pop()
-                out.append("Q" if i < ie and c in "'\"<" else c); i += 1
+                if i < ie and c in "'\"<":
+                    out.append("Q")
+                    ie = n
+                else:
+                    out.append(c)
+                i += 1
                 at_word_start = c in set(" \t\n;&|()")
                 if at_word_start:
                     word_start = len(out)

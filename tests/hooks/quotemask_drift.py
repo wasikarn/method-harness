@@ -95,6 +95,11 @@ CORPUS = [
     "echo $(echo do case)#$(\ncat <<E\nhi\nE)\ngit stash\nE",
     "echo $(echo do case)#x'y' ; git stash",
     "echo $(echo do case)#$'a\\'; git stash",
+    # GH #833 review 4: once an inert quote or "<" shows up, nothing opens to the end of the text
+    "echo $(echo do case)#\"\n\"; git stash",
+    "echo $(echo do case)#\"\n\" && git reset --hard # \"",
+    "echo $(echo do case)#${x:-\"\n\"}; git stash # \"",
+    "echo $(echo do case)#x #'\ngit stash",
 ]
 
 

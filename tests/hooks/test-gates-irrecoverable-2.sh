@@ -4571,4 +4571,21 @@ test_deny  "$SUBAGENT_GIT_GUARD" 'GH #833 review 3: subagent: echo $(echo do cas
   "$(bash_agent_payload $'echo $(echo do case)#\\\n#; git stash' fork)"
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 3 control: subagent: echo $(echo do case)#\ \n #; git status' \
   "$(bash_agent_payload $'echo $(echo do case)#\\\n#; git status' fork)"
+# GH #833 review 4: a quote bash opens on the unsure line may close on a later one, so once an inert quote or < shows
+# up the rest of the text is read with no quote, comment or heredoc opening (more reading, never less).
+for _c in $'X=claude; echo $(echo do case)#"\n" | $X' $'X=claude; echo $(echo then case)#"\n" | $X # "' \
+    $'X=claude; echo $(echo then case)#\'\n\' | $X # \'' $'X=claude; echo $(echo do case)#$\'\n\' | $X # \'' \
+    $'X=claude; cat <(echo do case)#"\n" | $X' $'X=claude; a=( do case )#"\n" | $X'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 4: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 4 control: subagent: X=claude; echo $(echo do case)#" \n " | $X --version' \
+  "$(bash_agent_payload $'X=claude; echo $(echo do case)#"\n" | $X --version' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #833 review 4: echo $(echo do case)#" \n cat <<E \n " \n rm -rf ~/ \n E \n "' \
+  "$(bash_payload $'echo $(echo do case)#"\ncat <<E\n"\nrm -rf ~/\nE\n"')"
+for _c in $'echo $(echo do case)#"\n"; git stash' $'echo $(echo do case)#"\n" && git reset --hard # "' \
+    $'echo $(echo do case)#${x:-"\n"}; git stash # "'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 4: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 4 control: subagent: echo $(echo do case)#" \n "; git status' \
+  "$(bash_agent_payload $'echo $(echo do case)#"\n"; git status' fork)"
 gates_summary

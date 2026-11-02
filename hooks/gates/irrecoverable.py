@@ -743,8 +743,10 @@ def _quote_mask(c, stack=None, hd=False):
     # cannot close the $( around it early. Fail safe: a "c" pushed by mistake (`echo do case`) or never closed leaves
     # every ) after it unsure (uc) while any glued ( is open. A # right after an unsure ) is read both ways: as a word,
     # so the rest of its line is scanned with its frames, parens and continuations, but up to the end of that line (ie)
-    # no quote opens and every < is masked (as a comment nothing there would open, and as a word a quote or << could
-    # hide the lines below). The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
+    # no quote or comment opens and every < is masked (as a comment nothing there would open, and as a word a quote or
+    # << could hide the lines below). Once such an inert quote or < shows up, bash's quote state past the line is
+    # unknown, so ie moves to the end of c: everything after reads as visible code (hd: a "!" frame, so _strip_heredocs
+    # strips nothing more). The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
     # separator is part of its word, and an escaped newline is a line continuation (_prev_char). Extglob @( !( ?(
     # *( +( are glued as $( is.
     mask, i, n = bytearray(len(c)), 0, len(c)
@@ -769,6 +771,9 @@ def _quote_mask(c, stack=None, hd=False):
                 po.pop()
         if q in _HD_OFF or ch == "<" and i < ie:
             mask[i] = 1
+            if ch == "<" and i < ie:  # an inert <: from here on the quote state is unknown (see above)
+                ie = n
+                stack += ["!"] if hd else []
         if q == SQ:
             mask[i] = 1
             if ch == SQ:
@@ -801,18 +806,22 @@ def _quote_mask(c, stack=None, hd=False):
         elif ch == "\\" and i + 1 < n:
             mask[i + 1] = esc[i + 1] = 1
             i += 1
-        elif ch == "$" and c[i + 1:i + 2] == SQ and i >= ie:
+        elif ch == "$" and c[i + 1:i + 2] == SQ and i >= ie:  # (below ie the ' is an inert quote)
             mask[i] = mask[i + 1] = 1
             stack.append("$'")
             i += 1
         elif ch in (SQ, '"'):
             mask[i] = 1
-            if i >= ie:  # an inert quote on an unsure line opens nothing
+            if i >= ie:
                 stack.append(ch)
+            else:  # an inert quote opens nothing, and from here on the quote state is unknown
+                ie = n
+                stack += ["!"] if hd else []
         elif ch == "#" and uc >= 0 and _prev_char(c, i, esc) == uc:
-            ie = c.find("\n", i)  # GH #833 review 2/3: an unsure #, read both ways (see above)
-            ie = n if ie < 0 else ie
-        elif ch == "#" and ((p := _prev_char(c, i, esc)) < 0 or not esc[p] and (c[p] in " \t\n;&|(" or c[p] == ")" and gc != p)):
+            if i >= ie:  # GH #833 review 2-4: an unsure #, read both ways (see above)
+                ie = c.find("\n", i)
+                ie = n if ie < 0 else ie
+        elif ch == "#" and i >= ie and ((p := _prev_char(c, i, esc)) < 0 or not esc[p] and (c[p] in " \t\n;&|(" or c[p] == ")" and gc != p)):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
             mask[i:j] = b"\1" * (j - i)
