@@ -268,6 +268,11 @@ except Exception:
                 j = i
                 while j < n and s[j] == "$":
                     out.append("$"); j += 1
+                if (j - i) % 2 == 1 and i < j < ie and s[j] == "'":
+                    out.pop()  # GH #833 review 5: an inert $'..' drops its $ as bash does; the blank goes to the word front
+                    pad[word_start] = pad.get(word_start, 0) + 1
+                    i = j
+                    continue
                 if (j - i) % 2 == 0 or j >= n or s[j] != "'" or j < ie:
                     i = j; at_word_start = False
                     continue
@@ -299,7 +304,7 @@ except Exception:
                         out.append("\\" * (j - i - 1)); at_word_start = False
                     i = j + 1
                     if i < n and s[i] not in set(" \t\n;&|()") and word_start < len(out):
-                        pad[word_start] = pad.get(word_start, 0) + 1  # GH #306: joins the word; blanks go to its front
+                        pad[word_start] = pad.get(word_start, 0) + 2  # GH #306: joins the word; blanks go to its front
                     else:
                         out.append("  ")  # GH #306: a blank, separator or the end follows: nothing glues
                     continue
@@ -315,7 +320,12 @@ except Exception:
                     parens.append("c")  # GH #833: a case pattern's ")" closes nothing until its esac
                 elif c == "e" and parens and parens[-1] == "c" and _cmd_word(i, "esac", ";&)\n", ("in", "}", "fi", "done", "esac")):
                     parens.pop()
-                if i < ie and c in "'\"<":
+                if i < ie and c in "'\"":
+                    # GH #833 review 5: an inert quote mark is dropped as bash drops it, its blank put at the front of the
+                    # word, so a quoted name still reads whole ("git" stash, g''it stash); from here on nothing opens (ie = n)
+                    pad[word_start] = pad.get(word_start, 0) + 1
+                    ie = n
+                elif i < ie and c == "<":
                     out.append("Q")
                     ie = n
                 else:
@@ -334,7 +344,7 @@ except Exception:
                 elif c == ")" and parens and parens.pop():
                     ng -= 1
                     at_word_start = False  # GH #820 item 5: $(..)# is one word, never a comment
-        return "".join("  " * pad.get(k, 0) + p for k, p in enumerate(out))
+        return "".join(" " * pad.get(k, 0) + p for k, p in enumerate(out)) + " " * pad.get(len(out), 0)
 
 def check_helper_body(text):
     # ponytail: still not a full shell tokenizer (no backtick/$()-aware

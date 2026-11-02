@@ -91,7 +91,7 @@ def mask_quotes(s):
         return False
 
     out = []
-    pad = {}  # out index -> blank pairs to put in front of that piece (GH #306)
+    pad = {}  # out index -> blanks to put in front of that piece (GH #306, #833)
     word_start = 0  # out index where the current word begins
     ng = 0  # GH #833: how many entries of parens are True
     ie = -1  # GH #833 review 3: end of the unsure line, where quotes and "<" are inert
@@ -139,6 +139,11 @@ def mask_quotes(s):
             while j < n and s[j] == "$":
                 out.append("$")
                 j += 1
+            if (j - i) % 2 == 1 and i < j < ie and s[j] == "'":
+                out.pop()  # GH #833 review 5: an inert $'..' drops its $ as bash does; the blank goes to the word front
+                pad[word_start] = pad.get(word_start, 0) + 1
+                i = j
+                continue
             if (j - i) % 2 == 0 or j >= n or s[j] != "'" or j < ie:
                 i = j
                 at_word_start = False
@@ -191,7 +196,7 @@ def mask_quotes(s):
                     at_word_start = False
                 i = j + 1
                 if i < n and s[i] not in _WORD_BOUNDARY_CHARS and word_start < len(out):
-                    pad[word_start] = pad.get(word_start, 0) + 1
+                    pad[word_start] = pad.get(word_start, 0) + 2
                 else:
                     out.append("  ")
                 continue
@@ -209,7 +214,12 @@ def mask_quotes(s):
                 parens.append("c")  # GH #833: a case pattern's ")" closes nothing until its esac
             elif c == "e" and parens and parens[-1] == "c" and _cmd_word(i, "esac", ";&)\n", ("in", "}", "fi", "done", "esac")):
                 parens.pop()
-            if i < ie and c in "'\"<":
+            if i < ie and c in "'\"":
+                # GH #833 review 5: an inert quote mark is dropped as bash drops it, its blank put at the front of the
+                # word, so a quoted name still reads whole ("git" stash, g''it stash); from here on nothing opens (ie = n)
+                pad[word_start] = pad.get(word_start, 0) + 1
+                ie = n
+            elif i < ie and c == "<":
                 out.append("Q")
                 ie = n
             else:
@@ -228,4 +238,4 @@ def mask_quotes(s):
             elif c == ")" and parens and parens.pop():
                 ng -= 1
                 at_word_start = False  # GH #820 item 5: $(..)# is one word
-    return "".join("  " * pad.get(k, 0) + p for k, p in enumerate(out))
+    return "".join(" " * pad.get(k, 0) + p for k, p in enumerate(out)) + " " * pad.get(len(out), 0)

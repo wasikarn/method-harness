@@ -100,6 +100,13 @@ CORPUS = [
     "echo $(echo do case)#\"\n\" && git reset --hard # \"",
     "echo $(echo do case)#${x:-\"\n\"}; git stash # \"",
     "echo $(echo do case)#x #'\ngit stash",
+    # GH #833 review 5: an inert quote mark (and the $ of an inert $'..') is dropped, its blank at the word front
+    "echo $(echo do case)#; \"git\" stash",
+    "echo $(echo do case)#'x' && g''it stash",
+    "echo $(echo do case)#; $'git' stash",
+    "echo $(echo do case)#; $$$'git' stash",
+    "echo $(echo do case)#\"",
+    "echo $(echo do case)#<x; git stash",
 ]
 
 

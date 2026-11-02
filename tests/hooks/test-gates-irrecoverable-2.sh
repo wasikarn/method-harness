@@ -4588,4 +4588,13 @@ for _c in $'echo $(echo do case)#"\n"; git stash' $'echo $(echo do case)#"\n" &&
 done
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 4 control: subagent: echo $(echo do case)#" \n "; git status' \
   "$(bash_agent_payload $'echo $(echo do case)#"\n"; git status' fork)"
+# GH #833 review 5: bash drops an inert quote mark (and the $ of an inert $'..'), so the shared mask drops it too, its
+# blank moved to the word front: a quoted git word on or after the unsure line still reads whole.
+for _c in 'echo $(echo do case)#; "git" stash' 'echo $(echo do case)#; git "stash"' \
+    "echo \$(echo do case)#'x' && g''it stash" "echo \$(echo do case)#; 'g'it reset --hard" \
+    "echo \$(echo do case)#; \$'git' stash" $'echo $(echo do case)# \'\n\'\ngit "stash"'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 5: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 5 control: subagent: echo $(echo do case)#; "git" status' \
+  "$(bash_agent_payload 'echo $(echo do case)#; "git" status' fork)"
 gates_summary
