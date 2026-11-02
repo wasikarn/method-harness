@@ -3126,7 +3126,7 @@ def _join_continuations(c):
 # GH #823: the reserved words a pipe stage may start with: a compound command opens (if/while/until/for/select) or
 # closes (fi/done) like a group; then/else/elif/do and `!`/`coproc` only lead the command after them. A function head
 # (`f()`, `function f`) names the group that opens next as its body. `case` is not read (its `pat)` closes nothing).
-_STAGE_KEYWORD_RE = re.compile(r"(if|while|until|for|select|fi|done|then|else|elif|do|!|coproc)(?=[ \t\n)]|$)")
+_STAGE_KEYWORD_RE = re.compile(r"(if|while|until|for|select|fi|done|then|else|elif|do|!|coproc)(?=[ \t\n()]|$)")
 _FUNC_HEAD_RE = re.compile(r"function[ \t]+([^\s(){}<>;&|'\"\\$`]+)(?:[ \t]*\(\))?|([A-Za-z_][\w.:-]*)[ \t]*\(\)")
 
 def _group_ends(g):
@@ -3201,25 +3201,48 @@ def _xargs_shell(g):
     i = _past_run_prefix(w, i) if i < len(w) else None
     return i is not None and i < len(w) and w[i].rsplit("/", 1)[-1] in _STDIN_SHELLS
 
+def _paren_pairs(t, mask=None):
+    # GH #823 review: {open index: close index} of every ( .. ) pair of t outside the mask, in one stack pass.
+    pairs, stack = {}, []
+    for k, ch in enumerate(t):
+        if mask is not None and mask[k]:
+            continue
+        if ch == "(":
+            stack.append(k)
+        elif ch == ")" and stack:
+            pairs[stack.pop()] = k
+    return pairs
+
+def _blank_arith(c):
+    # GH #823 review: a ((..)) arithmetic command (for ((i=0;i<2;i++)), $((1+2))) blanked, so its ; and ) are no
+    # separator or group closer to _pieces and _group_ends.
+    if "((" not in c:
+        return c
+    pairs, out, done = _paren_pairs(c), list(c), -1
+    for o in sorted(pairs):
+        e = pairs[o]
+        if o > done and c[o + 1:o + 2] == "(" and pairs.get(o + 1) == e - 1:
+            out[o + 2:e - 1] = " " * (e - o - 3)
+            done = e  # a pair inside is blanked already: each character once
+    return "".join(out)
+
+_PSUB_BUDGET = [200_000]  # chars of >(..) bodies read; past it a >(..) is taken as a shell (deny, the safe side)
+
 def _psub_shell(g):
     # GH #823: a >(..) process substitution of the stage runs a shell reading stdin (tee >(bash), > >(sh)): it reads
     # what the stage writes there.
-    k = g.find(">(")
-    if k < 0:
+    if ">(" not in g:
         return False
     mask = _quote_mask(g)
+    pairs = _paren_pairs(g, mask)
+    k = g.find(">(")
     while k >= 0:
-        if not mask[k]:
-            depth, j = 0, k + 1
-            while j < len(g):
-                if not mask[j]:
-                    depth += {"(": 1, ")": -1}.get(g[j], 0)
-                    if not depth:
-                        break
-                j += 1
-            body = g[k + 2:j]
-            if "sh" in body.translate(_UNQUOTE) and any(_reads_stdin_shell(body[x:y]) for x, y in _pieces(body)):
-                return True
+        if not mask[k] and k + 1 in pairs:
+            body = g[k + 2:pairs[k + 1]]
+            if "sh" in body.translate(_UNQUOTE):
+                _PSUB_BUDGET[0] -= len(body)
+                if _PSUB_BUDGET[0] < 0 or any(_reads_stdin_shell(body[x:y]) for x, y in _pieces(body)):
+                    return True
         k = g.find(">(", k + 1)
     return False
 
@@ -3255,7 +3278,7 @@ def _inline_interp_to_shell(c):
     # GH #823: so is a compound command (if/while/until/for), a call of a function whose body runs one, and a stage
     # led by `!` or `coproc`; a shell reached through xargs or a >(..) reads the pipe too. frames: one [ran an inline
     # script, function name or None] per open group or compound command.
-    c = _join_continuations(_normalize_ansi_c_quotes(c) if "$'" in c else c)
+    c = _blank_arith(_join_continuations(_normalize_ansi_c_quotes(c) if "$'" in c else c))
     frames, funcs, pending = [], set(), None
     for s, e in _pieces(c):
         inline = False  # a stage before this one runs an inline script

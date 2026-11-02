@@ -4393,9 +4393,14 @@ for _c in 'if true; then python3 -c 1; fi | bash' 'while read l; do python3 -c 1
   'python3 -c 1 | tee >(bash)' 'python3 -c 1 | tee >(bash) | wc -l' 'python3 -c 1 > >(sh)' 'x=$(date); python3 -c 1 | tee >(bash)' \
   'uvx python -c 1 | bash' 'uvx python@3.12 -c 1 | bash' 'uvx --from x python3 -c 1 | bash' \
   'npx -y node@18 -e 1 | sh' 'pipx run python -c 1 | bash' 'pipx run --spec x python3 -c 1 | sh' \
-  'uv tool run python -c 1 | bash' $'echo \'git reset --hard\' | $\'\\x73h\'' $'printf \'git reset --hard\' | $\'\\163h\''; do
+  'uv tool run python -c 1 | bash' $'echo \'git reset --hard\' | $\'\\x73h\'' $'printf \'git reset --hard\' | $\'\\163h\''\
+  'for ((i=0;i<2;i++)); do python3 -c 1; done | bash' 'for((i=0;i<2;i++)); do node -e 1; done | sh' \
+  'while(true); do python3 -c 1; done | bash' 'if(true); then python3 -c 1; fi | bash'; do
   test_deny  "$IRRECOVERABLE" "GH #823: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #823 review: many >(..) cost one paren pass, not a scan per opener (the deny comes inside the deadline).
+_c="python3 -c 1 | tee $(printf '>(%.0s' $(seq 6000))sh"
+test_deny  "$IRRECOVERABLE" "GH #823 review: 6000 nested >( (fast)" "$(bash_payload "$_c")"
 # GH #823 controls: the same shapes with no shell reading the script's output, a function whose body runs none (or one
 # not called before the pipe), xargs running no shell, a >(..) that is no shell, a runner running no inline script,
 # and $'..' naming no shell.
@@ -4406,7 +4411,8 @@ for _c in 'if true; then python3 -c 1; fi | grep x' 'while read l; do python3 -c
   'python3 -c 1 | xargs echo' 'python3 -c 1 | xargs -n 1 grep bash' 'echo ls | xargs bash' \
   'python3 -c 1 | tee >(gzip > out.gz)' 'python3 -c 1 | tee >(wc -l) | grep sh' 'x=$(date); python3 -c 1 | tee >(wc -l)' \
   'uvx ruff check . | bash' 'uvx python x.py | sh' 'npx -y node@18 x.js | sh' 'pipx run black . | bash' \
-  $'echo \'git status\' | $\'\\x73h\'' $'echo \'git reset --hard\' | $\'\\x67rep\' x'; do
+  $'echo \'git status\' | $\'\\x73h\'' $'echo \'git reset --hard\' | $\'\\x67rep\' x' \
+  'for ((i=0;i<2;i++)); do python3 -c 1; done | sort' 'while(true); do echo ls; done | bash' 'x=$((1+2)); echo ls | bash'; do
   test_allow "$IRRECOVERABLE" "GH #823 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
 gates_summary
