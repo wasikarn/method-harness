@@ -235,11 +235,19 @@ except Exception:
         pad = {}  # GH #306: out index -> blank pairs to put in front of that piece
         word_start = 0
         ng = 0  # GH #833: how many entries of parens are True
+        unsure = -2  # GH #833 review 2: index in s of the last ")" read while a case marker was on top
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
         at_word_start = True
         while i < n:
             c = s[i]
+            if c == "#" and unsure >= 0 and _back(i, False)[0] == unsure:
+                # GH #833 review 2: as a comment the line hides nothing below it, and as a word a quote or "<<" in it
+                # could, so it stays visible with no quote or "<" opening anything
+                while i < n and s[i] != "\n":
+                    out.append("Q" if s[i] in "'\"`<" else s[i])
+                    i += 1
+                continue
             if c == "#" and at_word_start:
                 while i < n and s[i] != "\n":
                     out.append(" "); i += 1
@@ -311,7 +319,8 @@ except Exception:
                     parens.append(k >= 0 and not e and s[k] in "$<>=@!?*+")
                     ng += parens[-1]
                 elif c == ")" and parens and parens[-1] == "c":
-                    at_word_start = at_word_start and not ng  # GH #833 fail safe: unsure, so glued while any glued ( is open
+                    if ng:  # GH #833 fail safe: a pattern or the real closer; a "#" after it is read both ways
+                        at_word_start, unsure = False, i - 1
                 elif c == ")" and parens and parens.pop():
                     ng -= 1
                     at_word_start = False  # GH #820 item 5: $(..)# is one word, never a comment

@@ -85,6 +85,11 @@ CORPUS = [
     "echo $(case a in a) echo in esac;; b) :;; esac)#; git stash",
     "case a in a)#x\nesac; git stash",
     "echo do case; (ls)#x\ngit stash",
+    # GH #833 review 2: a # after an unsure ")" is read both ways; no quote or "<" on its line opens anything
+    "a=(do case); case a in a)#'\n;; esac; git stash\n#'",
+    "a=(do case); case a in a)#\"\n;; esac; git stash\n#\"",
+    "a=(do case); case a in a)#<<E\n;; esac; git stash\nE",
+    "echo $(echo do case); case a in a)\\\n#'x'; git stash",
 ]
 
 

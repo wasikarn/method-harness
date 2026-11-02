@@ -741,13 +741,14 @@ def _quote_mask(c, stack=None, hd=False):
     # po holds one flag per open unquoted (, whether its ) ends mid-word; gc is the index of the last such ).
     # GH #833: a `case` read as a command pushes "c" onto po until its `esac`: a pattern's ) then pops nothing, so it
     # cannot close the $( around it early. Fail safe: a "c" pushed by mistake (`echo do case`) or never closed leaves
-    # every ) after it unsure, so while one is on top a ) keeps a glued # in its word whenever any glued ( is open
-    # (over-reading only); the quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
+    # every ) after it unsure (uc) while any glued ( is open. A # right after an unsure ) is read both ways: the rest
+    # of its line stays visible, but no quote, backtick or < on it opens anything (as a comment it would not, and as
+    # a word a quote or << there could hide the lines below). The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
     # separator is part of its word, and an escaped newline is a line continuation (_prev_char). Extglob @( !( ?(
     # *( +( are glued as $( is.
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
-    po, gc, esc = _ParenFlags(), -2, bytearray(len(c))
+    po, gc, uc, esc = _ParenFlags(), -2, -2, bytearray(len(c))
     while i < n:
         ch, q = c[i], stack[-1]
         if q == "!":
@@ -758,7 +759,7 @@ def _quote_mask(c, stack=None, hd=False):
                 p = _prev_char(c, i, esc)
                 po.append(p >= 0 and not esc[p] and c[p] in _GLUE_OPEN)
             elif ch == ")" and po and po[-1] == "c":
-                gc = i if po.glued else gc
+                uc = i if po.glued else uc
             elif ch == ")" and po and po.pop():
                 gc = i
             elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
@@ -806,6 +807,14 @@ def _quote_mask(c, stack=None, hd=False):
         elif ch in (SQ, '"'):
             mask[i] = 1
             stack.append(ch)
+        elif ch == "#" and uc >= 0 and _prev_char(c, i, esc) == uc:
+            j = c.find("\n", i)  # GH #833 review 2: an unsure #, read both ways (see above)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                if c[k] in "'\"`<":
+                    mask[k] = 1
+            i = j
+            continue
         elif ch == "#" and ((p := _prev_char(c, i, esc)) < 0 or not esc[p] and (c[p] in " \t\n;&|(" or c[p] == ")" and gc != p)):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j

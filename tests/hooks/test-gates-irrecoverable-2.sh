@@ -4535,4 +4535,23 @@ done
 for _c in 'echo $(case a in a) :;; esac) #; git stash' $'echo a \\\n#; git stash' 'echo @(a) #; git stash'; do
   test_allow "$SUBAGENT_GIT_GUARD" "GH #833 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #833 review 2: a # right after an unsure `)` (a case marker on top, a glued ( open) is read both ways: its line
+# stays visible, but no quote or << on it opens anything, so neither reading hides the lines below it.
+test_deny  "$IRRECOVERABLE" 'GH #833 review 2: a=(do case); case a in a)#<<E \n ;; esac; rm -rf ~/ \n E' \
+  "$(bash_payload $'a=(do case); case a in a)#<<E\n;; esac; rm -rf ~/\nE')"
+test_allow "$IRRECOVERABLE" 'GH #833 review 2 control: a=(do case); case a in a)#<<E \n ;; esac; rm -f x \n E' \
+  "$(bash_payload $'a=(do case); case a in a)#<<E\n;; esac; rm -f x\nE')"
+for _c in $'a=(do case); case a in a)#<<E\n;; esac; claude -p hi\nE' $'a=(do case); case a in a)#<<E\n;; esac; X=claude; $X -p hi\nE' \
+    $'shopt -s extglob\necho @(do|case); case a in a)#<<E\n;; esac; claude -p hi\nE' \
+    $'X=claude; echo $(echo do case); case a in a)#\'\n;; esac; $X -p hi\n#\''; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 2: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 2 control: subagent: ...#<<E \n ;; esac; claude --version \n E' \
+  "$(bash_agent_payload $'a=(do case); case a in a)#<<E\n;; esac; claude --version\nE' fork)"
+for _c in $'a=(do case); case a in a)#\'\n;; esac; git stash\n#\'' $'a=(do case); case a in a)#"\n;; esac; git stash\n#"' \
+    $'shopt -s extglob\necho @(x|case); case a in a)#\'\n;; esac; git stash\n#\'' $'a=(do case); case a in a)#<<E\n;; esac; git stash\nE'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 2: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 2 control: subagent: ...)#'"'"' \n ;; esac; git status \n #'"'" \
+  "$(bash_agent_payload $'a=(do case); case a in a)#\'\n;; esac; git status\n#\'' fork)"
 gates_summary
