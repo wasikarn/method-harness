@@ -4244,4 +4244,13 @@ for _c in $'set -e\nFLAGS=-r\nconfigure() {\n  SAFE=-i\n}\nremove_build() {\n  r
   'R=-r; main(){ I=-i; run; }; run(){ rm $R $I d; }; main "$@"' 'R=-r; f(){ local I=-i; local I; rm $R $I d; }; f'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 5 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #818 review 6: the function rule is off unless every function head has a body the scan recorded (a `f() ( .. )`
+# body, a `}` right after `fi`, or a comment before the `{` is not one).
+for _c in 'F=-r; init() { G=-i; }; run() ( rm $F $G b ); init; run' \
+  'F=-r; setup() { G=-i; }; clean() { if [ -d b ]; then rm $F $G b; fi }; setup; clean' \
+  'F=-r; setup() { G=-i; }; clean() { (cd /tmp && rm $F $G b) }; setup; clean' \
+  $'RFLAG=-r\nparse_opts() {\n  CONFIRM=-i\n}\nclean_build()  # remove the build dir\n{\n  rm $RFLAG $CONFIRM build\n}\nparse_opts\nclean_build' \
+  'F=-r; G=-i; f(){ local G; G=-i; local G; rm $F $G b; }; f' 'F=-r; G=-i; f(){ local -I G; rm $F $G b; }; f'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 6 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
 gates_summary

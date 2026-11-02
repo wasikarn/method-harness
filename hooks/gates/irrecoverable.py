@@ -6408,6 +6408,7 @@ _LOCAL_RE = re.compile(r"(?<![\w$-])(local|declare|typeset)((?:[ \t]+[-+][A-Za-z
 _DECL_WORDS = frozenset(("export", "local", "declare", "typeset", "readonly"))
 _REDIR_RE = re.compile(r"[0-9]*(?:[<>]&?|&>)>?-?[ \t]*(?:[^\s;&|()<>]+)?")
 
+_FN_ANY_HEAD_RE = re.compile(r"(?<![\w.:$-])(?:function[ \t]+[^\s()<>;&|]+|[A-Za-z_][\w.:-]*[ \t]*\([ \t]*\))")
 _FN_HEAD_RE = re.compile(r"(?:(?<![\w-])function[ \t]+([^\s()<>;&|]+)(?:[ \t]*\([ \t]*\))?|([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\))[ \t\n]*$")
 
 def _cmd_pos(text, i, seps=";\n&|(){"):
@@ -6431,7 +6432,7 @@ def _shell_scan(text, groups=None):
     seg, braces, loops = [-1], [], []
     fns, loop_spans = [], []
     exp, bt, brk = 0, False, 0  # inside ${..}, backticks, $[..] / [..]: an `&` there is text (GH #818 review)
-    bg, dq_sub = [], False
+    bg, dq_sub, brace_bad = [], False, False
     while i < n:
         c = text[i]
         if sq:
@@ -6493,6 +6494,8 @@ def _shell_scan(text, groups=None):
                 o, seg[-1], name = braces.pop()  # the group's list goes on past it: `{ ..; } &` is one background list
                 if name:
                     fns.append((o, i, name[0], name[1]))
+            elif w == "}":
+                brace_bad = True  # a `}` the scan did not match (`fi }`, `) }`)
             elif w == "do" and _cmd_pos(text, i, ";\n&"):
                 loops.append((i, seg[-1]))
             elif w == "done" and loops and _cmd_pos(text, i, ";\n&"):
@@ -6501,6 +6504,10 @@ def _shell_scan(text, groups=None):
         i += 1
     if groups is not None:
         groups["fn"], groups["loop"] = fns, loop_spans
+        # GH #818 review 6: every function head has a body the scan recorded (not `f() ( .. )`, a `}` right after `fi`,
+        # or a comment before the `{`), else the function rule is off.
+        heads = sum(1 for m in _FN_ANY_HEAD_RE.finditer(text) if not text_at[m.start()])
+        groups["fn_ok"] = not braces and not brace_bad and heads == len(fns)
     # GH #818 review 2/3: the scan does not follow the quotes nested in "$( .. )", "` .. `" or "${X:-".."}", where an inner "a & b" read
     # as a bare `&`; with one in the text no background list is read, as before GH #818.
     if groups is not None:
@@ -6557,7 +6564,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     memo = {}
     sets = [(m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None))
             for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m, memo))]
-    groups = {"fn": (), "loop": (), "bg": ()}
+    groups = {"fn": (), "loop": (), "bg": (), "fn_ok": False}
     spans, text_at = _shell_scan(text, groups if scoped else None) if raw else ((), b"")
     scope = {}  # GH #818: an entry's end -> the (open, close) only references inside which it reaches
     if raw:
@@ -6574,16 +6581,16 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                     if w.group(1) or w.group(2) or w.group(3):
                         sets.append((base + w.end(), w.group(1) or w.group(2) or w.group(3), None))
         # GH #818: `local G` / `declare G` with no value, inside a function: G is unset there, for that body only.
-        for m in _LOCAL_RE.finditer(text) if scoped else ():
-            if not text_at[m.start()] and not set(m.group(2)) & set("gpfFn"):
+        locs = list(_LOCAL_RE.finditer(text)) if scoped else ()
+        for m in locs if len(locs) <= 200 else ():  # GH #818 review 6: a bound, as each one searches its body
+            if not text_at[m.start()] and not set(m.group(2)) & set("gpfFnI"):
                 body = min(((o, c) for o, c, _, _ in groups["fn"] if o < m.start() < c), key=lambda b: b[1] - b[0],
                            default=None)
                 if body:
                     base = m.start(3)
                     for w in re.finditer(r"[A-Za-z_]\w*", m.group(3)):
-                        if re.search(r"(?<![\w$-])(?:local|declare|typeset)[ \t][^;&|\n]*(?<![\w$-])" + w.group(0) + "=",
-                                     text[body[0]:m.start()]):
-                            continue  # GH #818 review 5: already local with a value, which a bare `local` keeps
+                        if re.search(r"(?<![\w$-])" + w.group(0) + "=", text[body[0]:m.start()]):
+                            continue  # GH #818 review 5/6: set in the body before, maybe local, which a bare `local` keeps
                         scope[base + w.end()] = body
                         sets.append((base + w.end(), w.group(0), None))
     sets.sort(key=lambda e: e[0])
@@ -6635,7 +6642,8 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         # the walk-back below, so an unset reads as develop read it.
         # GH #818 review 5: a reference inside a body runs when that body is called, which the text order does not
         # show (functions first, calls at the bottom), so the rule reads only a reference outside every body.
-        return (v is None and not strict) or not fl or in_body(ref) or all(o < ref < c or first < ref for o, c, first in fl)
+        return (v is None and not strict) or not fl or not groups["fn_ok"] or in_body(ref) or all(
+            o < ref < c or first < ref for o, c, first in fl)
     def in_body(ref):
         return any(o < ref < c for o, c, _, _ in groups["fn"])
     def sub(m):
