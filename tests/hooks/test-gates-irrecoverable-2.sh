@@ -4620,4 +4620,14 @@ for _c in $'x+()#\'\n{ git stash; }\nx+\n#\'' $'f@()#\'\n{ git clean -fdx; }\nf@
 done
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 7 control: subagent: x+()#'"'"' \n { git status; } \n x+ \n #'"'" \
   "$(bash_agent_payload $'x+()#\'\n{ git status; }\nx+\n#\'' fork)"
+# GH #833 review 8: hd mode's (( branch: !((1)) with extglob off is ! and an arithmetic command, so its ) is unsure too.
+for _c in $'!((1))#<<E\nrm -rf ~\nE' $'true; !((1))#<<E\nrm -rf ~\nE' $'if !((1))#<<E\nrm -rf ~\nE\nthen :; fi' \
+    $'?((1))#<<E\nrm -rf ~\nE' $'@((a))#<<E\nrm -rf ~\nE'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 8: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 8 control: !((1))#<<E \n rm -f x \n E' "$(bash_payload $'!((1))#<<E\nrm -f x\nE')"
+test_deny  "$IRRECOVERABLE" 'GH #833 review 8: subagent: !((1))#<<E \n claude -p hi \n E' \
+  "$(bash_agent_payload $'!((1))#<<E\nclaude -p hi\nE' fork)"
+test_allow "$IRRECOVERABLE" 'GH #833 review 8 control: subagent: !((1))#<<E \n claude --version \n E' \
+  "$(bash_agent_payload $'!((1))#<<E\nclaude --version\nE' fork)"
 gates_summary

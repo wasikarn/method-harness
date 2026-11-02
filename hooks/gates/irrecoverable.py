@@ -863,8 +863,9 @@ def _quote_mask(c, stack=None, hd=False):
         elif q == "((" and ch == ")" and c[i + 1:i + 2] == ")":
             stack.pop()
             i += 1
-            if po and po.pop():
-                gc = i
+            x = po.pop() if po else False  # GH #833 review 8: !((1)) with extglob off is ! and an arithmetic command
+            gc = i if x is True else gc
+            uc = i if x == "x" else uc
         elif ch == "(" and q in ("((", "a("):
             stack.append("a(")  # a ( inside arithmetic: its ) closes it, not the (( frame
         elif ch == "(" and q == "(":
