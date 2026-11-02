@@ -3086,20 +3086,14 @@ def _group_ends(g):
                 cut = min(cut, k)
     return lead, opens, t[:cut], trail
 
-def _heredoc_stdin(g):
-    # GH #815: an unquoted, unescaped << (a heredoc or here-string) gives the stage's shell its stdin, so it reads
-    # no pipe. Read on the raw stage: `bash -s \\<\\<` passes a literal word and still reads the pipe.
-    if "<<" not in g:
-        return False
-    mask = _quote_mask(g)
-    return any(g.startswith("<<", k) and not mask[k] and not mask[k + 1] for k in range(len(g) - 1))
-
 def _inline_interp_to_shell(c):
     # GH #801: some pipeline of c runs an inline python/node script stage and, after it, a shell reading stdin.
     # Read on the ANSI-C-decoded text: _pieces does not model \' inside $'..', so a quoted probe string
     # ($'python3 -c \'x\' | bash') would split at its own pipes.
-    # GH #815: a { } or ( ) group whose commands run one is such a stage, and a shell whose stdin is a heredoc or
-    # here-string reads no pipe. depth: the open groups; the first `marked` of them ran an inline script.
+    # GH #815: a { } or ( ) group whose commands run one is such a stage. A shell given a heredoc or here-string
+    # (`| bash <<EOF`) is still read as reading the pipe: an over-deny, kept, since a << that is no stdin redirect
+    # (2<<, \<\<, ${x:-<<}, $[1<<2], <(cat <<<x)) let a reading of it through. depth: the open groups; the first
+    # `marked` of them ran an inline script.
     c = _join_continuations(_normalize_ansi_c_quotes(c) if "$'" in c else c)
     depth = marked = 0
     for s, e in _pieces(c):
@@ -3112,7 +3106,7 @@ def _inline_interp_to_shell(c):
                     depth -= 1
                     inline, marked = inline or depth < marked, min(marked, depth)
             depth += opens
-            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g) and not _heredoc_stdin(g):
+            if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g):
                 return True
             if _runs_inline_interp(g):
                 inline, marked = True, depth

@@ -4198,12 +4198,14 @@ for _c in $'uv run python -c \'print(1)\' | bash' $'poetry run python3 -c 1 | sh
   $'python3 - <<\'EOF\'\nimport os\nf = os.system\nf(\'git reset --hard\')\nEOF' \
   $'python3 - <<\'EOF\'\nfrom os import system as run\nrun(\'git reset --hard\')\nEOF' \
   $'cat <<EOF\n$(python3 -c 1 | bash)\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | bash' \
-  $'python3 -c \'print("git reset --hard")\' | bash -s \\<\\<'; do
+  $'python3 -c \'print("git reset --hard")\' | bash -s \\<\\<' \
+  $'python3 -c 1 | bash -s 2<<EOF\nx\nEOF' $'python3 -c 1 | bash -s <(cat <<<x)' $'python3 -c 1 | bash -s ${x:-<<}' \
+  $'python3 -c 1 | bash -s $[1<<2]' $'python3 -c 1 | bash <<EOF\nx\nEOF'; do
   test_deny  "$IRRECOVERABLE" "GH #815: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
 # GH #815 controls: the same shapes with no shell reading the script's output, a script file (not read either way),
-# a value word naming sh or holding e, a code body's own data heredoc, an expanding body's literal text, and a
-# shell whose stdin is a heredoc or here-string (the NIT: it reads no pipe).
+# a value word naming sh or holding e, a code body's own data heredoc, and an expanding body's literal text. A shell
+# given a heredoc (`| bash <<EOF`, the issue's NIT) stays denied: a << that is no stdin redirect must not get past.
 for _c in $'uv run python -c \'print(1)\' | grep 1' $'uv run --with sh python3 -c 1 | tee log' \
   $'{ python3 -c 1; } | grep x' $'(python3 -c 1); bash x.sh' $'(cd /tmp && python3 -c 1) > out.txt; echo ls | grep sh' \
   $'node --env-file .env -e 1 | jq .' $'python3 -c 1 | s\\ort' $'$\'\\x70ython3\' -c 1 | wc -l' \
@@ -4211,8 +4213,7 @@ for _c in $'uv run python -c \'print(1)\' | grep 1' $'uv run --with sh python3 -
   $'bash <<\'EOF\'\npython3 -c 1 | grep 1\nEOF' $'bash <<\'EOF\'\ncat > y.sh <<\'IN\'\npython3 -c 1 | sh\nIN\nEOF' \
   $'perl -e \'print 1\' | wc -l' $'perl -Mfeature=say x.pl | sh' \
   $'python3 - <<\'EOF\'\nimport os\nf = os.path.join\nprint(f(\'a\', \'git reset --hard\'))\nEOF' \
-  $'cat > notes.md <<EOF\nbuilt $(date)\nrun python3 -c 1 | bash\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | wc -l' \
-  $'python3 -c 1 | bash <<EOF\nx\nEOF' $'python3 -c 1 | bash <<< \'echo hi\''; do
+  $'cat > notes.md <<EOF\nbuilt $(date)\nrun python3 -c 1 | bash\nEOF' $'cat <<EOF\nx\nEO\\\nF\npython3 -c 1 | wc -l'; do
   test_allow "$IRRECOVERABLE" "GH #815 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
 gates_summary
