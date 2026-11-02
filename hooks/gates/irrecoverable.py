@@ -6857,8 +6857,8 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         t = text[a:b]
         return not groups["fn_ok"] or bool(
             (fn_call_re and fn_call_re.search(t)) or _MAY_SET_RE.search(t) or re.search(
-                r"(?<![\w$-])" + name + r"\+?=|\$\{" + name + r":?=|(?<![\w-])(?:read|mapfile|readarray|getopts|for)(?![\w-])"
-                r"[^;&|\n]*(?<![\w$-])" + name + r"(?![\w-])|-v[ \t]+" + name + r"(?![\w-])", t))
+                r"(?<![\w$-])" + name + r"(?:\[[^\]\n]{0,80}\])?\+?=|\$\{" + name + r":?=|(?<![\w-])(?:read|mapfile|readarray|getopts|for)"
+                r"(?![\w-])[^;&|\n]{0,300}?(?<![\w$-])" + name + r"(?![\w-])|-v[ \t]+" + name + r"(?![\w-])", t))
     def spend(n):
         # GH #818 review 2: past one budget the scoped copy is read as the raw one (paren subshells only, no background
         # list, function or loop rule), which then adds nothing.
@@ -6932,7 +6932,8 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                     first = next((k for k in ks if usable(ends[k], vals[k], ref, True, name)), None)
                     if first is not None and ends[first] > ref:
                         lk = next(k for k in reversed(ks) if usable(ends[k], vals[k], ref, True, name))
-                        if vals[lk] is None:
+                        # GH #818 review 11: an unset in a ( .. ) that closes within the body never reaches a later pass
+                        if vals[lk] is None and not any(lo < o and c < lc for o, c in encl(ends[lk])[0]):
                             return m.group(0)
             skip = []
             for k in range(bisect.bisect_right(ends, ref) - 1, -1, -1):

@@ -4371,4 +4371,8 @@ for _c in $'F=-r\nsafe_cmd() { G=-i; }\naction=safe\n"${action}_cmd"\nrm $F $G b
   'F=-r; G=-i; for d in a b; do rm $F $G b; kubectl config unset G; done'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 10 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #818 review 11: an unset in a ( .. ) that closes within the loop body never reaches a later pass; G[0]= may set G.
+for _c in $'F=-r; G=-i\nfor f in a b; do (cd /tmp && rm $F $G x; unset G); done' $'F=-r; G=-i\nf(){ local G; G[0]=-i; rm $F $G d; }\nf'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 11 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
 gates_summary
