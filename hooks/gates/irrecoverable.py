@@ -695,13 +695,22 @@ def _quote_mask(c, stack=None, hd=False):
     # GH #668 (hd, _strip_heredocs only): stack carries the state from one line to the next, and ${..},
     # $((..)), ((..)), $[..] and name=(..) are masked too. A `case` inside $( pushes "!", which never pops
     # and masks the rest: its pattern ) would close the $( early.
+    # GH #820 item 5: the ) of $(..) $((..)) <(..) >(..) name=(..) ends inside its word, so a # glued after it is
+    # no comment (`echo $(date)#|claude` pipes); the ) of a subshell, of ((..)) or an unmatched one ends the word.
+    # po holds one flag per open unquoted (, whether its ) ends mid-word; gc is the index of the last such ).
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
+    po, gc = [], -2
     while i < n:
         ch, q = c[i], stack[-1]
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
+        if q not in (SQ, '"', "$'"):
+            if ch == "(":
+                po.append(i > 0 and c[i - 1] in "$<>=")
+            elif ch == ")" and po and po.pop():
+                gc = i
         if q in _HD_OFF:
             mask[i] = 1
         if q == SQ:
@@ -717,9 +726,12 @@ def _quote_mask(c, stack=None, hd=False):
                 stack.pop()
             elif hd and c.startswith("$((", i):
                 stack.append("((")
+                po += [True, False]
                 i += 2
             elif ch == "$" and c[i + 1:i + 2] == "(" or hd and ch == "$" and c[i + 1:i + 2] == "{":
                 stack.append(c[i + 1])
+                if c[i + 1] == "(":
+                    po.append(True)
                 i += 1
             elif ch == "`":
                 stack.append("`")
@@ -740,7 +752,7 @@ def _quote_mask(c, stack=None, hd=False):
         elif ch in (SQ, '"'):
             mask[i] = 1
             stack.append(ch)
-        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|()"):
+        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|(" or c[i - 1] == ")" and gc != i - 1):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
             mask[i:j] = b"\1" * (j - i)
@@ -753,15 +765,19 @@ def _quote_mask(c, stack=None, hd=False):
                 stack.pop()
         elif c.startswith("((", i) or c.startswith("$((", i):
             stack.append("((")
+            po += [False] if ch == "(" else [True, False]
             i += 1 if ch == "(" else 2
         elif ch == "$" and c[i + 1:i + 2] in ("{", "[", "("):
             stack.append(c[i + 1])
+            po += [True] if c[i + 1] == "(" else []
             i += 1
         elif ch in "<>" and c[i + 1:i + 2] == "(":  # <( and >( read their body as $( does
             stack.append("(")
+            po.append(True)
             i += 1
         elif ch == "=" and c[i + 1:i + 2] == "(":
             stack.append("=(")
+            po.append(True)
             i += 1
         elif ch == "`":
             stack.pop() if q == "`" else stack.append("`")
@@ -772,6 +788,8 @@ def _quote_mask(c, stack=None, hd=False):
         elif q == "((" and ch == ")" and c[i + 1:i + 2] == ")":
             stack.pop()
             i += 1
+            if po and po.pop():
+                gc = i
         elif ch == "(" and q in ("((", "a("):
             stack.append("a(")  # a ( inside arithmetic: its ) closes it, not the (( frame
         elif ch == "(" and q == "(":

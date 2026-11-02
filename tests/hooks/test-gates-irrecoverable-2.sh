@@ -4428,4 +4428,21 @@ for _c in 'if true; then python3 -c 1; fi | grep x' 'while read l; do python3 -c
   'for ((i=0;i<2;i++)); do python3 -c 1; done | sort' 'while(true); do echo ls; done | bash' 'x=$((1+2)); echo ls | bash'; do
   test_allow "$IRRECOVERABLE" "GH #823 control: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
+# GH #820 item 5: a `#` glued after the `)` of $(..), $((..)), <(..), >(..) or name=(..) is part of the word in bash,
+# never a comment (`echo $(date)#|$X` pipes into $X). A `)` closing a subshell `(..)` or `((..))` still ends the word,
+# so a `#` after it, or after a blank, opens a comment. The mask is _quote_mask here and the shared _quotemask.py
+# (subagent-git-guard, test-integrity) with its inline copies.
+for _c in 'X=claude; echo $(date)#|$X' 'X=claude; echo $(date)#x|$X' 'X=claude; echo $((1+1))#|$X' \
+  'X=claude; cat <(date)#|$X' 'X=claude; echo $( (date) )#|$X' 'echo $(date)#|claude' 'X=claude; a=$(date)#; $X -p hi'; do
+  test_deny  "$IRRECOVERABLE" "GH #820 item 5: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'X=claude; echo $(date) #|$X' 'X=claude; (date)#|$X' 'X=claude; ((1))#|$X' 'X=claude; echo $(date)#|$X --version'; do
+  test_allow "$IRRECOVERABLE" "GH #820 item 5 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_deny  "$IRRECOVERABLE" 'GH #820 item 5: X=rm; echo a #'"'"' \n $X -rf /' "$(bash_payload $'X=rm; echo a #\'\n$X -rf /')"
+test_deny  "$IRRECOVERABLE" 'GH #820 item 5: X=rm; echo $(date)#; $X -rf /' "$(bash_payload 'X=rm; echo $(date)#; $X -rf /')"
+test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo a #'"'"' \n $X --version' "$(bash_payload $'X=rm; echo a #\'\n$X --version')"
+test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo $(date) #; $X -rf /' "$(bash_payload 'X=rm; echo $(date) #; $X -rf /')"
+test_deny  "$SUBAGENT_GIT_GUARD" 'GH #820 item 5: subagent: echo $(date)#; git stash' "$(bash_agent_payload 'echo $(date)#; git stash' fork)"
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #820 item 5 control: subagent: echo $(date) #; git stash' "$(bash_agent_payload 'echo $(date) #; git stash' fork)"
 gates_summary

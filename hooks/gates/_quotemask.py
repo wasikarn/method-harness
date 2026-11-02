@@ -43,9 +43,14 @@ def mask_quotes(s):
     # the two blanks go to the FRONT of that word, so the joined word reads
     # whole to the callers' anchors and every char after the pair keeps its
     # offset. A "#" after a mid-word pair stays mid-word, not a comment.
+    # GH #820 item 5: a ")" that closes a "(" glued after "$", "<", ">" or
+    # "=" ($(..) $((..) <(..) >(..) name=(..)) ends inside its word, so a "#"
+    # right after it is no comment (`echo $(date)#|claude` pipes); a subshell
+    # ")" or an unmatched one (a case pattern) still ends the word.
     out = []
     pad = {}  # out index -> blank pairs to put in front of that piece (GH #306)
     word_start = 0  # out index where the current word begins
+    parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued
     i, n = 0, len(s)
     at_word_start = True
     while i < n:
@@ -148,4 +153,8 @@ def mask_quotes(s):
             at_word_start = c in _WORD_BOUNDARY_CHARS
             if at_word_start:
                 word_start = len(out)
+            if c == "(":
+                parens.append(i > 1 and s[i - 2] in "$<>=")
+            elif c == ")" and parens and parens.pop():
+                at_word_start = False  # GH #820 item 5: $(..)# is one word
     return "".join("  " * pad.get(k, 0) + p for k, p in enumerate(out))
