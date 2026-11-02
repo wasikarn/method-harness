@@ -1598,6 +1598,7 @@ def _nested_spawn_text(c, overlap):
         return True
     work = 0  # shared across every anchor's scan, never reset per-anchor -- see _SPAWN_SCAN_BUDGET above
     mask = None
+    spans = None
     for m in _SPAWN_ANCHOR_RES[overlap].finditer(c):
         stmt, work = _spawn_statement(c[m.end(1):], work)
         if stmt is None:  # GH #798: a spent scan budget denies as "too dense", not as a spawn it did not find
@@ -1611,15 +1612,69 @@ def _nested_spawn_text(c, overlap):
             continue
         a, lead = m.start(1), m.group(1)
         lead_words = _spawn_lead_words(lead)
+        if lead_words is None and lead[:1] == ")" and "|" in c:
+            # GH #820 item 3: a case arm's `)` in a piped case (`echo hi | case a in a) claude;; esac`), never a `$(..)`
+            # close (`echo $(date) claude started`).
+            if spans is None:
+                spans = _piped_compound_spans(c, mask)
+            o = next((o for o, e, kw in spans if kw == "case" and o <= a < e), None)
+            p = -1 if o is None else c.rfind("(", o, a)
+            if o is not None and (p < 0 or c[p - 1] != "$"):
+                lead_words = _spawn_lead_words(lead[1:])
         if lead_words is None:
             continue
         # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
         # over as words.
         sep = re.match(r"[|;&(){\s]*", lead).group()
         piped = _pipe_before(c, a + len(sep), mask) or "xargs" in lead_words  # GH #810: | \<newline>, | # comment
+        # GH #820 item 4: `>(claude)` reads what is written to it. Item 3: a pipe into a compound command feeds every
+        # claude in it (`echo hi | case a in a) claude;; esac`, `| while read l; do claude; done`).
+        if not piped and c[a] == "(" and a and c[a - 1] == ">" and not mask[a - 1]:
+            piped = True
+        if not piped and "|" in c:
+            if spans is None:
+                spans = _piped_compound_spans(c, mask)
+            piped = any(o <= a < e for o, e, _ in spans)
         if _claude_starts_session(stmt, piped):
             return True
     return False
+
+_COMPOUND_KW_RE = re.compile(r"(?<![^\s;&|()])(case|if|while|until|for|select|esac|fi|do|done)(?![^\s;&|()])")
+_COMPOUND_OPEN = ("case", "if", "while", "until", "for", "select")
+_KW_LEAD_WORDS = ("then", "do", "else", "elif", "!", "{", "time")
+
+def _at_command_position(c, i):
+    j = i
+    while j and c[j - 1] in " \t":
+        j -= 1
+    if not j or c[j - 1] in ";&|()\n":
+        return True
+    w = re.search(r"\S+$", c[max(0, j - 8):j])
+    return w is not None and w.group() in _KW_LEAD_WORDS
+
+def _piped_compound_spans(c, mask):
+    # GH #820 item 3: the (start, end) of each compound command (case, if, while, until, for, select) a pipe feeds, to
+    # its matching esac / fi / done. Keywords are counted at a command position outside quotes and comments; one this
+    # misses ends a span early (a gap), never late. A span with no close runs to the end of the text.
+    if not re.search(r"(?<![\w-])(?:case|if|while|until|for|select)(?![\w-])", c):
+        return []
+    # One pass with a stack: case / if open at once, while / until / for / select at their `do`.
+    out, stack, pending = [], [], []
+    for m in _COMPOUND_KW_RE.finditer(c):
+        w, at = m.group(1), m.start()
+        if mask[at] or not _at_command_position(c, at):
+            continue
+        if w in _COMPOUND_OPEN:
+            e = (at, w, _pipe_past_comments(c, at, mask))  # a walk back from at: no scan of the text before it
+            (stack if w in ("case", "if") else pending).append(e)
+        elif w == "do":
+            stack.append(pending.pop() if pending else (at, w, False))
+        elif stack:
+            o, kw, piped = stack.pop()
+            if piped:
+                out.append((o, m.end(), kw))
+    out.extend((o, len(c), kw) for o, kw, piped in stack + pending if piped)
+    return out
 
 _RAW_PIPE_RE = re.compile(r"(?<!\|)\|&?(?:[\s({]|\\\n)*$")  # develop's reading: | \<newline> (GH #810)
 
@@ -3758,7 +3813,12 @@ def _text_statements(text):
     # `X=claude; echo hi | $X`); `||` is one separator, so `true || $X` is not read as piped.
     # A pipe that ends a line goes on past blank lines or a comment: it is carried to the next line's statement as
     # `| ` (GH #810: `echo hi |` then `$X` on the next line). A backslash-newline is masked, so no split is made there.
+    # GH #820 item 3: a statement inside a compound command a pipe feeds (`echo hi | if x; then $X; fi`) reads that
+    # stdin too, so it starts with `| ` as well.
     mask, out, start, i, carry = _quote_mask(text), [], 0, 0, ""
+    spans = _piped_compound_spans(text, mask) if "|" in text else []
+    def fed(st, at):
+        return "| " + st if spans and not st.lstrip().startswith("|") and any(o <= at < e for o, e, _ in spans) else st
     while i < len(text):
         ch = text[i]
         if ch in ";&|\n" and not mask[i]:
@@ -3766,7 +3826,7 @@ def _text_statements(text):
             if pipe:
                 carry, start, i = pipe.group(1) + " ", i + 1, i + 1
                 continue
-            out.append(carry + text[start:i])
+            out.append(fed(carry + text[start:i], start))
             carry = ""
             if ch == "|" and text[i + 1:i + 2] == "|":
                 i += 1
@@ -3777,7 +3837,7 @@ def _text_statements(text):
             else:
                 start = i + 1
         i += 1
-    out.append(carry + text[start:])
+    out.append(fed(carry + text[start:], start))
     return out
 
 
@@ -6533,23 +6593,45 @@ def _scan_body_vars(body):
     if _CMD_VALS is None:
         _CMD_VALS = {} if len(cmd) > _VIEW_LEN_CAP else {
             m.group(1): next(g for g in m.groups()[1:] if g is not None) for m in _PLAIN_ASSIGN_RE.finditer(cmd)}
+    starts = [body]
+    # GH #816 / #820 item 1: a double-quoted body keeps the outer shell's `\$` / `\`` (shlex leaves them), which the
+    # child reads as `$` / `` ` ``: `export Y=claude; bash -c "date|\$Y"`, and a body nested in a single-quoted one
+    # (`bash -c 'bash -c "\$X -p x"'`). A copy with them unescaped is read too, unless the body is written
+    # single-quoted only (`bash -c '\$Y -p x'` runs a command named `$Y`).
+    u = re.sub(r"\\([$`])", r"\1", body)
+    if u != body and not ("'" + body + "'" in cmd and '"' + body + '"' not in cmd):
+        starts.append(u)
+    seen = None
+    for v in starts:
+        v = _body_var_text(v)
+        if v is None:
+            return
+        # GH #816: a body's plain assignments, its values filled in, are outer values for the bodies nested in it
+        # (`export Y=$X; bash -c "\$Y -p x"`), which the main reading queues after it.
+        if len(_CMD_VALS) < 1000:
+            for m in _PLAIN_ASSIGN_RE.finditer(v):
+                _CMD_VALS.setdefault(m.group(1), next(g for g in m.groups()[1:] if g is not None))
+        if v == body:
+            continue
+        if seen is None:
+            seen = set(_text_statements(body))
+        for st in _text_statements(v):
+            if st.strip() and st not in seen and (
+                    _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st)):
+                _deny_nested_spawn()
+
+def _body_var_text(v):
+    # v with its variables substituted (_scan_body_vars), or None once the shared budget is spent.
     global _BODY_VAR_WORK
-    v = body
     for _ in range(8):  # `Y=$X; $Y -p x`: a value that is itself a reference, up to 8 links
         _BODY_VAR_WORK += len(v)
         if _BODY_VAR_WORK > _BODY_VAR_BUDGET:
-            return  # GH #812 review 11: past one budget across all bodies, the rest keep develop's checks only
+            return None  # GH #812 review 11: past one budget across all bodies, the rest keep develop's checks only
         w = _ordered_var_text(v, True, _CMD_VALS, True)
         if w == v or len(w) > _VIEW_LEN_CAP:  # bounded: a value holding refs (`X='$X$X'`) grows each pass
             break
         v = w
-    if v == body:
-        return
-    seen = set(_text_statements(body))
-    for st in _text_statements(v):
-        if st.strip() and st not in seen and (
-                _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st)):
-            _deny_nested_spawn()
+    return v
 
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
