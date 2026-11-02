@@ -6392,8 +6392,9 @@ _run_words()
 # owned by a rule id of its own (so it can ship shadow, GH #337): "ifs-split" reads $IFS / ${IFS} /
 # ${IFS:..} as a blank and drops the empty positionals ($9, $@) used as word ends; "var-verb" reads back
 # `$NAME` / `${NAME}` where the command assigns NAME a plain value (`X=rm; $X -rf x`; the last value,
-# then the first). Views run only after the command passed every check; the var-verb view (rm's rules enforce, GH #767) only
-# up to _VIEW_LEN_CAP: each one re-reads the whole text, and a timed-out hook allows.
+# then the first). Views run only after the command passed every check; each one re-reads the whole text, and a
+# timed-out hook allows, so the var-verb view runs every rule only up to _VIEW_LEN_CAP; past it, up to the parser's
+# _CMD_LEN_CAP, it reads rm's enforced rules alone (GH #787: padding hid `F=-rf; rm $F b`).
 # ponytail: one substitution per view, not every combination of values or of the two readings.
 _IFS_RE = re.compile(r"\$(?:\{IFS(?:[:%#/^,][^}]{0,40})?\}|IFS(?![A-Za-z0-9_]))")
 _EMPTY_POS_RE = re.compile(r"\$(?:[1-9@*]|\{[1-9@*]\})")
@@ -6404,6 +6405,10 @@ _VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
 _PLAIN_ASSIGN_RE = re.compile(
     r"(?<![\w$-])([A-Za-z_]\w*)=(?:'([^']*)'|\"([^\"$`\\]*)\"|([^\s;&|()<>'\"$`\\]*))(?=[\s;&|()]|$)")
 _VIEW_LEN_CAP = 20_000
+_VAR_RM_ONLY = len(cmd) > _VIEW_LEN_CAP  # GH #787: past the cap, var-verb's copies are read by rm's enforced rules alone
+# GH #787: past the cap, the characters all of var-verb's rm-only passes read together; also the most one copy may grow to
+# while it is built (a long value put back at many references built gigabytes before any check).
+_VAR_LONG_READ = 900_000
 
 # GH #589: a substitution whose output the text shows: `$(echo WORDS)`, `$(printf [--] WORDS)` (also
 # `command echo`, `/bin/echo`) and the backtick forms (WORDS with no further substitution in them) print WORDS; `${X:-W}`, `${X-W}`, `${X:=W}`,
@@ -6633,7 +6638,8 @@ def _views():
             if v != _BRACEX_TEXT and ("brace-view", v) not in out:
                 out.append(("brace-view", v))
     # The enforced ifs-split view reads as far as the parser does (_CMD_LEN_CAP); capping it lower let
-    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. Only the var-verb view keeps the lower cap (GH #787 tracks raising it now rm enforces there).
+    # padding past _VIEW_LEN_CAP hide `rm${IFS}-rf`. The var-verb view runs every rule only below the lower cap; past
+    # it, its copies are read by rm's enforced rules alone (GH #787, _VAR_RM_ONLY).
     v = _ifs_split(cmd)
     if v != cmd:
         out.append(("ifs-split", v))
@@ -6643,8 +6649,6 @@ def _views():
     # unread, so a misread quoted default must not hide an unquoted one (`${G:--rf}`) in the same command.
     for v in _subst_literals(cmd):
         out.append(("subst-literal", v))
-    if len(cmd) > _VIEW_LEN_CAP:
-        return out
     vals = {}
     for m in _PLAIN_ASSIGN_RE.finditer(cmd):
         vals.setdefault(m.group(1), []).append(next(g for g in m.groups()[1:] if g is not None))
@@ -6659,11 +6663,21 @@ def _views():
     # (GH #808). A fifth, scoped copy (GH #818) is the raw one that also reads a background list, a function body, a
     # `local` and a loop's later pass as bash scopes them. rm's rules read all five; the spawn scan only the in-order one.
     for pick in (-1, 0, None, "raw", "scoped"):
-        def _sub(m, pick=pick):
+        grown = [len(cmd)]
+        def _sub(m, pick=pick, grown=grown):
             name = m.group(1) or m.group(2)
-            return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
-        v = (_ordered_var_text(cmd, pick is None, scoped=pick == "scoped") if pick in (None, "raw", "scoped")
-             else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+            r = vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
+            grown[0] += len(r) - len(m.group(0))
+            if _VAR_RM_ONLY and grown[0] > _VAR_LONG_READ:
+                raise _LongCopy
+            return r
+        try:
+            v = (_ordered_var_text(cmd, pick is None, scoped=pick == "scoped", long=_VAR_RM_ONLY and "raise")
+                 if pick in (None, "raw", "scoped")
+                 else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+        except _LongCopy:
+            _VAR_LONG_CUT[0] = True
+            continue
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
@@ -6671,7 +6685,11 @@ def _views():
     if vals and "#" in cmd:
         # GH #810: one more in-order copy that reads `#` comments as bash does, so `echo hi | # it's fed` then `$X` puts
         # claude back; an extra copy, so a misread comment only adds a reading (GH #812 review 11).
-        v = _ordered_var_text(cmd, True, comments=True)
+        try:
+            v = _ordered_var_text(cmd, True, comments=True, long=_VAR_RM_ONLY and "raise")
+        except _LongCopy:
+            _VAR_LONG_CUT[0] = True
+            v = cmd
         if v != cmd and ("var-verb", v) not in out:
             _VAR_SPAWN_TEXTS.add(v)
             out.append(("var-verb", v))
@@ -6946,7 +6964,12 @@ def _prefix_assign(text, m, memo):
             break
         nxt = _PLAIN_ASSIGN_RE.match(text, k) or _REDIR_RE.match(text, k)
         if nxt is None or nxt.end() == k:
-            head = re.split(r"[;&|(){}\n]", text[:m.start()])[-1].split()
+            # The words since the last separator: a bisect into the separators found once per text (GH #787: a split
+            # of the whole prefix per assignment grew with the square of the text past _VIEW_LEN_CAP).
+            if "seps" not in memo:
+                memo["seps"] = [i for i, ch in enumerate(text) if ch in ";&|(){}\n"]
+            n = bisect.bisect_left(memo["seps"], m.start())
+            head = text[memo["seps"][n - 1] + 1 if n else 0:m.start()].split()
             out = not any(w in _DECL_WORDS for w in head)
             break
         if nxt.re is _PLAIN_ASSIGN_RE:
@@ -6959,12 +6982,21 @@ def _prefix_assign(text, m, memo):
 class _SlowCopy(Exception):
     pass
 
+class _LongCopy(Exception):
+    pass
+
+# GH #787: past _VIEW_LEN_CAP the raw and scoped copies scan their subshell spans per entry and walk back per reference,
+# which grows with the square of the text; one budget of that work per copy. A copy past it is not read, and the
+# command asks (_VAR_LONG_CUT), as the same text under the cap could deny.
+_LONG_COPY_BUDGET = 4_000_000
+_VAR_LONG_CUT = [False]
+
 _MAY_SET_RE = re.compile(r"(?<![\w$-])(?:source|\.|eval)[ \t]")
 _LOOP_STOP_RE = re.compile(r"(?<![\w$-])(?:break|continue|return|exit)(?![\w-])")
 
 _OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
 
-def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False, scoped=False):
+def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False, scoped=False, long=False):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
@@ -7057,11 +7089,22 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         work[0] += n
         if work[0] > 100_000:
             raise _SlowCopy
+    long_work, slow_enclosing = [0], {}
+    def long_spend(n):
+        if long:
+            long_work[0] += n
+            if long_work[0] > _LONG_COPY_BUDGET:
+                raise _LongCopy
     def encl(at):
         # The spans and function bodies holding an entry, once per entry (GH #818 review: per reference was slow).
         if slow[0]:
-            return [(o, c) for o, c in spans if o < at <= c], (), ()
+            # GH #787 review 3: once per entry here too (per reference grew with references x spans past the cap)
+            if at not in slow_enclosing:
+                long_spend(1 + len(spans))
+                slow_enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], (), ())
+            return slow_enclosing[at]
         if at not in enclosing:
+            long_spend(1 + len(spans) + len(groups["bg"]) + len(groups["fn"]))
             spend(len(spans) + len(groups["bg"]) + len(groups["fn"]))
             fl = []
             for o, c, name, head in groups["fn"]:
@@ -7077,6 +7120,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], [(o, c) for o, c in groups["bg"] if o < at <= c], fl)
         return enclosing[at]
     def usable(at, v, ref, strict=False, name=None):
+        long_spend(1)
         sp, bg, fl = encl(at)
         if not slow[0]:
             spend(1 + len(sp) + len(bg) + len(fl))
@@ -7097,11 +7141,17 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             o < ref < c or first < ref for o, c, first in fl)
     def in_body(ref):
         return any(o < ref < c for o, c, _, _ in groups["fn"])
+    grown = [len(text)]
     def sub(m):
         r = pick(m)
         # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no
         # pipe (`PAT="error|claude"; grep -E $PAT log`).
-        return m.group(0) if plain_only and _OPERATOR_CHARS.search(r) else r
+        r = m.group(0) if plain_only and _OPERATOR_CHARS.search(r) else r
+        if long:
+            grown[0] += len(r) - len(m.group(0))
+            if grown[0] > _VAR_LONG_READ:
+                raise _LongCopy
+        return r
     def pick(m):
         name = m.group(1) or m.group(2)
         if m.start() in lit:
@@ -7111,7 +7161,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             ref = m.start()
             if groups["loop"] and not slow[0]:
                 spend(len(groups["loop"]))
-            for lo, lc, kw, head in groups["loop"] if not nounset else ():
+            for lo, lc, kw, head in groups["loop"] if not nounset and not slow[0] else ():  # its body needs not slow
                 # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
                 # sets nothing before it: an unset there leaves the reference as written. Review 9: a while/until
                 # condition runs before each pass, so the scans start at the loop's keyword, and one that reads G may end
@@ -7145,10 +7195,17 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         return last.get(name, m.group(0)) if fallback_last else m.group(0)
     last = {n: v for _, n, v in sets if v is not None}
     try:
-        return _VAR_REF_RE.sub(sub, text)
-    except _SlowCopy:
-        slow[0] = True
-        return _VAR_REF_RE.sub(sub, text)
+        try:
+            return _VAR_REF_RE.sub(sub, text)
+        except _SlowCopy:
+            # The retry reads what the raw copy reads; its scan work stays counted (it is at most the 100k spend
+            # budget), its output starts again.
+            slow[0], grown[0] = True, len(text)
+            return _VAR_REF_RE.sub(sub, text)
+    except _LongCopy:
+        if long == "raise":
+            raise
+        return text
 
 _CMD_VALS = None
 _NESTED_VALS = {}  # GH #816: the bodies' own plain assignments, read only by the unescaped copies
@@ -7220,7 +7277,29 @@ if "agent_id" in d:
     for _unesc in (False, True):
         for _body in _BODY_VAR_QUEUE:
             _scan_body_vars(_body, _unesc)
+# GH #787: past _VIEW_LEN_CAP the var-verb copies skip the full pass (every rule, the spawn scan) and get the
+# enforced pass only. Each pass re-reads the whole text, so they share one read budget, and a pass starts only while
+# the deadline timer leaves the slowest pass so far (a pass that still overruns meets the deadline, which asks too);
+# a copy not read makes the command ask, never allow (it may be the only one that reads the rm as bash runs it).
+def _var_long_time_left():
+    try:
+        left = signal.getitimer(signal.ITIMER_REAL)[0]
+    except Exception:
+        return None
+    return left or None  # 0: no timer armed on this platform; the read budget alone bounds the passes
+
+_var_long_read, _var_long_slowest = 0, 0.3
 for _VIEW[0], _text in _views():
+    if _VAR_RM_ONLY and _VIEW[0] == "var-verb":
+        _left = _var_long_time_left()
+        if _var_long_read + len(_text) > _VAR_LONG_READ or (_left is not None and _left < _var_long_slowest):
+            _VAR_LONG_CUT[0] = True
+            continue
+        _var_long_read += len(_text)
+        _enforced_pass(_text)
+        if _left is not None:
+            _var_long_slowest = max(_var_long_slowest, _left - (_var_long_time_left() or 0))
+        continue
     try:
         # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.
         # brace-view (GH #731: `cl{aude,aude} -p x`, `cl{aude,aude}${IFS}-p x`) reads only its statements that name
@@ -7239,6 +7318,10 @@ for _VIEW[0], _text in _views():
         del _WORDS[:]
         if _VIEW[0] in _VIEW_ENFORCED:
             _enforced_pass(_text)
+if _VAR_LONG_CUT[0]:
+    _VIEW[0] = None
+    ask("[mh:gate] irrecoverable: too many variable readings to check past " + format(_VIEW_LEN_CAP, ",")
+        + " characters - confirm with user first, or split it into smaller commands")
 
 _disarm()
 sys.exit(0)

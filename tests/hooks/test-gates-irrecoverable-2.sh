@@ -4446,6 +4446,38 @@ test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo a #'"'"' \n $X -
 test_allow "$IRRECOVERABLE" 'GH #820 item 5 control: X=rm; echo $(date) #; $X -rf /' "$(bash_payload 'X=rm; echo $(date) #; $X -rf /')"
 test_deny  "$SUBAGENT_GIT_GUARD" 'GH #820 item 5: subagent: echo $(date)#; git stash' "$(bash_agent_payload 'echo $(date)#; git stash' fork)"
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #820 item 5 control: subagent: echo $(date) #; git stash' "$(bash_agent_payload 'echo $(date) #; git stash' fork)"
+# GH #787: the var-verb view's enforced rm rules read as far as the parser does (_CMD_LEN_CAP), like ifs-split; it
+# stopped at _VIEW_LEN_CAP (20 KB), so padding in front of `F=-rf; rm $F b` allowed it. Timed: a timed-out hook allows.
+_pad787="$(printf 'echo a; %.0s' $(seq 3000))"
+test_deny  "$IRRECOVERABLE" 'GH #787: 24 KB of statements, then F=-rf; rm $F b' "$(bash_payload "${_pad787}F=-rf; rm \$F b")"
+test_deny  "$IRRECOVERABLE" 'GH #787: F=-rf, 24 KB of statements, then rm $F b' "$(bash_payload "F=-rf; ${_pad787}rm \$F b")"
+test_allow "$IRRECOVERABLE" 'GH #787 control: 24 KB of statements, then F=-f; rm $F b' "$(bash_payload "${_pad787}F=-f; rm \$F b")"
+_timed_case 'GH #787: F=-rf; rm $F b after 48 KB of statements, denied in bounded time' 2 \
+  "$(printf 'echo a; %.0s' $(seq 6000))F=-rf; rm \$F b"
+_timed_case 'GH #787 control: 1200 F=x assignments and $F references after 24 KB of statements, allowed in bounded time' 0 \
+  "${_pad787}$(printf 'F=x; echo $F; %.0s' $(seq 1200))"
+test_allow "$IRRECOVERABLE" 'GH #787 control: 1200 F=x assignments and $F references after 24 KB of statements' \
+  "$(bash_payload "${_pad787}$(printf 'F=x; echo $F; %.0s' $(seq 1200))")"
+# GH #787 review: past the cap a var-verb copy that would cost more than its budget is not read, so the command asks
+# (the raw copy, whose scan budget the subshells and references below spend, alone reads `rm -r $G b`).
+# 3000 references each walking back past 1500 subshell assignments spend it; a build script reading its $LOG does not.
+test_ask_says "$IRRECOVERABLE" 'GH #787 review: a raw copy past its budget asks: F=-r; rm $F $G b; G=-i' \
+  "$(bash_payload "${_pad787}$(printf '(H=1); %.0s' $(seq 1500))$(printf 'echo $H; %.0s' $(seq 3000))F=-r; rm \$F \$G b; G=-i")" \
+  'too many variable readings'
+_log787="LOG=build.log; rm -f \$LOG; $(printf 'cc -c f.c -o f.o 2>>$LOG || (echo fail; exit 1); %.0s' $(seq 1500))"
+test_allow "$IRRECOVERABLE" 'GH #787 review control: a 73 KB build script, 1500 subshells and $LOG references' "$(bash_payload "$_log787")"
+# GH #787 review 3: the raw copy's spans holding an entry are found once per entry, not once per reference.
+_cp787="SRC=/data/in"$'\n'"DST=/data/out/y"$'\n'"$(for i in $(seq 1500); do printf 'cp $SRC/f%d.txt $(dirname $DST)/x%d\n' "$i" "$i"; done)"
+test_allow "$IRRECOVERABLE" 'GH #787 review 3 control: 1500 lines of cp $SRC/f $(dirname $DST)/x (58 KB)' "$(bash_payload "$_cp787")"
+# A copy is bounded while it is built: a 5 KB value at 6000 references would be 30 MB (70 KB at 25000 took 9 s, 1.7 GB).
+test_ask_says "$IRRECOVERABLE" 'GH #787 review: a copy over the read budget while built asks (5 KB value, 6000 references)' \
+  "$(bash_payload "${_pad787}F='$(printf 'a%.0s' $(seq 5000))'; rm a; $(printf '$F;%.0s' $(seq 6000))F=b")" \
+  'too many variable readings'
+# GH #787 review: a prefix assignment's statement start is a bisect, not a split of the whole text before it.
+_timed_case 'GH #787 review control: 130 KB of LC_ALL=C sort prefix assignments, allowed in bounded time' 0 \
+  "$(printf 'LC_ALL=C sort file > out; %.0s' $(seq 5000))X=1; echo \$X"
+test_allow "$IRRECOVERABLE" 'GH #787 review control: 130 KB of LC_ALL=C sort prefix assignments' \
+  "$(bash_payload "$(printf 'LC_ALL=C sort file > out; %.0s' $(seq 5000))X=1; echo \$X")"
 # GH #731: a claude spawn built by a brace (`cl{aude,aude} -p x` runs `claude -p x claude -p x`), with or without
 # ${IFS}, denies in a subagent; brace-view's copies are spawn-scanned, statement by statement, where they name claude.
 # (`cl{aude,aude}${IFS}-p x` itself denies on develop as git-restore, a brace-view misread of `W{,}${IFS}a b` in any
