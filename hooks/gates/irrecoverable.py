@@ -6597,7 +6597,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     def encl(at):
         # The spans and function bodies holding an entry, once per entry (GH #818 review: per reference was slow).
         if slow[0]:
-            return [(o, c) for o, c in spans if o < at <= c], ()
+            return [(o, c) for o, c in spans if o < at <= c], (), ()
         if at not in enclosing:
             spend(len(spans) + len(groups["bg"]) + len(groups["fn"]))
             fl = []
@@ -6611,14 +6611,16 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                             (w.start() for w in re.finditer(r"(?<![\w.:-])" + re.escape(name) + r"(?![\w.:-])", text)
                              if not head <= w.start() <= c), len(text))
                     fl.append((o, c, first_call[(o, name)]))
-            enclosing[at] = ([(o, c) for o, c in spans + groups["bg"] if o < at <= c], fl)
+            enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], [(o, c) for o, c in groups["bg"] if o < at <= c], fl)
         return enclosing[at]
     def usable(at, v, ref, strict=False):
-        sp, fl = encl(at)
+        sp, bg, fl = encl(at)
         if not slow[0]:
-            spend(1 + len(sp) + len(fl))
+            spend(1 + len(sp) + len(bg) + len(fl))
         if any(not o < ref < c for o, c in sp):
             return False  # set inside a subshell the reference is not in
+        if v is not None and any(not o < ref < c for o, c in bg):
+            return False  # GH #818: a value set in a background list; an unset there still counts, as develop read it
         sc = scope.get(at)
         if sc and not sc[0] < ref < sc[1]:
             return False

@@ -4223,8 +4223,9 @@ for _c in 'F=-r; G=-i && T="$(sed "s/&/and/" f)"; rm $F $G b' 'F=-r; G=-i && ech
   'F=-r; export G=-i X="$(fmt "a & b")"; rm $F $G b'; do
   test_allow "$IRRECOVERABLE" "GH #818 review 2 control: $_c" "$(bash_payload "$_c")"
 done
-# GH #818 review 3: the same for a "${X:-"default"}" (its inner quotes).
-for _c in 'G=-i; F=-r; unset G && echo "${X:-"Tom & Jerry"}"; rm $F $G b' \
+# GH #818 review 3: the same for a "${X:-"default"}" (its inner quotes). A background list drops a value only: an unset
+# there still counts (develop's reading), so the raw copy never reads less than develop's did.
+for _c in 'G=-i; F=-r; unset G && echo "${X:-"Tom & Jerry"}"; rm $F $G b' 'F=-r; G=-i; unset G & wait; rm $F $G b' \
   'G=-i; F=-r; unset G && echo "${MSG:-"build & test"}" >&2; rm $F $G b' \
   'G=-i; F=-r; unset G && echo "${X:+"a & b"}" "${Y:-"$Z"}"; rm $F $G b'; do
   test_deny  "$IRRECOVERABLE" "GH #818 review 3: $_c" "$(bash_payload "$_c")"
