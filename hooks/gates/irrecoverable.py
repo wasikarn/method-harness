@@ -1616,10 +1616,45 @@ def _nested_spawn_text(c, overlap):
         # A pipe in: `|` that is not `||`, or `|&`, up to a `(` or `{` group open; xargs hands its input
         # over as words.
         sep = re.match(r"[|;&(){\s]*", lead).group()
-        piped = re.search(r"(?<!\|)\|&?(?:[\s({]|\\\n)*$", c[:a] + sep) is not None or "xargs" in lead_words  # GH #810: | \<newline>
+        piped = _pipe_before(c, a + len(sep), mask) or "xargs" in lead_words  # GH #810: | \<newline>, | # comment
         if _claude_starts_session(stmt, piped):
             return True
     return False
+
+_RAW_PIPE_RE = re.compile(r"(?<!\|)\|&?(?:[\s({]|\\\n)*$")  # develop's reading: | \<newline> (GH #810)
+
+def _pipe_before(c, end, mask):
+    # True when a pipe (`|` or `|&`, not `||`) is the last thing before c[end], past blanks, a `(` or `{` group open,
+    # backslash-newlines and, beyond develop's raw reading (kept whole), comments (GH #810: `| # feed\n claude`).
+    # A `>|` redirect or a case / [[ =~ pattern `|` stays a pipe (GH #810 item 3, kept deny): an alias (bash expands
+    # one even on a reserved word, and the shell snapshot turns expand_aliases on), a backtick or an expansion can
+    # make the text bash parses differ from the text read (GH #812 reviews 1-9).
+    return _RAW_PIPE_RE.search(c, 0, end) is not None or _pipe_past_comments(c, end, mask)
+
+def _pipe_past_comments(c, end, mask):
+    j = end
+    while j:
+        ch = c[j - 1]
+        if ch in " \t\n({":
+            j -= 1
+        elif ch == "\\" and c[j:j + 1] == "\n" and not mask[j - 1]:  # a comment's last `\` continues nothing
+            j -= 1
+        elif mask[j - 1]:
+            k = j - 1  # the masked run's start: a comment runs from its `#` to the line end
+            while k and mask[k - 1]:
+                k -= 1
+            esc_nl = c[k] == "\n" and k and c[k - 1] == "\\"  # a backslash-newline just before the comment
+            h = k + 1 if esc_nl else k
+            if c[h:h + 1] != "#" or (h and c[h - 1] not in " \t\n;&|()") or c[j:j + 1] not in ("\n", ""):
+                return False  # a quoted or escaped word, not a comment
+            if re.search(r"\|&?[ \t]*$", c[h:j]):
+                return True  # a comment that ends in a pipe: develop's raw reading took it as one, kept
+            j = k - 1 if esc_nl else h
+        else:
+            break
+    if j and c[j - 1] == "&" and c[j - 2:j - 1] == "|":
+        j -= 1
+    return bool(j) and c[j - 1] == "|" and c[j - 2:j - 1] != "|"
 
 def _spawn_lead_words(lead):
     # The wrapper names in an anchor's text before `claude`, or None when that text holds a word no
@@ -3746,6 +3781,8 @@ def _text_statements(text):
     return out
 
 
+_BODY_VAR_QUEUE = {}  # GH #812: the bodies the main reading scanned, read again with their variables (_scan_body_vars)
+
 def _scan_body(body):
     if not body:
         return
@@ -3775,6 +3812,8 @@ def _scan_body(body):
                 if _spawn_over_budget:
                     _deny_nested_spawn()  # the "too dense" message, not the spawn one (GH #798)
                 deny(_SPAWN_DENY_REASON + ", inside bash -c / eval either")
+            if "$" in body:
+                _BODY_VAR_QUEUE[body] = None  # a dict: each body once, in order
         elif _view_spawns():
             _scan_view_statements(body)
     readings, blown, bad = _body_readings(body)
@@ -6150,9 +6189,15 @@ def _subst_literals(text, glued=True):
                     out.append(v)
     return out
 
-def _literal_dollars(text):
+def _literal_dollars(text, comments=False):
     # The offsets of each $ the shell keeps as text: inside '...' (outside "...") or after an odd run of
     # backslashes. var-verb puts no value back there (GH #767 review 6: `rm '$F' x` removes a file named $F).
+    # comments (GH #810): also skip `#` comments, whose `'` opens no quote (`| # it's fed` then `$X`). Read only by one
+    # extra var-verb copy (_views), never in place of develop's reading: a misread comment (`\ #` is none in bash)
+    # can put a value inside a real '...' and hide a deny (GH #812 reviews 10-11).
+    return _literal_dollars_read(text, comments)
+
+def _literal_dollars_read(text, comments):
     out, sq, dq, i, n = set(), False, False, 0, len(text)
     while i < n:
         c = text[i]
@@ -6169,6 +6214,11 @@ def _literal_dollars(text):
             sq = True
         elif c == '"':
             dq = not dq
+        elif comments and c == "#" and not dq and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            # GH #810: a comment, to its line end: its `'` opens no quote (`| # it's fed` then `$X`)
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
         i += 1
     return out
 
@@ -6219,6 +6269,13 @@ def _views():
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
+            out.append(("var-verb", v))
+    if vals and "#" in cmd:
+        # GH #810: one more in-order copy that reads `#` comments as bash does, so `echo hi | # it's fed` then `$X` puts
+        # claude back; an extra copy, so a misread comment only adds a reading (GH #812 review 11).
+        v = _ordered_var_text(cmd, True, comments=True)
+        if v != cmd and ("var-verb", v) not in out:
+            _VAR_SPAWN_TEXTS.add(v)
             out.append(("var-verb", v))
     return out
 
@@ -6407,7 +6464,9 @@ def _prefix_assign(text, m, memo):
         memo[k] = out
     return out
 
-def _ordered_var_text(text, fallback_last=True):
+_OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
+
+def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
@@ -6427,27 +6486,76 @@ def _ordered_var_text(text, fallback_last=True):
                 for w in re.finditer(r"[A-Za-z_]\w*", m.group(2)):
                     sets.append((base + w.end(), w.group(0), None))
     sets.sort(key=lambda e: e[0])
-    if not sets:
+    if not sets and not outer:
         return text
-    lit, keys = _literal_dollars(text), [e for e, _, _ in sets]
+    lit, by_name = _literal_dollars(text, comments), {}
+    for e, n, v in sets:  # per name, in order: the latest one before a reference is a bisect (GH #812 review 10)
+        by_name.setdefault(n, ([], []))
+        by_name[n][0].append(e)
+        by_name[n][1].append(v)
     def sub(m):
+        r = pick(m)
+        # plain_only (GH #812 review 3): a value holding an operator char is left as written: an expanded `|` is no
+        # pipe (`PAT="error|claude"; grep -E $PAT log`).
+        return m.group(0) if plain_only and _OPERATOR_CHARS.search(r) else r
+    def pick(m):
         name = m.group(1) or m.group(2)
         if m.start() in lit:
             return m.group(0)
-        for k in range(bisect.bisect_right(keys, m.start()) - 1, -1, -1):
-            if sets[k][1] == name:
-                at = sets[k][0]
+        if name in by_name:  # the latest assignment before it by bisect, past any set in a closed subshell (GH #808)
+            ends, vals = by_name[name]
+            for k in range(bisect.bisect_right(ends, m.start()) - 1, -1, -1):
+                at = ends[k]
                 if any(o < at <= c and not o < m.start() < c for o, c in spans):
                     continue  # set inside a subshell the reference is not in
-                return m.group(0) if sets[k][2] is None else sets[k][2]
+                return m.group(0) if vals[k] is None else vals[k]
         # No assignment before it: a loop's later pass or a function called after the assignment reads the last
         # value (`g(){ $X -p x; }; X=claude; g`).
+        # A body's outer value (GH #812: its environment) comes before its own later one.
+        if outer and name in outer:
+            return outer[name]
         return last.get(name, m.group(0)) if fallback_last else m.group(0)
     last = {n: v for _, n, v in sets if v is not None}
     return _VAR_REF_RE.sub(sub, text)
 
+_CMD_VALS = None
+_BODY_VAR_WORK, _BODY_VAR_BUDGET = 0, 300_000  # characters substituted, summed over every body and pass
+
+def _scan_body_vars(body):
+    # GH #812 / #810 item 2: a body is a script of its own, so its $NAME reads, in order, the plain value the body
+    # assigns before it (`bash -c 'X=claude; $X -p x'`), else the outer command's last one (the child's environment:
+    # `export X=claude; bash -c '$X -p x'`), else the body's last. A single-quoted body hid both from the views, which
+    # put no value inside '...'. Any outer assignment counts, exported or not (a spawn attempt either way).
+    # Only the statements the substitution changed are read.
+    global _CMD_VALS
+    if len(body) > _VIEW_LEN_CAP:
+        return
+    if _CMD_VALS is None:
+        _CMD_VALS = {} if len(cmd) > _VIEW_LEN_CAP else {
+            m.group(1): next(g for g in m.groups()[1:] if g is not None) for m in _PLAIN_ASSIGN_RE.finditer(cmd)}
+    global _BODY_VAR_WORK
+    v = body
+    for _ in range(8):  # `Y=$X; $Y -p x`: a value that is itself a reference, up to 8 links
+        _BODY_VAR_WORK += len(v)
+        if _BODY_VAR_WORK > _BODY_VAR_BUDGET:
+            return  # GH #812 review 11: past one budget across all bodies, the rest keep develop's checks only
+        w = _ordered_var_text(v, True, _CMD_VALS, True)
+        if w == v or len(w) > _VIEW_LEN_CAP:  # bounded: a value holding refs (`X='$X$X'`) grows each pass
+            break
+        v = w
+    if v == body:
+        return
+    seen = set(_text_statements(body))
+    for st in _text_statements(v):
+        if st.strip() and st not in seen and (
+                _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st)):
+            _deny_nested_spawn()
+
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
+if "agent_id" in d:
+    for _body in _BODY_VAR_QUEUE:
+        _scan_body_vars(_body)
 for _VIEW[0], _text in _views():
     try:
         # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.

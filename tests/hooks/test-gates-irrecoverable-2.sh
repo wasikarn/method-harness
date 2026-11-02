@@ -4070,6 +4070,51 @@ done
 for _c in $'X=claude; echo hi |\ngrep $X' $'X=claude; echo hi\n$X' $'X=claude; true ||\n$X'; do
   test_allow "$IRRECOVERABLE" "GH #810 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #812: a single-quoted bash -c / eval body is a script of its own: its own assignments (GH #812) and the outer
+# command's (GH #810 item 2: `export X=claude`, read as the child's environment) are substituted into it, in order and
+# up to 8 links, bounded in size. GH #810 comment: a pipe at a line end crosses a comment, one holding an apostrophe or
+# after a backslash-newline too, to the next line's `claude` or `$X`.
+for _c in "bash -c 'X=claude; \$X -p x'" "bash -c 'X=claude; echo hi | \$X'" "sh -c 'X=claude; \$X -p x'" \
+  "eval 'X=claude; \$X -p x'" "export X=claude; bash -c '\$X -p x'" "export X=claude; bash -c 'echo hi | \$X'" \
+  "X=claude bash -c '\$X -p x'" "export X=claude; bash -c 'Y=\$X; \$Y -p x'" \
+  "bash -c 'X=claude; Y=\$X; Z=\$Y; W=\$Z; \$W -p x'" \
+  "X='\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'; Y=claude; \$Y -p x" \
+  $'X=claude; echo hi | # it\'s fed\n$X' $'echo hi | # c\nclaude' $'echo hi | # c\n\nclaude' $'echo hi |#c\nclaude' \
+  $'echo hi |& # c\nclaude' $'echo hi | # it\'s\nclaude' $'echo hi | # c\n$(echo claude)' $'echo hi # c |\nclaude' \
+  $'echo hi | \\\n# c\nclaude' $'echo hi | \\\n# c \\\nclaude'; do
+  test_deny  "$IRRECOVERABLE" "GH #812: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in "bash -c 'X=claude; \$X --version'" "bash -c 'X=claude; echo \$X'" "export X=claude; bash -c '\$X --version'" \
+  "export X=claude; bash -c 'echo \$X'" "bash -c 'X=python3; \$X -c 1'" "bash -c 'PAT=\"error|claude\"; grep -E \$PAT log'" \
+  "X='\$X\$X\$X\$X\$X\$X'; bash -c 'echo \$X'" $'X=claude; echo hi # it\'s |\n$X' $'echo hi | # c\ngrep claude'; do
+  test_allow "$IRRECOVERABLE" "GH #812 control: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+# GH #812 review 10: the comment-aware literal-$ reading only adds substitutions: `\ #` and `\<newline>#` are no comment
+# in bash, so the later $X / $F is still read.
+for _c in $'X=claude\necho a\\ #\'\n\'; $X -p hi' $'X=claude\necho a\\\n#\'\n\'; $X -p hi'; do
+  test_deny  "$IRRECOVERABLE" "GH #812 review 10: subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
+test_deny  "$IRRECOVERABLE" 'GH #812 review 10: F=-rf \n echo a\ #'"'"' \n '"'"'; rm $F ~/proj' \
+  "$(bash_payload $'F=-rf\necho a\\ #\'\n\'; rm $F ~/proj')"
+# GH #812 review 11: develop's literal-$ reading stays as it was (the comment-aware one is one extra var-verb copy), so a
+# misread `\ #` cannot put a value inside a real '...' and hide -rf; the body scans share one work budget.
+test_deny  "$IRRECOVERABLE" 'GH #812 review 11: G="'"' # '"'"; F=-rf \n rm \ #'"'"' \n $G'"'"' $F ~/proj' \
+  "$(bash_payload "G=\"' # '\"; F=-rf"$'\n'"rm \\ #'"$'\n'"\$G' \$F ~/proj")"
+_c="X='$(printf '$X%.0s' {1..60})'; $(for i in $(seq 700); do printf "bash -c '\$X %s';" "$i"; done) F=-rf; rm \$F b"
+test_deny  "$IRRECOVERABLE" 'GH #812 review 11: 700 bodies of a growing $X, then rm -rf, deny in bounded time' \
+  "$(bash_agent_payload "$_c" fork)"
+# GH #810 item 3 (decision: keep the deny): a `>|` redirect and a case / [[ =~ pattern `|` stay a pipe in. Nine fresh
+# reviews of an exemption each found the text bash parses differ from the text read: a `case` or `[[` as an argument,
+# escaped, quoted, inside ${..} / $[..] / backticks / a heredoc, built by an expansion (`X=; $X case ..`), or an alias
+# (bash expands one even on a reserved word; the shell snapshot turns expand_aliases on). None is realistic.
+for _c in 'echo hi >| claude' 'X=claude; echo hi >| $X' 'X=claude; echo hi 2>| $X' 'case y in a|claude) echo;; esac' \
+  'X=claude; case y in a|$X) echo;; esac' '[[ y =~ (a|claude) ]]' 'X=claude; [[ y =~ (a|$X) ]]' \
+  'echo test case 3 in prod | claude' 'echo hi >& case x in a|claude' '\case x in a|claude' '"case" y in a|"claude"' \
+  'X=; Y=claude; $X case y in a|$Y' 'echo ${v:-;case x in a}|claude' '[[ x =~ $(echo|claude) ]]' \
+  'echo `true;case x` in a|claude' $'shopt -s expand_aliases; alias case=echo\ncase y in a|claude' \
+  $'bash -c \'cat <<";;"\nx\n;;\ndate|claude\'' 'case y in a) echo hi | claude;; esac' 'case y in a) ;; esac | claude'; do
+  test_deny  "$IRRECOVERABLE" "GH #810 item 3 (kept): subagent: ${_c//$'\n'/ \\n }" "$(bash_agent_payload "$_c" fork)"
+done
 # GH #801: interp-pipe-shell read the python/node word on the raw line, so a backslash in it (pyth\on3) got past;
 # a python -c / node -e|-p script piped into a stdin shell is the same unseen code; and a by-name import read at once
 # as a plain attribute (__import__('os').path) is no process API, so its literals are not read as commands.
