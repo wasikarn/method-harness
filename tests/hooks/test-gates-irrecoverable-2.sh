@@ -4397,7 +4397,9 @@ for _c in 'if true; then python3 -c 1; fi | bash' 'while read l; do python3 -c 1
   'for ((i=0;i<2;i++)); do python3 -c 1; done | bash' 'for((i=0;i<2;i++)); do node -e 1; done | sh' \
   'while(true); do python3 -c 1; done | bash' 'if(true); then python3 -c 1; fi | bash' \
   'for ((i=0; i<1; i++)) { python3 -c 1; } | bash' 'f() { for ((i=0;i<1;i++)) { python3 -c 1; }; }; f | bash' \
-  'f() { for ((;;)) { :; }; python3 -c 1; }; f | bash' 'f() { for x in a; { python3 -c 1; }; }; f | bash'; do
+  'f() { for ((;;)) { :; }; python3 -c 1; }; f | bash' 'f() { for x in a; { python3 -c 1; }; }; f | bash' \
+  'for x do python3 -c 1; done | bash' 'f() { for x do { python3 -c 1; }; done; }; f | bash' \
+  'f() { for x do if true; then :; fi; done; python3 -c 1; }; f | bash'; do
   test_deny  "$IRRECOVERABLE" "GH #823: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
 # GH #823 review 2: only a real ((..)) arithmetic command is blanked: a quoted or commented (( .. )) pair hides no pipe,

@@ -3130,6 +3130,7 @@ _STAGE_KEYWORD_RE = re.compile(r"(if|while|until|for|select|fi|done|then|else|el
 _FUNC_HEAD_RE = re.compile(r"function[ \t]+([^\s(){}<>;&|'\"\\$`]+)(?:[ \t]*\(\))?|([A-Za-z_][\w.:-]*)[ \t]*\(\)")
 
 _BLANKED_ARITH_RE = re.compile(r"\(\( *\)\)")
+_FOR_NAME_DO_RE = re.compile(r"[ \t]+[A-Za-z_]\w*(?=[ \t]+do(?=[ \t\n]|$))")
 
 def _group_ends(g):
     # GH #815: (events, core, trailing closers) of a pipe stage in a { } or ( ) group, which _pieces does not model:
@@ -3156,6 +3157,11 @@ def _group_ends(g):
                 k = m.group(1)
                 if k in ("if", "while", "until", "for", "select"):
                     events.append(("open", k in ("for", "select")))
+                    # review 6: POSIX `for NAME do ..` has no `in` list and no `;`: skip the name so `do` is read
+                    n2 = _FOR_NAME_DO_RE.match(t, m.end()) if k in ("for", "select") else None
+                    if n2:
+                        i = n2.end()
+                        continue
                 elif k == "do":
                     events.append(("do",))
                 elif k in ("fi", "done"):
