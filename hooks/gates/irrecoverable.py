@@ -1619,7 +1619,7 @@ def _nested_spawn_text(c, overlap):
                 spans = _piped_compound_spans(c, mask)
             o = next((o for o, e, kw in spans if kw == "case" and o <= a < e), None)
             p = -1 if o is None else c.rfind("(", o, a)
-            if o is not None and (p < 0 or c[p - 1] != "$"):
+            if o is not None and (p < 0 or c[p - 1] not in "$<>("):  # not $(..), $((..)), <(..), >(..)
                 lead_words = _spawn_lead_words(lead[1:])
         if lead_words is None:
             continue
@@ -1639,9 +1639,9 @@ def _nested_spawn_text(c, overlap):
             return True
     return False
 
-_COMPOUND_KW_RE = re.compile(r"(?<![^\s;&|()])(case|if|while|until|for|select|esac|fi|do|done)(?![^\s;&|()])")
+_COMPOUND_KW_RE = re.compile(r"(?<![^\s;&|()])(case|if|while|until|for|select|esac|fi|do|done)(?![^\s;&|()<>])")
 _COMPOUND_OPEN = ("case", "if", "while", "until", "for", "select")
-_KW_LEAD_WORDS = ("then", "do", "else", "elif", "!", "{", "time")
+_KW_LEAD_WORDS = ("then", "do", "else", "elif", "!", "{", "time", "fi", "esac", "done")  # `fi done` closes both
 
 def _at_command_position(c, i):
     j = i
@@ -6581,6 +6581,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     return _VAR_REF_RE.sub(sub, text)
 
 _CMD_VALS = None
+_NESTED_VALS = {}  # GH #816: the bodies' own plain assignments, read only by the unescaped copies
 _BODY_VAR_WORK, _BODY_VAR_BUDGET = 0, 300_000  # characters substituted, summed over every body and pass
 
 def _scan_body_vars(body, unescaped=False):
@@ -6604,15 +6605,21 @@ def _scan_body_vars(body, unescaped=False):
     if u != body and not ("'" + body + "'" in cmd and '"' + body + '"' not in cmd):
         starts.append(u)
     seen = None
+    outer = _CMD_VALS
+    if unescaped:
+        outer = dict(_NESTED_VALS)
+        outer.update(_CMD_VALS)
     for v in starts:
-        v = _body_var_text(v)
+        v = _body_var_text(v, outer)
         if v is None:
             return
         # GH #816: a body's plain assignments, its values filled in, are outer values for the bodies nested in it
-        # (`export Y=$X; bash -c "\$Y -p x"`), which the main reading queues after it.
-        if len(_CMD_VALS) < 1000:
+        # (`export Y=$X; bash -c "\$Y -p x"`), which the main reading queues after it. Only the unescaped copies read
+        # them (_NESTED_VALS): the bodies as written keep develop's outer values, as a sibling body's value must not
+        # come before a body's own later one (review 2: `bash -c 'Y=python3'; bash -c 'f(){ $Y -p x; }; ..; Y=claude'`).
+        if not unescaped and len(_NESTED_VALS) < 1000:
             for m in _PLAIN_ASSIGN_RE.finditer(v):
-                _CMD_VALS.setdefault(m.group(1), next(g for g in m.groups()[1:] if g is not None))
+                _NESTED_VALS.setdefault(m.group(1), next(g for g in m.groups()[1:] if g is not None))
         if v == body:
             continue
         if seen is None:
@@ -6622,14 +6629,14 @@ def _scan_body_vars(body, unescaped=False):
                     _nested_spawn(st, False) or _nested_spawn(st, True) or _nested_spawn(st, 2) or _subst_spawn(st)):
                 _deny_nested_spawn()
 
-def _body_var_text(v):
+def _body_var_text(v, outer):
     # v with its variables substituted (_scan_body_vars), or None once the shared budget is spent.
     global _BODY_VAR_WORK
     for _ in range(8):  # `Y=$X; $Y -p x`: a value that is itself a reference, up to 8 links
         _BODY_VAR_WORK += len(v)
         if _BODY_VAR_WORK > _BODY_VAR_BUDGET:
             return None  # GH #812 review 11: past one budget across all bodies, the rest keep develop's checks only
-        w = _ordered_var_text(v, True, _CMD_VALS, True)
+        w = _ordered_var_text(v, True, outer, True)
         if w == v or len(w) > _VIEW_LEN_CAP:  # bounded: a value holding refs (`X='$X$X'`) grows each pass
             break
         v = w

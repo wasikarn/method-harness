@@ -4216,4 +4216,17 @@ for _c in 'echo hi | while read l; do { echo "$l"; } done; claude --continue' 'e
   'echo hi | case a in a|if) true;; esac; claude --continue'; do
   test_allow "$IRRECOVERABLE" "GH #816/#820 review control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #816/#820 review 2: a body's assignments reach only the unescaped copies, never a sibling body as written (its own
+# later value stays read); `done>file` and `fi done` close; a `$((..))` / `<(..)` close is no case arm.
+for _c in "bash -c 'echo \$HOME; Y=python3'; bash -c 'f(){ \$Y -p x; }; trap f EXIT; Y=claude'" \
+  "W=python3; X=claude; bash -c 'Y=\$W'; bash -c 'f(){ \$Y -p x; }; trap f EXIT; Y=\$X; true'" \
+  "echo $(printf 'a%.0s' $(seq 21000)); bash -c 'X=python3; echo \$X'; bash -c 'f(){ \$X -p x; }; X=claude; f'"; do
+  test_deny  "$IRRECOVERABLE" "GH #816/#820 review 2: subagent: ${_c:0:120}" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'git log --oneline | while read l; do echo "$l"; done>log.txt; claude --continue' \
+  'git log | if grep -q x; then echo y; fi>/dev/null; claude --resume' \
+  'echo hi | while read l; do if [ x ]; then echo; fi done; claude --continue' \
+  'echo | case a in a) echo $((1+2)) claude;; esac' 'echo | case a in a) cat <(ls) claude;; esac'; do
+  test_allow "$IRRECOVERABLE" "GH #816/#820 review 2 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
