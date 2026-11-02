@@ -76,6 +76,15 @@ CORPUS = [
     "echo *(a)#; git stash",
     "echo +(a)#; git stash",
     "echo @(a) #; git stash",
+    # GH #833 review: a case misread from an argument, or whose esac goes unseen, fails safe
+    "echo $(echo do case)#; git stash",
+    "echo $( (echo do case) )#; git stash",
+    "echo $(case a in a) { :; } esac)#; git stash",
+    "echo $(if case a in a) :;; esac; then :; fi)#; git stash",
+    "echo $(case a in a) case b in b) :;; esac;; c) :;; esac)#; git stash",
+    "echo $(case a in a) echo in esac;; b) :;; esac)#; git stash",
+    "case a in a)#x\nesac; git stash",
+    "echo do case; (ls)#x\ngit stash",
 ]
 
 

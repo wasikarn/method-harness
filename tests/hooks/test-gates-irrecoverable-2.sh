@@ -4501,12 +4501,19 @@ _timed_case 'GH #731: subagent: cl{aude,aude}${IFS}-p${IFS}x after 300 brace wor
 # GH #833: the # misreads #829 left (GH #820 item 5 residuals). A case pattern's `)` inside $(..) no longer closes the
 # $(, a backslash-newline before # (or between $ and its `(`) is a line continuation bash deletes, an escaped blank or
 # separator before # is part of the word, and an extglob group @( !( ?( *( +( ends inside its word. Each runs claude in
-# bash 5.2. In "$(..)" the pattern's `)` no longer ends the $( frame either, which masked the arm (`| claude`) as
-# quoted text. Masks: _quote_mask here, the shared _quotemask.py and its inline copies (subagent-git-guard, test-integrity).
+# bash 5.2. Fail safe (review): a case misread from an argument (`echo do case`) or whose esac goes unseen leaves every
+# later `)` unsure, read as glued while a $( is open, and never touches a ".." frame. Masks: _quote_mask here, the shared _quotemask.py and its inline copies (subagent-git-guard, test-integrity).
 for _c in 'X=claude; echo $(case a in a) echo b;; esac)#|$X' 'X=claude; echo $(case a in (a) echo b;; esac)#|$X' \
     $'X=claude; echo $(case a in\n a|b) echo b;;\n esac)#|$X' 'X=claude; echo $(case a in a) (echo b);; esac)#|$X' \
     'X=claude; echo $(if true; then case a in a) echo b;; esac; fi)#|$X' 'X=claude; echo $(case a in esac)#|$X' \
-    'X=claude; echo "$(case a in a) echo hi | $X;; esac)"' 'echo "$(case a in a) echo hi | claude;; esac)"' \
+    'X=claude; echo $(echo do case)#|$X' 'X=claude; echo $(echo then case)#|$X' 'X=claude; echo $(echo ! case)#|$X' \
+    'X=claude; echo $(echo { case)#|$X' 'X=claude; echo $(echo time case)#|$X' 'X=claude; echo $( (echo do case) )#|$X' \
+    'X=claude; echo "$(echo do case)" | $X' 'X=claude; echo "$(case a in a) { :; } esac)" | $X' \
+    'X=claude; echo "$(case a in a) if :; then :; fi esac)" | $X' 'X=claude; echo $(case a in a) { :; } esac)#|$X' \
+    'X=claude; echo $(if case a in a) :;; esac; then :; fi)#|$X' \
+    'X=claude; echo $(while case a in a) false;; esac; do :; done)#|$X' \
+    'X=claude; echo $(case a in a) case b in b) :;; esac;; c) :;; esac)#|$X' 'X=claude; echo $(f() case a in a) :;; esac; f)#|$X' \
+    'X=claude; echo $(case a in a) echo in esac;; b) :;; esac)#|$X' \
     $'X=claude; echo a\\\n#|$X' $'X=claude; echo $(date)\\\n#|$X' $'X=claude; echo $\\\n(date)#|$X' \
     'X=claude; echo a\ #|$X' 'X=claude; echo a\;#|$X' \
     $'shopt -s extglob\nX=claude; echo @(a)#|$X' $'shopt -s extglob\nX=claude; echo !(a)#|$X' \
@@ -4515,12 +4522,13 @@ for _c in 'X=claude; echo $(case a in a) echo b;; esac)#|$X' 'X=claude; echo $(c
   test_deny  "$IRRECOVERABLE" "GH #833: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in 'X=claude; echo $(case a in a) echo b;; esac) #|$X' 'X=claude; echo $(case a in a) echo b;; esac)#|$X --version' \
-    'X=claude; echo $(echo case)#|$X --version' 'echo "$(case a in a) echo hi | claude --version;; esac)"' $'X=claude; echo a \\\n#|$X' $'X=claude; echo a\\\\\n#|$X' \
+    'X=claude; echo $(echo case)#|$X --version' 'X=claude; echo $(echo do case) #|$X' $'X=claude; echo a \\\n#|$X' $'X=claude; echo a\\\\\n#|$X' \
     'X=claude; echo a\\ #|$X' $'shopt -s extglob\nX=claude; echo @(a) #|$X' \
     $'shopt -s extglob\nX=claude; echo +(a)#|$X --version' 'X=claude; case a in a)#|$X'$'\n''esac'; do
   test_allow "$IRRECOVERABLE" "GH #833 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
-for _c in 'echo $(case a in a) :;; esac)#; git stash' $'echo a\\\n#; git stash' $'echo $\\\n(date)#; git stash' \
+for _c in 'echo $(case a in a) :;; esac)#; git stash' 'echo $(echo do case)#; git stash' 'echo $(echo then case)#; git stash' \
+    'echo $(case a in a) { :; } esac)#; git stash' 'echo $(case a in a) echo in esac;; b) :;; esac)#; git stash' $'echo a\\\n#; git stash' $'echo $\\\n(date)#; git stash' \
     'echo @(a)#; git stash'; do
   test_deny  "$SUBAGENT_GIT_GUARD" "GH #833: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done

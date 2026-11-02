@@ -50,7 +50,10 @@ def mask_quotes(s):
     # GH #833: a case read as a command pushes "c" until its esac, so a
     # pattern's ")" inside $(..) cannot pop the $( flag; an extglob group
     # @( !( ?( *( +( glues as $( does; a line continuation between "$" and
-    # its "(" is stepped over (_back).
+    # its "(" is stepped over (_back). Fail safe: a "c" pushed by mistake
+    # (`echo do case`) or never closed leaves each ")" after it unsure, so
+    # while one is on top a ")" keeps "#" in its word whenever a glued "("
+    # is still open (ng); that only reads more, never less.
     def _back(k, blanks):
         # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
         # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -73,12 +76,24 @@ def mask_quotes(s):
         if not s.startswith(word, i) or s[i + len(word):i + len(word) + 1] not in ("", " ", "\t", "\n", ";", "&", "|", ")"):
             return False
         k, e = _back(i, True)
-        return k < 0 or not e and (s[k] in after or any(
-            s.endswith(w, 0, k + 1) and (k + 1 == len(w) or s[k - len(w)] in " \t\n;&|(") for w in leads))
+        if k < 0 or not e and s[k] in after:
+            return True
+        for w in leads if not e else ():
+            j = k + 1 - len(w)
+            if j >= 0 and s.startswith(w, j) and (j == 0 or s[j - 1] in " \t\n;&|("):
+                if w != "in":
+                    return True
+                m = _back(j, True)[0]  # `in` leads only as `case WORD in`, never as an argument (`echo in esac`)
+                while m >= 0 and s[m] not in " \t\n":
+                    m -= 1
+                m = _back(m + 1, True)[0]
+                return s.endswith("case", 0, m + 1) and (m < 4 or s[m - 4] in " \t\n;&|(")
+        return False
 
     out = []
     pad = {}  # out index -> blank pairs to put in front of that piece (GH #306)
     word_start = 0  # out index where the current word begins
+    ng = 0  # GH #833: how many entries of parens are True
     parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued
     i, n = 0, len(s)
     at_word_start = True
@@ -177,9 +192,9 @@ def mask_quotes(s):
             i = j
             at_word_start = False
         else:
-            if c == "c" and at_word_start and _cmd_word(i, "case", ";&|(\n", ("then", "do", "else", "elif", "{", "!", "time")):
+            if c == "c" and at_word_start and _cmd_word(i, "case", ";&|()\n", ("then", "do", "else", "elif", "if", "while", "until", "{", "!", "time")):
                 parens.append("c")  # GH #833: a case pattern's ")" closes nothing until its esac
-            elif c == "e" and parens and parens[-1] == "c" and _cmd_word(i, "esac", ";&)\n", ("in",)):
+            elif c == "e" and parens and parens[-1] == "c" and _cmd_word(i, "esac", ";&)\n", ("in", "}", "fi", "done", "esac")):
                 parens.pop()
             out.append(c)
             i += 1
@@ -189,6 +204,10 @@ def mask_quotes(s):
             if c == "(":
                 k, e = _back(i - 1, False)  # GH #833: extglob @( !( ?( *( +( glue as $( does
                 parens.append(k >= 0 and not e and s[k] in "$<>=@!?*+")
-            elif c == ")" and parens and parens[-1] != "c" and parens.pop():
+                ng += parens[-1]
+            elif c == ")" and parens and parens[-1] == "c":
+                at_word_start = at_word_start and not ng  # GH #833 fail safe: unsure, so glued while any glued ( is open
+            elif c == ")" and parens and parens.pop():
+                ng -= 1
                 at_word_start = False  # GH #820 item 5: $(..)# is one word
     return "".join("  " * pad.get(k, 0) + p for k, p in enumerate(out))

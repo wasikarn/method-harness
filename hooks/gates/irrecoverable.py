@@ -689,8 +689,27 @@ def _reads_stdin_interp(seg):
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
 _GLUE_OPEN = "$<>=@!?*+"  # GH #820 item 5, #833: a ( after one of these ($( <( >( name=( and extglob @( !( ?( *( +()
 # closes inside its word
-_CASE_LEAD_RE = re.compile(r"(?:^|[\s;&|(])(?:then|do|else|elif|\{|!|time)$")  # reserved words a command follows
-_ESAC_LEAD_RE = re.compile(r"(?:^|\s)in$")  # `case a in esac`: no pattern at all
+# reserved words a command (so a case) may follow, and those an esac may follow: a closer, or `case WORD in`
+_CASE_LEAD_RE = re.compile(r"(?:^|[\s;&|(])(?:then|do|else|elif|if|while|until|\{|!|time)$")
+_ESAC_LEAD_RE = re.compile(r"(?:(?:^|[\s;&|(])case[ \t]+\S+[ \t\n]+in|(?:^|[\s;&|(])(?:\}|fi|done|esac))$")
+
+class _ParenFlags(list):
+    # GH #833: _quote_mask's po stack; glued counts its True entries (an open $( <( >( name=( or extglob group).
+    glued = 0
+
+    def append(self, x):
+        self.glued += x is True
+        super().append(x)
+
+    def __iadd__(self, xs):
+        for x in xs:
+            self.append(x)
+        return self
+
+    def pop(self):
+        x = super().pop()
+        self.glued -= x is True
+        return x
 
 def _prev_char(c, k, esc):
     # GH #833: the index of the char bash reads right before c[k] (-1 at the start). A backslash-newline the unquoted
@@ -700,15 +719,15 @@ def _prev_char(c, k, esc):
         k -= 2
     return k
 
-def _cmd_word(c, i, word, esc, after, lead):
+def _cmd_word(c, i, word, esc, after, lead, span):
     # GH #833: whether c[i:] starts the reserved word `word` where bash reads it (after one of the chars in after, a
-    # word lead matches, or at the start), followed by a blank, a separator or the end.
+    # word lead matches in the span chars ending there, or at the start), followed by a blank, a separator or the end.
     if not c.startswith(word, i) or c[i + len(word):i + len(word) + 1] not in ("", " ", "\t", "\n", ";", "&", "|", ")"):
         return False
     k = _prev_char(c, i, esc)
     while k >= 0 and c[k] in " \t" and not esc[k]:
         k = _prev_char(c, k, esc)
-    return k < 0 or not esc[k] and (c[k] in after or bool(lead.search(c, max(0, k - 5), k + 1)))
+    return k < 0 or not esc[k] and (c[k] in after or bool(lead.search(c, max(0, k - span), k + 1)))
 
 def _quote_mask(c, stack=None, hd=False):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
@@ -721,29 +740,30 @@ def _quote_mask(c, stack=None, hd=False):
     # no comment (`echo $(date)#|claude` pipes); the ) of a subshell, of ((..)) or an unmatched one ends the word.
     # po holds one flag per open unquoted (, whether its ) ends mid-word; gc is the index of the last such ).
     # GH #833: a `case` read as a command pushes "c" onto po until its `esac`: a pattern's ) then pops nothing, so it
-    # cannot close the $( around it early. esc flags each char an unquoted backslash escapes: an escaped blank or
+    # cannot close the $( around it early. Fail safe: a "c" pushed by mistake (`echo do case`) or never closed leaves
+    # every ) after it unsure, so while one is on top a ) keeps a glued # in its word whenever any glued ( is open
+    # (over-reading only); the quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
     # separator is part of its word, and an escaped newline is a line continuation (_prev_char). Extglob @( !( ?(
     # *( +( are glued as $( is.
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
-    po, gc, esc = [], -2, bytearray(len(c))
+    po, gc, esc = _ParenFlags(), -2, bytearray(len(c))
     while i < n:
         ch, q = c[i], stack[-1]
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
-        pat = False  # GH #833: a case pattern's )
         if q not in (SQ, '"', "$'"):
             if ch == "(":
                 p = _prev_char(c, i, esc)
                 po.append(p >= 0 and not esc[p] and c[p] in _GLUE_OPEN)
             elif ch == ")" and po and po[-1] == "c":
-                pat = True
+                gc = i if po.glued else gc
             elif ch == ")" and po and po.pop():
                 gc = i
-            elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|(\n", _CASE_LEAD_RE):
+            elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
                 po.append("c")
-            elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE):
+            elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
         if q in _HD_OFF:
             mask[i] = 1
@@ -793,7 +813,7 @@ def _quote_mask(c, stack=None, hd=False):
             i = j
             continue
         elif not hd:
-            if q == "(" and ch in "()" and not pat:
+            if q == "(" and ch in "()":
                 stack.append(ch) if ch == "(" else stack.pop()
             elif q == "`" and ch == "`":
                 stack.pop()
