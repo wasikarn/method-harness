@@ -149,6 +149,7 @@ except Exception:
         out = []
         pad = {}  # GH #306: out index -> blank pairs to put in front of that piece
         word_start = 0
+        parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
         at_word_start = True
         while i < n:
@@ -215,6 +216,10 @@ except Exception:
                 at_word_start = c in set(" \t\n;&|()")
                 if at_word_start:
                     word_start = len(out)
+                if c == "(":
+                    parens.append(i > 1 and s[i - 2] in "$<>=")
+                elif c == ")" and parens and parens.pop():
+                    at_word_start = False  # GH #820 item 5: $(..)# is one word, never a comment
         return "".join("  " * pad.get(k, 0) + p for k, p in enumerate(out))
 
 # GH #317: outside quotes a shell drops a backslash before an ordinary character (`g\it stash` and
