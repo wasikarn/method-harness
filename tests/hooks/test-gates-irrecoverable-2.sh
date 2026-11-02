@@ -4212,4 +4212,15 @@ for _c in 'F=-r; G=-i && T=${S//&/x}; rm $F $G b' 'F=-r; G=-i && echo `date & wa
   'G=-i; F=-r; for x in a b; do rm $F $G b; f(){ unset G; }; done'; do
   test_allow "$IRRECOVERABLE" "GH #818 review control: $_c" "$(bash_payload "$_c")"
 done
+# GH #818 review 2: the scan does not follow quotes nested in "$( .. )" or "` .. `", so with one in the text no `&` is read
+# as a background list.
+for _c in 'G=-i; F=-r; unset G && echo "$(printf "%s & %s" a b)"; rm $F $G b' \
+  'G=-i; F=-r; unset G && msg="$(git log -1 --format="%an & %ae")"; rm $F $G b' \
+  $'G=-i; F=-r\nunset G && echo "`date "+%a & %b"`"\nrm $F $G b' 'G=-i; F=-r; unset G "$(echo "a & b")"; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #818 review 2: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
+done
+for _c in 'F=-r; G=-i && T="$(sed "s/&/and/" f)"; rm $F $G b' 'F=-r; G=-i && echo "$(printf "%s & %s" a b)"; rm $F $G b' \
+  'F=-r; export G=-i X="$(fmt "a & b")"; rm $F $G b'; do
+  test_allow "$IRRECOVERABLE" "GH #818 review 2 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary

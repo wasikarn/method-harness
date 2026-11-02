@@ -6422,13 +6422,14 @@ def _shell_scan(text, groups=None):
     # <( .. ) included, as a value set inside one never reaches the text after it closes (a `)` with nothing open, a
     # case pattern, closes nothing); text_at[i] is 1 where offset i is quoted or in a comment, so a word there is text.
     # GH #818: a list run in the background (`G=-i & ..`, `{ ..; } &`) is a subshell too, so it is a span from the
-    # separator before it to its `&`. With groups (a dict), groups["fn"] gets (open, close, name, head) for each function
+    # separator before it to its `&`, in groups["bg"] (groups is a dict). groups["fn"] gets (open, close, name, head) for each function
     # body `name() { .. }` / `function name { .. }` and groups["loop"] (open, close) for each `do .. done`.
     spans, stack, sq, dq, i, n = [], [], False, False, 0, len(text)
     text_at = bytearray(n)
     seg, braces, loops = [-1], [], []
     fns, loop_spans = [], []
     exp, bt, brk = 0, False, 0  # inside ${..}, backticks, $[..] / [..]: an `&` there is text (GH #818 review)
+    bg, dq_sub = [], False
     while i < n:
         c = text[i]
         if sq:
@@ -6443,6 +6444,8 @@ def _shell_scan(text, groups=None):
             text_at[i], dq = 1, not dq
         elif dq:
             text_at[i] = 1
+            if c == "`" or (c == "$" and text[i + 1:i + 2] == "("):
+                dq_sub = True
         elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
             j = text.find("\n", i)
             j = n if j < 0 else j
@@ -6473,7 +6476,7 @@ def _shell_scan(text, groups=None):
             if text[i + 1:i + 2] == "&":
                 i += 1
             elif not (i and text[i - 1] in "<>|;") and text[i + 1:i + 2] != ">" and not (exp or bt or brk):
-                spans.append((seg[-1], i))  # GH #818: the list before a lone `&` runs in a subshell
+                bg.append((seg[-1], i))  # GH #818: the list before a lone `&` runs in a subshell
                 seg[-1] = i
         elif c in "{}d" and (i == 0 or text[i - 1] in " \t\n;&|()"):
             w = re.match(r"(?:\{|\}|done|do)(?=[\s;&|)<>]|$)", text[i:i + 5])
@@ -6493,6 +6496,10 @@ def _shell_scan(text, groups=None):
         i += 1
     if groups is not None:
         groups["fn"], groups["loop"] = fns, loop_spans
+    # GH #818 review 2: the scan does not follow the quotes nested in "$( .. )" or "` .. `", where an inner "a & b" read
+    # as a bare `&`; with one in the text no background list is read, as before GH #818.
+    if groups is not None:
+        groups["bg"] = [] if dq_sub else bg
     return spans, text_at
 
 def _prefix_assign(text, m, memo):
@@ -6525,6 +6532,9 @@ def _prefix_assign(text, m, memo):
         memo[k] = out
     return out
 
+class _SlowCopy(Exception):
+    pass
+
 _OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
 
 def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False):
@@ -6539,7 +6549,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     memo = {}
     sets = [(m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None))
             for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m, memo))]
-    groups = {"fn": (), "loop": ()}
+    groups = {"fn": (), "loop": (), "bg": ()}
     spans, text_at = _shell_scan(text, groups) if raw else ((), b"")
     scope = {}  # GH #818: an entry's end -> the (open, close) only references inside which it reaches
     if raw:
@@ -6574,10 +6584,19 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         by_name.setdefault(n, ([], []))
         by_name[n][0].append(e)
         by_name[n][1].append(v)
-    first_call, enclosing = {}, {}
+    first_call, enclosing, work, slow = {}, {}, [0], [False]
+    def spend(n):
+        # GH #818 review 2: past one budget the copy is read again as develop read it (paren subshells only, no
+        # background list, function or loop rule), so a slow shape keeps at least develop's reading.
+        work[0] += n
+        if work[0] > 400_000:
+            raise _SlowCopy
     def encl(at):
         # The spans and function bodies holding an entry, once per entry (GH #818 review: per reference was slow).
+        if slow[0]:
+            return [(o, c) for o, c in spans if o < at <= c], ()
         if at not in enclosing:
+            spend(len(spans) + len(groups["bg"]) + len(groups["fn"]))
             fl = []
             for o, c, name, head in groups["fn"]:
                 if o < at < c:
@@ -6589,10 +6608,12 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                             (w.start() for w in re.finditer(r"(?<![\w.:-])" + re.escape(name) + r"(?![\w.:-])", text)
                              if not head <= w.start() <= c), len(text))
                     fl.append((o, c, first_call[(o, name)]))
-            enclosing[at] = ([(o, c) for o, c in spans if o < at <= c], fl)
+            enclosing[at] = ([(o, c) for o, c in spans + groups["bg"] if o < at <= c], fl)
         return enclosing[at]
     def usable(at, v, ref, strict=False):
         sp, fl = encl(at)
+        if not slow[0]:
+            spend(1 + len(sp) + len(fl))
         if any(not o < ref < c for o, c in sp):
             return False  # set inside a subshell the reference is not in
         sc = scope.get(at)
@@ -6616,7 +6637,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             for lo, lc in groups["loop"]:
                 # GH #818: a later pass of a loop the reference is in reads the body's last entry after it when the body
                 # sets nothing before it: an unset there leaves the reference as written.
-                if lo < ref < lc:
+                if lo < ref < lc and not slow[0]:
                     ks = range(bisect.bisect_right(ends, lo), bisect.bisect_left(ends, lc))
                     first = next((k for k in ks if usable(ends[k], vals[k], ref, True)), None)
                     if first is not None and ends[first] > ref:
@@ -6633,7 +6654,11 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
             return outer[name]
         return last.get(name, m.group(0)) if fallback_last else m.group(0)
     last = {n: v for _, n, v in sets if v is not None}
-    return _VAR_REF_RE.sub(sub, text)
+    try:
+        return _VAR_REF_RE.sub(sub, text)
+    except _SlowCopy:
+        slow[0] = True
+        return _VAR_REF_RE.sub(sub, text)
 
 _CMD_VALS = None
 _BODY_VAR_WORK, _BODY_VAR_BUDGET = 0, 300_000  # characters substituted, summed over every body and pass
