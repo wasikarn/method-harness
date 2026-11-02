@@ -4230,4 +4230,12 @@ for _c in 'G=-i; F=-r; unset G && echo "${X:-"Tom & Jerry"}"; rm $F $G b' 'F=-r;
   'G=-i; F=-r; unset G && echo "${X:+"a & b"}" "${Y:-"$Z"}"; rm $F $G b'; do
   test_deny  "$IRRECOVERABLE" "GH #818 review 3: $_c" "$(bash_payload "$_c")"
 done
+# GH #818 review 4: the scoped reading is one more copy, not a change to the raw one, so a first loop pass, a value set in a
+# function a later body reads, and an earlier value past a dropped one all keep develop's reading.
+for _c in 'G=-i; F=-r; unset G; for i in 1; do rm $F $G b; unset F; done' \
+  'G=-i; F=-r; unset G; while true; do rm $F $G b; unset F; break; done' \
+  'init(){ F=-r; }; main(){ rm $F $G b; }; G=-i; unset G; init; main' 'G=-i; unset G; f(){ F=-r; }; g(){ rm $F $G b; }; f; g' \
+  'G=-i; F=-r & unset G; wait; rm $F $G b'; do
+  test_deny  "$IRRECOVERABLE" "GH #818 review 4: $_c" "$(bash_payload "$_c")"
+done
 gates_summary

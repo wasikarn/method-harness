@@ -6260,12 +6260,14 @@ def _views():
     # BIN=claude; command -v $BIN` (review 5). The raw copy is in order with a reference that has no assignment
     # before it left as written, as bash expands it to nothing: `F=-r; rm $F $G b; G=-i` does not prompt, while the
     # in-order copy's last-value fallback read it as -i (GH #805); it also drops an unset, subshell or prefix value
-    # (GH #808). rm's rules read all four copies; the spawn scan skips all but the in-order one.
-    for pick in (-1, 0, None, "raw"):
+    # (GH #808). A fifth, scoped copy (GH #818) is the raw one that also reads a background list, a function body, a
+    # `local` and a loop's later pass as bash scopes them. rm's rules read all five; the spawn scan only the in-order one.
+    for pick in (-1, 0, None, "raw", "scoped"):
         def _sub(m, pick=pick):
             name = m.group(1) or m.group(2)
             return vals[name][pick] if name in vals and m.start() not in lit else m.group(0)
-        v = (_ordered_var_text(cmd, pick is None) if pick in (None, "raw") else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
+        v = (_ordered_var_text(cmd, pick is None, scoped=pick == "scoped") if pick in (None, "raw", "scoped")
+             else _VAR_REF_RE.sub(_sub, cmd)) if vals else cmd
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
@@ -6540,7 +6542,7 @@ class _SlowCopy(Exception):
 
 _OPERATOR_CHARS = re.compile(r"[|;&<>()\n`]")
 
-def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False):
+def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, comments=False, scoped=False):
     # GH #798 review: each $NAME / ${NAME} read as the plain value assigned to NAME most recently before it, so
     # `BIN=claude; .. BIN=python3; $BIN -c ..` is python3 while `X=claude; $X -p x` is claude. Order-aware, not
     # scope-aware: a function's or a subshell's value counts from where it is written. A reference with no assignment
@@ -6549,11 +6551,14 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
     # `unset` since (left as written, as bash expands it to nothing), one set in a subshell that closed before it, and a
     # prefix assignment on a command. Dropping only ever leaves a reference as written, so this copy reads more -r, not less.
     raw = not fallback_last
+    # GH #818: scoped (with raw) is one more copy that also reads the shapes below as bash scopes them; the raw copy
+    # without it stays as it was, so this copy only adds a reading.
+    scoped = raw and scoped
     memo = {}
     sets = [(m.end(), m.group(1), next(g for g in m.groups()[1:] if g is not None))
             for m in _PLAIN_ASSIGN_RE.finditer(text) if not (raw and _prefix_assign(text, m, memo))]
     groups = {"fn": (), "loop": (), "bg": ()}
-    spans, text_at = _shell_scan(text, groups) if raw else ((), b"")
+    spans, text_at = _shell_scan(text, groups if scoped else None) if raw else ((), b"")
     scope = {}  # GH #818: an entry's end -> the (open, close) only references inside which it reaches
     if raw:
         for m in _UNSET_RE.finditer(text):
@@ -6561,16 +6566,15 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
                 base = m.start(2)
                 for w in re.finditer(r"[A-Za-z_]\w*", m.group(2)):
                     sets.append((base + w.end(), w.group(0), None))
-        # GH #818: a quoted name (`unset 'G'`) or one after an expansion (`unset ${X} G`); an extra reading, so the
-        # one above stays as it was.
-        for m in _UNSET_MORE_RE.finditer(text):
+        # GH #818: a quoted name (`unset 'G'`) or one after an expansion (`unset ${X} G`).
+        for m in _UNSET_MORE_RE.finditer(text) if scoped else ():
             if "f" not in m.group(1) and not text_at[m.start()]:
                 base = m.start(2)
                 for w in _UNSET_WORD_RE.finditer(m.group(2)):
                     if w.group(1) or w.group(2) or w.group(3):
                         sets.append((base + w.end(), w.group(1) or w.group(2) or w.group(3), None))
         # GH #818: `local G` / `declare G` with no value, inside a function: G is unset there, for that body only.
-        for m in _LOCAL_RE.finditer(text):
+        for m in _LOCAL_RE.finditer(text) if scoped else ():
             if not text_at[m.start()] and not set(m.group(2)) & set("gpfFn"):
                 body = min(((o, c) for o, c, _, _ in groups["fn"] if o < m.start() < c), key=lambda b: b[1] - b[0],
                            default=None)
@@ -6587,10 +6591,10 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
         by_name.setdefault(n, ([], []))
         by_name[n][0].append(e)
         by_name[n][1].append(v)
-    first_call, enclosing, work, slow = {}, {}, [0], [False]
+    first_call, enclosing, work, slow = {}, {}, [0], [not scoped]
     def spend(n):
-        # GH #818 review 2: past one budget the copy is read again as develop read it (paren subshells only, no
-        # background list, function or loop rule), so a slow shape keeps at least develop's reading.
+        # GH #818 review 2: past one budget the scoped copy is read as the raw one (paren subshells only, no background
+        # list, function or loop rule), which then adds nothing.
         work[0] += n
         if work[0] > 400_000:
             raise _SlowCopy
