@@ -1647,7 +1647,7 @@ def _at_command_position(c, i):
     j = i
     while j and c[j - 1] in " \t":
         j -= 1
-    if not j or c[j - 1] in ";&|()\n":
+    if not j or c[j - 1] in ";&|(){}\n":  # `{ :; } done` closes too (GH #816 review)
         return True
     w = re.search(r"\S+$", c[max(0, j - 8):j])
     return w is not None and w.group() in _KW_LEAD_WORDS
@@ -1655,7 +1655,7 @@ def _at_command_position(c, i):
 def _piped_compound_spans(c, mask):
     # GH #820 item 3: the (start, end) of each compound command (case, if, while, until, for, select) a pipe feeds, to
     # its matching esac / fi / done. Keywords are counted at a command position outside quotes and comments; one this
-    # misses ends a span early (a gap), never late. A span with no close runs to the end of the text.
+    # misses can end a span early (a gap) or, a close missed, run it to the end. A span with no close runs to the end of the text.
     if not re.search(r"(?<![\w-])(?:case|if|while|until|for|select)(?![\w-])", c):
         return []
     # One pass with a stack: case / if open at once, while / until / for / select at their `do`.
@@ -1664,6 +1664,8 @@ def _piped_compound_spans(c, mask):
         w, at = m.group(1), m.start()
         if mask[at] or not _at_command_position(c, at):
             continue
+        if w in _COMPOUND_OPEN and c[m.end():m.end() + 1] == ")":
+            continue  # a case pattern (`a|if)`), not a command (GH #816 review)
         if w in _COMPOUND_OPEN:
             e = (at, w, _pipe_past_comments(c, at, mask))  # a walk back from at: no scan of the text before it
             (stack if w in ("case", "if") else pending).append(e)
@@ -6581,7 +6583,7 @@ def _ordered_var_text(text, fallback_last=True, outer=None, plain_only=False, co
 _CMD_VALS = None
 _BODY_VAR_WORK, _BODY_VAR_BUDGET = 0, 300_000  # characters substituted, summed over every body and pass
 
-def _scan_body_vars(body):
+def _scan_body_vars(body, unescaped=False):
     # GH #812 / #810 item 2: a body is a script of its own, so its $NAME reads, in order, the plain value the body
     # assigns before it (`bash -c 'X=claude; $X -p x'`), else the outer command's last one (the child's environment:
     # `export X=claude; bash -c '$X -p x'`), else the body's last. A single-quoted body hid both from the views, which
@@ -6593,12 +6595,12 @@ def _scan_body_vars(body):
     if _CMD_VALS is None:
         _CMD_VALS = {} if len(cmd) > _VIEW_LEN_CAP else {
             m.group(1): next(g for g in m.groups()[1:] if g is not None) for m in _PLAIN_ASSIGN_RE.finditer(cmd)}
-    starts = [body]
+    starts = [] if unescaped else [body]
     # GH #816 / #820 item 1: a double-quoted body keeps the outer shell's `\$` / `\`` (shlex leaves them), which the
     # child reads as `$` / `` ` ``: `export Y=claude; bash -c "date|\$Y"`, and a body nested in a single-quoted one
     # (`bash -c 'bash -c "\$X -p x"'`). A copy with them unescaped is read too, unless the body is written
     # single-quoted only (`bash -c '\$Y -p x'` runs a command named `$Y`).
-    u = re.sub(r"\\([$`])", r"\1", body)
+    u = re.sub(r"\\([$`])", r"\1", body) if unescaped else body
     if u != body and not ("'" + body + "'" in cmd and '"' + body + '"' not in cmd):
         starts.append(u)
     seen = None
@@ -6636,8 +6638,11 @@ def _body_var_text(v):
 # GH #798: the views get one spawn-anchor budget of their own, the size of the main reading's, which has run.
 _spawn_anchor_work, _spawn_over_budget = 0, False
 if "agent_id" in d:
-    for _body in _BODY_VAR_QUEUE:
-        _scan_body_vars(_body)
+    # GH #816 review: every body as written first, then the unescaped copies, so a copy's expansion cannot spend the
+    # shared budget before a later body as written is read.
+    for _unesc in (False, True):
+        for _body in _BODY_VAR_QUEUE:
+            _scan_body_vars(_body, _unesc)
 for _VIEW[0], _text in _views():
     try:
         # GH #798: the spawn a view's own text shows (`X=claude; $X -p x`, `bash${IFS}-c ..`), at the top level too.

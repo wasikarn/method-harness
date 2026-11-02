@@ -4207,4 +4207,13 @@ for _c in "export X=claude; bash -c 'bash -c \"\\\$X --version\"'" "export X=cla
   'echo hi > >(grep claude)'; do
   test_allow "$IRRECOVERABLE" "GH #816/#820 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #816/#820 review: every body as written is read before any unescaped copy, so 25 copies of a 15 KB value cannot
+# spend the shared budget before a later `$X -p x` body; a `}` before done / fi closes, and `if)` is a case pattern.
+_c="H=$(printf 'y%.0s' $(seq 15000)); $(for i in $(seq 0 24); do printf 'bash -c "echo \\$H %s"; ' "$i"; done)export X=claude; bash -c '\$X -p x'"
+test_deny  "$IRRECOVERABLE" 'GH #816/#820 review: subagent: 25 double-quoted bodies of a 15 KB $H, then export X=claude; bash -c '"'"'$X -p x'"'"'' \
+  "$(bash_agent_payload "$_c" fork)"
+for _c in 'echo hi | while read l; do { echo "$l"; } done; claude --continue' 'echo hi | if true; then { :; } fi; claude --resume' \
+  'echo hi | case a in a|if) true;; esac; claude --continue'; do
+  test_allow "$IRRECOVERABLE" "GH #816/#820 review control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
