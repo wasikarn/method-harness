@@ -3060,14 +3060,19 @@ def _group_ends(g):
     # GH #815: (leading closers, opens, core, trailing closers) of a pipe stage in a { } or ( ) group, which _pieces
     # does not model: `{ python3 -c 1; } | bash` splits at the `;` into `{ python3 -c 1` and `} | bash`, and
     # `(python3 -c 1) | bash` keeps `(python3 -c 1)` as one stage. A trailing ) counts only past the stage's own
-    # unquoted ( ones, so `$(date)` closes nothing.
-    t, lead, opens = g.strip(), 0, 0
-    while t[:1] in ("}", ")"):
-        lead, t = lead + 1, t[1:].lstrip()
-    while (t[:1] == "(" and t[1:2] != "(") or (t[:1] == "{" and t[1:2] in (" ", "\t", "\n")):
-        opens, t = opens + 1, t[1:].lstrip()
+    # unquoted ( ones, so `$(date)` closes nothing; the core ends at the first one. Index scans: linear.
+    t, i, n, lead, opens = g, 0, len(g), 0, 0
+    while i < n and (t[i] in " \t\n" or t[i] in "})"):
+        lead += t[i] in "})"
+        i += 1
+    while i < n and ((t[i] == "(" and t[i + 1:i + 2] != "(") or (t[i] == "{" and t[i + 1:i + 2] in (" ", "\t", "\n"))
+                     or (opens and t[i] in " \t\n")):
+        opens += t[i] in "({"
+        i += 1
+    t = t[i:]
     mask = _quote_mask(t)
     depth = trail = 0
+    cut = len(t)
     for k, ch in enumerate(t):
         if mask[k]:
             continue
@@ -3078,37 +3083,36 @@ def _group_ends(g):
                 depth -= 1
             else:
                 trail += 1
-    if trail:
-        cut = len(t)
-        for _ in range(trail):
-            cut = t.rindex(")", 0, cut)
-        t = t[:cut]
-    return lead, opens, t, trail
+                cut = min(cut, k)
+    return lead, opens, t[:cut], trail
 
 def _inline_interp_to_shell(c):
     # GH #801: some pipeline of c runs an inline python/node script stage and, after it, a shell reading stdin.
     # Read on the ANSI-C-decoded text: _pieces does not model \' inside $'..', so a quoted probe string
     # ($'python3 -c \'x\' | bash') would split at its own pipes.
-    # GH #815: a { } or ( ) group whose commands run one is such a stage (groups: one flag per open group), and a
-    # shell whose stdin is a heredoc or here-string reads no pipe.
+    # GH #815: a { } or ( ) group whose commands run one is such a stage, and a shell whose stdin is a heredoc or
+    # here-string reads no pipe. depth: the open groups; the first `marked` of them ran an inline script.
     c = _join_continuations(_normalize_ansi_c_quotes(c) if "$'" in c else c)
-    groups = []
+    depth = marked = 0
     for s, e in _pieces(c):
         inline = False  # a stage before this one runs an inline script
         for a, b in _pieces(c[s:e], pipe=True):
             g = c[s + a:s + b]
             lead, opens, g, trail = _group_ends(g) if any(ch in g for ch in "(){}") else (0, 0, g, 0)
             for _ in range(lead):
-                inline = (groups.pop() if groups else False) or inline
-            groups.extend([False] * opens)
+                if depth:
+                    depth -= 1
+                    inline, marked = inline or depth < marked, min(marked, depth)
+            depth += opens
             if inline and "sh" in g.translate(_UNQUOTE) and _reads_stdin_shell(g) and not any(
                     t.startswith("<<") for t in (_split_words(g) or ())):
                 return True
             if _runs_inline_interp(g):
-                inline = True
-                groups[:] = [True] * len(groups)
+                inline, marked = True, depth
             for _ in range(trail):
-                inline = (groups.pop() if groups else False) or inline
+                if depth:
+                    depth -= 1
+                    inline, marked = inline or depth < marked, min(marked, depth)
     return False
 
 def _shell_stdin_bodies(c):
