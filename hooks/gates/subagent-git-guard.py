@@ -287,9 +287,15 @@ except Exception:
                 if at_word_start:
                     word_start = len(out)
                 if c == "(":
-                    k, e = _back(i - 1, False)  # GH #833: extglob @( !( ?( *( +( glue as $( does
-                    parens.append(k >= 0 and not e and s[k] in "$<>=@!?*+")
-                    ng += parens[-1]
+                    k, e = _back(i - 1, False)  # GH #833: steps over a continuation ($\<nl>()
+                    g = k >= 0 and not e
+                    parens.append("x" if g and s[k] in "@!?*+" else g and s[k] in "$<>=")  # GH #833 review 7: "x" is unsure
+                    ng += parens[-1] is True
+                elif c == ")" and parens and parens[-1] == "x":
+                    # GH #833 review 7: an extglob group glues (shopt -s extglob), but with extglob off !( is a negated
+                    # subshell and x+() f@() a function, where a "#" after ")" is a comment: read it both ways
+                    parens.pop()
+                    at_word_start, unsure = False, i - 1
                 elif c == ")" and parens and parens[-1] == "c":
                     if ng:  # GH #833 fail safe: a pattern or the real closer; a "#" after it is read both ways
                         at_word_start, unsure = False, i - 1

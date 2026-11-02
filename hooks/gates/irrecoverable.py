@@ -687,14 +687,16 @@ def _reads_stdin_interp(seg):
     return (not rest or rest[0] == "-") and not any(t.startswith("<") for t in rest)
 
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
-_GLUE_OPEN = "$<>=@!?*+"  # GH #820 item 5, #833: a ( after one of these ($( <( >( name=( and extglob @( !( ?( *( +()
-# closes inside its word
+_GLUE_OPEN = "$<>="  # GH #820 item 5: a ( after one of these ($( <( >( name=() closes inside its word
+# GH #833 review 7: after one of these the ( may be an extglob group (shopt -s extglob: @( !( ?( *( +( glue) or, with
+# extglob off as in plain bash -c, an operator (!( a negated subshell, x+() f@() a function), so its ) is unsure
+_EXTGLOB_OPEN = "@!?*+"
 # reserved words a command (so a case) may follow, and those an esac may follow: a closer, or `case WORD in`
 _CASE_LEAD_RE = re.compile(r"(?:^|[\s;&|(])(?:then|do|else|elif|if|while|until|\{|!|time)$")
 _ESAC_LEAD_RE = re.compile(r"(?:(?:^|[\s;&|(])case[ \t]+\S+[ \t\n]+in|(?:^|[\s;&|(])(?:\}|fi|done|esac))$")
 
 class _ParenFlags(list):
-    # GH #833: _quote_mask's po stack; glued counts its True entries (an open $( <( >( name=( or extglob group).
+    # GH #833: _quote_mask's po stack; glued counts its True entries (an open $( <( >( or name=( ).
     glued = 0
 
     def append(self, x):
@@ -747,8 +749,8 @@ def _quote_mask(c, stack=None, hd=False):
     # << could hide the lines below). Once such an inert quote or < shows up, bash's quote state past the line is
     # unknown, so ie moves to the end of c: everything after reads as visible code (hd: a "!" frame, so _strip_heredocs
     # strips nothing more). The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
-    # separator is part of its word, and an escaped newline is a line continuation (_prev_char). Extglob @( !( ?(
-    # *( +( are glued as $( is.
+    # separator is part of its word, and an escaped newline is a line continuation (_prev_char). The ) of an
+    # extglob candidate @( !( ?( *( +( is unsure too ("x" on po, _EXTGLOB_OPEN).
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
@@ -760,7 +762,11 @@ def _quote_mask(c, stack=None, hd=False):
         if q not in (SQ, '"', "$'"):
             if ch == "(":
                 p = _prev_char(c, i, esc)
-                po.append(p >= 0 and not esc[p] and c[p] in _GLUE_OPEN)
+                g = p >= 0 and not esc[p]
+                po.append("x" if g and c[p] in _EXTGLOB_OPEN else g and c[p] in _GLUE_OPEN)
+            elif ch == ")" and po and po[-1] == "x":
+                po.pop()
+                uc = i  # GH #833 review 7: an extglob group or an operator; a # after it is read both ways
             elif ch == ")" and po and po[-1] == "c":
                 uc = i if po.glued else uc
             elif ch == ")" and po and po.pop():

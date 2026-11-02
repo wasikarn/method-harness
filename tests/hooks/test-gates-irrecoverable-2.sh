@@ -4605,4 +4605,19 @@ for _c in 'echo $(echo do case)#; $"git" stash' 'echo $(echo do case)#; x=1 $"gi
 done
 test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 6 control: subagent: echo $(echo do case)#; $"git" status' \
   "$(bash_agent_payload 'echo $(echo do case)#; $"git" status' fork)"
+# GH #833 review 7: with extglob off (plain bash -c) !( is a negated subshell and x+() f@() a function, so a # after
+# their ) is a comment; the ) of an extglob candidate is unsure, and the # after it is read both ways.
+test_deny  "$IRRECOVERABLE" 'GH #833 review 7: !(true)#<<E \n rm -rf ~ \n E' "$(bash_payload $'!(true)#<<E\nrm -rf ~\nE')"
+test_deny  "$IRRECOVERABLE" 'GH #833 review 7: !(true)#<<E \n git reset --hard \n E' "$(bash_payload $'!(true)#<<E\ngit reset --hard\nE')"
+test_allow "$IRRECOVERABLE" 'GH #833 review 7 control: !(true)#<<E \n rm -f x \n E' "$(bash_payload $'!(true)#<<E\nrm -f x\nE')"
+for _c in $'!(true)#<<E\nclaude -p a\nE' $'x+()#<<E\n{ claude -p hi; }\nx+\nE' $'f@()#\'\n{ claude -p hi; }\nf@\n#\''; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 7: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 7 control: subagent: !(true)#<<E \n claude --version \n E' \
+  "$(bash_agent_payload $'!(true)#<<E\nclaude --version\nE' fork)"
+for _c in $'x+()#\'\n{ git stash; }\nx+\n#\'' $'f@()#\'\n{ git clean -fdx; }\nf@\n#\'' $'!(true)#"\ngit reset --hard\n#"'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 7: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 7 control: subagent: x+()#'"'"' \n { git status; } \n x+ \n #'"'" \
+  "$(bash_agent_payload $'x+()#\'\n{ git status; }\nx+\n#\'' fork)"
 gates_summary

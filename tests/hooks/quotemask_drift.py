@@ -111,6 +111,12 @@ CORPUS = [
     "echo $(echo do case)#; $\"git\" stash",
     "echo $(echo do case)#; g$\"it\" stash",
     "echo $(echo do case)#; git $\"reset\" --hard",
+    # GH #833 review 7: an extglob candidate's ")" is unsure (a group, or with extglob off an operator)
+    "!(true)#<<E\ngit stash\nE",
+    "x+()#'\n{ git stash; }\nx+\n#'",
+    "f@()#\"\ngit stash\n#\"",
+    "echo @(a|b)#; git stash",
+    "echo !(a) #'\ngit stash",
 ]
 
 

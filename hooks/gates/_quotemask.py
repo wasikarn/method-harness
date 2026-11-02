@@ -48,9 +48,10 @@ def mask_quotes(s):
     # right after it is no comment (`echo $(date)#|claude` pipes); a subshell
     # ")" or an unmatched one (a case pattern) still ends the word.
     # GH #833: a case read as a command pushes "c" until its esac, so a
-    # pattern's ")" inside $(..) cannot pop the $( flag; an extglob group
-    # @( !( ?( *( +( glues as $( does; a line continuation between "$" and
-    # its "(" is stepped over (_back). Fail safe: a "c" pushed by mistake
+    # pattern's ")" inside $(..) cannot pop the $( flag; the ")" of an
+    # extglob candidate @( !( ?( *( +( is unsure ("x": a group with extglob
+    # on, an operator with it off); a line continuation between "$" and its
+    # "(" is stepped over (_back). Fail safe: a "c" pushed by mistake
     # (`echo do case`) or never closed leaves each ")" after it unsure, so
     # while one is on top a ")" keeps "#" in its word whenever a glued "("
     # is still open (ng); that only reads more, never less.
@@ -230,9 +231,15 @@ def mask_quotes(s):
             if at_word_start:
                 word_start = len(out)
             if c == "(":
-                k, e = _back(i - 1, False)  # GH #833: extglob @( !( ?( *( +( glue as $( does
-                parens.append(k >= 0 and not e and s[k] in "$<>=@!?*+")
-                ng += parens[-1]
+                k, e = _back(i - 1, False)  # GH #833: steps over a continuation ($\<nl>()
+                g = k >= 0 and not e
+                parens.append("x" if g and s[k] in "@!?*+" else g and s[k] in "$<>=")  # GH #833 review 7: "x" is unsure
+                ng += parens[-1] is True
+            elif c == ")" and parens and parens[-1] == "x":
+                # GH #833 review 7: an extglob group glues (shopt -s extglob), but with extglob off !( is a negated
+                # subshell and x+() f@() a function, where a "#" after ")" is a comment: read it both ways
+                parens.pop()
+                at_word_start, unsure = False, i - 1
             elif c == ")" and parens and parens[-1] == "c":
                 if ng:  # GH #833 fail safe: a pattern or the real closer; a "#" after it is read both ways
                     at_word_start, unsure = False, i - 1
