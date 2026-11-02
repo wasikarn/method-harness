@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import json, os, re, shlex, sys
-import bisect  # its own line: tests/hooks/test-gate-canary.sh injects a NameError after the line above
+import bisect, itertools  # its own line: tests/hooks/test-gate-canary.sh injects a NameError after the line above
 
 # GH #156: raise the int-string digit limit before parsing so an oversized
 # unquoted int literal doesn't crash json.load() into this gate's fail-open
@@ -3223,10 +3223,13 @@ def _blank_arith(c):
     if "((" not in c:
         return c
     pairs, out, done = _paren_pairs(c, _quote_mask(c)), list(c), -1
+    unsafe = list(itertools.accumulate((ch in "#\n'\"`\\" for ch in c), initial=0))  # O(1) per span, not a scan
     for o in sorted(pairs):
         e = pairs[o]
+        # review 3: never a span holding a #, newline or quote, where the mask's pairing and bash's raw paren count in
+        # arithmetic can differ (`(( # (` newline `.. | bash ))` is two subshells); such a span is read as develop read it.
         if o > done and c[o + 1:o + 2] == "(" and pairs.get(o + 1) == e - 1 and (
-                c[o - 1:o] == "$" or _ARITH_LEAD_RE.search(c, max(0, o - 16), o)):
+                c[o - 1:o] == "$" or _ARITH_LEAD_RE.search(c, max(0, o - 16), o)) and unsafe[e] == unsafe[o]:
             out[o + 2:e - 1] = " " * (e - o - 3)
             done = e  # a pair inside is blanked already: each character once
     return "".join(out)

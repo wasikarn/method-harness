@@ -4398,9 +4398,11 @@ for _c in 'if true; then python3 -c 1; fi | bash' 'while read l; do python3 -c 1
   'while(true); do python3 -c 1; done | bash' 'if(true); then python3 -c 1; fi | bash'; do
   test_deny  "$IRRECOVERABLE" "GH #823: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
-# GH #823 review 2: only a real ((..)) arithmetic command is blanked: a quoted or commented (( .. )) pair hides no pipe.
+# GH #823 review 2: only a real ((..)) arithmetic command is blanked: a quoted or commented (( .. )) pair hides no pipe,
+# nor does a (( .. )) holding a comment, which bash reads as nested subshells (review 3).
 for _c in 'echo "((" ; python3 -c 1 | bash ; echo "))"' "echo '((' ; python3 -c 1 | bash ; echo '))'" \
-  'x="((";python3 -c 1|bash;y="))"' $'echo hi # ((\npython3 -c 1 | bash\n# ))' 'echo a((b; python3 -c 1 | bash; echo c))'; do
+  'x="((";python3 -c 1|bash;y="))"' $'echo hi # ((\npython3 -c 1 | bash\n# ))' 'echo a((b; python3 -c 1 | bash; echo c))' \
+  $'(( # (\n python3 -c 1 | bash ))' $'echo x; (( # (\npython3 -c 1 | bash ))' $'if (( # (\n python3 -c 1 | bash )); then :; fi'; do
   test_deny  "$IRRECOVERABLE" "GH #823 review 2: ${_c//$'\n'/ \\n }" "$(bash_payload "$_c")"
 done
 test_allow "$IRRECOVERABLE" "GH #823 review 2 control: a quoted (( .. )) and no shell" \
