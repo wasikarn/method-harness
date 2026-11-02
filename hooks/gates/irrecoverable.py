@@ -3134,9 +3134,9 @@ _BLANKED_ARITH_RE = re.compile(r"\(\( *\)\)")
 def _group_ends(g):
     # GH #815: (events, core, trailing closers) of a pipe stage in a { } or ( ) group, which _pieces does not model:
     # `{ python3 -c 1; } | bash` splits at the `;` into `{ python3 -c 1` and `} | bash`, and `(python3 -c 1) | bash`
-    # keeps `(python3 -c 1)` as one stage. events, in order: "close", ("open",) and ("func", name), read from the
-    # stage's front (GH #823: compound keywords and function heads too). A trailing ) counts only past the stage's own
-    # unquoted ( ones, so `$(date)` closes nothing; the core ends at the first one. Index scans: linear.
+    # keeps `(python3 -c 1)` as one stage. events, in order: "close", ("open", for/select), ("do",) and ("func", name),
+    # read from the stage's front (GH #823: compound keywords and function heads too). A trailing ) counts only past
+    # the stage's own unquoted ( ones, so `$(date)` closes nothing; the core ends at the first one. Index scans: linear.
     t, i, n, events = g, 0, len(g), []
     while i < n:
         ch = t[i]
@@ -3146,7 +3146,7 @@ def _group_ends(g):
             events.append("close")
             i += 1
         elif (ch == "(" and t[i + 1:i + 2] != "(") or (ch == "{" and t[i + 1:i + 2] in (" ", "\t", "\n", "")):
-            events.append(("open",))
+            events.append(("open", False))
             i += 1
         elif t.startswith("((", i) and (m := _BLANKED_ARITH_RE.match(t, i)):
             i = m.end()  # GH #823 review 4: a ((..)) _blank_arith emptied (for ((..)) { ..; }) leads its body
@@ -3155,7 +3155,9 @@ def _group_ends(g):
             if m:
                 k = m.group(1)
                 if k in ("if", "while", "until", "for", "select"):
-                    events.append(("open",))
+                    events.append(("open", k in ("for", "select")))
+                elif k == "do":
+                    events.append(("do",))
                 elif k in ("fi", "done"):
                     events.append("close")
                 i = m.end()
@@ -3270,7 +3272,7 @@ def _close_frame(frames, funcs):
     # a function body's instead names the function, whose output is a later call's.
     if not frames:
         return False
-    ran, fname = frames.pop()
+    ran, fname, _ = frames.pop()
     if not ran:
         return False
     if fname:
@@ -3289,7 +3291,8 @@ def _inline_interp_to_shell(c):
     # (2<<, \<\<, ${x:-<<}, $[1<<2], <(cat <<<x)) let a reading of it through.
     # GH #823: so is a compound command (if/while/until/for), a call of a function whose body runs one, and a stage
     # led by `!` or `coproc`; a shell reached through xargs or a >(..) reads the pipe too. frames: one [ran an inline
-    # script, function name or None] per open group or compound command.
+    # script, function name or None, a for/select still before its do] per open group or compound command. A { } or
+    # ( ) body a for/select takes instead of do .. done (for ((;;)) { ..; }) stands for its frame (review 5).
     c = _blank_arith(_join_continuations(_normalize_ansi_c_quotes(c) if "$'" in c else c))
     frames, funcs, pending = [], set(), None
     for s, e in _pieces(c):
@@ -3301,8 +3304,14 @@ def _inline_interp_to_shell(c):
             for ev in events:
                 if ev == "close":
                     inline = _close_frame(frames, funcs) or inline
+                elif ev[0] == "do":
+                    if frames:
+                        frames[-1][2] = False
                 elif ev[0] == "open":
-                    frames.append([False, pending])
+                    if not ev[1] and frames and frames[-1][2]:
+                        frames[-1][2] = False  # the for/select's brace body: its } closes the for
+                    else:
+                        frames.append([False, pending, ev[1]])
                     pending = None
                 else:
                     pending = ev[1]
