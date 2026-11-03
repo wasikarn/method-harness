@@ -145,7 +145,7 @@ except (AttributeError, ValueError, OSError):
 try:
     from _quotemask import mask_quotes as _mask_quotes
 except Exception:
-    def _mask_quotes(s):
+    def _mask_quotes(s, cuts=None):
         def _back(k, blanks):
             # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
             # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -192,7 +192,6 @@ except Exception:
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
         bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
-        rv = []  # GH #842: (start, end) in s of text a backtick cut reveals (see the end)
         at_word_start = True
         while i < n:
             c = s[i]
@@ -213,7 +212,8 @@ except Exception:
                         out.append(" ")  # GH #842: an escaped char, a backtick too, does not end the substitution
                         i += 1
                     elif cut and s[i] == "`":
-                        rv.append((i, s.find("\n", i) % (n + 1)))  # GH #842: the backtick ends the comment
+                        if cuts is not None:  # GH #842: the backtick ends the comment
+                            cuts.append(i)
                         cut = bt = False
                     out.append(" ")
                     i += 1
@@ -225,7 +225,9 @@ except Exception:
                     if cut and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
                         out.append("Q"); i += 1
                     elif cut and s[i] == "`":
-                        rv.append((i, s.find("\n", i) % (n + 1))); cut = bt = False  # GH #842
+                        if cuts is not None:  # GH #842: the backtick ends it
+                            cuts.append(i)
+                        cut = bt = False
                     elif s[i] == "\n":
                         cut = False
                     out.append("Q"); i += 1
@@ -252,7 +254,9 @@ except Exception:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
                         if cut and s[i] == "`":
-                            rv.append((i, s.find("\n", i) % (n + 1))); cut = bt = False  # GH #842
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append(i)
+                            cut = bt = False
                         elif s[i] == "\n":
                             cut = False
                         out.append("Q"); i += 1
@@ -267,7 +271,9 @@ except Exception:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
                         if cut and s[i] == "`":
-                            rv.append((i, s.find("\n", i) % (n + 1))); cut = bt = False  # GH #842
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append(i)
+                            cut = bt = False
                         elif s[i] == "\n":
                             cut = False
                         out.append("Q"); i += 1
@@ -335,15 +341,7 @@ except Exception:
                     at_word_start = False  # GH #820 item 5: $(..)# is one word, never a comment
                 if au and c == ")":
                     unsure = i - 1
-        f = "".join(" " * pad.get(k, 0) + p for k, p in enumerate(out)) + " " * pad.get(len(out), 0)
-        if rv:  # GH #842: a cut line shows what the masks hid on it, from the backtick on; nothing else changes
-            f = list(f)
-            for a, b in rv:
-                for k in range(a, b):
-                    if f[k] in "Q ":
-                        f[k] = " " if s[k] in "'\"" else s[k]
-            f = "".join(f)
-        return f
+        return "".join(" " * pad.get(k, 0) + p for k, p in enumerate(out)) + " " * pad.get(len(out), 0)
 
 # GH #317: outside quotes a shell drops a backslash before an ordinary character (`g\it stash` and
 # `git re\set` run git), but the mask keeps it. _mask drops it inside each word for the anchor scans;
@@ -1166,21 +1164,24 @@ def _hd_view(s, base, raw_ops):
             keep.append((last, len(s)))
             if any(mb[x:y] != base[x:y] for x, y in keep):
                 # The text before the first difference (or the first body) is the base's own, which the main
-                # scans already read. Blank it, newlines too, from one line before that point: the view then
-                # costs the anchor scans only its new part (a big "$(cat <<'EOF' ..)" body doubled the work).
-                d = spans[0][0] - 1
-                for x, y in keep:
-                    e = next((i for i in range(x, min(y, d)) if mb[i] != base[i]), None)
-                    if e is not None:
-                        d = e
-                        break
-                cut = mb.rfind("\n", 0, max(mb.rfind("\n", 0, max(d, 0)), 0)) + 1
-                v = (b, " " * cut + mb[cut:])
+                # scans already read: _trim blanks it, so the view costs the anchor scans only its new part (a
+                # big "$(cat <<'EOF' ..)" body doubled the work).
+                d = spans[0][0]
+                v = (b, _trim(mb, base[:d] + "\0" + base[d + 1:]) or mb)
         _hd_view_memo[k] = v
     return _hd_view_memo[k]
 
+def _trim(m, ref):
+    # m with everything before the line ahead of its first difference from ref blanked, newlines too: that
+    # part reads as ref does, which another scan already read, so the anchor scans charge only for the rest.
+    d = next((i for i in range(min(len(m), len(ref))) if m[i] != ref[i]), None)
+    if d is None:
+        return None
+    cut = m.rfind("\n", 0, max(m.rfind("\n", 0, d), 0)) + 1
+    return " " * cut + m[cut:]
+
 def _nl_view(s, base):
-    # GH #843: s masked with words joined across line continuations, when that differs from base
+    # GH #843: s masked with words joined across line continuations, when that differs from its plain mask
     global _nl_join
     if "\\\n" not in s or ("'" not in s and '"' not in s):
         return None
@@ -1189,7 +1190,38 @@ def _nl_view(s, base):
         m = _mask(s)
     finally:
         _nl_join = False
-    return (s, m) if m != base else None
+    t = _trim(m, _mask(s))
+    return (s, t) if t else None
+
+# GH #842: bash ends a backtick substitution at the first unescaped backtick, so a quote span or comment
+# the mask opened inside one (`echo 'a`#; git stash`) hides what bash runs after it. The mask reports each
+# such backtick (cuts); a view per cut reads the text after it as fresh code, with the text before it
+# blanked (it is the base's, which the main scans read) and the backtick itself made a word char, so a
+# `#` glued after it stays a word as in bash. Cuts are taken from the text with its heredoc bodies blanked,
+# so a backtick in heredoc prose cuts nothing. At most _CUT_MAX views per text.
+_CUT_MAX = 4
+_blank_memo = {}
+
+def _blanked(s, raw_ops):
+    k = (s, raw_ops)
+    if k not in _blank_memo:
+        _blank_memo[k] = _blank_heredocs_seq(s, raw_ops)[0]
+    return _blank_memo[k]
+
+def _cut_views(texts, raw_blanked):
+    # raw_blanked: the text with every heredoc body it can read blanked; a cut inside one of them is prose
+    views, seen = [], set()
+    for t in texts:
+        cuts = []
+        _scan_cost(len(t))
+        _mask_quotes(t, cuts)
+        for a in cuts:
+            if a in seen or len(seen) >= _CUT_MAX or raw_blanked[a] != "`":
+                continue
+            seen.add(a)
+            v = " " * a + "x" + t[a + 1:]
+            views.append((v, _mask(v)))
+    return views
 
 def _extra_views(s, base, based=None):
     # The views of s checked beside (based, base): heredoc bodies blanked (both ways), and each of those and
@@ -1202,6 +1234,11 @@ def _extra_views(s, base, based=None):
         for raw_ops in (False, True):
             v = _hd_view(s, base, raw_ops)
             if v and v not in views:
+                views.append(v)
+    if "`" in s:
+        srcs = [_blanked(s, False), _blanked(s, True)] if "<<" in s else [based]
+        for v in _cut_views(dict.fromkeys(srcs), srcs[-1]):
+            if v not in views:
                 views.append(v)
     for t, mt in [(based, base)] + list(views):
         v = _nl_view(t, mt)

@@ -194,7 +194,7 @@ FUNC_OPEN_RE = re.compile(
 try:
     from _quotemask import mask_quotes as _mask_quotes_bash
 except Exception:
-    def _mask_quotes_bash(s):
+    def _mask_quotes_bash(s, cuts=None):
         def _back(k, blanks):
             # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
             # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -241,7 +241,6 @@ except Exception:
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
         bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
-        rv = []  # GH #842: (start, end) in s of text a backtick cut reveals (see the end)
         at_word_start = True
         while i < n:
             c = s[i]
@@ -262,7 +261,8 @@ except Exception:
                         out.append(" ")  # GH #842: an escaped char, a backtick too, does not end the substitution
                         i += 1
                     elif cut and s[i] == "`":
-                        rv.append((i, s.find("\n", i) % (n + 1)))  # GH #842: the backtick ends the comment
+                        if cuts is not None:  # GH #842: the backtick ends the comment
+                            cuts.append(i)
                         cut = bt = False
                     out.append(" ")
                     i += 1
@@ -274,7 +274,9 @@ except Exception:
                     if cut and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
                         out.append("Q"); i += 1
                     elif cut and s[i] == "`":
-                        rv.append((i, s.find("\n", i) % (n + 1))); cut = bt = False  # GH #842
+                        if cuts is not None:  # GH #842: the backtick ends it
+                            cuts.append(i)
+                        cut = bt = False
                     elif s[i] == "\n":
                         cut = False
                     out.append("Q"); i += 1
@@ -301,7 +303,9 @@ except Exception:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
                         if cut and s[i] == "`":
-                            rv.append((i, s.find("\n", i) % (n + 1))); cut = bt = False  # GH #842
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append(i)
+                            cut = bt = False
                         elif s[i] == "\n":
                             cut = False
                         out.append("Q"); i += 1
@@ -316,7 +320,9 @@ except Exception:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
                         if cut and s[i] == "`":
-                            rv.append((i, s.find("\n", i) % (n + 1))); cut = bt = False  # GH #842
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append(i)
+                            cut = bt = False
                         elif s[i] == "\n":
                             cut = False
                         out.append("Q"); i += 1
@@ -384,15 +390,7 @@ except Exception:
                     at_word_start = False  # GH #820 item 5: $(..)# is one word, never a comment
                 if au and c == ")":
                     unsure = i - 1
-        f = "".join(" " * pad.get(k, 0) + p for k, p in enumerate(out)) + " " * pad.get(len(out), 0)
-        if rv:  # GH #842: a cut line shows what the masks hid on it, from the backtick on; nothing else changes
-            f = list(f)
-            for a, b in rv:
-                for k in range(a, b):
-                    if f[k] in "Q ":
-                        f[k] = " " if s[k] in "'\"" else s[k]
-            f = "".join(f)
-        return f
+        return "".join(" " * pad.get(k, 0) + p for k, p in enumerate(out)) + " " * pad.get(len(out), 0)
 
 def check_helper_body(text):
     # ponytail: still not a full shell tokenizer (no backtick/$()-aware

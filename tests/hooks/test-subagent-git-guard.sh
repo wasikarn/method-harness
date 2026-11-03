@@ -1796,6 +1796,25 @@ print("\n".join(lines))
 ')
 rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && [ "${#_c}" -gt 5000 ] && ok=0
 check "GH #843/#844 review 2: a 5 KB issue body through \"\$(cat <<'EOF' ..)\" is allowed (rc $rc, ${#_c} bytes)" "$ok"
+# Fresh-context review round 3: a cut must never change the mask's own reading (develop denied the first
+# rows), and the text after a cut is read as fresh code: joins, continuations and later lines included.
+test_deny "GH #842" $'echo `echo \'a`\\\'; g\\\nit stash' $'echo `echo \'a`\\\'; g\\\nit status'
+test_deny "GH #842" $'echo `echo \'a`\\\'; git st\\\nash' $'echo `echo \'a`\\\'; git st\\\natus'
+test_deny "GH #842" $'echo `echo \'a`\\\'; "g"it stash' $'echo `echo \'a`\\\'; "g"it status'
+test_deny "GH #842" $'echo `echo \'a`\\\'; $\'git\' stash' $'echo `echo \'a`\\\'; $\'git\' status'
+test_deny "GH #842" $'echo `echo #`; "g"it stash' $'echo `echo #`; "g"it status'
+test_deny "GH #842" $'echo `echo #`; git st"ash"' $'echo `echo #`; git st"atus"'
+test_deny "GH #842" $'echo `echo #`; g\\\nit stash' $'echo `echo #`; g\\\nit status'
+test_deny "GH #842" $'echo `echo \'a`; \\\ngit stash' $'echo `echo \'a`; \\\ngit status'
+test_deny "GH #842" $'echo `echo \'a`\ngit stash' $'echo `echo \'a`\ngit status'
+test_deny "GH #842" $'echo `echo \'a` &&\ngit stash' $'echo `echo \'a` &&\ngit status'
+# ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
+for _c in \
+  $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
+  $'git commit -F- <<\'EOF\'\nfix `echo \'a`#; git stash` case\nEOF' ; do
+  rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+  check "GH #842 review 3 control allowed (rc $rc): ${_c//$'\n'/<nl>}" "$ok"
+done
 # A heredoc body is still data: blanking it for the second view must not read it as code.
 rc=$(sgg_rc $'cat <<\'E\'\ndon\'t git stash\nE\ngit status'); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #844 control allowed: a git stash line in a quoted heredoc body (rc $rc)" "$ok"

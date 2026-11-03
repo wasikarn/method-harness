@@ -156,6 +156,12 @@ CORPUS = [
     "cat <<'E'\nfix: $(case a in a) x;; esac)#' shape\nE\ngit stash",
     "git commit -F- <<'E'\ndon't\nE\ngit stash",
     "cat <<A <<B\ndon't\nA\nit's\nB\ngit stash",
+    # GH #842 review 3: the mask's own reading never changes at a cut; the cuts are reported apart
+    "echo `echo 'a`\\'; g\\\nit stash",
+    "echo `echo #`; \"g\"it stash",
+    "echo `echo 'a`\ngit stash",
+    "echo `\necho 'a`#; git stash",
+    "He said `x` and `don't\nIt's the `\"$(cat` shape",
 ]
 
 
@@ -178,6 +184,12 @@ for label, fn in copies:
     for s in CORPUS:
         if fn(s) != mask_quotes(s):
             print("DRIFT %s on %r: %r != %r" % (label, s, fn(s), mask_quotes(s)))
+            bad += 1
+        a, b = [], []  # GH #842: the backtick cuts each copy reports must agree too
+        fn(s, a)
+        mask_quotes(s, b)
+        if a != b:
+            print("DRIFT %s cuts on %r: %r != %r" % (label, s, a, b))
             bad += 1
 print("OK" if not bad else "FAIL")
 sys.exit(1 if bad else 0)
