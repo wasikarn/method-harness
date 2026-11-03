@@ -759,16 +759,16 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
     # Every consumer of the mask reads the unmasked text with its own parser, which takes `echo do case` as an argument:
     # a misread "c" whose keep reading drifts out of step and back (a " in a later string or comment closing the one it
     # opened, `; esac)` popping the frame) unmasks a real string's or comment's text, and a split comment hides a pipe
-    # from GH #810's walk (review 2) and an unmasked `esac` ends a piped compound early (review 3). So only a case at a
-    # sure command start (right after `$(`, a lone `;`, `&&` or `||`; not `do`/`then`/`!`/`{`/`time` or a newline,
-    # where an argument or a pattern can stand, and not while any ${ is open: there it is word text, review 4) is read
-    # both ways, and the keep reading counts only when it ends in the
+    # from GH #810's walk (review 2) and an unmasked `esac` ends a piped compound early (review 3). Every other lead
+    # proved to hold a misread case: `do`/`then` arguments, `; case` in a ${..} word (review 4), `[[ x && case ]]` and
+    # arithmetic `&&`/`||` (review 5). So only a case right after its `$(` (blanks between) is read both ways: there
+    # bash always reads it as the reserved word. And the keep reading counts only when it ends in the
     # popping reading's quote state, unmasks no char of a comment the popping reading masks, and unmasks nothing outside
     # the text the popping reading reads in the frame a pop returns to (from that ) to where the frame closes). Else the
     # popping reading, develop's, stands.
     mask, i, n = bytearray(len(c)), 0, len(c)
-    # GH #839: comments masked, case starts (with whether no ${ was open there), open regions, region edges, open ${
-    both, cm, cp, rg, ok, bs = False, [], [], [], [0] * (len(c) + 1), []
+    # GH #839: comments masked, whether each open case is right after its $(, open regions, region edges
+    both, cm, cp, rg, ok = False, [], [], [], [0] * (len(c) + 1)
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
     au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
@@ -777,11 +777,6 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
             ok[rg.pop()[0]] += 1
             ok[i] -= 1
         ch, q = c[i], stack[-1]
-        if not hd and q not in (SQ, "$'") and ch in "{}":  # GH #839 review 4: ${..} per quote depth, nested { counted
-            if ch == "{" and (i and c[i - 1] == "$" or bs and bs[-1] == len(stack)):
-                bs.append(len(stack))
-            elif ch == "}" and bs and bs[-1] == len(stack):
-                bs.pop()
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
@@ -795,13 +790,8 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
                 uc = i  # GH #833 review 7: an extglob group or an operator; a # after it is read both ways
             elif ch == ")" and po and po[-1] == "c":
                 uc = i if po.glued else uc
-                # GH #839: a "$( frame (the only "(" frame outside hd) and a case at a sure command start: both ways
-                k = _prev_char(c, cp[-1][0], esc) if cp and cp[-1][1] else -1  # (a case in an open ${ is text)
-                while k >= 0 and c[k] in " \t" and not esc[k]:
-                    k = _prev_char(c, k, esc)
-                sure = k > 0 and not esc[k] and (c[k] == "(" and c[k - 1] == "$" or c[k] == ";" and c[k - 1] != ";"
-                                                 or c[k] in "&|" and c[k - 1] == c[k])
-                if q == "(" and not hd and sure:
+                # GH #839: a "$( frame (the only "(" frame outside hd) and a case right after its $(: both ways
+                if q == "(" and not hd and cp and cp[-1]:
                     both = True
                     if keep:  # this ) pops nothing (an unsure # after it still counts, au)
                         uc = i if au else uc
@@ -812,7 +802,13 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
                 gc = i
             elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
                 po.append("c")
-                cp.append((i, not bs))
+                k = _prev_char(c, i, esc)  # GH #839: right after $( (blanks between), decided once here
+                while k >= 0 and c[k] in " \t" and not esc[k]:
+                    k = _prev_char(c, k, esc)
+                d = k - 1  # an odd run of $ before the (: `$$(` is $$ and a plain (
+                while d >= 0 and c[d] == "$" and not esc[d]:
+                    d -= 1
+                cp.append(k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1)
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
                 cp and cp.pop()
