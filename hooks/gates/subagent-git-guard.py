@@ -1235,7 +1235,7 @@ def _nl_view(s, base):
 _CUT_MAX = 8
 _prose_memo = {}
 
-def _prose(s):
+def _prose(s, readings=False):
     # s with the bodies of the heredocs bash opens blanked: the source of the cut views (a backtick in
     # heredoc prose is no cut) and a heredoc view of its own. Only the substitution scanner's reading counts:
     # it tracks quotes, comments, $(..) and backtick frames and ${..}, so it opens the body in
@@ -1243,11 +1243,13 @@ def _prose(s):
     # quoted string, `\<<E`, `${v:-<<E}`, a backtick frame or a subscript. Its comment rules have readings it
     # cannot choose between (a `#` after `)` or after a backslash-newline), so a body counts only where every
     # reading opens it (`(true)#<<E` opens none in bash). If it cannot read a heredoc, nothing is blanked.
+    # With readings=True: the text per reading instead, each a heredoc view of its own (a comment the
+    # scanner reads two ways must not empty the one reading that opens the real heredoc).
     global _hd_collect
     if "<<" not in s:
-        return s
+        return [s] if readings else s
     if s not in _prose_memo:
-        common = None
+        common, each = None, []
         try:
             for lb in (True, False):
                 for pc in (False, True):
@@ -1255,15 +1257,19 @@ def _prose(s):
                     _hd_collect = (s, spans)
                     _scan_bodies(s, 0, False, lb, False, pc)
                     common = set(spans) if common is None else common & set(spans)
+                    each.append(set(spans))
         except _Unparsed:
             common = set()
         finally:
             _hd_collect = None
-        t = s
-        for x, y in sorted(common):
-            t = t[:x] + "Q" * (y - x) + t[y:]
-        _prose_memo[s] = t
-    return _prose_memo[s]
+
+        def blank(spans):
+            t = s
+            for x, y in sorted(spans):
+                t = t[:x] + "Q" * (y - x) + t[y:]
+            return t
+        _prose_memo[s] = (blank(common), list(dict.fromkeys(blank(e) for e in each)))
+    return _prose_memo[s][1] if readings else _prose_memo[s][0]
 
 def _cut_views(texts, base):
     # texts: the text(s) to cut, heredoc bodies blanked (see _prose).
@@ -1299,11 +1305,11 @@ def _extra_views(s, base, based=None):
             v = _hd_view(s, base, raw_ops)
             if v and v not in views:
                 views.append(v)
-        p = _prose(s)  # the heredocs the substitution scanner opens (a fake `<<X` cannot steer this one)
-        if p != s:
-            mp = _mask(p)
-            if mp != base and (p, mp) not in views:
-                views.append((p, mp))
+        for p in _prose(s, True):  # the heredocs the substitution scanner opens, per reading (a fake `<<X`
+            if p != s:             # cannot steer these)
+                mp = _mask(p)
+                if mp != base and (p, mp) not in views:
+                    views.append((p, mp))
     if "`" in s:
         for v in _cut_views([_prose(s) if "<<" in s else based], base):
             if v not in views:

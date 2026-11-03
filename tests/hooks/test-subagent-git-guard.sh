@@ -1874,6 +1874,12 @@ test_deny "GH #842" $'(:)#<<E\necho `echo \'a`; git reset --hard\nE' $'(:)#<<E\n
 test_deny "GH #844" $'# <<X\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'# <<X\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
 test_deny "GH #844" $'echo \'<<X \'\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'echo \'<<X \'\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
 test_deny "GH #844" $'(:)#<<X\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'(:)#<<X\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
+# Fresh-context review round 10: each comment reading of the scanner is a heredoc view of its own, so a
+# comment it reads two ways cannot empty the one reading that opens the real heredoc.
+test_deny "GH #844" $'# <<F note\necho x \\\n# don\'t\ngit commit -m "$(cat <<\'EOF\'\nsay "hi\nEOF\n)"; git stash\nF' \
+  $'# <<F note\necho x \\\n# don\'t\ngit commit -m "$(cat <<\'EOF\'\nsay "hi\nEOF\n)"; git status\nF'
+test_deny "GH #844" $'echo "<<F ok"; (true)#\'\nx="$(cat <<\'E\'\nsay "hi\nE\n)"; git stash\nF' \
+  $'echo "<<F ok"; (true)#\'\nx="$(cat <<\'E\'\nsay "hi\nE\n)"; git status\nF'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
