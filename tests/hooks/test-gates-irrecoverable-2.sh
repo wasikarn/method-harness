@@ -4726,4 +4726,30 @@ for host in ("_INTERP_PROC_RE", "_PYNODE_PROC_RE"):
 PY
 )"; then echo "  ✅ GH #796: both host regexes read getattr literals through a named group"; pass=$((pass + 1))
 else echo "  ❌ GH #796: $_r796" >&2; fail=$((fail + 1)); fi
+# GH #839: a case arm inside "$(..)" was masked as quoted text: the pattern's `)` popped the "$( frame, so the arm up
+# to the real `)` read as "..". Each runs claude in bash 5.2. Fail safe: that `)` may be a pattern's or the real one
+# (a case misread from an argument, or an esac never seen), so the text is read both ways and masked only where both
+# readings agree; the traps below must keep denying, and so must a pipe through a comment both readings see (GH #810,
+# review 1) or one the keep reading drifts through and back (review 2).
+for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(case a in a) echo hi | $X;; esac)"' \
+    'X=claude; echo "$(case a in (a) echo hi | $X;; esac)"' 'X=claude; echo "$(case a in a|b) $X -p x;; esac)"' \
+    $'X=claude; echo "$(case a in\n a) $X -p x;;\n esac)"' 'X=claude; echo "x $(case a in a) $X -p x;; esac) y"' \
+    'X=claude; echo "$(case a in b) :;; a) $X -p x;; esac)"' 'X=claude; echo "$(case a in a) echo "q" | $X;; esac)"' \
+    'echo "$(echo do case)" | claude' 'X=claude; echo "$(echo do case)" | $X' \
+    'X=claude; echo "$(case a in a) { :; } esac)" | $X' 'X=claude; echo "$(echo do case a in a) b)" | $X' \
+    'X=claude; echo "$(echo then case a)" "b" | $X' 'X=claude; echo "$(case a in a) :;; esac)" | $X' \
+    $'echo "$(case a in a) :;; esac)"; echo hi | # feed\nclaude' $'echo "$(echo do case)"; echo hi | # feed\nclaude' \
+    $'echo "$(case a in a) :;; esac)"; echo hi | { # }\nclaude; }' $'echo "$(echo do case)"; echo hi | # a "b\nclaude' \
+    $'X=claude; echo "$(echo do case)" | # "; esac) "\n$X' $'X=claude; echo "$(echo do case)" |\n# "; esac) "\n$X' \
+    $'echo "$(echo do case)" | \\\n# "; esac) "\nclaude' $'echo "$(echo do case)" | { # "; esac) "\nclaude; }' \
+    $'echo "$(echo do case)" | ( # "; esac) "\nclaude )'; do
+  test_deny  "$IRRECOVERABLE" "GH #839: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'echo "$(case a in a) echo hi | claude --version;; esac)"' 'X=claude; echo "$(case a in a) $X --version;; esac)"' \
+    'echo "$(echo do case)" | claude --version' 'X=claude; echo "$(case a in a) { :; } esac)" | $X --version' \
+    'X=claude; echo "$(echo do case a in a) b)" | $X --version' \
+    'echo "$(case a in a) echo hi;; esac)"' 'echo "$(case a in a) echo hi;; esac)" | claude --version' \
+    $'echo "$(echo do case)"; echo hi | # feed\nclaude --version' $'echo "$(echo do case)" | \\\n# "; esac) "\nclaude --version'; do
+  test_allow "$IRRECOVERABLE" "GH #839 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
