@@ -4560,6 +4560,15 @@ for _c in 'git${IFS}restore x' 'gi${IFS}t restore x' 'git${IFS}restore${IFS}x' '
     'ls"${IFS}"-p ls"${IFS}"-p x' 'X=${IFS}; gi${X}t restore x' 'echo ${IFS}#; rm -rf x' 'echo ${IFS}#x | gi${IFS}t restore y'; do
   test_deny  "$IRRECOVERABLE" "GH #838 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #838 review: a here-string or an unquoted heredoc body does no word splitting, so after `IFS=m` a ${IFS} there is
+# the letter m (`IFS=m; bash <<< "r"${IFS}" -rf x"` runs rm). A command that names IFS other than as a bare $IFS / ${IFS}
+# keeps the placeholder reading.
+for _c in 'IFS=m; bash <<< "r"${IFS}" -rf /"' 'IFS=m; sh <<< "r"${IFS}" -rf x"' "IFS=m; bash<<<r\${IFS}' -rf x'" \
+    'IFS=i; bash <<< g${IFS}t\ restore\ x' 'IFS=t; bash <<< gi${IFS}\ res${IFS}ore\ x' $'IFS=i; bash <<EOF\ng${IFS}t restore x\nEOF' \
+    'read IFS <<< m; bash <<< "r"${IFS}" -rf x"' 'export IFS=m; bash <<< "r"${IFS}" -rf x"'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" 'GH #838 review control: IFS=m; cat <<< "r"${IFS}" x"' "$(bash_payload 'IFS=m; cat <<< "r"${IFS}" x"')"
 # GH #840: a variable's value was never decoded, split, or carried into a nested body.
 # Row 1: an ANSI-C value (`X=$'\x63laude'`) is no plain value, so var-verb never put claude back.
 # Row 2: a value assigned in an outer body, used in a nested '...' body that the outer "..." unescapes (`\$X`).

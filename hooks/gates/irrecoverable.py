@@ -2374,6 +2374,18 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None
 
+_IFS_DEFAULT = []
+_IFS_REF_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
+
+def _ifs_default():
+    # GH #838 review: whether the command names IFS only as a bare $IFS / ${IFS}. A here-string or an unquoted heredoc
+    # body does no word splitting, so after `IFS=m` (or `read IFS`, `export IFS=m`, ...) a ${IFS} there is the letter m:
+    # `IFS=m; bash <<< "r"${IFS}" -rf x"` runs rm. Any other IFS in the text, so the placeholder reading. The raw
+    # command: cmd has its heredoc bodies stripped. Made once.
+    if not _IFS_DEFAULT:
+        _IFS_DEFAULT.append("IFS" not in _IFS_REF_RE.sub("", d["tool_input"].get("command", "")))
+    return _IFS_DEFAULT[0]
+
 def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param):
     # The substitution that starts at s[i] (a backtick, "$(", "${", or an unquoted "<(" / ">("):
     # (placeholder, index just past it), its command body appended to `bodies`. None when s[i]
@@ -2393,7 +2405,7 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param)
         # GH #726: a ${...} word is read quote-blind, so its "..." is unseen there: split in every word.
         bodies.append(_newlines_to_seps(s[i + 2:j - 1]) if in_dquote or in_param else s[i + 2:j - 1])
         return PH, j
-    if c == "$" and nxt == "{" and not in_dquote and not in_param and s.startswith("${IFS}", i):
+    if c == "$" and nxt == "{" and not in_dquote and not in_param and s.startswith("${IFS}", i) and _ifs_default():
         # GH #838: a bare unquoted ${IFS} is a word break or, with IFS empty, nothing; never other text (GH #834).
         # As a placeholder it read as any text, so `ls${IFS}-p ls${IFS}-p x` (`ls -p ls -p x`) was `<any> <any> x`, a
         # git restore. Read as nothing here; the ifs-split view reads the break. Any other ${NAME} stays a placeholder.
