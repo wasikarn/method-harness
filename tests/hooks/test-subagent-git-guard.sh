@@ -1929,6 +1929,17 @@ test_deny "GH #844" $'git commit -F- <<EOF\nfix: wrap \\\nEOF\nit\'s done\nEOF\n
 test_deny "GH #844" $'cat <<-E\n\tx\\\n\tE\ndon\'t\n\tE\ngit stash' $'cat <<-E\n\tx\\\n\tE\ndon\'t\n\tE\ngit status'
 test_deny "GH #844" $'x=$(cat <<E\nx\\\nE\ndon\'t\nE\n)\ngit stash' $'x=$(cat <<E\nx\\\nE\ndon\'t\nE\n)\ngit status'
 test_deny "GH #844" $'bash -c "cat <<E\nx\\\\\nE\ndon\'t\nE\ngit stash"' $'bash -c "cat <<E\nx\\\\\nE\ndon\'t\nE\ngit status"'
+# Fresh-context review round 17: a `<<` bash does not read as a heredoc (an assignment subscript with a
+# blank in it, a compound array assignment) hides no cut or later command; a long continued run stays fast.
+test_deny "GH #842" $'a[1<<E ]=1\necho `echo \'a`#; git stash\nE' $'a[1<<E ]=1\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'a[1<<E\t]=1\necho `echo #`; git stash\nE' $'a[1<<E\t]=1\necho `echo #`; git status\nE'
+test_deny "GH #844" $'a[1<<E ]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE' $'a[1<<E ]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE'
+test_deny "GH #844" $'a=(1<<E)\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE' $'a=(1<<E)\ncat <<\'F\'\ndon\'t\nF\ngit status\nE'
+test_deny "GH #842" $'a=(<<E)\necho `echo #`; git stash\nE' $'a=(<<E)\necho `echo #`; git status\nE'
+test_deny "GH #842" $'a+=(<<E)\necho `echo \'a`#; git stash\nE' $'a+=(<<E)\necho `echo \'a`#; git status\nE'
+_c="echo x; g$(_pad $'\\\ng' 5000)'"
+rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "GH #843 review 17: a 15 KB run of continued word chars decided inside 8 s as allow (rc $rc)" "$ok"
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

@@ -383,7 +383,7 @@ _QPIECE_RE = re.compile(r"(\$?)([\"'])([\w./-]*)[\"']|\\([\w./-])|([\w./-])")
 # above must stay _SPAWN_QWORD_RE's twin): pairs at its front or end are blanks in place in the mask, every
 # pair between moved two blanks to the word front, and the pieces are checked against the mask past them.
 _nl_join = False  # GH #843: the joined reading is its own view (see _extra_views), develop's is kept
-_QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])")
+_QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?<!\\\n)(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])")
 # Its pieces: a `$` (continuations may stand between it and its quote: $\<nl>'git' is $'git'), a quoted piece (inside "..", a continuation is deleted too: "g\<nl>it" is git), an
 # escaped letter, a continuation outside quotes, a plain letter.
 _QPIECE_NL_RE = re.compile(r"((?:\$(?:\\\n)*)?)(\"(?:[\w./-]|\\\n)*\"|'[\w./-]*')|\\([\w./-])|(\\\n)|([\w./-])")
@@ -833,7 +833,10 @@ def _violation_in_bodies(raw_cmd, masked_cmd, overlap):
     for m in _SHELL_RES[overlap].finditer(masked_cmd):
         for body in _bodies_at(raw_cmd, masked_cmd, m):
             mb = _mask(body)
-            for t, mt in [(body, mb)] + _extra_views(body, mb):  # GH #843/#844: the body read the other ways too
+            hit = _violation(mb, False) or (overlap and _violation(mb, overlap))
+            if hit:
+                return hit
+            for t, mt in _extra_views(body, mb):  # GH #843/#844: then the body read the other ways too
                 hit = _violation(mt, False) or (overlap and _violation(mt, overlap))
                 if hit:
                     return hit
@@ -869,14 +872,19 @@ def _in_arith(s, i):
     return line.rfind("((") > line.rfind("))")
 
 def _in_subscript(s, i):
-    # GH #842/#844, the new views only: a `<<` inside an unclosed `$[` on its line (`$[1<<E]`), or inside the
-    # subscript of an assignment word (`a[1<<E]=1`: a name, `[`, no blank up to the `<<`, and `]=` after it),
+    # GH #842/#844, the new views only: a `<<` inside an unclosed `$[` on its line (`$[1<<E]`), inside the
+    # subscript of an assignment word (`a[1<<E ]=1`: a name, `[`, no blank up to the `<<`, `]=` after it), or
+    # inside the parens of a compound array assignment (`a=(1<<E)`),
     # is a shift, not a heredoc. Any other `[` (`echo x[; cat <<'E'`, `echo a[1<<E]`) leaves it a heredoc.
     # Develop's paths keep _in_arith alone (there an unreadable heredoc denies), so this never turns a deny
     # into an allow.
     ls = s.rfind("\n", 0, i) + 1
     _scan_cost(i - ls)
     line = _mask_quotes(s[ls:i])
+    # A compound array assignment (`a=(1<<E)`, `a+=(<<E)`): bash reads no heredoc in its parens.
+    ca = max(line.rfind("=("), line.rfind("+=(") + 1)
+    if ca > line.rfind(")") and ca > 0 and re.search(r"(?:^|[\s;&|(])[A-Za-z_]\w*\+?$", line[:ca]):
+        return True
     ob = line.rfind("[")
     if ob <= line.rfind("]") or ob < 1:
         return False
@@ -885,7 +893,7 @@ def _in_subscript(s, i):
         while k >= 0 and line[k] == "$":
             k -= 1
         return (ob - 1 - k) % 2 == 1  # `$$[` is the PID then a literal `[`
-    if re.search(r"[\s;&|()<>]", line[ob + 1:]) or not re.match(r"<<[^\s;&|()<>]*\]\+?=", s[i:]):
+    if re.search(r"[\s;&|()<>]", line[ob + 1:]) or not re.match(r"<<[^\]\n]*\]\+?=", s[i:]):
         return False
     k = ob - 1
     while k >= 0 and (line[k].isalnum() or line[k] == "_"):
@@ -1368,6 +1376,9 @@ def _extra_views(s, base, based=None):
         # Each source has its own cap, so one cannot use up the views another needs.
         srcs = [(t, None) for t in dict.fromkeys([_prose(s)] + _prose(s, True) if "<<" in s else [based])]
         srcs += [(t, _prose(o)) for t, o in hd_srcs if t not in dict(srcs)]
+        if "<<" in s:  # the raw "sub" reading: a `<<` it reads as a shift blanks nothing, so no filter here
+            sub = _blank_heredocs_seq(s, True, "sub")[0]
+            srcs = [(t, f) for t, f in srcs if t != sub] + [(sub, None)]
         for src, prose in srcs:
             for v in _cut_views([src], base, prose):
                 if v not in views:
