@@ -2376,6 +2376,12 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
 
 _IFS_DEFAULT = []
 _IFS_REF_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
+# GH #838 review 6: a bare $IFS / ${IFS} inside a NAME= / NAME+= / NAME[..]= word (a quoted or escaped piece of the
+# word included), the word starting the text or after a blank or separator. One start per word, so linear.
+_IFS_IN_ASSIGN_RE = re.compile(
+    r"(?<![^\s;&|()])[A-Za-z_]\w*(?:\[[^\]\s]*\])?\+?="
+    r"(?:\"[^\"]*\"|'[^']*'|\\.|[^\s;&|()'\"\\$]|\$(?!\{IFS\}|IFS(?![A-Za-z0-9_])))*"
+    r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
 _IFS_HASH_RE = re.compile(r"(\$(?:\{IFS\}|IFS(?![A-Za-z0-9_])))#")
 
 def _ifs_default():
@@ -2406,6 +2412,8 @@ def _ifs_plain():
         if ok:
             mask = _quote_mask(raw)
             ok = not any(mask[m.start()] for m in _IFS_REF_RE.finditer(raw))
+        # Review 6: an assignment word is not split (`X=a${IFS}echo git push${IFS}--force origin x` pushes).
+        ok = ok and not _IFS_IN_ASSIGN_RE.search(raw)
         _IFS_DEFAULT.append(ok)
     return _IFS_DEFAULT[0]
 
@@ -6662,9 +6670,10 @@ def _ifs_empty(text):
     return _BARE_IFS_RE.sub(sub, text)
 
 # GH #840 row 3: NAME= a word of plain characters and bare $IFS / ${IFS} (`X=git${IFS}restore`), ended as
-# _PLAIN_ASSIGN_RE's bare word is. _PLAIN_ASSIGN_RE reads no value with a $ in it.
+# _PLAIN_ASSIGN_RE's bare word is. _PLAIN_ASSIGN_RE reads no value with a $ in it. Only at a word start (review 6: a
+# start after each `=` of `a=a=a=..b<x` rescanned the word from each one).
 _IFS_ASSIGN_RE = re.compile(
-    r"(?<![\w$-])([A-Za-z_]\w*)=((?:[^\s;&|()<>'\"$`\\]|\$\{IFS\}|\$IFS(?![A-Za-z0-9_]))*)(?=[\s;&|()]|$)")
+    r"(?<![^\s;&|()])([A-Za-z_]\w*)=((?:[^\s;&|()<>'\"$`\\]|\$\{IFS\}|\$IFS(?![A-Za-z0-9_]))*)(?=[\s;&|()]|$)")
 
 def _ifs_var_text(text):
     # GH #840 row 3: an assignment does no field splitting, so `X=git${IFS}restore` holds git<IFS>restore, and an
@@ -6678,6 +6687,8 @@ def _ifs_var_text(text):
     for m in _IFS_ASSIGN_RE.finditer(text):
         v = m.group(2)
         by_end.setdefault(m.group(1), {})[m.end()] = _BARE_IFS_RE.sub(" ", v) if "IFS" in v and _BARE_IFS_RE.search(v) else None
+    if not any(v is not None for d_ in by_end.values() for v in d_.values()):
+        return text
     for m in _PLAIN_ASSIGN_RE.finditer(text):  # a quoted plain value (`X='ls'`) the bare-word form above misses
         by_end.setdefault(m.group(1), {}).setdefault(m.end(), None)
     sets = {}

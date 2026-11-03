@@ -4615,6 +4615,18 @@ for _c in 'unset I""FS; echo g${IFS}it reset --hard | bash' "printf -v I''FS '';
     "printf -v I''FS ''; echo g\${IFS}it clean -fdx | sh -s"; do
   test_deny  "$IRRECOVERABLE" "GH #838 review 5: $_c" "$(bash_payload "$_c")"
 done
+# GH #838 review 6: an assignment word is not split, so `X=a${IFS}echo` is one prefix assignment and the next word is
+# the command (`X=a${IFS}echo git push${IFS}--force origin x` pushes): a bare ${IFS} in a NAME= / NAME+= / NAME[..]=
+# word keeps the placeholder reading.
+for _c in 'X=a${IFS}echo git push${IFS}--force origin x' 'X=${IFS}echo git push${IFS}--force origin x' \
+    'X=a${IFS}true git push${IFS}-f origin x' 'X=a${IFS}echo git push${IFS}--delete origin x' \
+    'X=a${IFS}echo git push${IFS}origin${IFS}:x' 'X=a${IFS}echo git branch${IFS}-D x' 'X=a${IFS}echo git checkout${IFS}-- x' \
+    'cd . && X=a${IFS}echo git push${IFS}--force origin x' 'A=1 X="a b"${IFS}echo git push${IFS}--force origin x'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 6: $_c" "$(bash_payload "$_c")"
+done
+# bounded: a run of NAME= starts in one word is scanned once, not once per start
+_timed_case 'GH #838 review 6: ${IFS} and 5000 a= in one word are read in bounded time' 0 \
+  "echo \${IFS} $(printf 'a=%.0s' $(seq 5000))b<x"
 # GH #846: the ifs-split copy that reads a bare ${IFS} as nothing is spawn-scanned, so a subagent's `cl${IFS}aude -p x`
 # (an empty IFS runs claude) denies
 for _c in 'cl${IFS}aude -p x' 'cl$IFS"aude" -p x' 'IFS=; cl${IFS}aude -p x'; do
