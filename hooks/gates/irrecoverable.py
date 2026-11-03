@@ -762,9 +762,11 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
     # from GH #810's walk (review 2) and an unmasked `esac` ends a piped compound early (review 3). Every other lead
     # proved to hold a misread case: `do`/`then` arguments, `; case` in a ${..} word (review 4), `[[ x && case ]]` and
     # arithmetic `&&`/`||` (review 5). So only a case right after its `$(` (blanks between) is read both ways: there
-    # bash always reads it as the reserved word (no backtick before it: `..` turns \\$( into text, review 6), and each
-    # ) the keep reading skips must close a plain pattern list after `in`, `;;`, `;&` or `;;&` (`esac>f)` is bash's
-    # real ) after an esac the scan cannot see, review 6: the keep reading is void). And it counts only when it ends in the
+    # bash always reads it as the reserved word (no backtick before it: `..` turns \\$( into text, review 6). The keep
+    # reading skips only the case's first ), and only when `case WORD in [(]PATTERN|..` runs whole from the case to it;
+    # any later ) while that case is open voids it: an esac the scan cannot see (`esac>f`, `esac<<<q`) may have closed
+    # the case, so that ) may be bash's real one (reviews 6, 7). Until such an esac the keep reading follows bash's own
+    # parse, so the ) bash closes on is the one that voids it. And it counts only when it ends in the
     # popping reading's quote state, unmasks no char of a comment the popping reading masks, and unmasks nothing outside
     # the text the popping reading reads in the frame a pop returns to (from that ) to where the frame closes). Else the
     # popping reading, develop's, stands.
@@ -794,11 +796,14 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
             elif ch == ")" and po and po[-1] == "c":
                 uc = i if po.glued else uc
                 # GH #839: a "$( frame (the only "(" frame outside hd) and a case right after its $(: both ways
-                if q == "(" and not hd and cp and cp[-1]:
-                    pat = re.compile(r"(?:(?<=[ \t\n])in|;;&?|;&)[ \t\n]*\(?[ \t]*(?!esac[ \t]*$)[\w*?.\-/@+=:,%^!\[\]~]+"
-                                     r"(?:[ \t]*\|[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+)*[ \t]*$").search(c, max(0, i - 256), i)
-                    if keep and not pat:  # review 6: a ) that is no plain pattern's (`esac>f)`): this reading is void
-                        stack.append("void")
+                if q == "(" and not hd and cp and cp[-1][0]:
+                    # review 6/7: only the first ) after the case, closing `case WORD in [(]PATTERN|..` as a whole
+                    pat = not cp[-1][2] and re.compile(
+                        r"case[ \t]+[^\s;&|()<>'\"\\`]+[ \t\n]+in[ \t\n]+\(?[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+"
+                        r"(?:[ \t]*\|[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+)*[ \t]*").fullmatch(c, cp[-1][1], i)
+                    cp[-1][2] = True
+                    if keep and not pat:  # a later ), or no plain first pattern's: an esac it cannot see (`esac>f`)
+                        stack.append("void")  # may have closed the case, so this ) may be bash's real one: void
                         break
                     if keep:  # this ) pops nothing (an unsure # after it still counts, au)
                         uc = i if au else uc
@@ -817,7 +822,7 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
                 d = k - 1  # an odd run of $ before the (: `$$(` is $$ and a plain (
                 while d >= 0 and c[d] == "$" and not esc[d]:
                     d -= 1
-                cp.append(k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1 and not bt)
+                cp.append([k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1 and not bt, i, False])
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
                 cp and cp.pop()
