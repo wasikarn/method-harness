@@ -365,6 +365,7 @@ _QPIECE_RE = re.compile(r"(\$?)([\"'])([\w./-]*)[\"']|\\([\w./-])|([\w./-])")
 # no longer sit at their raw offsets. A word with continuations is read by its own pattern (the pattern
 # above must stay _SPAWN_QWORD_RE's twin): pairs at its front or end are blanks in place in the mask, every
 # pair between moved two blanks to the word front, and the pieces are checked against the mask past them.
+_nl_join = False  # GH #843: the joined reading is its own view (see _extra_views), develop's is kept
 _QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?:[\w./-]|\\[\w./-]|\\\n|\$?\"[\w./-]*\"|\$?'[\w./-]*')+(?![^\s;&|()<>}])")
 _dollar_join = "'\""  # the `$` quote kinds joined in this pass
 _dollar_joined = False  # a word with a `$` piece was joined, so the other readings differ
@@ -396,7 +397,7 @@ def _join_quoted_words(raw, masked):
     if len(raw) != len(masked) or ("'" not in raw and '"' not in raw):
         return masked
     reps = []  # (start, end, joined text), checked against the mask as it came in
-    if "\\\n" in raw:
+    if _nl_join and "\\\n" in raw:
         for m in _QWORD_NL_RE.finditer(raw):  # GH #843: only the words _QWORD_RE cannot read whole
             w = m.group()
             if "\\\n" not in w or ("'" not in w and '"' not in w):
@@ -406,15 +407,19 @@ def _join_quoted_words(raw, masked):
                 a += 2
             while b - 2 > a and w.endswith("\\\n", 0, b):
                 b -= 2
-            core = w[a:b].replace("\\\n", "")
-            front = a + (b - a - len(core))  # blanks at the word front: leading pairs in place, inner pairs moved
-            k0 = m.start()
-            if masked[k0:k0 + front] != " " * front or masked[k0 + b:m.end()].strip():
-                continue
-            j = _join_pieces(core, k0 + front, masked)
-            if j is not None:
-                _dollar_joined = _dollar_joined or "$" in core
-                reps.append((k0, m.end(), j))
+            # Leading pairs are in place, or (a comment that ends in `<blank>\`, which is no continuation)
+            # are not pairs at all: read the word both with them and from after them.
+            for lead in ((0, a) if a else (0,)):
+                core = w[a:b].replace("\\\n", "")
+                front = a - lead + (b - a - len(core))  # blanks at the word front: leading pairs in place, inner pairs moved
+                k0 = m.start() + lead
+                if masked[k0:k0 + front] != " " * front or masked[m.start() + b:m.end()].strip():
+                    continue
+                j = _join_pieces(core, k0 + front, masked)
+                if j is not None:
+                    _dollar_joined = _dollar_joined or "$" in core
+                    reps.append((k0, m.end(), j))
+                    break
     taken = list(reps)
     for m in _QWORD_RE.finditer(raw):
         if "'" not in m.group() and '"' not in m.group():
@@ -436,7 +441,7 @@ def _join_quoted_words(raw, masked):
 _mask_memo = {}
 
 def _mask(s):
-    k = (_dollar_join, s)
+    k = (_dollar_join, _nl_join, s)
     if k not in _mask_memo:
         _mask_memo[k] = _WORD_TOKEN_RE.sub(_drop_escapes, _join_quoted_words(s, _mask_quotes(s)))
     return _mask_memo[k]
@@ -1077,56 +1082,100 @@ def _blank_heredocs(s):
     return "".join(out) + s[i:]
 
 # GH #844: the main view masks the whole command, heredoc bodies included, so a `'` in a body (`don't`)
-# opened a span that ran past the delimiter and hid the commands after it. _heredoc_spans finds every
-# operator on one mask, which a quote in an earlier body can throw off for a later operator. This second
-# view blanks the bodies one operator at a time, masking again after each blank, so a body is gone before
-# the next operator is looked for. It is checked as well as the main view, never in place of it, so it
-# can only add a deny. An operator it cannot read ends the view there (the bodies blanked so far stay
-# blanked): a `"` in prose inside `"$(cat <<'EOF' ..)"` throws the top-level mask off, and a `<<` in that
-# prose must never deny (see _substitution_texts).
-def _blank_heredocs_seq(s):
+# opened a span that ran past the delimiter and hid the commands after it. Two more views blank the bodies,
+# each checked as well as the main view, never in place of it, so each can only add a deny:
+# - by mask: the operators the mask shows, one at a time, masking again after each blank, so an earlier
+#   body is gone before the next operator is looked for (_heredoc_spans finds them all on one mask, which a
+#   quote in an earlier body throws off). It masks again only after a body that holds a char that can change
+#   the mask's state, and stops after _HD_SEQ_MAX operators (the raw view goes on);
+# - raw: every `<<` in the text in order, the mask not asked, so an operator the top-level mask hides
+#   (`"$(cat <<'EOF'` with a lone `"` in the body) still blanks its body. One inside quotes or a comment
+#   blanks prose, which is why it is a view of its own.
+# An operator either cannot read (_Unparsed) is skipped: a `<<` in prose must never deny by itself.
+_HD_SEQ_MAX = 24
+_HD_STATE_RE = re.compile(r"['\"`\\#$()<]|\b(?:case|esac)\b")
+
+def _blank_heredocs_seq(s, raw_ops):
     t, pos, line_end, last, spans = s, 0, -1, None, []
+    mt = None if raw_ops else _mask_quotes(t)
     while True:
-        _scan_cost(len(t))
-        m = _HD_OP_RE.search(_mask_quotes(t), pos)
+        if mt is None and not raw_ops:
+            if len(spans) >= _HD_SEQ_MAX:
+                raw_ops = True  # past the cap the mask view goes on as the raw one
+            else:
+                _scan_cost(len(t))
+                mt = _mask_quotes(t)
+        m = _HD_OP_RE.search(t if raw_ops else mt, pos)
         if not m:
             return t, spans
         p = m.start()
+        pos = m.end()
         chained = last is not None and p < line_end  # a second heredoc on the line of the one before
         try:
             h = _heredoc_at(t, p, last[3] if chained else None)
         except _Unparsed:
-            return t, spans
-        pos = m.end()
+            continue
         if h:
             if not chained:
                 line_end = t.find("\n", p)
             last = h
-            spans.append((h[1], h[2]))
-            t = t[:h[1]] + re.sub(r"[^\n]", "Q", t[h[1]:h[2]]) + t[h[2]:]
+            # The body and its terminator word become one Q word: offsets hold, and the anchor scans (charged
+            # per line start) see one line where the body had many.
+            spans.append((h[1], h[3]))
+            body = t[h[1]:h[3]]
+            q = "Q" * len(body)
+            t = t[:h[1]] + q + t[h[3]:]
+            if mt is not None and not raw_ops:
+                mt = None if _HD_STATE_RE.search(body) else mt[:h[1]] + q + mt[h[3]:]
 
 _hd_view_memo = {}
 
-def _hd_view(s, base):
+def _hd_view(s, base, raw_ops):
     # (blanked text, its mask) when it shows something base (a mask of s, or of s with fewer bodies blanked)
     # does not: a char that differs outside the blanked bodies. Where nothing differs it can add no anchor
-    # (each body starts and ends at a line start), and skipping it keeps a big heredoc document under the
+    # (each body starts at a line start and ends at its terminator's line end), and skipping it keeps a big heredoc document under the
     # work budget.
-    k = (_dollar_join, s, base)
+    k = (_dollar_join, s, base, raw_ops)
     if k not in _hd_view_memo:
         v = None
-        if "<<" in s:
-            b, spans = _blank_heredocs_seq(s)
-            if spans:
-                mb = _mask(b)
-                keep, last = [], 0
-                for x, y in spans:
-                    keep.append((last, x)); last = y
-                keep.append((last, len(s)))
-                if any(mb[x:y] != base[x:y] for x, y in keep):
-                    v = (b, mb)
+        b, spans = _blank_heredocs_seq(s, raw_ops)
+        if spans:
+            mb = _mask(b)
+            keep, last = [], 0
+            for x, y in spans:
+                keep.append((last, x)); last = y
+            keep.append((last, len(s)))
+            if any(mb[x:y] != base[x:y] for x, y in keep):
+                v = (b, mb)
         _hd_view_memo[k] = v
     return _hd_view_memo[k]
+
+def _nl_view(s, base):
+    # GH #843: s masked with words joined across line continuations, when that differs from base
+    global _nl_join
+    if "\\\n" not in s or ("'" not in s and '"' not in s):
+        return None
+    _nl_join = True
+    try:
+        m = _mask(s)
+    finally:
+        _nl_join = False
+    return (s, m) if m != base else None
+
+def _extra_views(s, base):
+    # The views of s checked beside (s, base): heredoc bodies blanked (both ways), and each of those and s
+    # itself read with continuation words joined.
+    views = []
+    if "<<" in s:
+        for raw_ops in (False, True):
+            v = _hd_view(s, base, raw_ops)
+            if v and v not in views:
+                views.append(v)
+    for t, mt in [(s, base)] + list(views):
+        v = _nl_view(t, mt)
+        if v and v not in views:
+            views.append(v)
+    return views
 
 # A quoted-delimiter body is data, never a command. Cutting it out before the substitution scans
 # keeps a big document written by `cat > f <<'EOF'` from spending the shared work budget (it would
@@ -1174,19 +1223,26 @@ def _substitution_texts():
                 texts.extend(_substitution_bodies(sb))
         blanked = [_blank_heredocs(b) for b in dict.fromkeys(texts)]
         _sub_texts = [(b, _mask(b)) for b in blanked]
-        for b, (_, mb) in zip(dict.fromkeys(texts), list(_sub_texts)):  # GH #844: the one-operator-at-a-time view too
-            v = _hd_view(b, mb)
-            if v:
-                _sub_texts.append(v)
+        for b, (bb, mb) in zip(dict.fromkeys(texts), list(_sub_texts)):  # GH #843/#844: the extra views too
+            for v in _extra_views(b, mb) + ([_nl_view(bb, mb)] if bb != b else []):
+                if v and v not in _sub_texts:
+                    _sub_texts.append(v)
     return _sub_texts
+
+_cmd_views_memo = {}
+
+def _cmd_views():
+    k = (_dollar_join, cmd)
+    if k not in _cmd_views_memo:
+        _cmd_views_memo[k] = _extra_views(cmd, masked)
+    return _cmd_views_memo[k]
 
 def _violation_everywhere(overlap):
     hit = _violation(masked, overlap) or _violation_in_bodies(cmd, masked, overlap)
     if hit:
         return hit
-    v = _hd_view(cmd, masked)  # GH #844: the command with its heredoc bodies blanked, as well
-    if v:
-        hit = _violation(v[1], overlap) or _violation_in_bodies(v[0], v[1], overlap)
+    for t, mt in _cmd_views():  # GH #843/#844: the command read the other ways, as well
+        hit = _violation(mt, overlap) or _violation_in_bodies(t, mt, overlap)
         if hit:
             return hit
     for body, mb in _substitution_texts():

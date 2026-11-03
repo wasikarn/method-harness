@@ -1758,6 +1758,17 @@ test_deny "GH #844" $'cat <<A\n"\nA\ncat <<B\nx\'\nB\ngit stash' $'cat <<A\n"\nA
 test_deny "GH #844" $'cat <<A <<B\ndon\'t\nA\nit\'s\nB\ngit stash' $'cat <<A <<B\ndon\'t\nA\nit\'s\nB\ngit status'
 test_deny "GH #844" $'cat <<\'E\'; git stash\ndon\'t\nE' $'cat <<\'E\'; git status\ndon\'t\nE'
 test_deny "GH #844" $'echo "$(cat <<\'E\'\ndon\'t\nE\ngit stash)"' $'echo "$(cat <<\'E\'\ndon\'t\nE\ngit status)"'
+# Fresh-context review round 1: develop's reading of a continuation word is kept beside the joined one
+# (`git stash'E'\<nl>` was denied on develop), a `<blank>\` comment ending is no continuation, and an
+# operator the top-level mask hides (inside "$(..)", body with a lone `"`) still blanks its body.
+test_deny "GH #843" $'git stash\'E\'\\\n' $'git status\'E\'\\\n'
+test_deny "GH #843" $'git stash"x"\\\n' $'git status"x"\\\n'
+test_deny "GH #843" $'# c \\\ng\\\n"it" stash' $'# c \\\ng\\\n"it" status'
+test_deny "GH #844" $'git commit -m "$(cat <<\'EOF\'\nfix: set width to 5"\nEOF\n)" && git stash' \
+  $'git commit -m "$(cat <<\'EOF\'\nfix: set width to 5"\nEOF\n)" && git status'
+test_deny "GH #844" $'echo "$(cat <<\'E\'\n"\nE\n)"; git stash' $'echo "$(cat <<\'E\'\n"\nE\n)"; git status'
+test_deny "GH #844" $'echo "$(cat <<\'E\'\ndon\'t "\nE\n)"; git stash' $'echo "$(cat <<\'E\'\ndon\'t "\nE\n)"; git status'
+test_deny "GH #844" $'cat <<\'A\'\nx\nA\necho "$(cat <<\'E\'\n"\nE\n)"; git stash' $'cat <<\'A\'\nx\nA\necho "$(cat <<\'E\'\n"\nE\n)"; git status'
 # A heredoc body is still data: blanking it for the second view must not read it as code.
 rc=$(sgg_rc $'cat <<\'E\'\ndon\'t git stash\nE\ngit status'); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #844 control allowed: a git stash line in a quoted heredoc body (rc $rc)" "$ok"
