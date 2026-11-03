@@ -2609,11 +2609,17 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
     return "".join(out)
 
 _IFS_SCAN_TOP = [False]  # GH #838 review 5: the text _blank_substitutions reads is the command's own top-level text
+_IFS_TOP_TEXT = []  # that text, made once (the main parse blanks thousands of bodies: GH #559's timed rows)
 
 def _blank_substitutions(s):
     # GH #838 review 5: only the command's own top-level text reads a bare ${IFS} as a break (_ifs_default); a body
     # (echo text fed to `| bash`, a -c body) is text read again, where ${IFS} is no longer what it was where written.
-    _IFS_SCAN_TOP[0] = "_ambig" in globals() and s == _newlines_to_seps(_normalize_ansi_c_quotes(cmd))
+    top = False
+    if "IFS" in s and "_ambig" in globals():
+        if not _IFS_TOP_TEXT:
+            _IFS_TOP_TEXT.append(_newlines_to_seps(_normalize_ansi_c_quotes(cmd)))
+        top = s == _IFS_TOP_TEXT[0]
+    _IFS_SCAN_TOP[0] = top
     try:
         return _blank_substitutions_read(s)
     finally:
