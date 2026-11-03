@@ -4543,4 +4543,50 @@ _timed_case 'GH #835: subagent: bash -c with 150 {a,b}${IFS}$(echo c) words is r
   "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150))'" fork
 _timed_case 'GH #835: subagent: bash -c cl{aude,aude} -p x after 150 brace words denies in bounded time' 2 \
   "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150)); cl{aude,aude} -p x'" fork
+# GH #838/#840
+# GH #838: the main reading blanked a bare unquoted ${IFS} to a placeholder, which a token window reads as any text,
+# so `ls${IFS}-p ls${IFS}-p x` (bash runs `ls -p ls -p x`) read as `<any> <any> x`, a git restore, in any session.
+# Unquoted and bare, ${IFS} is a word break or nothing (GH #834): the main reading now reads it as nothing, and the
+# ifs-split view reads the break. Other ${NAME} keep the broad reading (`${G}it` may be git).
+for _c in 'ls${IFS}-p ls${IFS}-p x' 'ls${IFS} ls${IFS} x' 'ls$IFS-p ls$IFS-p x' 'ls${IFS}-p ls${IFS}-p x y' \
+    'echo${IFS}a echo${IFS}a x' 'ls${IFS}-p x'; do
+  test_allow "$IRRECOVERABLE" "GH #838: main session: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" 'GH #838: subagent: ls${IFS}-p ls${IFS}-p x' "$(bash_agent_payload 'ls${IFS}-p ls${IFS}-p x' fork)"
+# controls: a ${IFS} that is a break or nothing still reads the verb; a quoted "${IFS}", an operator form and any other
+# ${NAME} keep the placeholder
+for _c in 'git${IFS}restore x' 'gi${IFS}t restore x' 'git${IFS}restore${IFS}x' 'rm${IFS}-rf${IFS}x' 'r${IFS}m -rf x' \
+    'git${IFS}reset${IFS}--hard' 'ls${HOME}-p ls${HOME}-p x' 'ls${A} ls${A} x' 'ls${IFS:0:1}-p ls${IFS:0:1}-p x' \
+    'ls"${IFS}"-p ls"${IFS}"-p x' 'X=${IFS}; gi${X}t restore x' 'echo ${IFS}#; rm -rf x' 'echo ${IFS}#x | gi${IFS}t restore y'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 control: $_c" "$(bash_payload "$_c")"
+done
+# GH #840: a variable's value was never decoded, split, or carried into a nested body.
+# Row 1: an ANSI-C value (`X=$'\x63laude'`) is no plain value, so var-verb never put claude back.
+# Row 2: a value assigned in an outer body, used in a nested '...' body that the outer "..." unescapes (`\$X`).
+# Row 3: an assignment does not split `git${IFS}restore`; the unquoted `$X` does, so an ifs-split copy puts it back.
+for _c in $'X=$\'\\x63laude\'; $X -p x' $'X=$\'\\x63laude\'; bash -c "$X -p x"' $'X=$\'\\143laude\'; ${X} -p x' \
+    "bash -c \"X=claude; bash -c '\\\$X -p x'\"" "bash -c \"X=claude; bash -c '\\\$X{,} -p x'\"" \
+    "bash -c \"X=claude; sh -c 'echo; \\\$X -p x'\""; do
+  test_deny  "$IRRECOVERABLE" "GH #840: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in $'X=$\'\\x63laude\'; $X -p x' "bash -c \"X=claude; bash -c '\\\$X -p x'\""; do
+  test_allow "$IRRECOVERABLE" "GH #840 control: main session: $_c" "$(bash_payload "$_c")"
+done
+for _c in $'X=$\'\\x63laude\'; $X --version' $'X=$\'\\x70ython3\'; $X -p x' "bash -c \"X=claude; bash -c '\\\$X --version'\"" \
+    "bash -c 'X=claude; bash -c '\\''\\\$X -p x'\\'''" "bash -c \"X=python3; bash -c '\\\$X -p x'\""; do
+  test_allow "$IRRECOVERABLE" "GH #840 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'X=git${IFS}restore; $X x' 'X=git${IFS}restore; $X ${IFS}x' \
+    'X=rm${IFS}-rf; $X x' 'X=git${IFS}reset${IFS}--hard; ${X}' 'X=git${IFS}restore; true && $X x'; do
+  test_deny  "$IRRECOVERABLE" "GH #840: main session: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'X=git${IFS}restore; "$X" x' 'X=git${IFS}status; $X x' 'X=git${IFS}restore; echo "$X" x' \
+    'X=git${IFS}restore; X=ls; $X x' "X=git\${IFS}restore; echo '\$X x'"; do
+  test_allow "$IRRECOVERABLE" "GH #840 control: main session: $_c" "$(bash_payload "$_c")"
+done
+# bounded: many nested bodies and many IFS-valued assignments are read in bounded time
+_timed_case 'GH #840: subagent: 300 nested \$X bodies in a double-quoted body are read in bounded time' 0 \
+  "bash -c \"X=python3; $(printf "bash -c '\\\\\$X -V'; %.0s" $(seq 300))\"" fork
+_timed_case 'GH #840: 300 IFS-valued assignments and references are read in bounded time' 2 \
+  "$(printf 'X=ls${IFS}-l; $X y; %.0s' $(seq 300))X=git\${IFS}restore; \$X x"
 gates_summary
