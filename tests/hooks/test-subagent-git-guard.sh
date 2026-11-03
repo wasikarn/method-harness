@@ -1880,6 +1880,11 @@ test_deny "GH #844" $'# <<F note\necho x \\\n# don\'t\ngit commit -m "$(cat <<\'
   $'# <<F note\necho x \\\n# don\'t\ngit commit -m "$(cat <<\'EOF\'\nsay "hi\nEOF\n)"; git status\nF'
 test_deny "GH #844" $'echo "<<F ok"; (true)#\'\nx="$(cat <<\'E\'\nsay "hi\nE\n)"; git stash\nF' \
   $'echo "<<F ok"; (true)#\'\nx="$(cat <<\'E\'\nsay "hi\nE\n)"; git status\nF'
+# Fresh-context review round 11: the cut views also read each scanner reading's text, so a heredoc only
+# some readings open (`$(..)#<<E`, one word in bash) is blanked under a cut view too.
+test_deny "GH #842" $'echo $(true)#<<E\nsay "hi\nE\necho `echo \'a`; git stash' $'echo $(true)#<<E\nsay "hi\nE\necho `echo \'a`; git status'
+test_deny "GH #842" $'echo $(date)#x; cat <<E\nsay "hi\nE\necho `echo \'a`; git stash' $'echo $(date)#x; cat <<E\nsay "hi\nE\necho `echo \'a`; git status'
+test_deny "GH #842" $'echo `echo \'a`; echo $(true)#x; cat <<E\nsay "hi\nE\ngit stash' $'echo `echo \'a`; echo $(true)#x; cat <<E\nsay "hi\nE\ngit status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

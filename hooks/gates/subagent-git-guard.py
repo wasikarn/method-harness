@@ -1311,7 +1311,8 @@ def _extra_views(s, base, based=None):
                 if mp != base and (p, mp) not in views:
                     views.append((p, mp))
     if "`" in s:
-        for v in _cut_views([_prose(s) if "<<" in s else based], base):
+        srcs = list(dict.fromkeys([_prose(s)] + _prose(s, True))) if "<<" in s else [based]
+        for v in _cut_views(srcs, base):  # each scanner reading too: a heredoc only some open is blanked
             if v not in views:
                 views.append(v)
     for t, mt in [(based, base)] + list(views):
