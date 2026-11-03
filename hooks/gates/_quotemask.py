@@ -56,6 +56,11 @@ def mask_quotes(s):
     # a glued "(" is open (ng). A "#" right after an unsure ")" is read both
     # ways: from it to the end the state is unknown (see the loop's first
     # branch), which only reads more, never less.
+    # GH #842: bash ends a backtick substitution at the first unescaped
+    # backtick, quote or comment or not (`echo 'a`#; git stash` runs git).
+    # Inside backticks a quote span or comment that reaches a backtick stops
+    # there; what follows is read like the text after an unsure "#" (no quote
+    # or comment opens to the end), except that "<" stays visible (il).
     def _back(k, blanks):
         # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
         # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -97,6 +102,8 @@ def mask_quotes(s):
     word_start = 0  # out index where the current word begins
     ng = 0  # GH #833: how many entries of parens are True
     ie = -1  # GH #833 review 3: end of the unsure line, where quotes and "<" are inert
+    il = -1  # GH #842: where "<" is inert (ie alone after a backtick cut, where "<" stays visible)
+    bt = False  # GH #842: inside an unquoted backtick substitution
     unsure = -2  # GH #833 review 2: index in s of the last ")" read while a case marker was on top
     au = False  # GH #833 review 9/10: every ")" after an unsure "#" is unsure too
     parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued
@@ -109,23 +116,37 @@ def mask_quotes(s):
             # (parens, quotes, a case, an esac, a continuation) changes how all after it reads; neither is safe, so
             # from here to the end the state is unknown (ie = n): read as a word, but no quote or comment opens, each
             # "<" masks to Q, an inert quote mark is dropped, and every later ")" is unsure (au). Over-reading only.
-            ie, au = n, True
+            ie, il, au = n, n, True
             out.append(c)
             i += 1
             at_word_start = False
             continue
         if c == "#" and at_word_start and i >= ie:
-            while i < n and s[i] != "\n":
+            while i < n and s[i] != "\n" and not (bt and s[i] == "`"):
+                if bt and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
+                    out.append(" ")  # GH #842: an escaped backtick does not end the substitution
+                    i += 1
                 out.append(" ")
                 i += 1
+            if i < n and s[i] == "`":
+                out.append("`")  # GH #842: the backtick ends the comment and the substitution
+                i += 1
+                at_word_start, ie, bt = False, n, False
             continue
         if c == "'" and i >= ie:
             out.append(" ")
             i += 1
-            while i < n and s[i] != "'":
+            while i < n and s[i] != "'" and not (bt and s[i] == "`"):
+                if bt and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
+                    out.append("Q")
+                    i += 1
                 out.append("Q")
                 i += 1
-            if i < n:
+            if i < n and s[i] == "`":
+                out.append("`")  # GH #842: the backtick ends the span and the substitution
+                i += 1
+                ie, bt = n, False
+            elif i < n:
                 out.append(" ")
                 i += 1
             at_word_start = False
@@ -154,7 +175,7 @@ def mask_quotes(s):
             out[-1] = " "
             out.append(" ")
             i = j + 1
-            while i < n and s[i] != "'":
+            while i < n and s[i] != "'" and not (bt and s[i] == "`"):
                 if s[i] == "\\" and i + 1 < n:
                     out.append("Q")
                     out.append("Q")
@@ -162,14 +183,18 @@ def mask_quotes(s):
                 else:
                     out.append("Q")
                     i += 1
-            if i < n:
+            if i < n and s[i] == "`":
+                out.append("`")  # GH #842
+                i += 1
+                ie, bt = n, False
+            elif i < n:
                 out.append(" ")
                 i += 1
             at_word_start = False
         elif c == '"' and i >= ie:
             out.append(" ")
             i += 1
-            while i < n and s[i] != '"':
+            while i < n and s[i] != '"' and not (bt and s[i] == "`"):
                 if s[i] == "\\" and i + 1 < n:
                     out.append("Q")
                     out.append("Q")
@@ -177,7 +202,11 @@ def mask_quotes(s):
                 else:
                     out.append("Q")
                     i += 1
-            if i < n:
+            if i < n and s[i] == "`":
+                out.append("`")  # GH #842
+                i += 1
+                ie, bt = n, False
+            elif i < n:
                 out.append(" ")
                 i += 1
             at_word_start = False
@@ -207,9 +236,9 @@ def mask_quotes(s):
             if (j - i) % 2 == 1 and j < n and s[j] in "'\"$":
                 out.append("Q")
                 j += 1
-            elif (j - i) % 2 == 1 and j < n and s[j] in _WORD_BOUNDARY_CHARS:
-                out.append(s[j])  # an escaped blank or separator is part of its word: a "#" after it is no comment
-                j += 1
+            elif (j - i) % 2 == 1 and j < n and (s[j] in _WORD_BOUNDARY_CHARS or s[j] == "`"):
+                out.append(s[j])  # an escaped blank or separator is part of its word: a "#" after it is no comment;
+                j += 1            # an escaped backtick (GH #842) neither opens nor closes a substitution
             i = j
             at_word_start = False
         else:
@@ -222,11 +251,13 @@ def mask_quotes(s):
                 # word, so a quoted name still reads whole ("git" stash, g''it stash); from here on nothing opens (ie = n)
                 pad[word_start] = pad.get(word_start, 0) + 1
                 ie = n
-            elif i < ie and c == "<":
+            elif i < il and c == "<":
                 out.append("Q")
                 ie = n
             else:
                 out.append(c)
+                if c == "`" and i >= ie:
+                    bt = not bt  # GH #842
             i += 1
             at_word_start = c in _WORD_BOUNDARY_CHARS
             if at_word_start:

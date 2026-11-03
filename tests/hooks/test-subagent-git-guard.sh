@@ -1715,6 +1715,53 @@ _c="$(_pad 'A="x y" ' 1500)git status"
 rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #520 1500 quoted assignments before git status decided inside 8 s as allow (rc $rc, ${#_c} bytes)" "$ok"
 
+# GH #842-#844: three quote masks that hid a git command from the subagent guard. Each test_deny row
+# runs one shape a subagent payload can send (bash 5.2 runs its `git stash`), then its control: the
+# same text with an allowed git command must still pass, so a row cannot go green by denying all.
+_sgg_err="$_JOURNAL_TMP/sgg842.err"
+test_deny() { # test_deny <issue> <command> <allowed control>
+  local rc
+  rc=$(payload "$2" fork | bash "$GATE" 2>"$_sgg_err"; echo $?); ok=1
+  [ "$rc" = "2" ] && ! /usr/bin/grep -qE 'Traceback|internal error' "$_sgg_err" && ok=0
+  check "$1 denied (rc $rc): ${2//$'\n'/<nl>}" "$ok"
+  rc=$(sgg_rc "$3"); ok=1; [ "$rc" = "0" ] && ok=0
+  check "$1 control allowed (rc $rc): ${3//$'\n'/<nl>}" "$ok"
+}
+# GH #842: inside backticks a quote or a comment ends at the next backtick (bash closes the substitution
+# there), so the quote span or comment the mask opened must not hide the text after it.
+test_deny "GH #842" $'echo `echo \'a`#; git stash' $'echo `echo \'a\'`#; git status'
+test_deny "GH #842" $'echo `echo "a`#; git stash' $'echo `echo "a"`#; git status'
+test_deny "GH #842" $'echo `echo $\'a`#; git stash' $'echo `echo $\'a\'`#; git status'
+test_deny "GH #842" $'echo `\'esac`#|git stash' $'echo `\'esac\'`#|git status'
+test_deny "GH #842" $'echo `echo #`; git stash' $'echo `echo #`; git status'
+test_deny "GH #842" $'echo `echo \'a`; git reset --hard' $'echo `echo \'a\'` \'git stash\''
+test_deny "GH #842" $'x=`echo "a`\ngit stash' $'x=`echo "a"`\ngit status'
+# GH #843: a line continuation inside a partly quoted word; bash deletes the pair and joins the word.
+test_deny "GH #843" $'g\\\n"it" stash' $'g\\\n"it" status'
+test_deny "GH #843" $'"g"\\\nit stash' $'"g"\\\nit status'
+test_deny "GH #843" $'g\\\n\'it\' reset --hard' $'echo g\\\n\'it\' reset --hard'
+test_deny "GH #843" $'"gi"\\\n"t" stash' $'"gi"\\\n"t" status'
+test_deny "GH #843" $'g\\\ni\\\n"t" stash' $'g\\\ni\\\n"t" status'
+test_deny "GH #843" $'true; \\\ng\\\n"it" stash' $'true; \\\ng\\\n"it" status'
+test_deny "GH #843" $'"git"\\\n stash' $'"git"\\\n status'
+# GH #844: a quote in a heredoc body opened a mask span that ran past the delimiter.
+test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\ngit stash' $'cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <<\'E\'\n$(date)#\'\nE\ngit stash' $'cat <<\'E\'\n$(date)#\'\nE\ngit status'
+test_deny "GH #844" $'cat <<\'E\'\na\\ #\'\nE\ngit stash' $'cat <<\'E\'\na\\ #\'\nE\ngit status'
+test_deny "GH #844" $'cat <<\'E\'\nfix: $(case a in a) x;; esac)#\' shape\nE\ngit stash' \
+  $'cat <<\'E\'\nfix: $(case a in a) x;; esac)#\' shape\nE\ngit status'
+test_deny "GH #844" $'git commit -F- <<\'E\'\ndon\'t\nE\ngit stash' $'git commit -F- <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <<E\ndon\'t\nE\ngit stash' $'cat <<E\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <<-\'E\'\n\tdon\'t\n\tE\ngit stash' $'cat <<-\'E\'\n\tdon\'t\n\tE\ngit status'
+test_deny "GH #844" $'cat <<\'A\'\ndon\'t\nA\ncat <<\'B\'\nx\'\nB\ngit stash' $'cat <<\'A\'\ndon\'t\nA\ncat <<\'B\'\nx\'\nB\ngit status'
+test_deny "GH #844" $'cat <<A\n"\nA\ncat <<B\nx\'\nB\ngit stash' $'cat <<A\n"\nA\ncat <<B\nx\'\nB\ngit status'
+test_deny "GH #844" $'cat <<A <<B\ndon\'t\nA\nit\'s\nB\ngit stash' $'cat <<A <<B\ndon\'t\nA\nit\'s\nB\ngit status'
+test_deny "GH #844" $'cat <<\'E\'; git stash\ndon\'t\nE' $'cat <<\'E\'; git status\ndon\'t\nE'
+test_deny "GH #844" $'echo "$(cat <<\'E\'\ndon\'t\nE\ngit stash)"' $'echo "$(cat <<\'E\'\ndon\'t\nE\ngit status)"'
+# A heredoc body is still data: blanking it for the second view must not read it as code.
+rc=$(sgg_rc $'cat <<\'E\'\ndon\'t git stash\nE\ngit status'); ok=1; [ "$rc" = "0" ] && ok=0
+check "GH #844 control allowed: a git stash line in a quoted heredoc body (rc $rc)" "$ok"
+
 # JSON nesting depth: an extra key nested ~140,000 deep makes json.load raise RecursionError ("Stack
 # overflow ... while decoding a JSON array"); that used to hit the parse-error allow, so a subagent
 # git stash ran. Depth overflow now fails closed for every payload; plain malformed JSON still allows.

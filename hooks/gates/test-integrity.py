@@ -235,6 +235,8 @@ except Exception:
         pad = {}  # GH #306, #833: out index -> blanks to put in front of that piece
         word_start = 0
         ng = 0  # GH #833: how many entries of parens are True
+        il = -1  # GH #842: where "<" is inert (see _quotemask.py)
+        bt = False  # GH #842: inside an unquoted backtick substitution
         ie = -1  # GH #833 review 3: end of the unsure line, where quotes and "<" are inert
         unsure = -2  # GH #833 review 2: index in s of the last ")" read while a case marker was on top
         au = False  # GH #833 review 9/10: every ")" after an unsure "#" is unsure too
@@ -248,20 +250,30 @@ except Exception:
                 # (parens, quotes, a case, an esac, a continuation) changes how all after it reads; neither is safe, so
                 # from here to the end the state is unknown (ie = n): read as a word, but no quote or comment opens, each
                 # "<" masks to Q, an inert quote mark is dropped, and every later ")" is unsure (au). Over-reading only.
-                ie, au = n, True
+                ie, il, au = n, n, True
                 out.append(c)
                 i += 1
                 at_word_start = False
                 continue
             if c == "#" and at_word_start and i >= ie:
-                while i < n and s[i] != "\n":
+                while i < n and s[i] != "\n" and not (bt and s[i] == "`"):
+                    if bt and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
+                        out.append(" "); i += 1  # GH #842: an escaped backtick does not end the substitution
                     out.append(" "); i += 1
+                if i < n and s[i] == "`":  # GH #842: the backtick ends the comment and the substitution
+                    out.append("`"); i += 1
+                    at_word_start, ie, bt = False, n, False
                 continue
             if c == "'" and i >= ie:
                 out.append(" "); i += 1
-                while i < n and s[i] != "'":
+                while i < n and s[i] != "'" and not (bt and s[i] == "`"):
+                    if bt and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
+                        out.append("Q"); i += 1
                     out.append("Q"); i += 1
-                if i < n:
+                if i < n and s[i] == "`":  # GH #842: the backtick ends the span and the substitution
+                    out.append("`"); i += 1
+                    ie, bt = n, False
+                elif i < n:
                     out.append(" "); i += 1
                 at_word_start = False
             elif c == "$":  # GH #161: ANSI-C $'...', backslash escapes the next char; only the last "$" of an odd run opens it ("$$" is the PID)
@@ -278,22 +290,28 @@ except Exception:
                     i = j; at_word_start = False
                     continue
                 out[-1] = " "; out.append(" "); i = j + 1
-                while i < n and s[i] != "'":
+                while i < n and s[i] != "'" and not (bt and s[i] == "`"):
                     if s[i] == "\\" and i + 1 < n:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
                         out.append("Q"); i += 1
-                if i < n:
+                if i < n and s[i] == "`":  # GH #842
+                    out.append("`"); i += 1
+                    ie, bt = n, False
+                elif i < n:
                     out.append(" "); i += 1
                 at_word_start = False
             elif c == '"' and i >= ie:
                 out.append(" "); i += 1
-                while i < n and s[i] != '"':
+                while i < n and s[i] != '"' and not (bt and s[i] == "`"):
                     if s[i] == "\\" and i + 1 < n:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
                         out.append("Q"); i += 1
-                if i < n:
+                if i < n and s[i] == "`":  # GH #842
+                    out.append("`"); i += 1
+                    ie, bt = n, False
+                elif i < n:
                     out.append(" "); i += 1
                 at_word_start = False
             elif c == "\\":  # GH #157 sibling: an odd backslash run escapes a following quote (literal, not a span)
@@ -312,8 +330,9 @@ except Exception:
                 out.append("\\" * (j - i))
                 if (j - i) % 2 == 1 and j < n and s[j] in "'\"$":  # an escaped "$" is literal too, never an ANSI-C opener
                     out.append("Q"); j += 1
-                elif (j - i) % 2 == 1 and j < n and s[j] in " \t\n;&|()":
-                    out.append(s[j]); j += 1  # an escaped blank or separator is part of its word: a "#" after it is no comment
+                elif (j - i) % 2 == 1 and j < n and s[j] in " \t\n;&|()`":
+                    out.append(s[j]); j += 1  # an escaped blank or separator is part of its word: a "#" after it is no comment;
+                                              # an escaped backtick (GH #842) neither opens nor closes a substitution
                 i = j
                 at_word_start = False
             else:
@@ -326,11 +345,13 @@ except Exception:
                     # word, so a quoted name still reads whole ("git" stash, g''it stash); from here on nothing opens (ie = n)
                     pad[word_start] = pad.get(word_start, 0) + 1
                     ie = n
-                elif i < ie and c == "<":
+                elif i < il and c == "<":
                     out.append("Q")
                     ie = n
                 else:
                     out.append(c)
+                    if c == "`" and i >= ie:
+                        bt = not bt  # GH #842
                 i += 1
                 at_word_start = c in set(" \t\n;&|()")
                 if at_word_start:
