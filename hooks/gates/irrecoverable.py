@@ -2376,9 +2376,10 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
 
 _IFS_DEFAULT = []
 _IFS_REF_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
+_IFS_HASH_RE = re.compile(r"(\$(?:\{IFS\}|IFS(?![A-Za-z0-9_])))#")
 
 def _ifs_default():
-    # GH #838 review: whether a bare unquoted ${IFS} is surely split away: no `<<` in the command, and IFS named only as
+    # GH #838 review: whether a bare unquoted ${IFS} is surely a word break or nothing: no `<<` in the command, and IFS named only as
     # a bare $IFS / ${IFS}. A here-string or an unquoted heredoc body does no word splitting, so ${IFS} there is IFS's
     # text: the default's newline starts a command (`bash <<< "echo"${IFS}"rm -rf x"`), and after `IFS=m` (or a spelling
     # the text hides: `printf -v I""FS m`) it is the letter m (`bash <<< "r"${IFS}" -rf x"`). Elsewhere the expansion
@@ -2411,8 +2412,9 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param)
     if c == "$" and nxt == "{" and not in_dquote and not in_param and s.startswith("${IFS}", i) and _ifs_default():
         # GH #838: a bare unquoted ${IFS} is a word break or, with IFS empty, nothing; never other text (GH #834).
         # As a placeholder it read as any text, so `ls${IFS}-p ls${IFS}-p x` (`ls -p ls -p x`) was `<any> <any> x`, a
-        # git restore. Read as nothing here; the ifs-split view reads the break. Any other ${NAME} stays a placeholder.
-        return "", i + 6
+        # git restore. Read as the break here (review 3: as nothing it glued `sh -c 'claude -p'${IFS}x` into
+        # `claude -px`); an ifs-split copy reads nothing (_views). Any other ${NAME} stays a placeholder.
+        return " ", i + 6
     if c == "$" and nxt == "{":
         # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
         # (`${ echo 'a}'; V; }`) is no closer: find it quote-aware, as for <(...).
@@ -2578,9 +2580,9 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
             if sub:
                 out.append(sub[0])
                 i = sub[1]
-                # GH #838: a ${IFS} read as nothing is still inside its word, so a `#` after it is no comment
-                # (`echo ${IFS}#; rm -rf x` runs the rm)
-                last_escaped = not sub[0]
+                # GH #838: a ${IFS} read as a break is still inside its word as bash parses it, so a `#` after it is
+                # no comment (`echo ${IFS}#; rm -rf x` runs the rm)
+                last_escaped = sub[0] == " "
                 continue
         out.append(c)
         i += 1
@@ -6743,6 +6745,12 @@ def _views():
     v = _ifs_split(cmd)
     if v != cmd:
         out.append(("ifs-split", v))
+        # GH #838 review 3: the main reading reads a bare ${IFS} as a break (_ifs_default); this copy reads it as
+        # nothing, an IFS emptied under a spelling the text hides (`printf -v I""FS ''; gi${IFS}t restore x`).
+        # A `#` after the ${IFS} is inside its word, no comment (`echo ${IFS}#x | gi${IFS}t restore y`), so escaped.
+        e = _ifs_empty(_IFS_HASH_RE.sub(r"\1\\#", cmd)) if _ifs_default() else cmd
+        if e != cmd and ("ifs-split", e) not in out:
+            out.append(("ifs-split", e))
         # GH #840 row 3: one more ifs-split copy that also puts back a value holding a bare ${IFS}, split where the
         # unquoted reference splits it (`X=git${IFS}restore; $X x`). Only such values: a plain one is var-verb's
         # (shadow but for rm), and a ${IFS} in a value is never ordinary shell.

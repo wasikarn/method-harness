@@ -4582,6 +4582,22 @@ done
 for _c in 'printf -v I""FS m; ls${IFS}-p ls${IFS}-p x'; do
   test_allow "$IRRECOVERABLE" "GH #838 review 2 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #838 review 3: read as nothing, ${IFS} glued a -c body to the next word (`sh -c 'claude -p'${IFS}x` read as
+# `claude -px`); bash splits there, so the main reading reads a break, and an extra ifs-split copy reads nothing (an IFS
+# emptied under a spelling the text hides: `printf -v I""FS ''; gi${IFS}t restore x`).
+for _c in "sh -c 'claude -p'\${IFS}x" "bash -c 'claude --print'\${IFS}x" "echo hi | sh -c 'claude -p'\${IFS}x" \
+    "sh -c 'echo hi | claude'\${IFS}x" "sh -c 'claude --bg'\${IFS}x" 'bash -c claude\ -p${IFS}x' 'sh -c "claude -p"${IFS}"x"' \
+    "bash -c 'claude -p'\${IFS}'x'" "bash -c 'claude -p'\${IFS}\\x" "env sh -c 'claude -p'\${IFS}x" "nohup bash -lc 'claude -p'\${IFS}x"; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 3: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in "sh -c 'claude -p'\${IFS}x" "bash -c 'claude --version'\${IFS}x"; do
+  test_allow "$IRRECOVERABLE" "GH #838 review 3 control: main session: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" "GH #838 review 3 control: subagent: sh -c 'claude --version'\${IFS}x" \
+  "$(bash_agent_payload "sh -c 'claude --version'\${IFS}x" fork)"
+for _c in 'printf -v I""FS ""; gi${IFS}t restore x' 'eval I""FS=; r${IFS}m -rf x' "bash -c 'git reset --hard'\${IFS}y"; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 3: $_c" "$(bash_payload "$_c")"
+done
 # GH #840: a variable's value was never decoded, split, or carried into a nested body.
 # Row 1: an ANSI-C value (`X=$'\x63laude'`) is no plain value, so var-verb never put claude back.
 # Row 2: a value assigned in an outer body, used in a nested '...' body that the outer "..." unescapes (`\$X`).
