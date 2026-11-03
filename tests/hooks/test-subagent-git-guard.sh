@@ -1885,6 +1885,16 @@ test_deny "GH #844" $'echo "<<F ok"; (true)#\'\nx="$(cat <<\'E\'\nsay "hi\nE\n)"
 test_deny "GH #842" $'echo $(true)#<<E\nsay "hi\nE\necho `echo \'a`; git stash' $'echo $(true)#<<E\nsay "hi\nE\necho `echo \'a`; git status'
 test_deny "GH #842" $'echo $(date)#x; cat <<E\nsay "hi\nE\necho `echo \'a`; git stash' $'echo $(date)#x; cat <<E\nsay "hi\nE\necho `echo \'a`; git status'
 test_deny "GH #842" $'echo `echo \'a`; echo $(true)#x; cat <<E\nsay "hi\nE\ngit stash' $'echo `echo \'a`; echo $(true)#x; cat <<E\nsay "hi\nE\ngit status'
+# Fresh-context review round 12: a run of continuations at the end of a quoted word (only the last pair is
+# in place in the mask), and a `[` that is no assignment subscript (`echo x[; cat <<'E'`) opens no shift.
+test_deny "GH #843" $'"git"\\\n\\\n stash' $'"git"\\\n\\\n status'
+test_deny "GH #843" $'"gi"t\\\n\\\n stash' $'"gi"t\\\n\\\n status'
+test_deny "GH #843" $'git "stash"\\\n\\\n' $'git "status"\\\n\\\n'
+test_deny "GH #843" $'bash -c \'"git"\\\n\\\n\\\n stash\'' $'bash -c \'"git"\\\n\\\n\\\n status\''
+test_deny "GH #844" $'echo x[; cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo x[; cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'grep -c a[ f | cat <<\'E\'\ndon\'t\nE\ngit stash' $'grep -c a[ f | cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo a[ <<\'E\'\ndon\'t\nE\ngit stash' $'echo a[ <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo a[1<<E]\ndon\'t\nE]\ngit stash' $'echo a[1<<E]\ndon\'t\nE]\ngit status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

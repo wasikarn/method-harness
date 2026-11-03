@@ -452,8 +452,10 @@ def _join_quoted_words(raw, masked):
             while b - 1 > a and ps[b - 1].group(4):
                 b -= 1
             core = [p for p in ps[a:b] if not p.group(4)]
-            inner = 2 * (b - a - len(core))  # blanks the mask moved to the word front, one pair each
-            tail = ps[b].start() if b < len(ps) else len(w)
+            # Blanks the mask moved to the word front, one pair each: every inner pair, and every trailing
+            # pair but the last (a backslash follows it, so it glues); only the last trailing pair is in place.
+            inner = 2 * (b - a - len(core)) + 2 * max(len(ps) - b - 1, 0)
+            tail = ps[-1].start() if b < len(ps) else len(w)
             # Leading pairs are in place, or (a comment that ends in `<blank>\`, which is no continuation)
             # are not pairs at all: read the word both with them and from after them.
             for lead in ((0, 2 * a) if a else (0,)):
@@ -860,14 +862,25 @@ def _in_arith(s, i):
     return line.rfind("((") > line.rfind("))")
 
 def _in_subscript(s, i):
-    # GH #842/#844, the new views only: a `<<` inside an unclosed `$[` or `name[` on its line (`$[1<<E]`,
-    # `a[1<<E]=1`) is a shift, not a heredoc. Develop's paths keep _in_arith alone (there an unreadable
-    # heredoc denies), so this never turns a deny into an allow.
+    # GH #842/#844, the new views only: a `<<` inside an unclosed `$[` on its line (`$[1<<E]`), or inside the
+    # subscript of an assignment word (`a[1<<E]=1`: a name, `[`, no blank up to the `<<`, and `]=` after it),
+    # is a shift, not a heredoc. Any other `[` (`echo x[; cat <<'E'`, `echo a[1<<E]`) leaves it a heredoc.
+    # Develop's paths keep _in_arith alone (there an unreadable heredoc denies), so this never turns a deny
+    # into an allow.
     ls = s.rfind("\n", 0, i) + 1
     _scan_cost(i - ls)
     line = _mask_quotes(s[ls:i])
     ob = line.rfind("[")
-    return ob > line.rfind("]") and ob > 0 and (line[ob - 1] == "$" or line[ob - 1].isalnum() or line[ob - 1] == "_")
+    if ob <= line.rfind("]") or ob < 1:
+        return False
+    if line[ob - 1] == "$":
+        return True
+    if re.search(r"[\s;&|()<>]", line[ob + 1:]) or not re.match(r"<<[^\s;&|()<>]*\]\+?=", s[i:]):
+        return False
+    k = ob - 1
+    while k >= 0 and (line[k].isalnum() or line[k] == "_"):
+        k -= 1
+    return k < ob - 1 and not line[k + 1].isdigit() and (k < 0 or line[k] in " \t;&|(")
 
 def _scan_cost(k):
     global _work
