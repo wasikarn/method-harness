@@ -859,6 +859,16 @@ def _in_arith(s, i):
     line = _mask_quotes(s[ls:i])
     return line.rfind("((") > line.rfind("))")
 
+def _in_subscript(s, i):
+    # GH #842/#844, the new views only: a `<<` inside an unclosed `$[` or `name[` on its line (`$[1<<E]`,
+    # `a[1<<E]=1`) is a shift, not a heredoc. Develop's paths keep _in_arith alone (there an unreadable
+    # heredoc denies), so this never turns a deny into an allow.
+    ls = s.rfind("\n", 0, i) + 1
+    _scan_cost(i - ls)
+    line = _mask_quotes(s[ls:i])
+    ob = line.rfind("[")
+    return ob > line.rfind("]") and ob > 0 and (line[ob - 1] == "$" or line[ob - 1].isalnum() or line[ob - 1] == "_")
+
 def _scan_cost(k):
     global _work
     _work += k
@@ -1053,7 +1063,8 @@ def _scan_bodies(s, depth=0, zsh_dollar=False, lookback=True, legacy=False, pare
             h = _heredoc_at(s, i, pend[-1][3] if pend else None)
             if h:
                 pend.append(h)
-                if _hd_collect is not None and _hd_collect[0] is s and not f[7]:
+                if _hd_collect is not None and _hd_collect[0] is s and not f[7] \
+                        and not any(g[0] == "bt" for g in frames) and not _in_subscript(s, i):
                     _hd_collect[1].append((h[1], h[3]))  # GH #842: a heredoc this scan opens (see _prose)
             i += 1
         elif c == "`":
@@ -1162,6 +1173,8 @@ def _blank_heredocs_seq(s, raw_ops):
         p = m.start()
         pos = m.end()
         chained = last is not None and p < line_end  # a second heredoc on the line of the one before
+        if _in_subscript(t, p):
+            continue
         try:
             h = _heredoc_at(t, p, last[3] if chained else None)
         except _Unparsed:

@@ -1857,6 +1857,15 @@ test_deny "GH #842" $'# $( <<E\necho `echo \'a`#; git stash\nE' $'# $( <<E\necho
 test_deny "GH #842" $'echo \'$( <<E \'\necho `echo "a`#; git stash\nE' $'echo \'$( <<E \'\necho `echo "a`#; git status\nE'
 test_deny "GH #842" $'echo \\<<E\necho `echo \'a`#; git stash\nE' $'echo \\<<E\necho `echo \'a`#; git status\nE'
 test_deny "GH #842" $'echo ${v:-<<E}\necho `echo \'a`#; git stash\nE}' $'echo ${v:-<<E}\necho `echo \'a`#; git status\nE}'
+# Fresh-context review round 8: a `<<` in a quoted string inside backticks, or a shift in $[..] or an
+# array subscript, opens no heredoc, so its "body" hides no cut and no later command.
+test_deny "GH #842" $'echo `echo \'<<E \'`\necho `echo #`; git stash\nE' $'echo `echo \'<<E \'`\necho `echo #`; git status\nE'
+test_deny "GH #842" $'echo `echo \'<<EOF \'`\necho `echo \'it`; git stash\nEOF' $'echo `echo \'<<EOF \'`\necho `echo \'it`; git status\nEOF'
+test_deny "GH #842" $'x=`echo $\'<<E \'`\necho `echo \'a`; git stash\nE' $'x=`echo $\'<<E \'`\necho `echo \'a`; git status\nE'
+test_deny "GH #842" $'echo $[1<<E]\necho `echo \'a`; git stash\nE]' $'echo $[1<<E]\necho `echo \'a`; git status\nE]'
+test_deny "GH #842" $'a[1<<E]=1\necho `echo #`; git stash\nE]=1' $'a[1<<E]=1\necho `echo #`; git status\nE]=1'
+test_deny "GH #844" $'a[1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]=1' $'a[1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]=1'
+test_deny "GH #844" $'echo $[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]' $'echo $[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
