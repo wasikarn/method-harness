@@ -4731,7 +4731,7 @@ else echo "  ❌ GH #796: $_r796" >&2; fail=$((fail + 1)); fi
 # (a case misread from an argument, or an esac never seen), so the text is read both ways and masked only where both
 # readings agree; the traps below must keep denying, and so must a pipe through a comment both readings see (GH #810,
 # review 1) or one the keep reading drifts through and back (review 2), and a piped compound whose closer sits in a
-# real string after a misread case (review 3).
+# real string after a misread case (review 3) or in a ${..} word (review 4).
 for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(case a in a) echo hi | $X;; esac)"' \
     'X=claude; echo "$(case a in (a) echo hi | $X;; esac)"' 'X=claude; echo "$(case a in a|b) $X -p x;; esac)"' \
     $'X=claude; echo "$(case a in\n a) $X -p x;;\n esac)"' 'X=claude; echo "x $(case a in a) $X -p x;; esac) y"' \
@@ -4749,7 +4749,14 @@ for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(ca
     'X=claude; echo hi | case a in a) echo "$(echo then case)" "& esac)"; $X;; esac' \
     'X=claude; echo hi | while true; do echo "$(echo do case)" "; esac) "; $X; break; done' \
     'X=claude; echo hi | if true; then echo "$(:; case a in a) :;; esac)" "; esac) "; $X; fi' \
-    'X=claude; echo "$(true && case a in a) echo hi | $X;; esac)"' 'X=claude; echo "$(:; case a in a) $X -p x;; esac)"'; do
+    'X=claude; echo "$(true && case a in a) echo hi | $X;; esac)"' 'X=claude; echo "$(:; case a in a) $X -p x;; esac)"' \
+    'X=claude; echo hi | if true; then echo "$(echo ${x:-; case b in b) y; esac; fi )})"; $X; fi' \
+    'X=claude; echo hi | case a in a) echo "$(echo ${x:-; case b in b) y; esac; esac )})"; $X;; esac' \
+    'X=claude; echo hi | while true; do echo "$(echo ${x:-; case b in b) y; esac; done )})"; $X; break; done' \
+    'X=claude; echo hi | if true; then echo "$(echo ${x:-&& case b in b) y; esac; fi )})"; $X; fi' \
+    'X=claude; echo hi | if true; then echo "$(echo ${x:-|| case b in b) y; esac; fi )})"; $X; fi' \
+    'X=claude; echo hi | if :; then echo "$(echo ${x/;case b in b)/; esac; fi )})"; $X; fi' \
+    'X=claude; echo "${y}$(:; case a in a) $X -p x;; esac)"'; do
   test_deny  "$IRRECOVERABLE" "GH #839: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in 'echo "$(case a in a) echo hi | claude --version;; esac)"' 'X=claude; echo "$(case a in a) $X --version;; esac)"' \
