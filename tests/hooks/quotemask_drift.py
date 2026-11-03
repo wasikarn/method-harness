@@ -58,6 +58,73 @@ CORPUS = [
     "(ls)#x\ngit stash",
     "((1))#x\ngit stash",
     "case a in a)#x\ngit stash",
+    # GH #833: a case pattern's ")" inside $( keeps the $( open; a continuation inside $\<nl>( is stepped over;
+    # an extglob group glues as $( does
+    "echo $(case a in a) :;; esac)#; git stash",
+    "echo $(case a in (a) :;; esac)#; git stash",
+    "echo $(case a in\n a|b) :;;\n esac)#; git stash",
+    "echo $(if true; then case a in a) :;; esac; fi)#; git stash",
+    "echo $(case a in esac)#; git stash",
+    "echo $(case a in a) :;; esac) #; git stash",
+    "echo $(echo case)#; git stash",
+    "echo case a in a)#x\ngit stash",
+    "echo $\\\n(date)#; git stash",
+    "echo \\$(date)#; git stash",
+    "echo @(a)#; git stash",
+    "echo !(a)#; git stash",
+    "echo ?(a)#; git stash",
+    "echo *(a)#; git stash",
+    "echo +(a)#; git stash",
+    "echo @(a) #; git stash",
+    # GH #833 review: a case misread from an argument, or whose esac goes unseen, fails safe
+    "echo $(echo do case)#; git stash",
+    "echo $( (echo do case) )#; git stash",
+    "echo $(case a in a) { :; } esac)#; git stash",
+    "echo $(if case a in a) :;; esac; then :; fi)#; git stash",
+    "echo $(case a in a) case b in b) :;; esac;; c) :;; esac)#; git stash",
+    "echo $(case a in a) echo in esac;; b) :;; esac)#; git stash",
+    "case a in a)#x\nesac; git stash",
+    "echo do case; (ls)#x\ngit stash",
+    # GH #833 review 2: a # after an unsure ")" is read both ways; no quote or "<" on its line opens anything
+    "a=(do case); case a in a)#'\n;; esac; git stash\n#'",
+    "a=(do case); case a in a)#\"\n;; esac; git stash\n#\"",
+    "a=(do case); case a in a)#<<E\n;; esac; git stash\nE",
+    "echo $(echo do case); case a in a)\\\n#'x'; git stash",
+    # GH #833 review 3: the unsure line keeps its frames and continuations; only quotes and "<" are inert
+    "echo $(echo do case)#\\\n#; git stash",
+    "echo $(echo do case)#$(\ncat <<E\nhi\nE)\ngit stash\nE",
+    "echo $(echo do case)#x'y' ; git stash",
+    "echo $(echo do case)#$'a\\'; git stash",
+    # GH #833 review 4: once an inert quote or "<" shows up, nothing opens to the end of the text
+    "echo $(echo do case)#\"\n\"; git stash",
+    "echo $(echo do case)#\"\n\" && git reset --hard # \"",
+    "echo $(echo do case)#${x:-\"\n\"}; git stash # \"",
+    "echo $(echo do case)#x #'\ngit stash",
+    # GH #833 review 5: an inert quote mark (and the $ of an inert $'..') is dropped, its blank at the word front
+    "echo $(echo do case)#; \"git\" stash",
+    "echo $(echo do case)#'x' && g''it stash",
+    "echo $(echo do case)#; $'git' stash",
+    "echo $(echo do case)#; $$$'git' stash",
+    "echo $(echo do case)#\"",
+    "echo $(echo do case)#<x; git stash",
+    # GH #833 review 6: an inert $".." drops its $ too
+    "echo $(echo do case)#; $\"git\" stash",
+    "echo $(echo do case)#; g$\"it\" stash",
+    "echo $(echo do case)#; git $\"reset\" --hard",
+    # GH #833 review 7: an extglob candidate's ")" is unsure (a group, or with extglob off an operator)
+    "!(true)#<<E\ngit stash\nE",
+    "x+()#'\n{ git stash; }\nx+\n#'",
+    "f@()#\"\ngit stash\n#\"",
+    "echo @(a|b)#; git stash",
+    "echo !(a) #'\ngit stash",
+    # GH #833 review 9: a ")" on an unsure "#" line popping below its depth makes every later ")" unsure
+    "echo $(!(true)#)\n)#; git stash",
+    "echo $(f+()#)\n{ :; }\n)#; git stash",
+    "echo $(!(true)#x)\n(ls)#; git stash",
+    # GH #833 review 10: from an unsure "#" to the end the state is unknown
+    "echo $(case a in a) !(true)#;esac\n;; b)#'\n;; esac); git stash\n'",
+    "( !(true)#$(\n)#'\ngit stash\n'",
+    "!(true)#\\\n#'\ngit stash #'",
 ]
 
 
