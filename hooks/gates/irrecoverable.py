@@ -1502,6 +1502,15 @@ def _spawn_drop_escapes(c):
     return _SPAWN_WORD_RE.sub(word, c)
 
 def _nested_spawn(c, overlap):
+    # GH #835: the anchor reads the text as written, so an ANSI-C escape (`$'\x63laude' -p x`) hid the name; a $'..'
+    # bash decodes is read decoded too (live_only: in "..." it is literal text).
+    if "$'" in c:
+        dc = _normalize_ansi_c_quotes(c, live_only=True)
+        if dc != c and _nested_spawn_read(dc, overlap):
+            return True
+    return _nested_spawn_read(c, overlap)
+
+def _nested_spawn_read(c, overlap):
     c = _spawn_drop_escapes(c)
     j = _SPAWN_QWORD_RE.sub(_spawn_join_quoted, c)
     return _nested_spawn_text(j, overlap) or (j != c and _nested_spawn_text(c, overlap))
@@ -4212,6 +4221,11 @@ def _scan_body(body):
                 _BODY_VAR_QUEUE[body] = None  # a dict: each body once, in order
         elif _view_spawns():
             _scan_view_statements(body)
+        elif _VIEW[0] == "brace-view" and "claude" in _UNQUOTED_RE.sub("", body):
+            # GH #835: _bracex expands a bash -c / eval body too (`bash -c 'cl{aude,aude} -p x'` reads
+            # `bash -c 'claude claude -p x'`), so the body's statements that name claude are read, as GH #731 reads
+            # brace-view's top-level ones; a body that does not name claude is not, for GH #661's budget.
+            _scan_view_statements(body, named=True)
     readings, blown, bad = _body_readings(body)
     for cur, ww, curc in readings:
         if ww:
@@ -6569,6 +6583,24 @@ def _literal_subst_glued(text):
 def _ifs_split(text):
     return _EMPTY_POS_RE.sub("", _IFS_RE.sub(" ", text)) if "IFS" in text else text
 
+_BARE_IFS_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
+
+def _ifs_empty(text):
+    # GH #834: the text with each bare, unquoted $IFS / ${IFS} read as nothing. Unquoted, its value is all IFS
+    # characters, so field splitting leaves a word break (ifs-split's reading) or, with IFS empty or unset, nothing;
+    # never other text. Blanked to a placeholder it read as any text, so brace-view's raw copy of `ls{,}${IFS}-p x`
+    # (`ls${IFS}-p ls${IFS}-p x`) was `<any> <any> x`, a git restore. A quoted "${IFS}" or an operator form
+    # (`${IFS:0:1}`) is a value, so it stays as written.
+    if "IFS" not in text:
+        return text
+    mask = None
+    def sub(m):
+        nonlocal mask
+        if mask is None:
+            mask = _quote_mask(text)
+        return m.group(0) if mask[m.start()] else ""
+    return _BARE_IFS_RE.sub(sub, text)
+
 def _subst_literals(text, glued=True):
     # The text with each literal substitution replaced by what it prints: one copy per quoted mode (see below).
     out = []
@@ -6632,7 +6664,8 @@ def _views():
     # text with both rewrites applied (each only turns text into the words it stands for, so one copy per
     # quoted mode reads all that either rewrite alone would); they enforce what brace-view enforces.
     if _BRACEX_TEXT is not None:
-        out.append(("brace-view", _BRACEX_TEXT))
+        # GH #834: the raw copy reads a bare unquoted ${IFS} as nothing (_ifs_empty); the copy below reads it as a break.
+        out.append(("brace-view", _ifs_empty(_BRACEX_TEXT)))
         ifs = _ifs_split(_BRACEX_TEXT)
         for v in _subst_literals(ifs, glued=False) or [ifs]:
             if v != _BRACEX_TEXT and ("brace-view", v) not in out:
@@ -6681,6 +6714,19 @@ def _views():
         if pick is None and v != cmd:
             _VAR_SPAWN_TEXTS.add(v)
         if v != cmd and ("var-verb", v) not in out:
+            out.append(("var-verb", v))
+    ifs = _ifs_split(cmd) if vals else cmd
+    if ifs != cmd:
+        # GH #835: one in-order copy of the ifs-split text, so a value put back past a ${IFS} word break is read
+        # (`X=claude; bash${IFS}-c "$X -p x"`, `env${IFS}$X -p x`): no other view applies both rewrites. Spawn-scanned
+        # like the in-order copy, and read by var-verb's enforced rules.
+        try:
+            v = _ordered_var_text(ifs, True, long=_VAR_RM_ONLY and "raise")
+        except _LongCopy:
+            _VAR_LONG_CUT[0] = True
+            v = ifs
+        if v != ifs and ("var-verb", v) not in out:
+            _VAR_SPAWN_TEXTS.add(v)
             out.append(("var-verb", v))
     if vals and "#" in cmd:
         # GH #810: one more in-order copy that reads `#` comments as bash does, so `echo hi | # it's fed` then `$X` puts

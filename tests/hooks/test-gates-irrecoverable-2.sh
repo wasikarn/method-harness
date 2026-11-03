@@ -4498,4 +4498,49 @@ _timed_case 'GH #731: subagent: 300 {a,b}${IFS}$(echo c) words are read in bound
   "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 300))" fork
 _timed_case 'GH #731: subagent: cl{aude,aude}${IFS}-p${IFS}x after 300 brace words denies in bounded time' 2 \
   "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 300)); cl{aude,aude}\${IFS}-p\${IFS}x" fork
+# GH #834/#835
+# GH #834: brace-view's raw copy read a bare unquoted ${IFS} as any text, so `ls{,}${IFS}-p x` (bash runs
+# `ls -p ls -p x`) read as `<any> <any> x`, a git restore with a pathspec, in any session. Unquoted and bare,
+# ${IFS} is a word break or nothing (an empty IFS), never other text: the ifs-split copy reads the break, and the
+# raw copy now reads it as nothing.
+for _c in 'ls{,}${IFS}-l x' 'ls{,}${IFS}-W x' 'ls{,}${IFS}. x' 'e{cho,cho}${IFS}-p x' 'cl{aude,aude}${IFS}-p x' \
+    'ls{,} -p x' 'cl{aude,aude}${IFS}-p${IFS}x' 'ls{,}$IFS-l x' 'ls{,}${IFS}-l x y'; do
+  test_allow "$IRRECOVERABLE" "GH #834: main session: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'ls{,}${IFS}-l x' 'e{cho,cho}${IFS}-p x'; do
+  test_allow "$IRRECOVERABLE" "GH #834: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+# controls: brace-view still reads git's discard rules through ${IFS}, a quoted "${IFS}" and an operator form
+for _c in 'gi{t,t}${IFS}restore x' 'git{,}${IFS}restore${IFS}x' 'git re{store,store} x' 'g{i,i}t${IFS}reset --hard' \
+    'IFS=; gi${IFS}t restore{,} x'; do
+  test_deny  "$IRRECOVERABLE" "GH #834 control: $_c" "$(bash_payload "$_c")"
+done
+test_deny  "$IRRECOVERABLE" 'GH #834 control: subagent: cl{aude,aude}${IFS}-p x is the spawn' \
+  "$(bash_agent_payload 'cl{aude,aude}${IFS}-p x' fork)"
+# GH #835: four subagent claude spawns that were allowed. Rows 1-2 need the ifs-split and var-verb rewrites at once
+# (one in-order var-verb copy of the ifs-split text); row 3 is an ANSI-C escape the spawn anchor never decoded; row 4
+# is a brace in a bash -c / eval body, which brace-view never expands (it reads quoted text as written).
+for _c in 'X=claude; bash${IFS}-c "$X -p x"' 'X=claude; env${IFS}$X -p x' $'$\'\\x63laude\' -p x' \
+    "bash -c 'cl{aude,aude} -p x'" \
+    'X=claude; env${IFS}$X${IFS}-p${IFS}x' 'X=claude; bash${IFS}-c${IFS}"$X -p x"' $'$\'\\143laude\' -p x' \
+    $'cl$\'\\x61\'ude -p x' $'bash -c "$\'\\x63laude\' -p x"' "bash -c \"cl{aude,aude} -p x\"" \
+    "eval 'cl{aude,aude} -p x'" "bash -c 'true; c{l,l}aude -p x'" "sh -c 'bash -c \"cl{aude,aude} -p x\"'" \
+    "bash\${IFS}-c 'cl{aude,aude} -p x'"; do
+  test_deny  "$IRRECOVERABLE" "GH #835: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'X=claude; bash${IFS}-c "$X -p x"' 'X=claude; env${IFS}$X -p x' $'$\'\\x63laude\' -p x' \
+    "bash -c 'cl{aude,aude} -p x'"; do
+  test_allow "$IRRECOVERABLE" "GH #835 control: main session: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'X=claude; bash${IFS}-c "$X --version"' 'X=python3; env${IFS}$X -p x' $'$\'\\x63laude\' --version' \
+    $'echo $\'\\x63laude\' -p x' "bash -c 'echo cl{aude,aude} -p x'" "bash -c 'mkdir -p {a,b}/claude'" \
+    "bash -c 'cl{aude,aude} --version'"; do
+  test_allow "$IRRECOVERABLE" "GH #835 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+# a body's brace text is read in bounded time, and the spawn after it still denies (150 words: 300 in a body spend
+# the main reading's spawn budget on develop, which denies as too dense)
+_timed_case 'GH #835: subagent: bash -c with 150 {a,b}${IFS}$(echo c) words is read in bounded time' 0 \
+  "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150))'" fork
+_timed_case 'GH #835: subagent: bash -c cl{aude,aude} -p x after 150 brace words denies in bounded time' 2 \
+  "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150)); cl{aude,aude} -p x'" fork
 gates_summary
