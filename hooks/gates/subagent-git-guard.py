@@ -983,6 +983,8 @@ def _substitution_bodies(s, depth=0):
                 bodies.extend(_scan_bodies(s, depth, z, lb, False, pc))
     return bodies
 
+_hd_collect = None  # GH #842: (text, list) while _prose asks _scan_bodies which heredocs it opens
+
 def _scan_bodies(s, depth=0, zsh_dollar=False, lookback=True, legacy=False, paren_close=False):
     bodies, n, i = [], len(s), 0
     # frame: kind, body start, open quote, paren depth, open `case` count, saw case, at command
@@ -1051,6 +1053,8 @@ def _scan_bodies(s, depth=0, zsh_dollar=False, lookback=True, legacy=False, pare
             h = _heredoc_at(s, i, pend[-1][3] if pend else None)
             if h:
                 pend.append(h)
+                if _hd_collect is not None and _hd_collect[0] is s and not f[7]:
+                    _hd_collect[1].append((h[1], h[3]))  # GH #842: a heredoc this scan opens (see _prose)
             i += 1
         elif c == "`":
             if f[0] == "bt" and f[2] is None:
@@ -1143,7 +1147,7 @@ _HD_SEQ_MAX = 24
 _HD_STATE_RE = re.compile(r"['\"`\\#$()<]|\b(?:case|esac)\b")
 
 def _blank_heredocs_seq(s, raw_ops):
-    t, pos, line_end, last, spans, ops = s, 0, -1, None, [], []
+    t, pos, line_end, last, spans = s, 0, -1, None, []
     mt = None if raw_ops else _mask_quotes(t)
     while True:
         if mt is None and not raw_ops:
@@ -1154,7 +1158,7 @@ def _blank_heredocs_seq(s, raw_ops):
                 mt = _mask_quotes(t)
         m = _HD_OP_RE.search(t if raw_ops else mt, pos)
         if not m:
-            return t, spans, ops
+            return t, spans
         p = m.start()
         pos = m.end()
         chained = last is not None and p < line_end  # a second heredoc on the line of the one before
@@ -1169,7 +1173,6 @@ def _blank_heredocs_seq(s, raw_ops):
             # The body and its terminator word become one Q word: offsets hold, and the anchor scans (charged
             # per line start) see one line where the body had many.
             spans.append((h[1], h[3]))
-            ops.append(p)
             body = t[h[1]:h[3]]
             q = "Q" * len(body)
             t = t[:h[1]] + q + t[h[3]:]
@@ -1186,7 +1189,7 @@ def _hd_view(s, base, raw_ops):
     k = (_dollar_join, s, base, raw_ops)
     if k not in _hd_view_memo:
         v = None
-        b, spans, _ = _blank_heredocs_seq(s, raw_ops)
+        b, spans = _blank_heredocs_seq(s, raw_ops)
         if spans:
             mb = _mask(b)
             keep, last = [], 0
@@ -1217,30 +1220,29 @@ def _nl_view(s, base):
 # `#` glued after it stays a word as in bash. Cuts are taken from the text with its heredoc bodies blanked,
 # so a backtick in heredoc prose cuts nothing. At most _CUT_MAX views per text.
 _CUT_MAX = 8
-_blank_memo = {}
-
-def _blanked(s, raw_ops):
-    # (s with heredoc bodies blanked, their (start, end) spans, their operator indexes)
-    k = (s, raw_ops)
-    if k not in _blank_memo:
-        _blank_memo[k] = _blank_heredocs_seq(s, raw_ops)
-    return _blank_memo[k]
-
 def _prose(s):
-    # The spans a cut view counts as heredoc prose: a raw-found body whose operator the mask finds too, or
-    # whose operator follows a `$(` or backtick on its line ("$(cat <<'EOF'", where the top-level mask is
-    # thrown off). A `<<` in a comment or a plain quoted string (`# see <<EOF`) makes nothing prose.
-    _, mspans, _ = _blanked(s, False)
-    _, rspans, rops = _blanked(s, True)
-    out = []
-    for span, p in zip(rspans, rops):
-        line = s[s.rfind("\n", 0, p) + 1:p]
-        if span in mspans or "$(" in line or "`" in line:
-            out.append(span)
-    return out
+    # s with the bodies of the heredocs bash opens blanked, for the cut views: a backtick in heredoc prose
+    # is no cut. Only the substitution scanner's reading counts here: it tracks quotes, comments, $(..) and
+    # backtick frames and ${..}, so it opens the body in "$(cat <<'EOF' ..)", where the top-level mask is
+    # thrown off, and no body for a `<<` in a comment, a quoted string, `\<<E` or `${v:-<<E}`. If it cannot
+    # read a heredoc, nothing is blanked (more is read).
+    global _hd_collect
+    if "<<" not in s:
+        return s
+    spans = []
+    _hd_collect = (s, spans)
+    try:
+        _scan_bodies(s)
+    except _Unparsed:
+        spans = []
+    finally:
+        _hd_collect = None
+    for x, y in spans:
+        s = s[:x] + "Q" * (y - x) + s[y:]
+    return s
 
-def _cut_views(texts, prose, base):
-    # prose: the heredoc body spans (see _prose); a cut inside one of them is not code.
+def _cut_views(texts, base):
+    # texts: the text(s) to cut, heredoc bodies blanked (see _prose).
     # The substitution, from its opening backtick to the cut, becomes word chars, so what stands before it
     # (`env `echo #` git stash`) keeps its place. A cut view is searched for cuts of its own (a second
     # substitution on the line), up to _CUT_MAX views in all.
@@ -1251,7 +1253,7 @@ def _cut_views(texts, prose, base):
         _scan_cost(len(t))
         _mask_quotes(t, cuts)
         for o, a in cuts:
-            if made >= _CUT_MAX or any(x <= a < y for x, y in prose):
+            if made >= _CUT_MAX:
                 continue
             made += 1
             v = t[:o] + "x" * (a - o + 1) + t[a + 1:]
@@ -1274,11 +1276,7 @@ def _extra_views(s, base, based=None):
             if v and v not in views:
                 views.append(v)
     if "`" in s:
-        if "<<" in s:
-            srcs, prose = [_blanked(s, False)[0], _blanked(s, True)[0]], _prose(s)
-        else:
-            srcs, prose = [based], []
-        for v in _cut_views(dict.fromkeys(srcs), prose, base):
+        for v in _cut_views([_prose(s) if "<<" in s else based], base):
             if v not in views:
                 views.append(v)
     for t, mt in [(based, base)] + list(views):

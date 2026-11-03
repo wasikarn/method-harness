@@ -1849,6 +1849,14 @@ test_deny "GH #843" $'"g\\\nit" stash' $'"g\\\nit" status'
 test_deny "GH #843" $'"gi\\\nt" stash' $'"gi\\\nt" status'
 test_deny "GH #843" $'g"i\\\nt" stash' $'g"i\\\nt" status'
 test_deny "GH #843" $'git "st\\\nash"' $'git "st\\\natus"'
+# Fresh-context review round 7: only a heredoc the substitution scanner opens (quotes, comments, frames
+# and ${..} tracked) makes its body prose for the cut views; a fake `<<` hides no real cut.
+test_deny "GH #842" $'echo \'$( <<E \'\necho `echo \'a`#; git stash\nE' $'echo \'$( <<E \'\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'echo \'` <<E \'\necho `echo \'a`#; git stash\nE' $'echo \'` <<E \'\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'# $( <<E\necho `echo \'a`#; git stash\nE' $'# $( <<E\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'echo \'$( <<E \'\necho `echo "a`#; git stash\nE' $'echo \'$( <<E \'\necho `echo "a`#; git status\nE'
+test_deny "GH #842" $'echo \\<<E\necho `echo \'a`#; git stash\nE' $'echo \\<<E\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'echo ${v:-<<E}\necho `echo \'a`#; git stash\nE}' $'echo ${v:-<<E}\necho `echo \'a`#; git status\nE}'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
