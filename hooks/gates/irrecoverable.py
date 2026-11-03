@@ -2378,12 +2378,15 @@ _IFS_DEFAULT = []
 _IFS_REF_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
 
 def _ifs_default():
-    # GH #838 review: whether the command names IFS only as a bare $IFS / ${IFS}. A here-string or an unquoted heredoc
-    # body does no word splitting, so after `IFS=m` (or `read IFS`, `export IFS=m`, ...) a ${IFS} there is the letter m:
-    # `IFS=m; bash <<< "r"${IFS}" -rf x"` runs rm. Any other IFS in the text, so the placeholder reading. The raw
-    # command: cmd has its heredoc bodies stripped. Made once.
+    # GH #838 review: whether a bare unquoted ${IFS} is surely split away: no `<<` in the command, and IFS named only as
+    # a bare $IFS / ${IFS}. A here-string or an unquoted heredoc body does no word splitting, so ${IFS} there is IFS's
+    # text: the default's newline starts a command (`bash <<< "echo"${IFS}"rm -rf x"`), and after `IFS=m` (or a spelling
+    # the text hides: `printf -v I""FS m`) it is the letter m (`bash <<< "r"${IFS}" -rf x"`). Elsewhere the expansion
+    # is field-split whatever IFS holds. Either sign keeps the placeholder reading. The raw command: cmd has its heredoc
+    # bodies stripped. Made once.
     if not _IFS_DEFAULT:
-        _IFS_DEFAULT.append("IFS" not in _IFS_REF_RE.sub("", d["tool_input"].get("command", "")))
+        raw = d["tool_input"].get("command", "")
+        _IFS_DEFAULT.append("<<" not in raw and "IFS" not in _IFS_REF_RE.sub("", raw))
     return _IFS_DEFAULT[0]
 
 def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param):

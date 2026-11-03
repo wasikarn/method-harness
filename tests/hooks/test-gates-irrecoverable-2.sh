@@ -4569,6 +4569,19 @@ for _c in 'IFS=m; bash <<< "r"${IFS}" -rf /"' 'IFS=m; sh <<< "r"${IFS}" -rf x"' 
   test_deny  "$IRRECOVERABLE" "GH #838 review: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 test_allow "$IRRECOVERABLE" 'GH #838 review control: IFS=m; cat <<< "r"${IFS}" x"' "$(bash_payload 'IFS=m; cat <<< "r"${IFS}" x"')"
+# GH #838 review 2: the default IFS holds a newline, so in a here-string or heredoc body ${IFS} starts a new command
+# (`bash <<< "echo"${IFS}"rm -rf x"`), and IFS may be set under a spelling the text does not show (`printf -v I""FS m`):
+# a command with `<<` in it keeps the placeholder reading.
+for _c in 'bash <<< "echo"${IFS}"rm -rf x"' 'bash<<<"echo"${IFS}"rm -rf x"' 'sh <<< "true"${IFS}"rm -rf x"' \
+    'bash <<< "echo"${IFS}"git reset --hard"' 'bash <<< "echo"${IFS}"git restore x"' $'bash <<EOF\necho${IFS}rm -rf x\nEOF' \
+    $'bash <<-EOF\n\techo${IFS}rm -rf x\n\tEOF' 'printf -v I""FS m; bash <<< "r"${IFS}" -rf x"' 'eval I""FS=m; bash <<< "r"${IFS}" -rf x"' \
+    'read I\FS <<< m; bash <<< "r"${IFS}" -rf x"' 'declare I\FS=m; bash <<< "r"${IFS}" -rf x"' \
+    'printf -v I""FS i; bash <<< g${IFS}t\ restore\ x' $'eval I""FS=m; bash <<EOF\nr${IFS} -rf x\nEOF'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 2: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+for _c in 'printf -v I""FS m; ls${IFS}-p ls${IFS}-p x'; do
+  test_allow "$IRRECOVERABLE" "GH #838 review 2 control: $_c" "$(bash_payload "$_c")"
+done
 # GH #840: a variable's value was never decoded, split, or carried into a nested body.
 # Row 1: an ANSI-C value (`X=$'\x63laude'`) is no plain value, so var-verb never put claude back.
 # Row 2: a value assigned in an outer body, used in a nested '...' body that the outer "..." unescapes (`\$X`).
