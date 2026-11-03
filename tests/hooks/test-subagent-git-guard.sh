@@ -1940,6 +1940,15 @@ test_deny "GH #842" $'a+=(<<E)\necho `echo \'a`#; git stash\nE' $'a+=(<<E)\necho
 _c="echo x; g$(_pad $'\\\ng' 5000)'"
 rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #843 review 17: a 15 KB run of continued word chars decided inside 8 s as allow (rc $rc)" "$ok"
+# Fresh-context review round 18: a word after a backslash-newline that is no continuation (an escaped `\\`,
+# a comment's last `\`) is joined, and a `<<` in any unclosed `name[` is also read as a shift.
+test_deny "GH #843" $'echo a\\\\\ng\\\n"it" stash' $'echo a\\\\\ng\\\n"it" status'
+test_deny "GH #843" $'echo a\\\\\n"git"\\\n stash' $'echo a\\\\\n"git"\\\n status'
+test_deny "GH #843" $'# see C:\\\ng\\\n"it" stash' $'# see C:\\\ng\\\n"it" status'
+test_deny "GH #843" $'git status # it\'s\\\ng\\\n\'it\' stash' $'git status # it\'s\\\ng\\\n\'it\' status'
+test_deny "GH #844" $'a[ 1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]=1' $'a[ 1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]=1'
+test_deny "GH #844" $'a[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]' $'a[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]'
+test_deny "GH #842" $'a[ 1<<E]=1\necho `echo \'a`#; git stash\nE]=1' $'a[ 1<<E]=1\necho `echo \'a`#; git status\nE]=1'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

@@ -383,6 +383,8 @@ _QPIECE_RE = re.compile(r"(\$?)([\"'])([\w./-]*)[\"']|\\([\w./-])|([\w./-])")
 # above must stay _SPAWN_QWORD_RE's twin): pairs at its front or end are blanks in place in the mask, every
 # pair between moved two blanks to the word front, and the pieces are checked against the mask past them.
 _nl_join = False  # GH #843: the joined reading is its own view (see _extra_views), develop's is kept
+_QWORD_NL_BODY = r"(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])"
+_QWORD_NL_BODY_RE = re.compile(_QWORD_NL_BODY)
 _QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?<!\\\n)(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])")
 # Its pieces: a `$` (continuations may stand between it and its quote: $\<nl>'git' is $'git'), a quoted piece (inside "..", a continuation is deleted too: "g\<nl>it" is git), an
 # escaped letter, a continuation outside quotes, a plain letter.
@@ -447,7 +449,22 @@ def _join_quoted_words(raw, masked):
         return masked
     reps = []  # (start, end, joined text), checked against the mask as it came in
     if _nl_join and "\\\n" in raw:
-        for m in _QWORD_NL_RE.finditer(raw):  # GH #843: only the words _QWORD_RE cannot read whole
+        cands = list(_QWORD_NL_RE.finditer(raw))
+        # _QWORD_NL_RE starts no word right after a backslash-newline (that made a long continued run
+        # quadratic), but one that is no continuation ends its line: an even backslash run (`a\\<nl>`) or a
+        # comment's last `\` (the mask of that physical line alone blanks it; the whole mask cannot say,
+        # since it moves a continuation's blanks to its word front). A word is tried there too.
+        for q in (i for i in range(len(raw) - 1) if raw.startswith("\\\n", i)):
+            r = q
+            while r > 0 and raw[r - 1] == "\\":
+                r -= 1
+            ls = raw.rfind("\n", 0, q) + 1
+            _scan_cost(q + 1 - ls)
+            if (q - r) % 2 == 1 or _mask_quotes(raw[ls:q + 1])[-1:] == " ":
+                mm = _QWORD_NL_BODY_RE.match(raw, q + 2)
+                if mm and not any(c.start() < mm.end() and mm.start() < c.end() for c in cands):
+                    cands.append(mm)
+        for m in cands:  # GH #843: only the words _QWORD_RE cannot read whole
             w = m.group()
             if "\\\n" not in w or ("'" not in w and '"' not in w):
                 continue
@@ -871,7 +888,7 @@ def _in_arith(s, i):
     line = _mask_quotes(s[ls:i])
     return line.rfind("((") > line.rfind("))")
 
-def _in_subscript(s, i):
+def _in_subscript(s, i, loose=False):
     # GH #842/#844, the new views only: a `<<` inside an unclosed `$[` on its line (`$[1<<E]`), inside the
     # subscript of an assignment word (`a[1<<E ]=1`: a name, `[`, no blank up to the `<<`, `]=` after it), or
     # inside the parens of a compound array assignment (`a=(1<<E)`),
@@ -893,6 +910,8 @@ def _in_subscript(s, i):
         while k >= 0 and line[k] == "$":
             k -= 1
         return (ob - 1 - k) % 2 == 1  # `$$[` is the PID then a literal `[`
+    if loose:  # the "brk" reading: any unclosed `name[` (`a[ 1<<E]=1`, `a[1<<E]` with no `=`)
+        return line[ob - 1].isalnum() or line[ob - 1] == "_"
     if re.search(r"[\s;&|()<>]", line[ob + 1:]) or not re.match(r"<<[^\]\n]*\]\+?=", s[i:]):
         return False
     k = ob - 1
@@ -1188,7 +1207,7 @@ def _blank_heredocs(s):
 _HD_SEQ_MAX = 24
 _HD_STATE_RE = re.compile(r"['\"`\\#$()<]|\b(?:case|esac)\b")
 
-_HD_MODES = ("sub", "dev", "all")
+_HD_MODES = ("sub", "dev", "all", "brk")
 _CONT_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # an odd backslash run, then a newline: its last pair
 
 def _blank_heredocs_seq(s, raw_ops, mode="sub"):
@@ -1214,7 +1233,7 @@ def _blank_heredocs_seq(s, raw_ops, mode="sub"):
             h = _heredoc_at(t, p, last[3] if chained else None, mode != "all")
         except _Unparsed:
             continue
-        if h and mode == "sub" and _in_subscript(t, p):  # only once a heredoc is found: a long line of shifts stays linear
+        if h and mode in ("sub", "brk") and _in_subscript(t, p, mode == "brk"):  # only once a heredoc is found: a long line of shifts stays linear
             continue
         if h:
             if not chained:
@@ -1376,9 +1395,10 @@ def _extra_views(s, base, based=None):
         # Each source has its own cap, so one cannot use up the views another needs.
         srcs = [(t, None) for t in dict.fromkeys([_prose(s)] + _prose(s, True) if "<<" in s else [based])]
         srcs += [(t, _prose(o)) for t, o in hd_srcs if t not in dict(srcs)]
-        if "<<" in s:  # the raw "sub" reading: a `<<` it reads as a shift blanks nothing, so no filter here
-            sub = _blank_heredocs_seq(s, True, "sub")[0]
-            srcs = [(t, f) for t, f in srcs if t != sub] + [(sub, None)]
+        if "<<" in s:  # the raw "sub" and "brk" readings: a `<<` they read as a shift blanks nothing, so no filter
+            for mode in ("sub", "brk"):
+                sub = _blank_heredocs_seq(s, True, mode)[0]
+                srcs = [(t, f) for t, f in srcs if t != sub] + [(sub, None)]
         for src, prose in srcs:
             for v in _cut_views([src], base, prose):
                 if v not in views:
