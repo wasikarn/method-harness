@@ -2385,6 +2385,11 @@ def _ifs_default():
     # the text hides: `printf -v I""FS m`) it is the letter m (`bash <<< "r"${IFS}" -rf x"`). Elsewhere the expansion
     # is field-split whatever IFS holds. Either sign keeps the placeholder reading. The raw command: cmd has its heredoc
     # bodies stripped. Made once.
+    # Review 4: only from the main parse on (`_ambig` set), and not with an ambiguity shape: the readings before it (the
+    # interp-pipe text) and a command whose `git reset` the brace ambiguity denies (`echo {a,b}; git${IFS}reset --soft
+    # HEAD~1`, GH #718: allowed, as develop reads it) keep develop's placeholder.
+    if "_ambig" not in globals() or _ambig:
+        return False
     if not _IFS_DEFAULT:
         raw = d["tool_input"].get("command", "")
         _IFS_DEFAULT.append("<<" not in raw and "IFS" not in _IFS_REF_RE.sub("", raw))

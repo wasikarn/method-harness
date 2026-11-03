@@ -4598,6 +4598,13 @@ test_allow "$IRRECOVERABLE" "GH #838 review 3 control: subagent: sh -c 'claude -
 for _c in 'printf -v I""FS ""; gi${IFS}t restore x' 'eval I""FS=; r${IFS}m -rf x' "bash -c 'git reset --hard'\${IFS}y"; do
   test_deny  "$IRRECOVERABLE" "GH #838 review 3: $_c" "$(bash_payload "$_c")"
 done
+# GH #846: the ifs-split copy that reads a bare ${IFS} as nothing is spawn-scanned, so a subagent's `cl${IFS}aude -p x`
+# (an empty IFS runs claude) denies
+for _c in 'cl${IFS}aude -p x' 'cl$IFS"aude" -p x' 'IFS=; cl${IFS}aude -p x'; do
+  test_deny  "$IRRECOVERABLE" "GH #846: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #846 control: main session: cl${IFS}aude -p x' "$(bash_payload 'cl${IFS}aude -p x')"
+test_allow "$IRRECOVERABLE" 'GH #846 control: subagent: cl${IFS}aude --version' "$(bash_agent_payload 'cl${IFS}aude --version' fork)"
 # GH #840: a variable's value was never decoded, split, or carried into a nested body.
 # Row 1: an ANSI-C value (`X=$'\x63laude'`) is no plain value, so var-verb never put claude back.
 # Row 2: a value assigned in an outer body, used in a nested '...' body that the outer "..." unescapes (`\$X`).
