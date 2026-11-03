@@ -4701,6 +4701,136 @@ _timed_case 'GH #835: subagent: bash -c with 150 {a,b}${IFS}$(echo c) words is r
   "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150))'" fork
 _timed_case 'GH #835: subagent: bash -c cl{aude,aude} -p x after 150 brace words denies in bounded time' 2 \
   "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150)); cl{aude,aude} -p x'" fork
+# GH #838/#840
+# GH #838: the main reading blanked a bare unquoted ${IFS} to a placeholder, which a token window reads as any text,
+# so `ls${IFS}-p ls${IFS}-p x` (bash runs `ls -p ls -p x`) read as `<any> <any> x`, a git restore, in any session.
+# Unquoted and bare, ${IFS} is a word break or nothing (GH #834): the main reading now reads it as nothing, and the
+# ifs-split view reads the break. Other ${NAME} keep the broad reading (`${G}it` may be git).
+for _c in 'ls${IFS}-p ls${IFS}-p x' 'ls${IFS} ls${IFS} x' 'ls$IFS-p ls$IFS-p x' 'ls${IFS}-p ls${IFS}-p x y' \
+    'echo${IFS}a echo${IFS}a x' 'ls${IFS}-p x'; do
+  test_allow "$IRRECOVERABLE" "GH #838: main session: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" 'GH #838: subagent: ls${IFS}-p ls${IFS}-p x' "$(bash_agent_payload 'ls${IFS}-p ls${IFS}-p x' fork)"
+# controls: a ${IFS} that is a break or nothing still reads the verb; a quoted "${IFS}", an operator form and any other
+# ${NAME} keep the placeholder
+for _c in 'git${IFS}restore x' 'gi${IFS}t restore x' 'git${IFS}restore${IFS}x' 'rm${IFS}-rf${IFS}x' 'r${IFS}m -rf x' \
+    'git${IFS}reset${IFS}--hard' 'ls${HOME}-p ls${HOME}-p x' 'ls${A} ls${A} x' 'ls${IFS:0:1}-p ls${IFS:0:1}-p x' \
+    'ls"${IFS}"-p ls"${IFS}"-p x' 'X=${IFS}; gi${X}t restore x' 'echo ${IFS}#; rm -rf x' 'echo ${IFS}#x | gi${IFS}t restore y'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 control: $_c" "$(bash_payload "$_c")"
+done
+# GH #838 review: a here-string or an unquoted heredoc body does no word splitting, so after `IFS=m` a ${IFS} there is
+# the letter m (`IFS=m; bash <<< "r"${IFS}" -rf x"` runs rm). A command that names IFS other than as a bare $IFS / ${IFS}
+# keeps the placeholder reading.
+for _c in 'IFS=m; bash <<< "r"${IFS}" -rf /"' 'IFS=m; sh <<< "r"${IFS}" -rf x"' "IFS=m; bash<<<r\${IFS}' -rf x'" \
+    'IFS=i; bash <<< g${IFS}t\ restore\ x' 'IFS=t; bash <<< gi${IFS}\ res${IFS}ore\ x' $'IFS=i; bash <<EOF\ng${IFS}t restore x\nEOF' \
+    'read IFS <<< m; bash <<< "r"${IFS}" -rf x"' 'export IFS=m; bash <<< "r"${IFS}" -rf x"'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" 'GH #838 review control: IFS=m; cat <<< "r"${IFS}" x"' "$(bash_payload 'IFS=m; cat <<< "r"${IFS}" x"')"
+# GH #838 review 2: the default IFS holds a newline, so in a here-string or heredoc body ${IFS} starts a new command
+# (`bash <<< "echo"${IFS}"rm -rf x"`), and IFS may be set under a spelling the text does not show (`printf -v I""FS m`):
+# a command with `<<` in it keeps the placeholder reading.
+for _c in 'bash <<< "echo"${IFS}"rm -rf x"' 'bash<<<"echo"${IFS}"rm -rf x"' 'sh <<< "true"${IFS}"rm -rf x"' \
+    'bash <<< "echo"${IFS}"git reset --hard"' 'bash <<< "echo"${IFS}"git restore x"' $'bash <<EOF\necho${IFS}rm -rf x\nEOF' \
+    $'bash <<-EOF\n\techo${IFS}rm -rf x\n\tEOF' 'printf -v I""FS m; bash <<< "r"${IFS}" -rf x"' 'eval I""FS=m; bash <<< "r"${IFS}" -rf x"' \
+    'read I\FS <<< m; bash <<< "r"${IFS}" -rf x"' 'declare I\FS=m; bash <<< "r"${IFS}" -rf x"' \
+    'printf -v I""FS i; bash <<< g${IFS}t\ restore\ x' $'eval I""FS=m; bash <<EOF\nr${IFS} -rf x\nEOF'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 2: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+_c='printf -v I""FS m; ls${IFS}-p ls${IFS}-p x'
+test_allow "$IRRECOVERABLE" "GH #838 review 2 control: $_c" "$(bash_payload "$_c")"
+# GH #838 review 3: read as nothing, ${IFS} glued a -c body to the next word (`sh -c 'claude -p'${IFS}x` read as
+# `claude -px`); bash splits there, so the main reading reads a break, and an extra ifs-split copy reads nothing (an IFS
+# emptied under a spelling the text hides: `printf -v I""FS ''; gi${IFS}t restore x`).
+for _c in "sh -c 'claude -p'\${IFS}x" "bash -c 'claude --print'\${IFS}x" "echo hi | sh -c 'claude -p'\${IFS}x" \
+    "sh -c 'echo hi | claude'\${IFS}x" "sh -c 'claude --bg'\${IFS}x" 'bash -c claude\ -p${IFS}x' 'sh -c "claude -p"${IFS}"x"' \
+    "bash -c 'claude -p'\${IFS}'x'" "bash -c 'claude -p'\${IFS}\\x" "env sh -c 'claude -p'\${IFS}x" "nohup bash -lc 'claude -p'\${IFS}x"; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 3: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in "sh -c 'claude -p'\${IFS}x" "bash -c 'claude --version'\${IFS}x"; do
+  test_allow "$IRRECOVERABLE" "GH #838 review 3 control: main session: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" "GH #838 review 3 control: subagent: sh -c 'claude --version'\${IFS}x" \
+  "$(bash_agent_payload "sh -c 'claude --version'\${IFS}x" fork)"
+for _c in 'printf -v I""FS ""; gi${IFS}t restore x' 'eval I""FS=; r${IFS}m -rf x' "bash -c 'git reset --hard'\${IFS}y"; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 3: $_c" "$(bash_payload "$_c")"
+done
+# GH #838 review 4: a quoted "${IFS}" is IFS's text, newline included, and an echo / printf fed to a shell drops the
+# quotes before its body is read (`echo "x${IFS}rm -rf x" | bash` runs the rm): a command with a quoted or escaped
+# $IFS / ${IFS} keeps the placeholder reading.
+for _c in 'echo "x${IFS}rm -rf x" | bash' 'printf "x${IFS}rm -rf x" | sh' "printf '%s\\n' \"x\${IFS}rm -rf x\" | bash" \
+    'echo "true${IFS}rm -rf x" | sh' 'echo "x${IFS}git reset --hard" | bash' 'echo "x${IFS}git restore y" | bash' \
+    'echo x"${IFS}"rm -rf x | bash' 'echo "x${IFS}r""m -rf x" | bash' 'echo -e "x${IFS}rm -rf x" | bash -s' \
+    'echo "x${IFS}rm -rf x" | env bash' 'command echo "x${IFS}git reset --hard" | sh'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 4: $_c" "$(bash_payload "$_c")"
+done
+# GH #838 review 5: text a shell reads again (an echo fed to `| bash`, a -c body) is no longer what ${IFS} was where it
+# was written (`unset I""FS; echo g${IFS}it reset --hard | bash` runs git reset --hard): only the command's own top-level
+# text reads a bare ${IFS} as a break; every body keeps the placeholder.
+for _c in 'unset I""FS; echo g${IFS}it reset --hard | bash' "printf -v I''FS ''; echo r\${IFS}m -rf x | bash" \
+    'export I""FS=; echo r${IFS}m -rf x | bash' 'unset I""FS; echo g${IFS}it restore x | sh' \
+    "printf -v I''FS ''; echo g\${IFS}it clean -fdx | sh -s"; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 5: $_c" "$(bash_payload "$_c")"
+done
+# GH #838 review 6: an assignment word is not split, so `X=a${IFS}echo` is one prefix assignment and the next word is
+# the command (`X=a${IFS}echo git push${IFS}--force origin x` pushes): a bare ${IFS} in a NAME= / NAME+= / NAME[..]=
+# word keeps the placeholder reading.
+for _c in 'X=a${IFS}echo git push${IFS}--force origin x' 'X=${IFS}echo git push${IFS}--force origin x' \
+    'X=a${IFS}true git push${IFS}-f origin x' 'X=a${IFS}echo git push${IFS}--delete origin x' \
+    'X=a${IFS}echo git push${IFS}origin${IFS}:x' 'X=a${IFS}echo git branch${IFS}-D x' 'X=a${IFS}echo git checkout${IFS}-- x' \
+    'cd . && X=a${IFS}echo git push${IFS}--force origin x' 'A=1 X="a b"${IFS}echo git push${IFS}--force origin x'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 6: $_c" "$(bash_payload "$_c")"
+done
+# bounded: a run of NAME= starts in one word is scanned once, not once per start
+_timed_case 'GH #838 review 6: ${IFS} and 5000 a= in one word are read in bounded time' 0 \
+  "echo \${IFS} $(printf 'a=%.0s' $(seq 5000))b<x"
+# GH #838 review 7: an assignment value may hold any substitution or a backslash-newline (`X=$(true)a${IFS}echo`), so
+# any NAME= / NAME+= / ]= before the last bare ${IFS} keeps the placeholder reading.
+for _c in 'X=$(true)a${IFS}echo git push${IFS}--force origin x' 'X=$(true)${IFS}echo git push${IFS}--force origin x' \
+    'X=$((1))${IFS}echo git push${IFS}--force origin x' 'X=<(true)${IFS}echo git push${IFS}--force origin x' \
+    'X=${A-a b}${IFS}echo git push${IFS}--force origin x' 'X=`echo a b`${IFS}echo git push${IFS}--force origin x' \
+    'X=a Y=$(true)${IFS}echo git push${IFS}--force origin x' 'if X=$(true)${IFS}echo git push${IFS}--force origin x; then :; fi' \
+    $'X=a\\\nb${IFS}echo git push${IFS}--force origin x' 'X=$(true)a${IFS}echo git branch${IFS}-D x'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 7: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+_timed_case 'GH #838 review 7: ${IFS} after 20000 name characters is read in bounded time' 0 \
+  "echo $(printf 'a%.0s' $(seq 20000)) ls\${IFS}-p ls\${IFS}-p x"
+# GH #846: the ifs-split copy that reads a bare ${IFS} as nothing is spawn-scanned, so a subagent's `cl${IFS}aude -p x`
+# (an empty IFS runs claude) denies
+for _c in 'cl${IFS}aude -p x' 'cl$IFS"aude" -p x' 'IFS=; cl${IFS}aude -p x'; do
+  test_deny  "$IRRECOVERABLE" "GH #846: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #846 control: main session: cl${IFS}aude -p x' "$(bash_payload 'cl${IFS}aude -p x')"
+test_allow "$IRRECOVERABLE" 'GH #846 control: subagent: cl${IFS}aude --version' "$(bash_agent_payload 'cl${IFS}aude --version' fork)"
+# GH #840: a variable's value was never decoded, split, or carried into a nested body.
+# Row 1: an ANSI-C value (`X=$'\x63laude'`) is no plain value, so var-verb never put claude back.
+# Row 2: a value assigned in an outer body, used in a nested '...' body that the outer "..." unescapes (`\$X`).
+# Row 3: an assignment does not split `git${IFS}restore`; the unquoted `$X` does, so an ifs-split copy puts it back.
+for _c in $'X=$\'\\x63laude\'; $X -p x' $'X=$\'\\x63laude\'; bash -c "$X -p x"' $'X=$\'\\143laude\'; ${X} -p x' \
+    "bash -c \"X=claude; bash -c '\\\$X -p x'\"" "bash -c \"X=claude; bash -c '\\\$X{,} -p x'\"" \
+    "bash -c \"X=claude; sh -c 'echo; \\\$X -p x'\""; do
+  test_deny  "$IRRECOVERABLE" "GH #840: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in $'X=$\'\\x63laude\'; $X -p x' "bash -c \"X=claude; bash -c '\\\$X -p x'\""; do
+  test_allow "$IRRECOVERABLE" "GH #840 control: main session: $_c" "$(bash_payload "$_c")"
+done
+for _c in $'X=$\'\\x63laude\'; $X --version' $'X=$\'\\x70ython3\'; $X -p x' "bash -c \"X=claude; bash -c '\\\$X --version'\"" \
+    "bash -c 'X=claude; bash -c '\\''\\\$X -p x'\\'''" "bash -c \"X=python3; bash -c '\\\$X -p x'\""; do
+  test_allow "$IRRECOVERABLE" "GH #840 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'X=git${IFS}restore; $X x' 'X=git${IFS}restore; $X ${IFS}x' \
+    'X=rm${IFS}-rf; $X x' 'X=git${IFS}reset${IFS}--hard; ${X}' 'X=git${IFS}restore; true && $X x'; do
+  test_deny  "$IRRECOVERABLE" "GH #840: main session: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'X=git${IFS}restore; "$X" x' 'X=git${IFS}status; $X x' 'X=git${IFS}restore; echo "$X" x' \
+    'X=git${IFS}restore; X=ls; $X x' "X=git\${IFS}restore; echo '\$X x'"; do
+  test_allow "$IRRECOVERABLE" "GH #840 control: main session: $_c" "$(bash_payload "$_c")"
+done
+# bounded: many nested bodies and many IFS-valued assignments are read in bounded time
+_timed_case 'GH #840: subagent: 300 nested \$X bodies in a double-quoted body are read in bounded time' 0 \
+  "bash -c \"X=python3; $(printf "bash -c '\\\\\$X -V'; %.0s" $(seq 300))\"" fork
+_timed_case 'GH #840: 300 IFS-valued assignments and references are read in bounded time' 2 \
+  "$(printf 'X=ls${IFS}-l; $X y; %.0s' $(seq 300))X=git\${IFS}restore; \$X x"
 # GH #796
 # GH #796: _PROC_BY_NAME is spliced onto the end of _INTERP_PROC_RE and _PYNODE_PROC_RE; its getattr quote is a named
 # group, so a capturing group added earlier in either host regex cannot steal the backreference. Each host regex is
