@@ -2379,19 +2379,27 @@ _IFS_REF_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
 _IFS_HASH_RE = re.compile(r"(\$(?:\{IFS\}|IFS(?![A-Za-z0-9_])))#")
 
 def _ifs_default():
-    # GH #838 review: whether a bare unquoted ${IFS} is surely a word break or nothing: no `<<` in the command, and IFS named only as
-    # a bare $IFS / ${IFS}. A here-string or an unquoted heredoc body does no word splitting, so ${IFS} there is IFS's
-    # text: the default's newline starts a command (`bash <<< "echo"${IFS}"rm -rf x"`), and after `IFS=m` (or a spelling
-    # the text hides: `printf -v I""FS m`) it is the letter m (`bash <<< "r"${IFS}" -rf x"`). Elsewhere the expansion
-    # is field-split whatever IFS holds. Either sign keeps the placeholder reading. The raw command: cmd has its heredoc
-    # bodies stripped. Made once.
-    # Review 4: only from the main parse on (`_ambig` set), and not with an ambiguity shape: the readings before it (the
-    # interp-pipe text) and a command whose `git reset` the brace ambiguity denies (`echo {a,b}; git${IFS}reset --soft
-    # HEAD~1`, GH #718: allowed, as develop reads it) keep develop's placeholder.
+    # GH #838: whether the main reading reads a bare unquoted ${IFS} as the word break bash makes of it. Only in the
+    # command's own top-level text (review 5: text a shell reads again, an echo fed to `| bash` or a -c body, is no
+    # longer what ${IFS} was where it was written: `unset I""FS; echo g${IFS}it reset --hard | bash`), and only when
+    # _ifs_plain holds; otherwise develop's placeholder.
+    return _IFS_SCAN_TOP[0] and _ifs_plain()
+
+def _ifs_plain():
+    # GH #838: the command's own signs that a bare ${IFS} is surely a word break or nothing. Made once.
+    # - The main parse has begun (`_ambig` set): the readings before it (the interp-pipe text) keep develop's.
+    # - No ambiguity shape: the brace ambiguity denies a plain `git reset` (`echo {a,b}; git${IFS}reset --soft HEAD~1`
+    #   is allowed, GH #718, as develop reads it).
+    # - No `<<` (review 2): a here-string or unquoted heredoc body does no word splitting, so ${IFS} there is IFS's text,
+    #   the default's newline starting a command (`bash <<< "echo"${IFS}"rm -rf x"`).
+    # - IFS named only as a bare $IFS / ${IFS} (review 1): `IFS=m; bash <<< "r"${IFS}" -rf x"`. A spelling the text
+    #   hides (`printf -v I""FS m`) changes nothing outside those bodies: an unquoted expansion is field-split whatever
+    #   IFS holds, and the ifs-split copy that reads it as nothing covers an emptied IFS.
+    # - No quoted or escaped $IFS / ${IFS} (review 4): it is IFS's text, newline included, and an echo fed to a shell
+    #   drops the quotes before its body is read (`echo "x${IFS}rm -rf x" | bash`). The raw command, as cmd has its
+    #   heredoc bodies stripped.
     if "_ambig" not in globals() or _ambig:
         return False
-    # Review 4: a quoted or escaped $IFS / ${IFS} is IFS's text, newline included, and an echo / printf fed to a shell
-    # drops its quotes before the body is read (`echo "x${IFS}rm -rf x" | bash` runs the rm): the placeholder too.
     if not _IFS_DEFAULT:
         raw = d["tool_input"].get("command", "")
         ok = "<<" not in raw and "IFS" not in _IFS_REF_RE.sub("", raw)
@@ -2600,7 +2608,18 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
         last_escaped = False
     return "".join(out)
 
+_IFS_SCAN_TOP = [False]  # GH #838 review 5: the text _blank_substitutions reads is the command's own top-level text
+
 def _blank_substitutions(s):
+    # GH #838 review 5: only the command's own top-level text reads a bare ${IFS} as a break (_ifs_default); a body
+    # (echo text fed to `| bash`, a -c body) is text read again, where ${IFS} is no longer what it was where written.
+    _IFS_SCAN_TOP[0] = "_ambig" in globals() and s == _newlines_to_seps(_normalize_ansi_c_quotes(cmd))
+    try:
+        return _blank_substitutions_read(s)
+    finally:
+        _IFS_SCAN_TOP[0] = False
+
+def _blank_substitutions_read(s):
     bodies = []
     for _ in range(5):
         new = _scan_once(s, bodies)
@@ -6759,7 +6778,7 @@ def _views():
         # GH #838 review 3: the main reading reads a bare ${IFS} as a break (_ifs_default); this copy reads it as
         # nothing, an IFS emptied under a spelling the text hides (`printf -v I""FS ''; gi${IFS}t restore x`).
         # A `#` after the ${IFS} is inside its word, no comment (`echo ${IFS}#x | gi${IFS}t restore y`), so escaped.
-        e = _ifs_empty(_IFS_HASH_RE.sub(r"\1\\#", cmd)) if _ifs_default() else cmd
+        e = _ifs_empty(_IFS_HASH_RE.sub(r"\1\\#", cmd)) if _ifs_plain() else cmd
         if e != cmd and ("ifs-split", e) not in out:
             out.append(("ifs-split", e))
         # GH #840 row 3: one more ifs-split copy that also puts back a value holding a bare ${IFS}, split where the

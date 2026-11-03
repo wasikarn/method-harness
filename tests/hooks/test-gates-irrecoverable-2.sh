@@ -4607,6 +4607,14 @@ for _c in 'echo "x${IFS}rm -rf x" | bash' 'printf "x${IFS}rm -rf x" | sh' "print
     'echo "x${IFS}rm -rf x" | env bash' 'command echo "x${IFS}git reset --hard" | sh'; do
   test_deny  "$IRRECOVERABLE" "GH #838 review 4: $_c" "$(bash_payload "$_c")"
 done
+# GH #838 review 5: text a shell reads again (an echo fed to `| bash`, a -c body) is no longer what ${IFS} was where it
+# was written (`unset I""FS; echo g${IFS}it reset --hard | bash` runs git reset --hard): only the command's own top-level
+# text reads a bare ${IFS} as a break; every body keeps the placeholder.
+for _c in 'unset I""FS; echo g${IFS}it reset --hard | bash' "printf -v I''FS ''; echo r\${IFS}m -rf x | bash" \
+    'export I""FS=; echo r${IFS}m -rf x | bash' 'unset I""FS; echo g${IFS}it restore x | sh' \
+    "printf -v I''FS ''; echo g\${IFS}it clean -fdx | sh -s"; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 5: $_c" "$(bash_payload "$_c")"
+done
 # GH #846: the ifs-split copy that reads a bare ${IFS} as nothing is spawn-scanned, so a subagent's `cl${IFS}aude -p x`
 # (an empty IFS runs claude) denies
 for _c in 'cl${IFS}aude -p x' 'cl$IFS"aude" -p x' 'IFS=; cl${IFS}aude -p x'; do
