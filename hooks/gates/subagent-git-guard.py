@@ -383,7 +383,10 @@ _QPIECE_RE = re.compile(r"(\$?)([\"'])([\w./-]*)[\"']|\\([\w./-])|([\w./-])")
 # above must stay _SPAWN_QWORD_RE's twin): pairs at its front or end are blanks in place in the mask, every
 # pair between moved two blanks to the word front, and the pieces are checked against the mask past them.
 _nl_join = False  # GH #843: the joined reading is its own view (see _extra_views), develop's is kept
-_QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?:[\w./-]|\\[\w./-]|\\\n|\$?\"[\w./-]*\"|\$?'[\w./-]*')+(?![^\s;&|()<>}])")
+_QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?:[\w./-]|\\[\w./-]|\\\n|\$?\"(?:[\w./-]|\\\n)*\"|\$?'[\w./-]*')+(?![^\s;&|()<>}])")
+# Its pieces: a `$`, a quoted piece (inside "..", a continuation is deleted too: "g\<nl>it" is git), an
+# escaped letter, a continuation outside quotes, a plain letter.
+_QPIECE_NL_RE = re.compile(r"(\$?)(\"(?:[\w./-]|\\\n)*\"|'[\w./-]*')|\\([\w./-])|(\\\n)|([\w./-])")
 _dollar_join = "'\""  # the `$` quote kinds joined in this pass
 _dollar_joined = False  # a word with a `$` piece was joined, so the other readings differ
 
@@ -409,6 +412,29 @@ def _join_pieces(word, k0, masked):
             return None
     return "".join(letters)
 
+def _join_pieces_nl(pieces, k, masked):
+    # The letters of _QPIECE_NL_RE pieces (no continuation outside quotes among them) if the mask from k
+    # shows them outside every quote, else None. A quoted piece is masked as blank, one Q per char, blank.
+    letters = []
+    for p in pieces:
+        t = p.group()
+        if p.group(5):
+            ok = masked[k:k + 1] == t
+            letters.append(t)
+        elif p.group(3):
+            ok = masked[k:k + 2] == t
+            letters.append(p.group(3))
+        else:
+            d, q = len(p.group(1)), p.group(2)
+            body = q[1:-1]
+            ok = (not d or q[0] in _dollar_join) and masked[k:k + d] in ("", " ", "$") and \
+                masked[k + d:k + len(t)] == " " + "Q" * len(body) + " "
+            letters.append(body.replace("\\\n", "") if q[0] == '"' else body)
+        if not ok:
+            return None
+        k += len(t)
+    return "".join(letters)
+
 def _join_quoted_words(raw, masked):
     global _dollar_joined
     if len(raw) != len(masked) or ("'" not in raw and '"' not in raw):
@@ -419,22 +445,25 @@ def _join_quoted_words(raw, masked):
             w = m.group()
             if "\\\n" not in w or ("'" not in w and '"' not in w):
                 continue
-            a, b = 0, len(w)
-            while w.startswith("\\\n", a):
-                a += 2
-            while b - 2 > a and w.endswith("\\\n", 0, b):
-                b -= 2
+            ps = list(_QPIECE_NL_RE.finditer(w))
+            a, b = 0, len(ps)
+            while a < b and ps[a].group(4):
+                a += 1
+            while b - 1 > a and ps[b - 1].group(4):
+                b -= 1
+            core = [p for p in ps[a:b] if not p.group(4)]
+            inner = 2 * (b - a - len(core))  # blanks the mask moved to the word front, one pair each
+            tail = ps[b].start() if b < len(ps) else len(w)
             # Leading pairs are in place, or (a comment that ends in `<blank>\`, which is no continuation)
             # are not pairs at all: read the word both with them and from after them.
-            for lead in ((0, a) if a else (0,)):
-                core = w[a:b].replace("\\\n", "")
-                front = a - lead + (b - a - len(core))  # blanks at the word front: leading pairs in place, inner pairs moved
+            for lead in ((0, 2 * a) if a else (0,)):
                 k0 = m.start() + lead
-                if masked[k0:k0 + front] != " " * front or masked[m.start() + b:m.end()].strip():
+                front = 2 * a - lead + inner
+                if masked[k0:k0 + front] != " " * front or masked[m.start() + tail:m.end()].strip():
                     continue
-                j = _join_pieces(core, k0 + front, masked)
+                j = _join_pieces_nl(core, k0 + front, masked)
                 if j is not None:
-                    _dollar_joined = _dollar_joined or "$" in core
+                    _dollar_joined = _dollar_joined or any(p.group(1) for p in core)
                     reps.append((k0, m.end(), j))
                     break
     taken = list(reps)
@@ -1114,7 +1143,7 @@ _HD_SEQ_MAX = 24
 _HD_STATE_RE = re.compile(r"['\"`\\#$()<]|\b(?:case|esac)\b")
 
 def _blank_heredocs_seq(s, raw_ops):
-    t, pos, line_end, last, spans = s, 0, -1, None, []
+    t, pos, line_end, last, spans, ops = s, 0, -1, None, [], []
     mt = None if raw_ops else _mask_quotes(t)
     while True:
         if mt is None and not raw_ops:
@@ -1125,7 +1154,7 @@ def _blank_heredocs_seq(s, raw_ops):
                 mt = _mask_quotes(t)
         m = _HD_OP_RE.search(t if raw_ops else mt, pos)
         if not m:
-            return t, spans
+            return t, spans, ops
         p = m.start()
         pos = m.end()
         chained = last is not None and p < line_end  # a second heredoc on the line of the one before
@@ -1140,6 +1169,7 @@ def _blank_heredocs_seq(s, raw_ops):
             # The body and its terminator word become one Q word: offsets hold, and the anchor scans (charged
             # per line start) see one line where the body had many.
             spans.append((h[1], h[3]))
+            ops.append(p)
             body = t[h[1]:h[3]]
             q = "Q" * len(body)
             t = t[:h[1]] + q + t[h[3]:]
@@ -1156,7 +1186,7 @@ def _hd_view(s, base, raw_ops):
     k = (_dollar_join, s, base, raw_ops)
     if k not in _hd_view_memo:
         v = None
-        b, spans = _blank_heredocs_seq(s, raw_ops)
+        b, spans, _ = _blank_heredocs_seq(s, raw_ops)
         if spans:
             mb = _mask(b)
             keep, last = [], 0
@@ -1164,36 +1194,9 @@ def _hd_view(s, base, raw_ops):
                 keep.append((last, x)); last = y
             keep.append((last, len(s)))
             if any(mb[x:y] != base[x:y] for x, y in keep):
-                # The text before the first difference (or the first body) is the base's own, which the main
-                # scans already read: _trim blanks it, so the view costs the anchor scans only its new part (a
-                # big "$(cat <<'EOF' ..)" body doubled the work).
-                d = spans[0][0]
-                v = (b, _trim(mb, base[:d] + "\0" + base[d + 1:]) or mb)
+                v = (b, mb)
         _hd_view_memo[k] = v
     return _hd_view_memo[k]
-
-def _trim(m, ref):
-    # m with what comes before the statement that holds its first difference from ref blanked: that part
-    # reads as ref does, which another scan already read, so the anchor scans charge only for the rest.
-    # The statement starts after the last newline in m outside every (, { and backtick: a simple command
-    # never spans such a newline, while a `$(`, `{` or backtick that spans lines (`env $(<nl>true<nl>) git
-    # stash`) keeps its wrapper in the view. ; & | are never taken: an escaped one (`X=a\;b`) is a word char.
-    d = next((i for i in range(min(len(m), len(ref))) if m[i] != ref[i]), None)
-    if d is None:
-        return None
-    depth = cut = 0
-    bt = False
-    for i in range(d):
-        c = m[i]
-        if c in "({":
-            depth += 1
-        elif c in ")}":
-            depth = max(depth - 1, 0)
-        elif c == "`":
-            bt = not bt
-        elif c == "\n" and not depth and not bt:
-            cut = i + 1
-    return " " * cut + m[cut:]
 
 def _nl_view(s, base):
     # GH #843: s masked with words joined across line continuations, when that differs from its plain mask
@@ -1205,8 +1208,7 @@ def _nl_view(s, base):
         m = _mask(s)
     finally:
         _nl_join = False
-    t = _trim(m, _mask(s))
-    return (s, t) if t else None
+    return (s, m) if m != _mask(s) else None
 
 # GH #842: bash ends a backtick substitution at the first unescaped backtick, so a quote span or comment
 # the mask opened inside one (`echo 'a`#; git stash`) hides what bash runs after it. The mask reports each
@@ -1218,13 +1220,27 @@ _CUT_MAX = 8
 _blank_memo = {}
 
 def _blanked(s, raw_ops):
+    # (s with heredoc bodies blanked, their (start, end) spans, their operator indexes)
     k = (s, raw_ops)
     if k not in _blank_memo:
-        _blank_memo[k] = _blank_heredocs_seq(s, raw_ops)[0]
+        _blank_memo[k] = _blank_heredocs_seq(s, raw_ops)
     return _blank_memo[k]
 
-def _cut_views(texts, raw_blanked, base):
-    # raw_blanked: the text with every heredoc body it can read blanked; a cut inside one of them is prose.
+def _prose(s):
+    # The spans a cut view counts as heredoc prose: a raw-found body whose operator the mask finds too, or
+    # whose operator follows a `$(` or backtick on its line ("$(cat <<'EOF'", where the top-level mask is
+    # thrown off). A `<<` in a comment or a plain quoted string (`# see <<EOF`) makes nothing prose.
+    _, mspans, _ = _blanked(s, False)
+    _, rspans, rops = _blanked(s, True)
+    out = []
+    for span, p in zip(rspans, rops):
+        line = s[s.rfind("\n", 0, p) + 1:p]
+        if span in mspans or "$(" in line or "`" in line:
+            out.append(span)
+    return out
+
+def _cut_views(texts, prose, base):
+    # prose: the heredoc body spans (see _prose); a cut inside one of them is not code.
     # The substitution, from its opening backtick to the cut, becomes word chars, so what stands before it
     # (`env `echo #` git stash`) keeps its place. A cut view is searched for cuts of its own (a second
     # substitution on the line), up to _CUT_MAX views in all.
@@ -1235,12 +1251,12 @@ def _cut_views(texts, raw_blanked, base):
         _scan_cost(len(t))
         _mask_quotes(t, cuts)
         for o, a in cuts:
-            if made >= _CUT_MAX or raw_blanked[a] != "`":
+            if made >= _CUT_MAX or any(x <= a < y for x, y in prose):
                 continue
             made += 1
             v = t[:o] + "x" * (a - o + 1) + t[a + 1:]
-            mv = _trim(_mask(v), base)
-            if mv:
+            mv = _mask(v)
+            if mv != base:
                 views.append((v, mv))
             work.append(v)
     return views
@@ -1258,8 +1274,11 @@ def _extra_views(s, base, based=None):
             if v and v not in views:
                 views.append(v)
     if "`" in s:
-        srcs = [_blanked(s, False), _blanked(s, True)] if "<<" in s else [based]
-        for v in _cut_views(dict.fromkeys(srcs), srcs[-1], base):
+        if "<<" in s:
+            srcs, prose = [_blanked(s, False)[0], _blanked(s, True)[0]], _prose(s)
+        else:
+            srcs, prose = [based], []
+        for v in _cut_views(dict.fromkeys(srcs), prose, base):
             if v not in views:
                 views.append(v)
     for t, mt in [(based, base)] + list(views):

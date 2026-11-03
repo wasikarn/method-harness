@@ -1832,6 +1832,23 @@ test_deny "GH #844" $'env X=a\\;b $(true <<\'E\'\ndon\'t\nE\n) git stash' $'env 
 test_deny "GH #843" $'env `\ntrue\n` g\\\n"it" stash' $'env `\ntrue\n` g\\\n"it" status'
 test_deny "GH #843" $'nohup `\n:\n` g\\\n"it" stash' $'nohup `\n:\n` g\\\n"it" status'
 test_deny "GH #844" $'env `\ntrue <<\'E\'\ndon\'t\nE\n` git stash' $'env `\ntrue <<\'E\'\ndon\'t\nE\n` git status'
+# Fresh-context review round 6: views are no longer trimmed (a miscounted nesting dropped the wrapper), a
+# `<<` in a comment or a plain quoted string does not make the lines after it prose for the cut views, and
+# a continuation inside a double-quoted piece is joined.
+test_deny "GH #843" $'env $(: }\n) g\\\n"it" stash' $'env $(: }\n) g\\\n"it" status'
+test_deny "GH #843" $'env $(: \\)\n) git st\\\n"ash"' $'env $(: \\)\n) git st\\\n"atus"'
+test_deny "GH #843" $'env `: \\`\n` g\\\n"it" stash' $'env `: \\`\n` g\\\n"it" status'
+test_deny "GH #843" $'env $(case x in x) :;;\nesac\n) g\\\n"it" stash' $'env $(case x in x) :;;\nesac\n) g\\\n"it" status'
+test_deny "GH #844" $'env $(: }\ntrue <<\'E\'\ndon\'t\nE\n) git stash' $'env $(: }\ntrue <<\'E\'\ndon\'t\nE\n) git status'
+test_deny "GH #842" $'env $(: }\n) `echo #` git stash' $'env $(: }\n) `echo #` git status'
+test_deny "GH #843" $'echo \\`; env `\ntrue\n` g\\\n"it" stash' $'echo \\`; env `\ntrue\n` g\\\n"it" status'
+test_deny "GH #842" $'# write it with <<EOF\necho `echo \'a`#; git stash\ncat > f <<EOF\nx\nEOF' $'# write it with <<EOF\necho `echo \'a`#; git status\ncat > f <<EOF\nx\nEOF'
+test_deny "GH #842" $'echo "a <<E b"\necho `echo #`; git stash\nE' $'echo "a <<E b"\necho `echo #`; git status\nE'
+test_deny "GH #842" $'# <<E\necho `echo \'a`; git reset --hard\nE' $'# <<E\necho `echo \'a`; git status\nE'
+test_deny "GH #843" $'"g\\\nit" stash' $'"g\\\nit" status'
+test_deny "GH #843" $'"gi\\\nt" stash' $'"gi\\\nt" status'
+test_deny "GH #843" $'g"i\\\nt" stash' $'g"i\\\nt" status'
+test_deny "GH #843" $'git "st\\\nash"' $'git "st\\\natus"'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
