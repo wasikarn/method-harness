@@ -756,16 +756,24 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
     # do case)" | claude`) or its esac goes unseen: the real ) then closes nothing and the closing " opens a string. So
     # such a text is read both ways, popping and keeping, and a char stays masked only where both readings mask it:
     # never more than the popping reading alone, and a comment both readings see stays masked (GH #810's pipe walk).
-    # The keep reading counts only when it ends in the popping reading's quote state (one that leaves a frame or a
-    # string open is not how bash read the text) and unmasks no char of a comment the popping reading masks: a keep
-    # reading can drift out of step and back (a " in that comment closing the string it opened), and a comment split
-    # by its unmasked chars hides a pipe from GH #810's walk (review 2). Then the popping reading, develop's, stands.
+    # Every consumer of the mask reads the unmasked text with its own parser, which takes `echo do case` as an argument:
+    # a misread "c" whose keep reading drifts out of step and back (a " in a later string or comment closing the one it
+    # opened, `; esac)` popping the frame) unmasks a real string's or comment's text, and a split comment hides a pipe
+    # from GH #810's walk (review 2) and an unmasked `esac` ends a piped compound early (review 3). So only a case at a
+    # sure command start (right after `$(`, a lone `;`, `&&` or `||`; not `do`/`then`/`!`/`{`/`time` or a newline,
+    # where an argument or a pattern can stand) is read both ways, and the keep reading counts only when it ends in the
+    # popping reading's quote state, unmasks no char of a comment the popping reading masks, and unmasks nothing outside
+    # the text the popping reading reads in the frame a pop returns to (from that ) to where the frame closes). Else the
+    # popping reading, develop's, stands.
     mask, i, n = bytearray(len(c)), 0, len(c)
-    both, cm = False, []  # cm: the (start, end) of each comment this reading masks
+    both, cm, cp, rg, ok = False, [], [], [], bytearray(len(c))  # comments masked, case starts, open regions, regions
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
     au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
     while i < n:
+        while rg and len(stack) < rg[-1][1]:  # GH #839: a frame a pop returned to has closed
+            s0 = rg.pop()[0]
+            ok[s0:i] = b"\1" * (i - s0)
         ch, q = c[i], stack[-1]
         if q == "!":
             mask[i:] = b"\1" * (n - i)
@@ -780,18 +788,27 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
                 uc = i  # GH #833 review 7: an extglob group or an operator; a # after it is read both ways
             elif ch == ")" and po and po[-1] == "c":
                 uc = i if po.glued else uc
-                if q == "(" and not hd:  # GH #839: a "$( frame (the only "(" frame outside hd): read both ways
+                # GH #839: a "$( frame (the only "(" frame outside hd) and a case at a sure command start: both ways
+                k = _prev_char(c, cp[-1], esc) if cp else -1
+                while k >= 0 and c[k] in " \t" and not esc[k]:
+                    k = _prev_char(c, k, esc)
+                sure = k > 0 and not esc[k] and (c[k] == "(" and c[k - 1] == "$" or c[k] == ";" and c[k - 1] != ";"
+                                                 or c[k] in "&|" and c[k - 1] == c[k])
+                if q == "(" and not hd and sure:
                     both = True
                     if keep:  # this ) pops nothing (an unsure # after it still counts, au)
                         uc = i if au else uc
                         i += 1
                         continue
+                    rg.append((i, len(stack) - 1))  # the pop below returns to that frame: a region opens
             elif ch == ")" and po and po.pop():
                 gc = i
             elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
                 po.append("c")
+                cp.append(i)
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
+                cp and cp.pop()
             uc = i if au and ch == ")" else uc
         if q in _HD_OFF or ch == "<" and i < ie:
             mask[i] = 1
@@ -891,9 +908,12 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
             stack.append("(")
         i += 1
     if both and not keep:
+        for s0, _ in rg:  # frames still open at the end
+            ok[s0:] = b"\1" * (n - s0)
         ks = [None]
         kept = _quote_mask(c, ks, False, True)
-        if ks == stack and all(kept.find(0, a, b) < 0 for a, b in cm):
+        if ks == stack and all(kept.find(0, a, b) < 0 for a, b in cm) and all(
+                k or o or not m for m, k, o in zip(mask, kept, ok)):
             mask = bytearray(a & b for a, b in zip(mask, kept))
     return mask
 
