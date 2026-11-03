@@ -1173,21 +1173,25 @@ def _hd_view(s, base, raw_ops):
     return _hd_view_memo[k]
 
 def _trim(m, ref):
-    # m with what comes before the statement that holds its first difference from ref blanked, newlines too:
-    # that part reads as ref does, which another scan already read, so the anchor scans charge only for the
-    # rest. The statement starts after the last newline, ;, & or | outside every paren: a wrapper before a
-    # `$(` that spans lines (`env $(<nl>true<nl>) git stash`) stays in the view with its command.
+    # m with what comes before the statement that holds its first difference from ref blanked: that part
+    # reads as ref does, which another scan already read, so the anchor scans charge only for the rest.
+    # The statement starts after the last newline in m outside every (, { and backtick: a simple command
+    # never spans such a newline, while a `$(`, `{` or backtick that spans lines (`env $(<nl>true<nl>) git
+    # stash`) keeps its wrapper in the view. ; & | are never taken: an escaped one (`X=a\;b`) is a word char.
     d = next((i for i in range(min(len(m), len(ref))) if m[i] != ref[i]), None)
     if d is None:
         return None
     depth = cut = 0
+    bt = False
     for i in range(d):
         c = m[i]
-        if c == "(":
+        if c in "({":
             depth += 1
-        elif c == ")":
+        elif c in ")}":
             depth = max(depth - 1, 0)
-        elif c in "\n;&|" and not depth:
+        elif c == "`":
+            bt = not bt
+        elif c == "\n" and not depth and not bt:
             cut = i + 1
     return " " * cut + m[cut:]
 

@@ -1820,6 +1820,18 @@ test_deny "GH #843" $'env $(\ntrue\n) g\\\n"it" stash' $'env $(\ntrue\n) g\\\n"i
 test_deny "GH #844" $'env $(\ntrue <<\'E\'\ndon\'t\nE\n) git stash' $'env $(\ntrue <<\'E\'\ndon\'t\nE\n) git status'
 test_deny "GH #844" $'echo `echo \'a`\ncat <<E\nsize 5"\nE\ngit stash' $'echo `echo \'a`\ncat <<E\nsize 5"\nE\ngit status'
 test_deny "GH #844" $'echo `echo \'a`; cat <<E\n5"\nE\ngit stash' $'echo `echo \'a`; cat <<E\n5"\nE\ngit status'
+# Fresh-context review round 5: a view is trimmed only at a newline outside every (, { and backtick, so
+# an escaped separator or a backtick that spans lines keeps the wrapper or the git word in the view.
+test_deny "GH #843" $'git -c core.x=1\\;2 s\\\n"tash"' $'git -c core.x=1\\;2 s\\\n"tatus"'
+test_deny "GH #843" $'X=a\\;b g\\\n"it" stash' $'X=a\\;b g\\\n"it" status'
+test_deny "GH #843" $'X=a\\|b g\\\n"it" stash' $'X=a\\|b g\\\n"it" status'
+test_deny "GH #843" $'env X=a\\;b $(\ntrue\n) g\\\n"it" stash' $'env X=a\\;b $(\ntrue\n) g\\\n"it" status'
+test_deny "GH #842" $'env X=a\\;b `echo #` git stash' $'env X=a\\;b `echo #` git status'
+test_deny "GH #842" $'git -c core.x=1\\;2 -c core.y=`echo \'a` stash' $'git -c core.x=1\\;2 -c core.y=`echo \'a` status'
+test_deny "GH #844" $'env X=a\\;b $(true <<\'E\'\ndon\'t\nE\n) git stash' $'env X=a\\;b $(true <<\'E\'\ndon\'t\nE\n) git status'
+test_deny "GH #843" $'env `\ntrue\n` g\\\n"it" stash' $'env `\ntrue\n` g\\\n"it" status'
+test_deny "GH #843" $'nohup `\n:\n` g\\\n"it" stash' $'nohup `\n:\n` g\\\n"it" status'
+test_deny "GH #844" $'env `\ntrue <<\'E\'\ndon\'t\nE\n` git stash' $'env `\ntrue <<\'E\'\ndon\'t\nE\n` git status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
