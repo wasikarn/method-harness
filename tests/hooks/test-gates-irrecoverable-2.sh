@@ -4627,6 +4627,17 @@ done
 # bounded: a run of NAME= starts in one word is scanned once, not once per start
 _timed_case 'GH #838 review 6: ${IFS} and 5000 a= in one word are read in bounded time' 0 \
   "echo \${IFS} $(printf 'a=%.0s' $(seq 5000))b<x"
+# GH #838 review 7: an assignment value may hold any substitution or a backslash-newline (`X=$(true)a${IFS}echo`), so
+# any NAME= / NAME+= / ]= before the last bare ${IFS} keeps the placeholder reading.
+for _c in 'X=$(true)a${IFS}echo git push${IFS}--force origin x' 'X=$(true)${IFS}echo git push${IFS}--force origin x' \
+    'X=$((1))${IFS}echo git push${IFS}--force origin x' 'X=<(true)${IFS}echo git push${IFS}--force origin x' \
+    'X=${A-a b}${IFS}echo git push${IFS}--force origin x' 'X=`echo a b`${IFS}echo git push${IFS}--force origin x' \
+    'X=a Y=$(true)${IFS}echo git push${IFS}--force origin x' 'if X=$(true)${IFS}echo git push${IFS}--force origin x; then :; fi' \
+    $'X=a\\\nb${IFS}echo git push${IFS}--force origin x' 'X=$(true)a${IFS}echo git branch${IFS}-D x'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 7: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+_timed_case 'GH #838 review 7: ${IFS} after 20000 name characters is read in bounded time' 0 \
+  "echo $(printf 'a%.0s' $(seq 20000)) ls\${IFS}-p ls\${IFS}-p x"
 # GH #846: the ifs-split copy that reads a bare ${IFS} as nothing is spawn-scanned, so a subagent's `cl${IFS}aude -p x`
 # (an empty IFS runs claude) denies
 for _c in 'cl${IFS}aude -p x' 'cl$IFS"aude" -p x' 'IFS=; cl${IFS}aude -p x'; do

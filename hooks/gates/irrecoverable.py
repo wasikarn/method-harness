@@ -2376,12 +2376,9 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
 
 _IFS_DEFAULT = []
 _IFS_REF_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
-# GH #838 review 6: a bare $IFS / ${IFS} inside a NAME= / NAME+= / NAME[..]= word (a quoted or escaped piece of the
-# word included), the word starting the text or after a blank or separator. One start per word, so linear.
-_IFS_IN_ASSIGN_RE = re.compile(
-    r"(?<![^\s;&|()])[A-Za-z_]\w*(?:\[[^\]\s]*\])?\+?="
-    r"(?:\"[^\"]*\"|'[^']*'|\\.|[^\s;&|()'\"\\$]|\$(?!\{IFS\}|IFS(?![A-Za-z0-9_])))*"
-    r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
+# GH #838 reviews 6-7: an `=` / `+=` after a name character or `]`: an assignment, maybe (`X=a${IFS}echo`,
+# `X=$(true)a${IFS}echo`, `A[0]=..`). A lookbehind, so linear.
+_ASSIGN_EQ_RE = re.compile(r"(?<=[A-Za-z0-9_\]])\+?=")
 _IFS_HASH_RE = re.compile(r"(\$(?:\{IFS\}|IFS(?![A-Za-z0-9_])))#")
 
 def _ifs_default():
@@ -2401,6 +2398,7 @@ def _ifs_plain():
     # - IFS named only as a bare $IFS / ${IFS} (review 1): `IFS=m; bash <<< "r"${IFS}" -rf x"`. A spelling the text
     #   hides (`printf -v I""FS m`) changes nothing outside those bodies: an unquoted expansion is field-split whatever
     #   IFS holds, and the ifs-split copy that reads it as nothing covers an emptied IFS.
+    # - No assignment before it (reviews 6-7): an assignment word is not split.
     # - No quoted or escaped $IFS / ${IFS} (review 4): it is IFS's text, newline included, and an echo fed to a shell
     #   drops the quotes before its body is read (`echo "x${IFS}rm -rf x" | bash`). The raw command, as cmd has its
     #   heredoc bodies stripped.
@@ -2412,8 +2410,13 @@ def _ifs_plain():
         if ok:
             mask = _quote_mask(raw)
             ok = not any(mask[m.start()] for m in _IFS_REF_RE.finditer(raw))
-        # Review 6: an assignment word is not split (`X=a${IFS}echo git push${IFS}--force origin x` pushes).
-        ok = ok and not _IFS_IN_ASSIGN_RE.search(raw)
+        # Reviews 6-7: an assignment word is not split (`X=a${IFS}echo git push${IFS}--force origin x` pushes), and its
+        # value may hold any substitution or a backslash-newline: any NAME= before the last bare ${IFS} keeps it too.
+        if ok:
+            last = None
+            for last in _IFS_REF_RE.finditer(raw):
+                pass
+            ok = last is None or not _ASSIGN_EQ_RE.search(raw, 0, last.start())
         _IFS_DEFAULT.append(ok)
     return _IFS_DEFAULT[0]
 
