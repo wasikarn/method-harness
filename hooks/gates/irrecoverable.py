@@ -731,7 +731,7 @@ def _cmd_word(c, i, word, esc, after, lead, span):
         k = _prev_char(c, k, esc)
     return k < 0 or not esc[k] and (c[k] in after or bool(lead.search(c, max(0, k - span), k + 1)))
 
-def _quote_mask(c, stack=None, hd=False, keep=False):
+def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
     # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
     # per scanned text.
@@ -825,7 +825,8 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
                 cp.append([k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1 and not bt, i, False])
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
-                cp and cp.pop()
+                if cp and cp.pop()[0] and ce is not None:  # GH #839: the esac that closes a sure case
+                    ce.append(i)
             uc = i if au and ch == ")" else uc
         if q in _HD_OFF or ch == "<" and i < ie:
             mask[i] = 1
@@ -928,11 +929,17 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
         for s0, _ in rg:  # frames still open at the end
             ok[s0] += 1
         ok = list(itertools.accumulate(ok))
-        ks = [None]
-        kept = _quote_mask(c, ks, False, True)
+        ks, ce = [None], []
+        kept = _quote_mask(c, ks, False, True, ce)
         if ks == stack and all(kept.find(0, a, b) < 0 for a, b in cm) and all(
                 k or o or not m for m, k, o in zip(mask, kept, ok)):
-            mask = bytearray(a & b for a, b in zip(mask, kept))
+            new = bytearray(a & b for a, b in zip(mask, kept))
+            # review 8: the consumers take an argument word after } { ) then do .. for a closer (`echo } fi` ends a
+            # piped if early, a gap develop has for unquoted text too), so a keep reading that would unmask a } or a
+            # fi/done/esac word other than its own case's esac does not count
+            shown = "".join(ch if m and not k else " " for ch, m, k in zip(c, mask, new))
+            if not any(m.group() == "}" or m.start() not in ce for m in re.finditer(r"\}|(?<!\w)(?:fi|done|esac)(?!\w)", shown)):
+                mask = new
     return mask
 
 def _in_subscript(line, mask, starts):
