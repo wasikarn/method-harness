@@ -1922,6 +1922,13 @@ test_deny "GH #842" $'cat a[1<<E]+=1\ndon\'t\nE]+=1\necho `echo #`; git stash' $
 test_deny "GH #842" $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\necho `echo #`; git stash' $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\necho `echo #`; git status'
 test_deny "GH #842" $'cat a[1<<E]=1\ndon\'t\nE]=1\nenv `echo #` git stash' $'cat a[1<<E]=1\ndon\'t\nE]=1\nenv `echo #` git status'
 test_deny "GH #842" $'cat <\\\n<\'I\'\n\'\nI\nx=`echo "a`\n"git" stash' $'cat <\\\n<\'I\'\n\'\nI\nx=`echo "a`\n"git" status'
+# Fresh-context review round 16: in an unquoted heredoc body bash deletes a backslash-newline before it
+# compares a line with the delimiter, so `x\` then `E` is no terminator; the continuation-deleted view reads it.
+test_deny "GH #844" $'cat <<E\nx\\\nE\ndon\'t\nE\ngit stash' $'cat <<E\nx\\\nE\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'git commit -F- <<EOF\nfix: wrap \\\nEOF\nit\'s done\nEOF\ngit stash' $'git commit -F- <<EOF\nfix: wrap \\\nEOF\nit\'s done\nEOF\ngit status'
+test_deny "GH #844" $'cat <<-E\n\tx\\\n\tE\ndon\'t\n\tE\ngit stash' $'cat <<-E\n\tx\\\n\tE\ndon\'t\n\tE\ngit status'
+test_deny "GH #844" $'x=$(cat <<E\nx\\\nE\ndon\'t\nE\n)\ngit stash' $'x=$(cat <<E\nx\\\nE\ndon\'t\nE\n)\ngit status'
+test_deny "GH #844" $'bash -c "cat <<E\nx\\\\\nE\ndon\'t\nE\ngit stash"' $'bash -c "cat <<E\nx\\\\\nE\ndon\'t\nE\ngit status"'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

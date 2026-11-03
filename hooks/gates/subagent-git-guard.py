@@ -1348,13 +1348,15 @@ def _extra_views(s, base, based=None):
                 mp = _mask(p)
                 if mp != base and (p, mp) not in views:
                     views.append((p, mp))
-    # A line continuation inside an operator (`<\<nl><'E'`) is deleted by bash before it reads one: the
-    # heredoc views of the text without its continuations (offsets do not matter here, since each view is
-    # scanned whole against its own text).
+    # bash deletes a line continuation before it reads an operator (`<\<nl><'E'`) and, in an unquoted heredoc
+    # body, before it compares a line with the delimiter (`x\<nl>E` is no terminator): the heredoc views of
+    # the text without its continuations (offsets do not matter here, since each view is scanned whole
+    # against its own text). Raw operators only, unless deleting them makes a new operator: the mask-found
+    # view of a long script cost about 3x develop's work (see above).
     nc = _CONT_RE.sub(r"\1", s) if "\\\n" in s and "<" in s else s
-    if nc.count("<<") > s.count("<<"):  # only when deleting them makes an operator (cost: `ls \<nl> -la` in prose)
+    if nc != s and "<<" in nc:
         mnc = _mask(nc)
-        for raw_ops in (False, True):
+        for raw_ops in ((False, True) if nc.count("<<") > s.count("<<") else (True,)):
             for mode in _HD_MODES:
                 v = _hd_view(nc, mnc, raw_ops, mode)
                 if v and v not in views:
