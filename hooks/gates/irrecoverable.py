@@ -731,7 +731,7 @@ def _cmd_word(c, i, word, esc, after, lead, span):
         k = _prev_char(c, k, esc)
     return k < 0 or not esc[k] and (c[k] in after or bool(lead.search(c, max(0, k - span), k + 1)))
 
-def _quote_mask(c, stack=None, hd=False):
+def _quote_mask(c, stack=None, hd=False, keep=False):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
     # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
     # per scanned text.
@@ -751,7 +751,17 @@ def _quote_mask(c, stack=None, hd=False):
     # _strip_heredocs strips nothing more. Over-reading only, and only after an unsure #. The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
     # separator is part of its word, and an escaped newline is a line continuation (_prev_char). The ) of an
     # extglob candidate @( !( ?( *( +( is unsure too ("x" on po, _EXTGLOB_OPEN).
+    # GH #839: outside hd, a ) read while "c" tops po inside a "$( frame pops that frame, so a real case arm after its
+    # pattern's ) read as ".." and was masked. Not popping (keep) fails unsafe when the "c" is a misread (`echo "$(echo
+    # do case)" | claude`) or its esac goes unseen: the real ) then closes nothing and the closing " opens a string. So
+    # such a text is read both ways, popping and keeping, and a char stays masked only where both readings mask it:
+    # never more than the popping reading alone, and a comment both readings see stays masked (GH #810's pipe walk).
+    # The keep reading counts only when it ends in the popping reading's quote state (one that leaves a frame or a
+    # string open is not how bash read the text) and unmasks no char of a comment the popping reading masks: a keep
+    # reading can drift out of step and back (a " in that comment closing the string it opened), and a comment split
+    # by its unmasked chars hides a pipe from GH #810's walk (review 2). Then the popping reading, develop's, stands.
     mask, i, n = bytearray(len(c)), 0, len(c)
+    both, cm = False, []  # cm: the (start, end) of each comment this reading masks
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
     au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
@@ -770,6 +780,12 @@ def _quote_mask(c, stack=None, hd=False):
                 uc = i  # GH #833 review 7: an extglob group or an operator; a # after it is read both ways
             elif ch == ")" and po and po[-1] == "c":
                 uc = i if po.glued else uc
+                if q == "(" and not hd:  # GH #839: a "$( frame (the only "(" frame outside hd): read both ways
+                    both = True
+                    if keep:  # this ) pops nothing (an unsure # after it still counts, au)
+                        uc = i if au else uc
+                        i += 1
+                        continue
             elif ch == ")" and po and po.pop():
                 gc = i
             elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
@@ -833,6 +849,7 @@ def _quote_mask(c, stack=None, hd=False):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
             mask[i:j] = b"\1" * (j - i)
+            cm.append((i, j))
             i = j
             continue
         elif not hd:
@@ -873,6 +890,11 @@ def _quote_mask(c, stack=None, hd=False):
         elif ch == "(" and q == "(":
             stack.append("(")
         i += 1
+    if both and not keep:
+        ks = [None]
+        kept = _quote_mask(c, ks, False, True)
+        if ks == stack and all(kept.find(0, a, b) < 0 for a, b in cm):
+            mask = bytearray(a & b for a, b in zip(mask, kept))
     return mask
 
 def _in_subscript(line, mask, starts):
