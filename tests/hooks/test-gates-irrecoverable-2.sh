@@ -4731,7 +4731,8 @@ else echo "  ❌ GH #796: $_r796" >&2; fail=$((fail + 1)); fi
 # (a case misread from an argument, or an esac never seen), so the text is read both ways and masked only where both
 # readings agree; the traps below must keep denying, and so must a pipe through a comment both readings see (GH #810,
 # review 1) or one the keep reading drifts through and back (review 2), and a piped compound whose closer sits in a
-# real string after a misread case (review 3), in a ${..} word (review 4), or a [[ ]] or arithmetic operand (review 5).
+# real string after a misread case (review 3), in a ${..} word (review 4), a [[ ]] or arithmetic operand (review 5),
+# a \\$( in backticks, or after an esac the scan cannot see (review 6).
 for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(case a in a) echo hi | $X;; esac)"' \
     'X=claude; echo "$(case a in (a) echo hi | $X;; esac)"' 'X=claude; echo "$(case a in a|b) $X -p x;; esac)"' \
     $'X=claude; echo "$(case a in\n a) $X -p x;;\n esac)"' 'X=claude; echo "x $(case a in a) $X -p x;; esac) y"' \
@@ -4764,7 +4765,14 @@ for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(ca
     'X=claude; echo hi | if true; then echo "$(echo $[ 1 && case ]) ; fi; esac ) "; $X; fi' \
     'X=claude; echo hi | if true; then echo "$(echo ${x:-`echo }`; case b in b) y; esac; fi )})"; $X; fi' \
     'X=claude; echo "$$(case a in a) y; esac ) " | $X' \
-    'X=claude; echo "$( case a in a) echo hi | $X;; esac)"' 'X=claude; echo "$$$(case a in a) echo hi | $X;; esac)"'; do
+    'X=claude; echo "$( case a in a) echo hi | $X;; esac)"' 'X=claude; echo "$$$(case a in a) echo hi | $X;; esac)"' \
+    'echo hi | if true; then echo `echo "\\$(case a in a) ; fi; esac ) "`; claude; fi' \
+    'X=claude; echo hi | if true; then echo "`echo "\\$(case a in a) ; fi; esac ) "`"; $X; fi' \
+    'X=claude; echo hi | if true; then echo "$(case a in a) :;; esac>/dev/null) ; fi; esac ) "; $X; fi' \
+    'echo hi | if true; then echo "$(case a in a) :;; esac</dev/null) ; fi; esac ) "; claude; fi' \
+    'echo hi | if true; then echo "$(case a in a) :;; esac>&2) ; fi; esac ) "; claude; fi' \
+    $'echo hi | if true; then echo "$(case a in a) :;; es\\\nac) ; fi; esac ) "; claude; fi' \
+    'echo hi | while true; do echo "$(case a in a) :;; esac>/dev/null) ; done; esac ) "; claude; break; done'; do
   test_deny  "$IRRECOVERABLE" "GH #839: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in 'echo "$(case a in a) echo hi | claude --version;; esac)"' 'X=claude; echo "$(case a in a) $X --version;; esac)"' \

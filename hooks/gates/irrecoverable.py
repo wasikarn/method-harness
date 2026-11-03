@@ -762,13 +762,15 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
     # from GH #810's walk (review 2) and an unmasked `esac` ends a piped compound early (review 3). Every other lead
     # proved to hold a misread case: `do`/`then` arguments, `; case` in a ${..} word (review 4), `[[ x && case ]]` and
     # arithmetic `&&`/`||` (review 5). So only a case right after its `$(` (blanks between) is read both ways: there
-    # bash always reads it as the reserved word. And the keep reading counts only when it ends in the
+    # bash always reads it as the reserved word (no backtick before it: `..` turns \\$( into text, review 6), and each
+    # ) the keep reading skips must close a plain pattern list after `in`, `;;`, `;&` or `;;&` (`esac>f)` is bash's
+    # real ) after an esac the scan cannot see, review 6: the keep reading is void). And it counts only when it ends in the
     # popping reading's quote state, unmasks no char of a comment the popping reading masks, and unmasks nothing outside
     # the text the popping reading reads in the frame a pop returns to (from that ) to where the frame closes). Else the
     # popping reading, develop's, stands.
     mask, i, n = bytearray(len(c)), 0, len(c)
     # GH #839: comments masked, whether each open case is right after its $(, open regions, region edges
-    both, cm, cp, rg, ok = False, [], [], [], [0] * (len(c) + 1)
+    both, cm, cp, rg, ok, bt = False, [], [], [], [0] * (len(c) + 1), False
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
     au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
@@ -777,6 +779,7 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
             ok[rg.pop()[0]] += 1
             ok[i] -= 1
         ch, q = c[i], stack[-1]
+        bt = bt or ch == "`"  # GH #839 review 6: `..` turns \\ into \, so a later $( may be text: no sure start
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
@@ -792,12 +795,18 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
                 uc = i if po.glued else uc
                 # GH #839: a "$( frame (the only "(" frame outside hd) and a case right after its $(: both ways
                 if q == "(" and not hd and cp and cp[-1]:
-                    both = True
+                    pat = re.compile(r"(?:(?<=[ \t\n])in|;;&?|;&)[ \t\n]*\(?[ \t]*(?!esac[ \t]*$)[\w*?.\-/@+=:,%^!\[\]~]+"
+                                     r"(?:[ \t]*\|[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+)*[ \t]*$").search(c, max(0, i - 256), i)
+                    if keep and not pat:  # review 6: a ) that is no plain pattern's (`esac>f)`): this reading is void
+                        stack.append("void")
+                        break
                     if keep:  # this ) pops nothing (an unsure # after it still counts, au)
                         uc = i if au else uc
                         i += 1
                         continue
-                    rg.append((i, len(stack) - 1))  # the pop below returns to that frame: a region opens
+                    if pat:
+                        both = True
+                        rg.append((i, len(stack) - 1))  # the pop below returns to that frame: a region opens
             elif ch == ")" and po and po.pop():
                 gc = i
             elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
@@ -808,7 +817,7 @@ def _quote_mask(c, stack=None, hd=False, keep=False):
                 d = k - 1  # an odd run of $ before the (: `$$(` is $$ and a plain (
                 while d >= 0 and c[d] == "$" and not esc[d]:
                     d -= 1
-                cp.append(k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1)
+                cp.append(k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1 and not bt)
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
                 cp and cp.pop()
