@@ -1866,6 +1866,14 @@ test_deny "GH #842" $'echo $[1<<E]\necho `echo \'a`; git stash\nE]' $'echo $[1<<
 test_deny "GH #842" $'a[1<<E]=1\necho `echo #`; git stash\nE]=1' $'a[1<<E]=1\necho `echo #`; git status\nE]=1'
 test_deny "GH #844" $'a[1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]=1' $'a[1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]=1'
 test_deny "GH #844" $'echo $[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]' $'echo $[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]'
+# Fresh-context review round 9: a heredoc counts as prose only where every comment reading of the scanner
+# opens it (`(true)#<<E` is a comment in bash), and the scanner's heredocs give a view of their own, so a
+# fake `<<X` before a real "$(cat <<'E' ..)" hides nothing.
+test_deny "GH #842" $'(true)#<<E\necho `echo \'a`#; git stash\nE' $'(true)#<<E\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'(:)#<<E\necho `echo \'a`; git reset --hard\nE' $'(:)#<<E\necho `echo \'a`; git status\nE'
+test_deny "GH #844" $'# <<X\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'# <<X\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
+test_deny "GH #844" $'echo \'<<X \'\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'echo \'<<X \'\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
+test_deny "GH #844" $'(:)#<<X\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'(:)#<<X\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
