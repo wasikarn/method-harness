@@ -383,10 +383,10 @@ _QPIECE_RE = re.compile(r"(\$?)([\"'])([\w./-]*)[\"']|\\([\w./-])|([\w./-])")
 # above must stay _SPAWN_QWORD_RE's twin): pairs at its front or end are blanks in place in the mask, every
 # pair between moved two blanks to the word front, and the pieces are checked against the mask past them.
 _nl_join = False  # GH #843: the joined reading is its own view (see _extra_views), develop's is kept
-_QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?:[\w./-]|\\[\w./-]|\\\n|\$?\"(?:[\w./-]|\\\n)*\"|\$?'[\w./-]*')+(?![^\s;&|()<>}])")
-# Its pieces: a `$`, a quoted piece (inside "..", a continuation is deleted too: "g\<nl>it" is git), an
+_QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])")
+# Its pieces: a `$` (continuations may stand between it and its quote: $\<nl>'git' is $'git'), a quoted piece (inside "..", a continuation is deleted too: "g\<nl>it" is git), an
 # escaped letter, a continuation outside quotes, a plain letter.
-_QPIECE_NL_RE = re.compile(r"(\$?)(\"(?:[\w./-]|\\\n)*\"|'[\w./-]*')|\\([\w./-])|(\\\n)|([\w./-])")
+_QPIECE_NL_RE = re.compile(r"((?:\$(?:\\\n)*)?)(\"(?:[\w./-]|\\\n)*\"|'[\w./-]*')|\\([\w./-])|(\\\n)|([\w./-])")
 _dollar_join = "'\""  # the `$` quote kinds joined in this pass
 _dollar_joined = False  # a word with a `$` piece was joined, so the other readings differ
 
@@ -425,11 +425,17 @@ def _join_pieces_nl(pieces, k, masked):
             ok = masked[k:k + 2] == t
             letters.append(p.group(3))
         else:
-            d, q = len(p.group(1)), p.group(2)
+            # The pairs between `$` and its quote moved to the word front in the mask (see the caller), so
+            # the piece is masked as `$` (or the blank of a $'..' opener), then blank, one Q per char, blank.
+            d, q = min(len(p.group(1)), 1), p.group(2)
             body = q[1:-1]
             ok = (not d or q[0] in _dollar_join) and masked[k:k + d] in ("", " ", "$") and \
-                masked[k + d:k + len(t)] == " " + "Q" * len(body) + " "
+                masked[k + d:k + d + len(q)] == " " + "Q" * len(body) + " "
             letters.append(body.replace("\\\n", "") if q[0] == '"' else body)
+            k += d + len(q)
+            if not ok:
+                return None
+            continue
         if not ok:
             return None
         k += len(t)
@@ -454,7 +460,8 @@ def _join_quoted_words(raw, masked):
             core = [p for p in ps[a:b] if not p.group(4)]
             # Blanks the mask moved to the word front, one pair each: every inner pair, and every trailing
             # pair but the last (a backslash follows it, so it glues); only the last trailing pair is in place.
-            inner = 2 * (b - a - len(core)) + 2 * max(len(ps) - b - 1, 0)
+            inner = 2 * (b - a - len(core)) + 2 * max(len(ps) - b - 1, 0) + \
+                sum(len(p.group(1) or "") - 1 for p in core if p.group(1) and len(p.group(1)) > 1)
             tail = ps[-1].start() if b < len(ps) else len(w)
             # Leading pairs are in place, or (a comment that ends in `<blank>\`, which is no continuation)
             # are not pairs at all: read the word both with them and from after them.
@@ -1195,11 +1202,11 @@ def _blank_heredocs_seq(s, raw_ops, mode="sub"):
         p = m.start()
         pos = m.end()
         chained = last is not None and p < line_end  # a second heredoc on the line of the one before
-        if mode == "sub" and _in_subscript(t, p):
-            continue
         try:
             h = _heredoc_at(t, p, last[3] if chained else None, mode != "all")
         except _Unparsed:
+            continue
+        if h and mode == "sub" and _in_subscript(t, p):  # only once a heredoc is found: a long line of shifts stays linear
             continue
         if h:
             if not chained:

@@ -1904,6 +1904,17 @@ test_deny "GH #844" $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\ngit stash' $'((echo
 test_deny "GH #844" $'echo $((echo a)|cat) && cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo $((echo a)|cat) && cat <<\'E\'\ndon\'t\nE\ngit status'
 test_deny "GH #844" $'cat <\\\n<\'E\'\ndon\'t\nE\ngit stash' $'cat <\\\n<\'E\'\ndon\'t\nE\ngit status'
 test_deny "GH #844" $'cat \\\n<\\\n<-\'E\'\ndon\'t\nE\ngit stash' $'cat \\\n<\\\n<-\'E\'\ndon\'t\nE\ngit status'
+# Fresh-context review round 14: a continuation between `$` and its quote ($\<nl>'git') is joined, and a
+# long line of shift-like `<<` stays fast (no heredoc follows, so no subscript check runs).
+test_deny "GH #843" $'$\\\n\'git\' stash' $'$\\\n\'git\' status'
+test_deny "GH #843" $'$\\\n"git" stash' $'$\\\n"git" status'
+test_deny "GH #843" $'g$\\\n\'it\' stash' $'g$\\\n\'it\' status'
+test_deny "GH #843" $'git $\\\n"stash"' $'git $\\\n"status"'
+test_deny "GH #843" $'$\\\n\\\n\'git\' stash' $'$\\\n\\\n\'git\' status'
+test_deny "GH #843" $'bash -c \'$\\\n"git" stash\'' $'bash -c \'$\\\n"git" status\''
+_c="$(_pad 'a[1<<E]=1 ' 800)"
+rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "GH #844 review 14: 800 shift-like a[1<<E]=1 words on one line decided inside 8 s as allow (rc $rc)" "$ok"
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
