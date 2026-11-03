@@ -1769,6 +1769,33 @@ test_deny "GH #844" $'git commit -m "$(cat <<\'EOF\'\nfix: set width to 5"\nEOF\
 test_deny "GH #844" $'echo "$(cat <<\'E\'\n"\nE\n)"; git stash' $'echo "$(cat <<\'E\'\n"\nE\n)"; git status'
 test_deny "GH #844" $'echo "$(cat <<\'E\'\ndon\'t "\nE\n)"; git stash' $'echo "$(cat <<\'E\'\ndon\'t "\nE\n)"; git status'
 test_deny "GH #844" $'cat <<\'A\'\nx\nA\necho "$(cat <<\'E\'\n"\nE\n)"; git stash' $'cat <<\'A\'\nx\nA\necho "$(cat <<\'E\'\n"\nE\n)"; git status'
+# Fresh-context review round 2: a second-parse body (bash -c, sh -c, eval) gets the same extra views.
+test_deny "GH #843" $'bash -c \'g\\\n"it" stash\'' $'bash -c \'g\\\n"it" status\''
+test_deny "GH #843" $'eval \'g\\\n"it" stash\'' $'eval \'g\\\n"it" status\''
+test_deny "GH #843" $'sh -c \'"g"\\\nit stash\'' $'sh -c \'"g"\\\nit status\''
+test_deny "GH #843" $'bash -c \'git s\\\n"tash"\'' $'bash -c \'git s\\\n"tatus"\''
+test_deny "GH #844" $'bash -c "cat <<\'E\'\ndon\'t\nE\ngit stash"' $'bash -c "cat <<\'E\'\ndon\'t\nE\ngit status"'
+test_deny "GH #844" $'eval "cat <<\'E\'\ndon\'t\nE\ngit stash"' $'eval "cat <<\'E\'\ndon\'t\nE\ngit status"'
+test_deny "GH #844" $'sh -c "true <<\'E\'\n\'\nE\ngit reset --soft HEAD"' $'sh -c "true <<\'E\'\n\'\nE\ngit status"'
+# ... and a substitution's continuation view is built from its blanked text, so heredoc prose stays data.
+for _c in \
+  $'git commit -m "$(cat <<\'EOF\'\nfix(hook): stop running stash\n\nExample:\n    ls \\\n      -la\ngit stash is no longer run by the hook.\nEOF\n)"' \
+  $'x="$(cat <<\'EOF\'\na\\\\\ngit reset b\nEOF\n)"' ; do
+  rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+  check "GH #843/#844 review 2 control allowed (rc $rc): ${_c//$'\n'/<nl>}" "$ok"
+done
+_c=$(python3 -c '
+q = chr(39)
+lines = ["gh issue create --title x --body \"$(cat <<" + q + "EOF" + q]
+block = ["echo " + q + "it" + q + q + "s" + q + " # comment with " + q + " quote",
+         "Fix the parser so it doesn" + q + "t hide `git stash` from the guard.",
+         "He said \"hi\" and left `a lone backtick", "Paths: ~/x, C:\\\\temp\\\\z\\\\",
+         "  ls \\", "case $x in a) echo a;; esac", "100% done; 5\" screen; it" + q + "s " + q + "fine" + q]
+lines += block * 22 + ["EOF", ")\" && git log --oneline -3"]
+print("\n".join(lines))
+')
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && [ "${#_c}" -gt 5000 ] && ok=0
+check "GH #843/#844 review 2: a 5 KB issue body through \"\$(cat <<'EOF' ..)\" is allowed (rc $rc, ${#_c} bytes)" "$ok"
 # A heredoc body is still data: blanking it for the second view must not read it as code.
 rc=$(sgg_rc $'cat <<\'E\'\ndon\'t git stash\nE\ngit status'); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #844 control allowed: a git stash line in a quoted heredoc body (rc $rc)" "$ok"
