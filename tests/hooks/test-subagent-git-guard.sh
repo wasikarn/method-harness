@@ -1915,6 +1915,13 @@ test_deny "GH #843" $'bash -c \'$\\\n"git" stash\'' $'bash -c \'$\\\n"git" statu
 _c="$(_pad 'a[1<<E]=1 ' 800)"
 rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #844 review 14: 800 shift-like a[1<<E]=1 words on one line decided inside 8 s as allow (rc $rc)" "$ok"
+# Fresh-context review round 15: each heredoc view's text is a cut source too (with its own cap), so a cut
+# after a heredoc only those views find is read.
+test_deny "GH #842" $'cat <\\\n<\'I\'\ndon\'t\nI\necho `echo #`; git stash' $'cat <\\\n<\'I\'\ndon\'t\nI\necho `echo #`; git status'
+test_deny "GH #842" $'cat a[1<<E]+=1\ndon\'t\nE]+=1\necho `echo #`; git stash' $'cat a[1<<E]+=1\ndon\'t\nE]+=1\necho `echo #`; git status'
+test_deny "GH #842" $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\necho `echo #`; git stash' $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\necho `echo #`; git status'
+test_deny "GH #842" $'cat a[1<<E]=1\ndon\'t\nE]=1\nenv `echo #` git stash' $'cat a[1<<E]=1\ndon\'t\nE]=1\nenv `echo #` git status'
+test_deny "GH #842" $'cat <\\\n<\'I\'\n\'\nI\nx=`echo "a`\n"git" stash' $'cat <\\\n<\'I\'\n\'\nI\nx=`echo "a`\n"git" status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

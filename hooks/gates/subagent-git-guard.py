@@ -1300,8 +1300,10 @@ def _prose(s, readings=False):
         _prose_memo[s] = (blank(common), list(dict.fromkeys(blank(e) for e in each)))
     return _prose_memo[s][1] if readings else _prose_memo[s][0]
 
-def _cut_views(texts, base):
-    # texts: the text(s) to cut, heredoc bodies blanked (see _prose).
+def _cut_views(texts, base, prose=None):
+    # texts: the text(s) to cut, heredoc bodies blanked (see _prose). prose, when given, is the same text with
+    # the bodies every scanner reading opens blanked: a cut there is heredoc prose and is skipped (a source
+    # whose view blanked a fake `<<` instead must not read prose backticks as cuts).
     # The substitution, from its opening backtick to the cut, becomes word chars, so what stands before it
     # (`env `echo #` git stash`) keeps its place. A cut view is searched for cuts of its own (a second
     # substitution on the line), up to _CUT_MAX views in all.
@@ -1312,7 +1314,7 @@ def _cut_views(texts, base):
         _scan_cost(len(t))
         _mask_quotes(t, cuts)
         for o, a in cuts:
-            if made >= _CUT_MAX:
+            if made >= _CUT_MAX or prose is not None and prose[a:a + 1] != "`":
                 continue
             made += 1
             v = t[:o] + "x" * (a - o + 1) + t[a + 1:]
@@ -1329,12 +1331,18 @@ def _extra_views(s, base, based=None):
     # prose of a body base blanked is never read as code.
     based = s if based is None else based
     views = []
+    hd_srcs = []  # (heredoc view text, the text it came from) for the cut views
     if "<<" in s:
-        for raw_ops in (False, True):
+        # The raw-operator views and the scanner's per reading below. The mask-found view is left out here:
+        # once "$(cat <<'EOF'" throws the top-level mask off it blanks one body and reads the prose after it
+        # as code, which cost about 3x develop's work on a script of `cat > f <<'EOF'` blocks and commits,
+        # and the scanner views cover the fake operators it was for.
+        for raw_ops in (True,):
             for mode in _HD_MODES:
                 v = _hd_view(s, base, raw_ops, mode)
                 if v and v not in views:
                     views.append(v)
+                    hd_srcs.append((v[0], s))
         for p in _prose(s, True):  # the heredocs the substitution scanner opens, per reading (a fake `<<X`
             if p != s:             # cannot steer these)
                 mp = _mask(p)
@@ -1344,18 +1352,24 @@ def _extra_views(s, base, based=None):
     # heredoc views of the text without its continuations (offsets do not matter here, since each view is
     # scanned whole against its own text).
     nc = _CONT_RE.sub(r"\1", s) if "\\\n" in s and "<" in s else s
-    if nc != s and "<<" in nc:
+    if nc.count("<<") > s.count("<<"):  # only when deleting them makes an operator (cost: `ls \<nl> -la` in prose)
         mnc = _mask(nc)
         for raw_ops in (False, True):
             for mode in _HD_MODES:
                 v = _hd_view(nc, mnc, raw_ops, mode)
                 if v and v not in views:
                     views.append(v)
+                    hd_srcs.append((v[0], nc))
     if "`" in s:
-        srcs = list(dict.fromkeys([_prose(s)] + _prose(s, True))) if "<<" in s else [based]
-        for v in _cut_views(srcs, base):  # each scanner reading too: a heredoc only some open is blanked
-            if v not in views:
-                views.append(v)
+        # Cut sources: the scanner's readings (a heredoc only some open is blanked in one of them) and every
+        # heredoc view's text so far (a heredoc only those views find: `cat <\<nl><'E'`, `((echo a) )`).
+        # Each source has its own cap, so one cannot use up the views another needs.
+        srcs = [(t, None) for t in dict.fromkeys([_prose(s)] + _prose(s, True) if "<<" in s else [based])]
+        srcs += [(t, _prose(o)) for t, o in hd_srcs if t not in dict(srcs)]
+        for src, prose in srcs:
+            for v in _cut_views([src], base, prose):
+                if v not in views:
+                    views.append(v)
     for t, mt in [(based, base)] + list(views):
         v = _nl_view(t, mt)
         if v and v not in views:
