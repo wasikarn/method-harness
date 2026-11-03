@@ -4701,4 +4701,29 @@ _timed_case 'GH #835: subagent: bash -c with 150 {a,b}${IFS}$(echo c) words is r
   "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150))'" fork
 _timed_case 'GH #835: subagent: bash -c cl{aude,aude} -p x after 150 brace words denies in bounded time' 2 \
   "bash -c 'echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 150)); cl{aude,aude} -p x'" fork
+# GH #796
+# GH #796: _PROC_BY_NAME is spliced onto the end of _INTERP_PROC_RE and _PYNODE_PROC_RE; its getattr quote is a named
+# group, so a capturing group added earlier in either host regex cannot steal the backreference. Each host regex is
+# compiled as is and again behind a capturing group of its own: getattr(os, "sep") never matches, getattr(os,
+# "system") always does.
+if _r796="$(python3 - "$ROOT/hooks/gates/irrecoverable.py" <<'PY' 2>&1
+import ast, re, sys
+tree = ast.parse(open(sys.argv[1]).read())
+names = ("_PROC_BY_NAME", "_INTERP_PROC_RE", "_PYNODE_PROC_RE")
+ns = {"re": re}
+for n in tree.body:
+    if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in names:
+        exec(compile(ast.Module([n], []), "irrecoverable.py", "exec"), ns)
+assert all(k in ns for k in names), "a regex assignment is missing"
+assert not re.search(r"\\[1-9]", ns["_PROC_BY_NAME"]), "_PROC_BY_NAME holds a numbered backreference"
+for host in ("_INTERP_PROC_RE", "_PYNODE_PROC_RE"):
+    pat = ns[host].pattern
+    for label, rx in (("as is", ns[host]), ("behind a capturing group", re.compile("(?:(Z)|)(?:" + pat + ")"))):
+        assert not rx.search('getattr(os, "sep")'), host + " " + label + ': getattr(os, "sep") matches'
+        assert rx.search('getattr(os, "system")'), host + " " + label + ': getattr(os, "system") does not match'
+        assert rx.search("getattr(os, 'popen')"), host + " " + label + ": getattr(os, 'popen') does not match"
+        assert rx.search("getattr(os, 'sep\")"), host + " " + label + ": a mixed-quote literal is read as one plain literal"
+PY
+)"; then echo "  ✅ GH #796: both host regexes read getattr literals through a named group"; pass=$((pass + 1))
+else echo "  ❌ GH #796: $_r796" >&2; fail=$((fail + 1)); fi
 gates_summary
