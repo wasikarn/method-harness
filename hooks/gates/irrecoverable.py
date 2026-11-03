@@ -766,7 +766,8 @@ def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
     # reading skips only the case's first ), and only when `case WORD in [(]PATTERN|..` runs whole from the case to it;
     # any later ) while that case is open voids it: an esac the scan cannot see (`esac>f`, `esac<<<q`) may have closed
     # the case, so that ) may be bash's real one (reviews 6, 7). Until such an esac the keep reading follows bash's own
-    # parse, so the ) bash closes on is the one that voids it. And it counts only when it ends in the
+    # parse, so the ) bash closes on is the one that voids it. Only a plain arm counts (reviews 8, 9: see the end). And
+    # it counts only when it ends in the
     # popping reading's quote state, unmasks no char of a comment the popping reading masks, and unmasks nothing outside
     # the text the popping reading reads in the frame a pop returns to (from that ) to where the frame closes). Else the
     # popping reading, develop's, stands.
@@ -801,7 +802,7 @@ def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
                     pat = not cp[-1][2] and re.compile(
                         r"case[ \t]+[^\s;&|()<>'\"\\`]+[ \t\n]+in[ \t\n]+\(?[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+"
                         r"(?:[ \t]*\|[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+)*[ \t]*").fullmatch(c, cp[-1][1], i)
-                    cp[-1][2] = True
+                    cp[-1][2] = i + 1 if pat else -1  # where its body starts, or -1
                     if keep and not pat:  # a later ), or no plain first pattern's: an esac it cannot see (`esac>f`)
                         stack.append("void")  # may have closed the case, so this ) may be bash's real one: void
                         break
@@ -825,8 +826,9 @@ def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
                 cp.append([k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1 and not bt, i, False])
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
-                if cp and cp.pop()[0] and ce is not None:  # GH #839: the esac that closes a sure case
-                    ce.append(i)
+                e = cp.pop() if cp else [False]
+                if e[0] and ce is not None and e[2] > 0:  # GH #839: a sure case's body, to the esac that closes it
+                    ce.append((e[2], i))
             uc = i if au and ch == ")" else uc
         if q in _HD_OFF or ch == "<" and i < ie:
             mask[i] = 1
@@ -934,11 +936,23 @@ def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
         if ks == stack and all(kept.find(0, a, b) < 0 for a, b in cm) and all(
                 k or o or not m for m, k, o in zip(mask, kept, ok)):
             new = bytearray(a & b for a, b in zip(mask, kept))
-            # review 8: the consumers take an argument word after } { ) then do .. for a closer (`echo } fi` ends a
-            # piped if early, a gap develop has for unquoted text too), so a keep reading that would unmask a } or a
-            # fi/done/esac word other than its own case's esac does not count
-            shown = "".join(ch if m and not k else " " for ch, m, k in zip(c, mask, new))
-            if not any(m.group() == "}" or m.start() not in ce for m in re.finditer(r"\}|(?<!\w)(?:fi|done|esac)(?!\w)", shown)):
+            # reviews 8, 9: an unmasked arm hands its words to consumers that misread richer text (`echo } fi` ends a
+            # piped if early, #864; `$(( esac)` parses unlike bash), so the keep reading counts only for plain arms:
+            # each sure case's body and every char it unmasks hold words, blanks, | ; & $ = . / : , + @ % - and no
+            # reserved word, but for the case's own esac and the ) after it
+            plain = re.compile(r"[\w \t\n|;&$=./:,+@%-]*")
+            word = re.compile(r"(?<![\w-])(?:if|then|else|elif|fi|case|esac|for|select|while|until|do|done|in|function|"
+                              r"time|coproc)(?![\w-])")
+            shown = [ch if m and not k else " " for ch, m, k in zip(c, mask, new)]
+            for b, e in ce:
+                shown[e:e + 4] = "    "
+                j = e + 4
+                while j < n and c[j] in " \t":
+                    j += 1
+                if j < n and c[j] == ")":
+                    shown[j] = " "
+            shown = "".join(shown)
+            if all(plain.fullmatch(t) and not word.search(t) for t in [shown] + [c[b:e] for b, e in ce]):
                 mask = new
     return mask
 
