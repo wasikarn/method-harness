@@ -59,9 +59,10 @@ def mask_quotes(s, cuts=None):
     # GH #842: bash ends a backtick substitution at the first unescaped
     # backtick, quote or comment or not (`echo 'a`#; git stash` runs git).
     # The mask's own output does not change for it: a caller that passes a
-    # list as cuts gets the index of each backtick where a quote span or a
-    # comment opened inside a substitution (on the same line) is cut by bash,
-    # and reads the text after it as code in a view of its own. Only a
+    # list as cuts gets, for each backtick where bash cuts a quote span or a
+    # comment opened inside a substitution (on the same line), the pair (index
+    # of the backtick that opened the substitution, index of the cut), and
+    # reads the text after the cut as code in a view of its own. Only a
     # substitution opened on the line is tracked (bt ends at an unquoted
     # newline), so a lone backtick in earlier prose cuts nothing.
     def _back(k, blanks):
@@ -110,6 +111,7 @@ def mask_quotes(s, cuts=None):
     parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued
     i, n = 0, len(s)
     bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
+    bo = -1
     at_word_start = True
     while i < n:
         c = s[i]
@@ -131,7 +133,7 @@ def mask_quotes(s, cuts=None):
                     i += 1
                 elif cut and s[i] == "`":
                     if cuts is not None:  # GH #842: the backtick ends the comment
-                        cuts.append(i)
+                        cuts.append((bo, i))
                     cut = bt = False
                 out.append(" ")
                 i += 1
@@ -146,7 +148,7 @@ def mask_quotes(s, cuts=None):
                     i += 1
                 elif cut and s[i] == "`":
                     if cuts is not None:  # GH #842: the backtick ends the span
-                        cuts.append(i)
+                        cuts.append((bo, i))
                     cut = bt = False
                 elif s[i] == "\n":
                     cut = False  # GH #842: only a backtick on the line the span opened on
@@ -190,7 +192,7 @@ def mask_quotes(s, cuts=None):
                 else:
                     if cut and s[i] == "`":
                         if cuts is not None:  # GH #842
-                            cuts.append(i)
+                            cuts.append((bo, i))
                         cut = bt = False
                     elif s[i] == "\n":
                         cut = False
@@ -212,7 +214,7 @@ def mask_quotes(s, cuts=None):
                 else:
                     if cut and s[i] == "`":
                         if cuts is not None:  # GH #842
-                            cuts.append(i)
+                            cuts.append((bo, i))
                         cut = bt = False
                     elif s[i] == "\n":
                         cut = False
@@ -269,7 +271,7 @@ def mask_quotes(s, cuts=None):
             else:
                 out.append(c)
                 if c == "`" and i >= ie:
-                    bt = not bt  # GH #842
+                    bt, bo = not bt, i  # GH #842: bo is the index of the backtick that opened it
                 elif c == "\n":
                     bt = False  # GH #842: a substitution is tracked on its own line only
             i += 1

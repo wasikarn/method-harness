@@ -1808,6 +1808,18 @@ test_deny "GH #842" $'echo `echo #`; g\\\nit stash' $'echo `echo #`; g\\\nit sta
 test_deny "GH #842" $'echo `echo \'a`; \\\ngit stash' $'echo `echo \'a`; \\\ngit status'
 test_deny "GH #842" $'echo `echo \'a`\ngit stash' $'echo `echo \'a`\ngit status'
 test_deny "GH #842" $'echo `echo \'a` &&\ngit stash' $'echo `echo \'a` &&\ngit status'
+# Fresh-context review round 4: cuts found inside a cut view are followed, a wrapper before the
+# substitution is kept, a view keeps its whole statement, and each source text gets its own cuts.
+test_deny "GH #842" $'echo `echo #`; echo `echo #`; git stash' $'echo `echo #`; echo `echo #`; git status'
+test_deny "GH #842" $'echo `echo \'a`; echo `echo "a`#; git stash' $'echo `echo \'a`; echo `echo "a`#; git status'
+test_deny "GH #842" $'bash -c \'echo `echo #`; echo `echo #`; git stash\'' $'bash -c \'echo `echo #`; echo `echo #`; git status\''
+test_deny "GH #842" $'env `echo #` git stash' $'env `echo #` git status'
+test_deny "GH #842" $'env `echo \'a` git stash' $'env `echo \'a` git status'
+test_deny "GH #842" $'nohup `echo #` git stash' $'nohup `echo #` git status'
+test_deny "GH #843" $'env $(\ntrue\n) g\\\n"it" stash' $'env $(\ntrue\n) g\\\n"it" status'
+test_deny "GH #844" $'env $(\ntrue <<\'E\'\ndon\'t\nE\n) git stash' $'env $(\ntrue <<\'E\'\ndon\'t\nE\n) git status'
+test_deny "GH #844" $'echo `echo \'a`\ncat <<E\nsize 5"\nE\ngit stash' $'echo `echo \'a`\ncat <<E\nsize 5"\nE\ngit status'
+test_deny "GH #844" $'echo `echo \'a`; cat <<E\n5"\nE\ngit stash' $'echo `echo \'a`; cat <<E\n5"\nE\ngit status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

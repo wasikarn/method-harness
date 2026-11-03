@@ -192,6 +192,7 @@ except Exception:
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
         bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
+        bo = -1
         at_word_start = True
         while i < n:
             c = s[i]
@@ -213,7 +214,7 @@ except Exception:
                         i += 1
                     elif cut and s[i] == "`":
                         if cuts is not None:  # GH #842: the backtick ends the comment
-                            cuts.append(i)
+                            cuts.append((bo, i))
                         cut = bt = False
                     out.append(" ")
                     i += 1
@@ -226,7 +227,7 @@ except Exception:
                         out.append("Q"); i += 1
                     elif cut and s[i] == "`":
                         if cuts is not None:  # GH #842: the backtick ends it
-                            cuts.append(i)
+                            cuts.append((bo, i))
                         cut = bt = False
                     elif s[i] == "\n":
                         cut = False
@@ -255,7 +256,7 @@ except Exception:
                     else:
                         if cut and s[i] == "`":
                             if cuts is not None:  # GH #842: the backtick ends it
-                                cuts.append(i)
+                                cuts.append((bo, i))
                             cut = bt = False
                         elif s[i] == "\n":
                             cut = False
@@ -272,7 +273,7 @@ except Exception:
                     else:
                         if cut and s[i] == "`":
                             if cuts is not None:  # GH #842: the backtick ends it
-                                cuts.append(i)
+                                cuts.append((bo, i))
                             cut = bt = False
                         elif s[i] == "\n":
                             cut = False
@@ -316,7 +317,7 @@ except Exception:
                 else:
                     out.append(c)
                     if c == "`" and i >= ie:
-                        bt = not bt  # GH #842
+                        bt, bo = not bt, i  # GH #842: bo is the index of the backtick that opened it
                     elif c == "\n":
                         bt = False  # GH #842: a substitution is tracked on its own line only
                 i += 1
@@ -1172,12 +1173,22 @@ def _hd_view(s, base, raw_ops):
     return _hd_view_memo[k]
 
 def _trim(m, ref):
-    # m with everything before the line ahead of its first difference from ref blanked, newlines too: that
-    # part reads as ref does, which another scan already read, so the anchor scans charge only for the rest.
+    # m with what comes before the statement that holds its first difference from ref blanked, newlines too:
+    # that part reads as ref does, which another scan already read, so the anchor scans charge only for the
+    # rest. The statement starts after the last newline, ;, & or | outside every paren: a wrapper before a
+    # `$(` that spans lines (`env $(<nl>true<nl>) git stash`) stays in the view with its command.
     d = next((i for i in range(min(len(m), len(ref))) if m[i] != ref[i]), None)
     if d is None:
         return None
-    cut = m.rfind("\n", 0, max(m.rfind("\n", 0, d), 0)) + 1
+    depth = cut = 0
+    for i in range(d):
+        c = m[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth = max(depth - 1, 0)
+        elif c in "\n;&|" and not depth:
+            cut = i + 1
     return " " * cut + m[cut:]
 
 def _nl_view(s, base):
@@ -1199,7 +1210,7 @@ def _nl_view(s, base):
 # blanked (it is the base's, which the main scans read) and the backtick itself made a word char, so a
 # `#` glued after it stays a word as in bash. Cuts are taken from the text with its heredoc bodies blanked,
 # so a backtick in heredoc prose cuts nothing. At most _CUT_MAX views per text.
-_CUT_MAX = 4
+_CUT_MAX = 8
 _blank_memo = {}
 
 def _blanked(s, raw_ops):
@@ -1208,19 +1219,26 @@ def _blanked(s, raw_ops):
         _blank_memo[k] = _blank_heredocs_seq(s, raw_ops)[0]
     return _blank_memo[k]
 
-def _cut_views(texts, raw_blanked):
-    # raw_blanked: the text with every heredoc body it can read blanked; a cut inside one of them is prose
-    views, seen = [], set()
-    for t in texts:
+def _cut_views(texts, raw_blanked, base):
+    # raw_blanked: the text with every heredoc body it can read blanked; a cut inside one of them is prose.
+    # The substitution, from its opening backtick to the cut, becomes word chars, so what stands before it
+    # (`env `echo #` git stash`) keeps its place. A cut view is searched for cuts of its own (a second
+    # substitution on the line), up to _CUT_MAX views in all.
+    views, work, made = [], list(texts), 0
+    while work and made < _CUT_MAX:
+        t = work.pop(0)
         cuts = []
         _scan_cost(len(t))
         _mask_quotes(t, cuts)
-        for a in cuts:
-            if a in seen or len(seen) >= _CUT_MAX or raw_blanked[a] != "`":
+        for o, a in cuts:
+            if made >= _CUT_MAX or raw_blanked[a] != "`":
                 continue
-            seen.add(a)
-            v = " " * a + "x" + t[a + 1:]
-            views.append((v, _mask(v)))
+            made += 1
+            v = t[:o] + "x" * (a - o + 1) + t[a + 1:]
+            mv = _trim(_mask(v), base)
+            if mv:
+                views.append((v, mv))
+            work.append(v)
     return views
 
 def _extra_views(s, base, based=None):
@@ -1237,7 +1255,7 @@ def _extra_views(s, base, based=None):
                 views.append(v)
     if "`" in s:
         srcs = [_blanked(s, False), _blanked(s, True)] if "<<" in s else [based]
-        for v in _cut_views(dict.fromkeys(srcs), srcs[-1]):
+        for v in _cut_views(dict.fromkeys(srcs), srcs[-1], base):
             if v not in views:
                 views.append(v)
     for t, mt in [(based, base)] + list(views):

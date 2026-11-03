@@ -241,6 +241,7 @@ except Exception:
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
         bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
+        bo = -1
         at_word_start = True
         while i < n:
             c = s[i]
@@ -262,7 +263,7 @@ except Exception:
                         i += 1
                     elif cut and s[i] == "`":
                         if cuts is not None:  # GH #842: the backtick ends the comment
-                            cuts.append(i)
+                            cuts.append((bo, i))
                         cut = bt = False
                     out.append(" ")
                     i += 1
@@ -275,7 +276,7 @@ except Exception:
                         out.append("Q"); i += 1
                     elif cut and s[i] == "`":
                         if cuts is not None:  # GH #842: the backtick ends it
-                            cuts.append(i)
+                            cuts.append((bo, i))
                         cut = bt = False
                     elif s[i] == "\n":
                         cut = False
@@ -304,7 +305,7 @@ except Exception:
                     else:
                         if cut and s[i] == "`":
                             if cuts is not None:  # GH #842: the backtick ends it
-                                cuts.append(i)
+                                cuts.append((bo, i))
                             cut = bt = False
                         elif s[i] == "\n":
                             cut = False
@@ -321,7 +322,7 @@ except Exception:
                     else:
                         if cut and s[i] == "`":
                             if cuts is not None:  # GH #842: the backtick ends it
-                                cuts.append(i)
+                                cuts.append((bo, i))
                             cut = bt = False
                         elif s[i] == "\n":
                             cut = False
@@ -365,7 +366,7 @@ except Exception:
                 else:
                     out.append(c)
                     if c == "`" and i >= ie:
-                        bt = not bt  # GH #842
+                        bt, bo = not bt, i  # GH #842: bo is the index of the backtick that opened it
                     elif c == "\n":
                         bt = False  # GH #842: a substitution is tracked on its own line only
                 i += 1
