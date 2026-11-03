@@ -874,7 +874,10 @@ def _in_subscript(s, i):
     if ob <= line.rfind("]") or ob < 1:
         return False
     if line[ob - 1] == "$":
-        return True
+        k = ob - 1
+        while k >= 0 and line[k] == "$":
+            k -= 1
+        return (ob - 1 - k) % 2 == 1  # `$$[` is the PID then a literal `[`
     if re.search(r"[\s;&|()<>]", line[ob + 1:]) or not re.match(r"<<[^\s;&|()<>]*\]\+?=", s[i:]):
         return False
     k = ob - 1
@@ -901,7 +904,7 @@ def _line_end(s, pos):
             return e
         pos = e + 1
 
-def _heredoc_at(s, i, after=None):
+def _heredoc_at(s, i, after=None, shift=True):
     # A heredoc operator at s[i]: (trigger, body start, body end, terminator end, quoted delimiter),
     # or None when it opens no body (arithmetic shift, or no newline follows). The trigger is the
     # newline where the body begins. A second heredoc on the same line passes `after`, the first
@@ -913,7 +916,7 @@ def _heredoc_at(s, i, after=None):
     # _Unparsed, and the command is denied.
     m = _HD_START_RE.match(s, i)
     eol = _line_end(s, m.end() if m else i)
-    if eol < 0 or _in_arith(s, i):
+    if eol < 0 or shift and _in_arith(s, i):  # GH #844: shift=False reads a `<<` in (( )) as a heredoc too
         return None
     if not m:
         raise _Unparsed
@@ -1170,7 +1173,13 @@ def _blank_heredocs(s):
 _HD_SEQ_MAX = 24
 _HD_STATE_RE = re.compile(r"['\"`\\#$()<]|\b(?:case|esac)\b")
 
-def _blank_heredocs_seq(s, raw_ops):
+_HD_MODES = ("sub", "dev", "all")
+_CONT_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # an odd backslash run, then a newline: its last pair
+
+def _blank_heredocs_seq(s, raw_ops, mode="sub"):
+    # mode is how a `<<` that may be a shift is read: "dev" as develop's _in_arith reads it, "sub" also as a
+    # shift in a subscript (_in_subscript), "all" always as a heredoc. Each mode is its own view, so a wrong
+    # answer in one (`((echo a) )` is no arithmetic, `echo a[<<E]=1` no subscript) is covered by another.
     t, pos, line_end, last, spans = s, 0, -1, None, []
     mt = None if raw_ops else _mask_quotes(t)
     while True:
@@ -1186,10 +1195,10 @@ def _blank_heredocs_seq(s, raw_ops):
         p = m.start()
         pos = m.end()
         chained = last is not None and p < line_end  # a second heredoc on the line of the one before
-        if _in_subscript(t, p):
+        if mode == "sub" and _in_subscript(t, p):
             continue
         try:
-            h = _heredoc_at(t, p, last[3] if chained else None)
+            h = _heredoc_at(t, p, last[3] if chained else None, mode != "all")
         except _Unparsed:
             continue
         if h:
@@ -1207,15 +1216,15 @@ def _blank_heredocs_seq(s, raw_ops):
 
 _hd_view_memo = {}
 
-def _hd_view(s, base, raw_ops):
+def _hd_view(s, base, raw_ops, mode="sub"):
     # (blanked text, its mask) when it shows something base (a mask of s, or of s with fewer bodies blanked)
     # does not: a char that differs outside the blanked bodies. Where nothing differs it can add no anchor
     # (each body starts at a line start and ends at its terminator's line end), and skipping it keeps a big heredoc document under the
     # work budget.
-    k = (_dollar_join, s, base, raw_ops)
+    k = (_dollar_join, s, base, raw_ops, mode)
     if k not in _hd_view_memo:
         v = None
-        b, spans = _blank_heredocs_seq(s, raw_ops)
+        b, spans = _blank_heredocs_seq(s, raw_ops, mode)
         if spans:
             mb = _mask(b)
             keep, last = [], 0
@@ -1315,14 +1324,26 @@ def _extra_views(s, base, based=None):
     views = []
     if "<<" in s:
         for raw_ops in (False, True):
-            v = _hd_view(s, base, raw_ops)
-            if v and v not in views:
-                views.append(v)
+            for mode in _HD_MODES:
+                v = _hd_view(s, base, raw_ops, mode)
+                if v and v not in views:
+                    views.append(v)
         for p in _prose(s, True):  # the heredocs the substitution scanner opens, per reading (a fake `<<X`
             if p != s:             # cannot steer these)
                 mp = _mask(p)
                 if mp != base and (p, mp) not in views:
                     views.append((p, mp))
+    # A line continuation inside an operator (`<\<nl><'E'`) is deleted by bash before it reads one: the
+    # heredoc views of the text without its continuations (offsets do not matter here, since each view is
+    # scanned whole against its own text).
+    nc = _CONT_RE.sub(r"\1", s) if "\\\n" in s and "<" in s else s
+    if nc != s and "<<" in nc:
+        mnc = _mask(nc)
+        for raw_ops in (False, True):
+            for mode in _HD_MODES:
+                v = _hd_view(nc, mnc, raw_ops, mode)
+                if v and v not in views:
+                    views.append(v)
     if "`" in s:
         srcs = list(dict.fromkeys([_prose(s)] + _prose(s, True))) if "<<" in s else [based]
         for v in _cut_views(srcs, base):  # each scanner reading too: a heredoc only some open is blanked

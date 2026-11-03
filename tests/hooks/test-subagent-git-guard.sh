@@ -1895,6 +1895,15 @@ test_deny "GH #844" $'echo x[; cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo x[; cat
 test_deny "GH #844" $'grep -c a[ f | cat <<\'E\'\ndon\'t\nE\ngit stash' $'grep -c a[ f | cat <<\'E\'\ndon\'t\nE\ngit status'
 test_deny "GH #844" $'echo a[ <<\'E\'\ndon\'t\nE\ngit stash' $'echo a[ <<\'E\'\ndon\'t\nE\ngit status'
 test_deny "GH #844" $'echo a[1<<E]\ndon\'t\nE]\ngit stash' $'echo a[1<<E]\ndon\'t\nE]\ngit status'
+# Fresh-context review round 13: whether a `<<` is a shift or a heredoc is read every way in the views
+# (`$$[`, an argument word `a[<<E]=1`, `((echo a) )`), and a continuation inside the operator is deleted.
+test_deny "GH #844" $'echo $$[ && cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo $$[ && cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo a[<<E]=1\ndon\'t\nE]=1\ngit stash' $'echo a[<<E]=1\ndon\'t\nE]=1\ngit status'
+test_deny "GH #844" $'cat a[1<<E]+=1\ndon\'t\nE]+=1\ngit stash' $'cat a[1<<E]+=1\ndon\'t\nE]+=1\ngit status'
+test_deny "GH #844" $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\ngit stash' $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo $((echo a)|cat) && cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo $((echo a)|cat) && cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <\\\n<\'E\'\ndon\'t\nE\ngit stash' $'cat <\\\n<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat \\\n<\\\n<-\'E\'\ndon\'t\nE\ngit stash' $'cat \\\n<\\\n<-\'E\'\ndon\'t\nE\ngit status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
