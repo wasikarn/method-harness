@@ -766,14 +766,15 @@ def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
     # reading skips only the case's first ), and only when `case WORD in [(]PATTERN|..` runs whole from the case to it;
     # any later ) while that case is open voids it: an esac the scan cannot see (`esac>f`, `esac<<<q`) may have closed
     # the case, so that ) may be bash's real one (reviews 6, 7). Until such an esac the keep reading follows bash's own
-    # parse, so the ) bash closes on is the one that voids it. Only a plain arm counts (reviews 8, 9: see the end). And
+    # parse, so the ) bash closes on is the one that voids it. Only a plain arm in a string that ends its statement
+    # counts (reviews 8, 9: see the end). And
     # it counts only when it ends in the
     # popping reading's quote state, unmasks no char of a comment the popping reading masks, and unmasks nothing outside
     # the text the popping reading reads in the frame a pop returns to (from that ) to where the frame closes). Else the
     # popping reading, develop's, stands.
     mask, i, n = bytearray(len(c)), 0, len(c)
     # GH #839: comments masked, whether each open case is right after its $(, open regions, region edges
-    both, cm, cp, rg, ok, bt = False, [], [], [], [0] * (len(c) + 1), False
+    both, cm, cp, rg, ok, bt, re_ = False, [], [], [], [0] * (len(c) + 1), False, []  # re_: where regions end
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
     au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
@@ -781,6 +782,7 @@ def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
         while rg and len(stack) < rg[-1][1]:  # GH #839: a frame a pop returned to has closed
             ok[rg.pop()[0]] += 1
             ok[i] -= 1
+            re_.append(i)
         ch, q = c[i], stack[-1]
         bt = bt or ch == "`"  # GH #839 review 6: `..` turns \\ into \, so a later $( may be text: no sure start
         if q == "!":
@@ -952,7 +954,11 @@ def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
                 if j < n and c[j] == ")":
                     shown[j] = " "
             shown = "".join(shown)
-            if all(plain.fullmatch(t) and not word.search(t) for t in [shown] + [c[b:e] for b, e in ce]):
+            # review 9: _text_statements splits at the arm's ;; inside "$(..)", which cuts a wrapper before the string
+            # from the command after it (`nice -n "$(case ..)" $X -p x`), so each string must end its statement
+            end = re.compile(r"[ \t]*(?:[;&|\n)]|$)")
+            if all(plain.fullmatch(t) and not word.search(t) for t in [shown] + [c[b:e] for b, e in ce]) and all(
+                    end.match(c, e) for e in re_):
                 mask = new
     return mask
 

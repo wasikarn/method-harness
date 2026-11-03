@@ -4733,7 +4733,7 @@ else echo "  ❌ GH #796: $_r796" >&2; fail=$((fail + 1)); fi
 # review 1) or one the keep reading drifts through and back (review 2), and a piped compound whose closer sits in a
 # real string after a misread case (review 3), in a ${..} word (review 4), a [[ ]] or arithmetic operand (review 5),
 # a \\$( in backticks, or after an esac the scan cannot see (reviews 6, 7), or an arm's argument a consumer takes for
-# a closer or a rich arm a consumer parses unlike bash (reviews 8, 9).
+# a closer or a rich arm a consumer parses unlike bash (review 8, fuzz), or a wrapper cut from its command (review 9).
 for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(case a in a) echo hi | $X;; esac)"' \
     'X=claude; echo "$(case a in (a) echo hi | $X;; esac)"' 'X=claude; echo "$(case a in a|b) $X -p x;; esac)"' \
     $'X=claude; echo "$(case a in\n a) $X -p x;;\n esac)"' 'X=claude; echo "x $(case a in a) $X -p x;; esac) y"' \
@@ -4788,14 +4788,19 @@ for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(ca
     'echo hi | if true; then X="$(case x in x) echo <(:) fi;; esac)"; claude; fi' \
     $'echo hi | if true; then X="$(case x in x) echo a\\\nfi;; esac)"; claude; fi' \
     'echo hi | if true; then X="$( case x in x) echo   fi{ fi;; esac)"; claude; fi' \
-    $'echo hi | if true; then X="$(case x in\n x) echo $(( esac)\\${}|;; y) :;; esac)"; claude; fi'; do
+    $'echo hi | if true; then X="$(case x in\n x) echo $(( esac)\\${}|;; y) :;; esac)"; claude; fi' \
+    'X=claude; nice -n "$(case x in x) echo 5;; esac)" $X -p x' 'X=claude; timeout "$(case x in x) echo 5;; esac)" $X -p x' \
+    'X=claude; time "$(case x in x) echo env;; esac)" $X -p x' 'X=claude; env -u "$(case x in x) echo 5;; esac)" "$X" -p x' \
+    'X=claude; echo hi | nice -n "$(case x in x) echo 5;; esac)" $X${IFS}-p${IFS}x' \
+    $'X=claude; nice -n "$(case x in x) echo 5\nesac)" ${X} -p x'; do
   test_deny  "$IRRECOVERABLE" "GH #839: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 for _c in 'echo "$(case a in a) echo hi | claude --version;; esac)"' 'X=claude; echo "$(case a in a) $X --version;; esac)"' \
     'echo "$(echo do case)" | claude --version' 'X=claude; echo "$(case a in a) { :; } esac)" | $X --version' \
     'X=claude; echo "$(echo do case a in a) b)" | $X --version' \
     'echo "$(case a in a) echo hi;; esac)"' 'echo "$(case a in a) echo hi;; esac)" | claude --version' \
-    $'echo "$(echo do case)"; echo hi | # feed\nclaude --version' $'echo "$(echo do case)" | \\\n# "; esac) "\nclaude --version'; do
+    $'echo "$(echo do case)"; echo hi | # feed\nclaude --version' $'echo "$(echo do case)" | \\\n# "; esac) "\nclaude --version' \
+    'X=claude; nice -n "$(case x in x) echo 5;; esac)" $X --version'; do
   test_allow "$IRRECOVERABLE" "GH #839 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
 gates_summary
