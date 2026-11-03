@@ -3767,9 +3767,10 @@ _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)
 # GH #741: asyncio's create_subprocess_shell/exec and posix_spawn(p) (a bare name in a -c body, a call in a heredoc
 # script, GH #741 review 3), and a process module reached by name
 # (getattr(os, ...), importlib.import_module("os"), __import__("subprocess")), where the call is built at run time.
-# A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review).
-_PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
-                 r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)\1)\w+\1\s*[,)])"
+# A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review);
+# its quote is a named group, so a capturing group added to a host regex cannot shift the backreference (GH #796).
+_PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*(?P<gq>[\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
+                 r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)(?P=gq))\w+(?P=gq)\s*[,)])"
                  r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']"
                  # GH #801: read at once as an attribute that names no process API (__import__('os').path) it is no
                  # call built at run time; .system, .execvp etc. still count, stored or called (f = ....system)
