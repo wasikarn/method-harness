@@ -2390,9 +2390,15 @@ def _ifs_default():
     # HEAD~1`, GH #718: allowed, as develop reads it) keep develop's placeholder.
     if "_ambig" not in globals() or _ambig:
         return False
+    # Review 4: a quoted or escaped $IFS / ${IFS} is IFS's text, newline included, and an echo / printf fed to a shell
+    # drops its quotes before the body is read (`echo "x${IFS}rm -rf x" | bash` runs the rm): the placeholder too.
     if not _IFS_DEFAULT:
         raw = d["tool_input"].get("command", "")
-        _IFS_DEFAULT.append("<<" not in raw and "IFS" not in _IFS_REF_RE.sub("", raw))
+        ok = "<<" not in raw and "IFS" not in _IFS_REF_RE.sub("", raw)
+        if ok:
+            mask = _quote_mask(raw)
+            ok = not any(mask[m.start()] for m in _IFS_REF_RE.finditer(raw))
+        _IFS_DEFAULT.append(ok)
     return _IFS_DEFAULT[0]
 
 def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param):

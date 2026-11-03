@@ -4598,6 +4598,15 @@ test_allow "$IRRECOVERABLE" "GH #838 review 3 control: subagent: sh -c 'claude -
 for _c in 'printf -v I""FS ""; gi${IFS}t restore x' 'eval I""FS=; r${IFS}m -rf x' "bash -c 'git reset --hard'\${IFS}y"; do
   test_deny  "$IRRECOVERABLE" "GH #838 review 3: $_c" "$(bash_payload "$_c")"
 done
+# GH #838 review 4: a quoted "${IFS}" is IFS's text, newline included, and an echo / printf fed to a shell drops the
+# quotes before its body is read (`echo "x${IFS}rm -rf x" | bash` runs the rm): a command with a quoted or escaped
+# $IFS / ${IFS} keeps the placeholder reading.
+for _c in 'echo "x${IFS}rm -rf x" | bash' 'printf "x${IFS}rm -rf x" | sh' "printf '%s\\n' \"x\${IFS}rm -rf x\" | bash" \
+    'echo "true${IFS}rm -rf x" | sh' 'echo "x${IFS}git reset --hard" | bash' 'echo "x${IFS}git restore y" | bash' \
+    'echo x"${IFS}"rm -rf x | bash' 'echo "x${IFS}r""m -rf x" | bash' 'echo -e "x${IFS}rm -rf x" | bash -s' \
+    'echo "x${IFS}rm -rf x" | env bash' 'command echo "x${IFS}git reset --hard" | sh'; do
+  test_deny  "$IRRECOVERABLE" "GH #838 review 4: $_c" "$(bash_payload "$_c")"
+done
 # GH #846: the ifs-split copy that reads a bare ${IFS} as nothing is spawn-scanned, so a subagent's `cl${IFS}aude -p x`
 # (an empty IFS runs claude) denies
 for _c in 'cl${IFS}aude -p x' 'cl$IFS"aude" -p x' 'IFS=; cl${IFS}aude -p x'; do
