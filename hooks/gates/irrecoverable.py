@@ -687,6 +687,49 @@ def _reads_stdin_interp(seg):
     return (not rest or rest[0] == "-") and not any(t.startswith("<") for t in rest)
 
 _HD_OFF = ("{", "((", "a(", "[", "=(")  # hd frames where << is no redirection: ${ $(( (( $[ name=(
+_GLUE_OPEN = "$<>="  # GH #820 item 5: a ( after one of these ($( <( >( name=() closes inside its word
+# GH #833 review 7: after one of these the ( may be an extglob group (shopt -s extglob: @( !( ?( *( +( glue) or, with
+# extglob off as in plain bash -c, an operator (!( a negated subshell, x+() f@() a function), so its ) is unsure
+_EXTGLOB_OPEN = "@!?*+"
+# reserved words a command (so a case) may follow, and those an esac may follow: a closer, or `case WORD in`
+_CASE_LEAD_RE = re.compile(r"(?:^|[\s;&|(])(?:then|do|else|elif|if|while|until|\{|!|time)$")
+_ESAC_LEAD_RE = re.compile(r"(?:(?:^|[\s;&|(])case[ \t]+\S+[ \t\n]+in|(?:^|[\s;&|(])(?:\}|fi|done|esac))$")
+
+class _ParenFlags(list):
+    # GH #833: _quote_mask's po stack; glued counts its True entries (an open $( <( >( or name=( ).
+    glued = 0
+
+    def append(self, x):
+        self.glued += x is True
+        super().append(x)
+
+    def __iadd__(self, xs):
+        for x in xs:
+            self.append(x)
+        return self
+
+    def pop(self):
+        x = super().pop()
+        self.glued -= x is True
+        return x
+
+def _prev_char(c, k, esc):
+    # GH #833: the index of the char bash reads right before c[k] (-1 at the start). A backslash-newline the unquoted
+    # scan escaped (esc) is a line continuation the shell deletes, so it is stepped over.
+    k -= 1
+    while k > 0 and c[k] == "\n" and esc[k]:
+        k -= 2
+    return k
+
+def _cmd_word(c, i, word, esc, after, lead, span):
+    # GH #833: whether c[i:] starts the reserved word `word` where bash reads it (after one of the chars in after, a
+    # word lead matches in the span chars ending there, or at the start), followed by a blank, a separator or the end.
+    if not c.startswith(word, i) or c[i + len(word):i + len(word) + 1] not in ("", " ", "\t", "\n", ";", "&", "|", ")"):
+        return False
+    k = _prev_char(c, i, esc)
+    while k >= 0 and c[k] in " \t" and not esc[k]:
+        k = _prev_char(c, k, esc)
+    return k < 0 or not esc[k] and (c[k] in after or bool(lead.search(c, max(0, k - span), k + 1)))
 
 def _quote_mask(c, stack=None, hd=False):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
@@ -698,9 +741,20 @@ def _quote_mask(c, stack=None, hd=False):
     # GH #820 item 5: the ) of $(..) $((..)) <(..) >(..) name=(..) ends inside its word, so a # glued after it is
     # no comment (`echo $(date)#|claude` pipes); the ) of a subshell, of ((..)) or an unmatched one ends the word.
     # po holds one flag per open unquoted (, whether its ) ends mid-word; gc is the index of the last such ).
+    # GH #833: a `case` read as a command pushes "c" onto po until its `esac`: a pattern's ) then pops nothing, so it
+    # cannot close the $( around it early. Fail safe: a "c" pushed by mistake (`echo do case`) or never closed leaves
+    # every ) after it unsure (uc) while any glued ( is open. A # right after an unsure ) is read both ways: as a
+    # comment it hides the rest of its line, and as a word what that line does (frames, parens, quotes, a case, an esac,
+    # a continuation) changes how everything after it reads. Neither reading is safe, so from that # to the end of c the
+    # state is unknown (ie = n): the text is scanned as a word, but no quote or comment opens, every < is masked, a ".."
+    # opened before it is no longer masked, and every later ) is unsure too (au); hd mode pushes a "!" frame, so
+    # _strip_heredocs strips nothing more. Over-reading only, and only after an unsure #. The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
+    # separator is part of its word, and an escaped newline is a line continuation (_prev_char). The ) of an
+    # extglob candidate @( !( ?( *( +( is unsure too ("x" on po, _EXTGLOB_OPEN).
     mask, i, n = bytearray(len(c)), 0, len(c)
     stack = [None] if stack is None else stack
-    po, gc = [], -2
+    po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
+    au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
     while i < n:
         ch, q = c[i], stack[-1]
         if q == "!":
@@ -708,17 +762,32 @@ def _quote_mask(c, stack=None, hd=False):
             break
         if q not in (SQ, '"', "$'"):
             if ch == "(":
-                po.append(i > 0 and c[i - 1] in "$<>=")
+                p = _prev_char(c, i, esc)
+                g = p >= 0 and not esc[p]
+                po.append("x" if g and c[p] in _EXTGLOB_OPEN else g and c[p] in _GLUE_OPEN)
+            elif ch == ")" and po and po[-1] == "x":
+                po.pop()
+                uc = i  # GH #833 review 7: an extglob group or an operator; a # after it is read both ways
+            elif ch == ")" and po and po[-1] == "c":
+                uc = i if po.glued else uc
             elif ch == ")" and po and po.pop():
                 gc = i
-        if q in _HD_OFF:
+            elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
+                po.append("c")
+            elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
+                po.pop()
+            uc = i if au and ch == ")" else uc
+        if q in _HD_OFF or ch == "<" and i < ie:
             mask[i] = 1
+            if ch == "<" and i < ie:  # an inert <: from here on the quote state is unknown (see above)
+                ie = n
+                stack += ["!"] if hd else []
         if q == SQ:
             mask[i] = 1
             if ch == SQ:
                 stack.pop()
         elif q == '"':
-            mask[i] = 1
+            mask[i] = i >= ie  # GH #833 review 10: past an unsure #, a ".." opened before it may be a $( still
             if ch == "\\" and i + 1 < n:
                 mask[i + 1] = 1
                 i += 1
@@ -743,16 +812,24 @@ def _quote_mask(c, stack=None, hd=False):
             elif ch == SQ:
                 stack.pop()
         elif ch == "\\" and i + 1 < n:
-            mask[i + 1] = 1
+            mask[i + 1] = esc[i + 1] = 1
             i += 1
-        elif ch == "$" and c[i + 1:i + 2] == SQ:
+        elif ch == "$" and c[i + 1:i + 2] == SQ and i >= ie:  # (below ie the ' is an inert quote)
             mask[i] = mask[i + 1] = 1
             stack.append("$'")
             i += 1
         elif ch in (SQ, '"'):
             mask[i] = 1
-            stack.append(ch)
-        elif ch == "#" and (i == 0 or c[i - 1] in " \t\n;&|(" or c[i - 1] == ")" and gc != i - 1):
+            if i >= ie:
+                stack.append(ch)
+            else:  # an inert quote opens nothing, and from here on the quote state is unknown
+                ie = n
+                stack += ["!"] if hd else []
+        elif ch == "#" and uc >= 0 and _prev_char(c, i, esc) == uc:
+            if i >= ie:  # GH #833 review 2-10: an unsure #, read both ways (see above)
+                ie, au = n, True
+                stack += ["!"] if hd else []
+        elif ch == "#" and i >= ie and ((p := _prev_char(c, i, esc)) < 0 or not esc[p] and (c[p] in " \t\n;&|(" or c[p] == ")" and gc != p)):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
             mask[i:j] = b"\1" * (j - i)
@@ -788,8 +865,9 @@ def _quote_mask(c, stack=None, hd=False):
         elif q == "((" and ch == ")" and c[i + 1:i + 2] == ")":
             stack.pop()
             i += 1
-            if po and po.pop():
-                gc = i
+            x = po.pop() if po else False  # GH #833 review 8: !((1)) with extglob off is ! and an arithmetic command
+            gc = i if x is True else gc
+            uc = i if x == "x" or au else uc
         elif ch == "(" and q in ("((", "a("):
             stack.append("a(")  # a ( inside arithmetic: its ) closes it, not the (( frame
         elif ch == "(" and q == "(":
@@ -3838,9 +3916,10 @@ _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)
 # GH #741: asyncio's create_subprocess_shell/exec and posix_spawn(p) (a bare name in a -c body, a call in a heredoc
 # script, GH #741 review 3), and a process module reached by name
 # (getattr(os, ...), importlib.import_module("os"), __import__("subprocess")), where the call is built at run time.
-# A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review).
-_PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
-                 r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)\1)\w+\1\s*[,)])"
+# A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review);
+# its quote is a named group, so a capturing group added to a host regex cannot shift the backreference (GH #796).
+_PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*(?P<gq>[\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
+                 r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)(?P=gq))\w+(?P=gq)\s*[,)])"
                  r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']"
                  # GH #801: read at once as an attribute that names no process API (__import__('os').path) it is no
                  # call built at run time; .system, .execvp etc. still count, stored or called (f = ....system)

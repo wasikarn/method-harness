@@ -4498,6 +4498,164 @@ _timed_case 'GH #731: subagent: 300 {a,b}${IFS}$(echo c) words are read in bound
   "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 300))" fork
 _timed_case 'GH #731: subagent: cl{aude,aude}${IFS}-p${IFS}x after 300 brace words denies in bounded time' 2 \
   "echo $(printf '{a,b}${IFS}$(echo c) %.0s' $(seq 300)); cl{aude,aude}\${IFS}-p\${IFS}x" fork
+# GH #833: the # misreads #829 left (GH #820 item 5 residuals). A case pattern's `)` inside $(..) no longer closes the
+# $(, a backslash-newline before # (or between $ and its `(`) is a line continuation bash deletes, an escaped blank or
+# separator before # is part of the word, and an extglob group @( !( ?( *( +( ends inside its word. Each runs claude in
+# bash 5.2. Fail safe (review): a case misread from an argument (`echo do case`) or whose esac goes unseen leaves every
+# later `)` unsure, read as glued while a $( is open, and never touches a ".." frame. Masks: _quote_mask here, the shared _quotemask.py and its inline copies (subagent-git-guard, test-integrity).
+for _c in 'X=claude; echo $(case a in a) echo b;; esac)#|$X' 'X=claude; echo $(case a in (a) echo b;; esac)#|$X' \
+    $'X=claude; echo $(case a in\n a|b) echo b;;\n esac)#|$X' 'X=claude; echo $(case a in a) (echo b);; esac)#|$X' \
+    'X=claude; echo $(if true; then case a in a) echo b;; esac; fi)#|$X' 'X=claude; echo $(case a in esac)#|$X' \
+    'X=claude; echo $(echo do case)#|$X' 'X=claude; echo $(echo then case)#|$X' 'X=claude; echo $(echo ! case)#|$X' \
+    'X=claude; echo $(echo { case)#|$X' 'X=claude; echo $(echo time case)#|$X' 'X=claude; echo $( (echo do case) )#|$X' \
+    'X=claude; echo "$(echo do case)" | $X' 'X=claude; echo "$(case a in a) { :; } esac)" | $X' \
+    'X=claude; echo "$(case a in a) if :; then :; fi esac)" | $X' 'X=claude; echo $(case a in a) { :; } esac)#|$X' \
+    'X=claude; echo $(if case a in a) :;; esac; then :; fi)#|$X' \
+    'X=claude; echo $(while case a in a) false;; esac; do :; done)#|$X' \
+    'X=claude; echo $(case a in a) case b in b) :;; esac;; c) :;; esac)#|$X' 'X=claude; echo $(f() case a in a) :;; esac; f)#|$X' \
+    'X=claude; echo $(case a in a) echo in esac;; b) :;; esac)#|$X' \
+    $'X=claude; echo a\\\n#|$X' $'X=claude; echo $(date)\\\n#|$X' $'X=claude; echo $\\\n(date)#|$X' \
+    'X=claude; echo a\ #|$X' 'X=claude; echo a\;#|$X' \
+    $'shopt -s extglob\nX=claude; echo @(a)#|$X' $'shopt -s extglob\nX=claude; echo !(a)#|$X' \
+    $'shopt -s extglob\nX=claude; echo ?(a)#|$X' $'shopt -s extglob\nX=claude; echo *(a)#|$X' \
+    $'shopt -s extglob\nX=claude; echo +(a)#|$X'; do
+  test_deny  "$IRRECOVERABLE" "GH #833: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'X=claude; echo $(case a in a) echo b;; esac) #|$X' 'X=claude; echo $(case a in a) echo b;; esac)#|$X --version' \
+    'X=claude; echo $(echo case)#|$X --version' 'X=claude; echo $(echo do case) #|$X' $'X=claude; echo a \\\n#|$X' $'X=claude; echo a\\\\\n#|$X' \
+    'X=claude; echo a\\ #|$X' $'shopt -s extglob\nX=claude; echo @(a) #|$X' \
+    $'shopt -s extglob\nX=claude; echo +(a)#|$X --version' 'X=claude; case a in a)#|$X'$'\n''esac'; do
+  test_allow "$IRRECOVERABLE" "GH #833 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'echo $(case a in a) :;; esac)#; git stash' 'echo $(echo do case)#; git stash' 'echo $(echo then case)#; git stash' \
+    'echo $(case a in a) { :; } esac)#; git stash' 'echo $(case a in a) echo in esac;; b) :;; esac)#; git stash' $'echo a\\\n#; git stash' $'echo $\\\n(date)#; git stash' \
+    'echo @(a)#; git stash'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'echo $(case a in a) :;; esac) #; git stash' $'echo a \\\n#; git stash' 'echo @(a) #; git stash'; do
+  test_allow "$SUBAGENT_GIT_GUARD" "GH #833 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+# GH #833 review 2: a # right after an unsure `)` (a case marker on top, a glued ( open) is read both ways: its line
+# stays visible, but no quote or << on it opens anything, so neither reading hides the lines below it.
+test_deny  "$IRRECOVERABLE" 'GH #833 review 2: a=(do case); case a in a)#<<E \n ;; esac; rm -rf ~/ \n E' \
+  "$(bash_payload $'a=(do case); case a in a)#<<E\n;; esac; rm -rf ~/\nE')"
+test_allow "$IRRECOVERABLE" 'GH #833 review 2 control: a=(do case); case a in a)#<<E \n ;; esac; rm -f x \n E' \
+  "$(bash_payload $'a=(do case); case a in a)#<<E\n;; esac; rm -f x\nE')"
+for _c in $'a=(do case); case a in a)#<<E\n;; esac; claude -p hi\nE' $'a=(do case); case a in a)#<<E\n;; esac; X=claude; $X -p hi\nE' \
+    $'shopt -s extglob\necho @(do|case); case a in a)#<<E\n;; esac; claude -p hi\nE' \
+    $'X=claude; echo $(echo do case); case a in a)#\'\n;; esac; $X -p hi\n#\''; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 2: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 2 control: subagent: ...#<<E \n ;; esac; claude --version \n E' \
+  "$(bash_agent_payload $'a=(do case); case a in a)#<<E\n;; esac; claude --version\nE' fork)"
+for _c in $'a=(do case); case a in a)#\'\n;; esac; git stash\n#\'' $'a=(do case); case a in a)#"\n;; esac; git stash\n#"' \
+    $'shopt -s extglob\necho @(x|case); case a in a)#\'\n;; esac; git stash\n#\'' $'a=(do case); case a in a)#<<E\n;; esac; git stash\nE'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 2: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 2 control: subagent: ...)#'"'"' \n ;; esac; git status \n #'"'" \
+  "$(bash_agent_payload $'a=(do case); case a in a)#\'\n;; esac; git status\n#\'' fork)"
+# GH #833 review 3: the unsure line is still read as a word (frames, parens, continuations), with only its quotes and
+# < inert, so a $( opened on it or a backslash-newline ending it carries on as in bash.
+test_deny  "$IRRECOVERABLE" 'GH #833 review 3: echo $(echo do case)#$( \n cat <<E \n hi \n E) \n rm -rf ~/ \n E' \
+  "$(bash_payload $'echo $(echo do case)#$(\ncat <<E\nhi\nE)\nrm -rf ~/\nE')"
+test_deny  "$IRRECOVERABLE" "GH #833 review 3: echo \$(echo do case)#\$( \\n cat <<'E' ... rm -rf ~/" \
+  "$(bash_payload $'echo $(echo do case)#$(\ncat <<\'E\'\nhi\nE)\nrm -rf ~/\nE')"
+test_allow "$IRRECOVERABLE" 'GH #833 review 3 control: echo $(echo do case)#$( \n cat <<E \n hi \n E) \n ls x \n E' \
+  "$(bash_payload $'echo $(echo do case)#$(\ncat <<E\nhi\nE)\nls x\nE')"
+for _c in $'X=claude; echo $(echo do case)#$(\ncat <<E\nhi\nE)\n$X -p hi\nE' $'X=claude; echo $(echo do case)#\\\n#|$X'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 3: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 3 control: subagent: X=claude; echo $(echo do case)#\ \n #|$X --version' \
+  "$(bash_agent_payload $'X=claude; echo $(echo do case)#\\\n#|$X --version' fork)"
+test_deny  "$SUBAGENT_GIT_GUARD" 'GH #833 review 3: subagent: echo $(echo do case)#\ \n #; git stash' \
+  "$(bash_agent_payload $'echo $(echo do case)#\\\n#; git stash' fork)"
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 3 control: subagent: echo $(echo do case)#\ \n #; git status' \
+  "$(bash_agent_payload $'echo $(echo do case)#\\\n#; git status' fork)"
+# GH #833 review 4: a quote bash opens on the unsure line may close on a later one, so once an inert quote or < shows
+# up the rest of the text is read with no quote, comment or heredoc opening (more reading, never less).
+for _c in $'X=claude; echo $(echo do case)#"\n" | $X' $'X=claude; echo $(echo then case)#"\n" | $X # "' \
+    $'X=claude; echo $(echo then case)#\'\n\' | $X # \'' $'X=claude; echo $(echo do case)#$\'\n\' | $X # \'' \
+    $'X=claude; cat <(echo do case)#"\n" | $X' $'X=claude; a=( do case )#"\n" | $X'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 4: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 4 control: subagent: X=claude; echo $(echo do case)#" \n " | $X --version' \
+  "$(bash_agent_payload $'X=claude; echo $(echo do case)#"\n" | $X --version' fork)"
+test_deny  "$IRRECOVERABLE" 'GH #833 review 4: echo $(echo do case)#" \n cat <<E \n " \n rm -rf ~/ \n E \n "' \
+  "$(bash_payload $'echo $(echo do case)#"\ncat <<E\n"\nrm -rf ~/\nE\n"')"
+for _c in $'echo $(echo do case)#"\n"; git stash' $'echo $(echo do case)#"\n" && git reset --hard # "' \
+    $'echo $(echo do case)#${x:-"\n"}; git stash # "'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 4: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 4 control: subagent: echo $(echo do case)#" \n "; git status' \
+  "$(bash_agent_payload $'echo $(echo do case)#"\n"; git status' fork)"
+# GH #833 review 5: bash drops an inert quote mark (and the $ of an inert $'..'), so the shared mask drops it too, its
+# blank moved to the word front: a quoted git word on or after the unsure line still reads whole.
+for _c in 'echo $(echo do case)#; "git" stash' 'echo $(echo do case)#; git "stash"' \
+    "echo \$(echo do case)#'x' && g''it stash" "echo \$(echo do case)#; 'g'it reset --hard" \
+    "echo \$(echo do case)#; \$'git' stash" $'echo $(echo do case)# \'\n\'\ngit "stash"'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 5: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 5 control: subagent: echo $(echo do case)#; "git" status' \
+  "$(bash_agent_payload 'echo $(echo do case)#; "git" status' fork)"
+# GH #833 review 6: the $ of an inert $".." is dropped too ($"git" is git in bash).
+for _c in 'echo $(echo do case)#; $"git" stash' 'echo $(echo do case)#; x=1 $"git" stash' 'echo $(echo do case)#; $"g"it stash' \
+    'echo $(echo do case)#; g$"it" stash' 'echo $(echo do case)#; $"g"$"it" stash' 'echo $(echo do case)#"a"; $"git" stash' \
+    'echo $(echo do case)#; git $"reset" --hard'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 6: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 6 control: subagent: echo $(echo do case)#; $"git" status' \
+  "$(bash_agent_payload 'echo $(echo do case)#; $"git" status' fork)"
+# GH #833 review 7: with extglob off (plain bash -c) !( is a negated subshell and x+() f@() a function, so a # after
+# their ) is a comment; the ) of an extglob candidate is unsure, and the # after it is read both ways.
+test_deny  "$IRRECOVERABLE" 'GH #833 review 7: !(true)#<<E \n rm -rf ~ \n E' "$(bash_payload $'!(true)#<<E\nrm -rf ~\nE')"
+test_deny  "$IRRECOVERABLE" 'GH #833 review 7: !(true)#<<E \n git reset --hard \n E' "$(bash_payload $'!(true)#<<E\ngit reset --hard\nE')"
+test_allow "$IRRECOVERABLE" 'GH #833 review 7 control: !(true)#<<E \n rm -f x \n E' "$(bash_payload $'!(true)#<<E\nrm -f x\nE')"
+for _c in $'!(true)#<<E\nclaude -p a\nE' $'x+()#<<E\n{ claude -p hi; }\nx+\nE' $'f@()#\'\n{ claude -p hi; }\nf@\n#\''; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 7: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 7 control: subagent: !(true)#<<E \n claude --version \n E' \
+  "$(bash_agent_payload $'!(true)#<<E\nclaude --version\nE' fork)"
+for _c in $'x+()#\'\n{ git stash; }\nx+\n#\'' $'f@()#\'\n{ git clean -fdx; }\nf@\n#\'' $'!(true)#"\ngit reset --hard\n#"'; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 7: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 7 control: subagent: x+()#'"'"' \n { git status; } \n x+ \n #'"'" \
+  "$(bash_agent_payload $'x+()#\'\n{ git status; }\nx+\n#\'' fork)"
+# GH #833 review 8: hd mode's (( branch: !((1)) with extglob off is ! and an arithmetic command, so its ) is unsure too.
+for _c in $'!((1))#<<E\nrm -rf ~\nE' $'true; !((1))#<<E\nrm -rf ~\nE' $'if !((1))#<<E\nrm -rf ~\nE\nthen :; fi' \
+    $'?((1))#<<E\nrm -rf ~\nE' $'@((a))#<<E\nrm -rf ~\nE'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 8: $_c" "$(bash_payload "$_c")"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 8 control: !((1))#<<E \n rm -f x \n E' "$(bash_payload $'!((1))#<<E\nrm -f x\nE')"
+test_deny  "$IRRECOVERABLE" 'GH #833 review 8: subagent: !((1))#<<E \n claude -p hi \n E' \
+  "$(bash_agent_payload $'!((1))#<<E\nclaude -p hi\nE' fork)"
+test_allow "$IRRECOVERABLE" 'GH #833 review 8 control: subagent: !((1))#<<E \n claude --version \n E' \
+  "$(bash_agent_payload $'!((1))#<<E\nclaude --version\nE' fork)"
+# GH #833 review 9: a ) on an unsure # line that pops below the depth at its # closes what the comment reading still
+# has open, so every later ) is unsure (fail safe): the real closer's # is read both ways.
+for _c in $'echo $(!(true)#)\n)#|claude' $'X=claude; echo $(!(true)#)\n)#|$X' $'echo $(!((1))#)\n)#|claude' \
+    $'echo $(f+()#)\n{ :; }\n)#|claude'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 9: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 9 control: subagent: echo $(!(true)#) \n )#|claude --version' \
+  "$(bash_agent_payload $'echo $(!(true)#)\n)#|claude --version' fork)"
+test_deny  "$SUBAGENT_GIT_GUARD" 'GH #833 review 9: subagent: echo $(!(true)#) \n )#; git stash' \
+  "$(bash_agent_payload $'echo $(!(true)#)\n)#; git stash' fork)"
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 9 control: subagent: echo $(!(true)#) \n )#; git status' \
+  "$(bash_agent_payload $'echo $(!(true)#)\n)#; git status' fork)"
+# GH #833 review 10: what the unsure line does (quote frames, an esac, an opened ( or $(, a continuation) outlives it,
+# so from an unsure # to the end the state is unknown: no quote or comment opens and every later ) is unsure.
+for _c in $'X=claude; echo "$(!(true)#)"\n)" | $X' $'X=claude; echo $(!(true)#(\n)#|$X' $'X=claude; !(true)#\\\n#\'\necho hi |$X #\'' \
+    $'X=claude; echo "$(!(true)#)\nclaude -p hi)"'; do
+  test_deny  "$IRRECOVERABLE" "GH #833 review 10: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$IRRECOVERABLE" 'GH #833 review 10 control: subagent: X=claude; echo "$(!(true)#)" \n )" | $X --version' \
+  "$(bash_agent_payload $'X=claude; echo "$(!(true)#)"\n)" | $X --version' fork)"
+for _c in $'echo $(case a in a) !(true)#;esac\n;; b)#\'\n;; esac); git stash\n\'' $'( !(true)#$(\n)#\'\ngit stash\n\'' \
+    $'echo $(!(true)#(\n)#; git stash' $'!(true)#\\\n#\'\ngit stash #\''; do
+  test_deny  "$SUBAGENT_GIT_GUARD" "GH #833 review 10: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+test_allow "$SUBAGENT_GIT_GUARD" 'GH #833 review 10 control: subagent: !(true)#\ \n #'"'"' \n git status #'"'" \
+  "$(bash_agent_payload $'!(true)#\\\n#\'\ngit status #\'' fork)"
 # GH #834/#835
 # GH #834: brace-view's raw copy read a bare unquoted ${IFS} as any text, so `ls{,}${IFS}-p x` (bash runs
 # `ls -p ls -p x`) read as `<any> <any> x`, a git restore with a pathspec, in any session. Unquoted and bare,
@@ -4579,9 +4737,8 @@ for _c in 'bash <<< "echo"${IFS}"rm -rf x"' 'bash<<<"echo"${IFS}"rm -rf x"' 'sh 
     'printf -v I""FS i; bash <<< g${IFS}t\ restore\ x' $'eval I""FS=m; bash <<EOF\nr${IFS} -rf x\nEOF'; do
   test_deny  "$IRRECOVERABLE" "GH #838 review 2: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
-for _c in 'printf -v I""FS m; ls${IFS}-p ls${IFS}-p x'; do
-  test_allow "$IRRECOVERABLE" "GH #838 review 2 control: $_c" "$(bash_payload "$_c")"
-done
+_c='printf -v I""FS m; ls${IFS}-p ls${IFS}-p x'
+test_allow "$IRRECOVERABLE" "GH #838 review 2 control: $_c" "$(bash_payload "$_c")"
 # GH #838 review 3: read as nothing, ${IFS} glued a -c body to the next word (`sh -c 'claude -p'${IFS}x` read as
 # `claude -px`); bash splits there, so the main reading reads a break, and an extra ifs-split copy reads nothing (an IFS
 # emptied under a spelling the text hides: `printf -v I""FS ''; gi${IFS}t restore x`).
@@ -4674,4 +4831,29 @@ _timed_case 'GH #840: subagent: 300 nested \$X bodies in a double-quoted body ar
   "bash -c \"X=python3; $(printf "bash -c '\\\\\$X -V'; %.0s" $(seq 300))\"" fork
 _timed_case 'GH #840: 300 IFS-valued assignments and references are read in bounded time' 2 \
   "$(printf 'X=ls${IFS}-l; $X y; %.0s' $(seq 300))X=git\${IFS}restore; \$X x"
+# GH #796
+# GH #796: _PROC_BY_NAME is spliced onto the end of _INTERP_PROC_RE and _PYNODE_PROC_RE; its getattr quote is a named
+# group, so a capturing group added earlier in either host regex cannot steal the backreference. Each host regex is
+# compiled as is and again behind a capturing group of its own: getattr(os, "sep") never matches, getattr(os,
+# "system") always does.
+if _r796="$(python3 - "$ROOT/hooks/gates/irrecoverable.py" <<'PY' 2>&1
+import ast, re, sys
+tree = ast.parse(open(sys.argv[1]).read())
+names = ("_PROC_BY_NAME", "_INTERP_PROC_RE", "_PYNODE_PROC_RE")
+ns = {"re": re}
+for n in tree.body:
+    if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in names:
+        exec(compile(ast.Module([n], []), "irrecoverable.py", "exec"), ns)
+assert all(k in ns for k in names), "a regex assignment is missing"
+assert not re.search(r"\\[1-9]", ns["_PROC_BY_NAME"]), "_PROC_BY_NAME holds a numbered backreference"
+for host in ("_INTERP_PROC_RE", "_PYNODE_PROC_RE"):
+    pat = ns[host].pattern
+    for label, rx in (("as is", ns[host]), ("behind a capturing group", re.compile("(?:(Z)|)(?:" + pat + ")"))):
+        assert not rx.search('getattr(os, "sep")'), host + " " + label + ': getattr(os, "sep") matches'
+        assert rx.search('getattr(os, "system")'), host + " " + label + ': getattr(os, "system") does not match'
+        assert rx.search("getattr(os, 'popen')"), host + " " + label + ": getattr(os, 'popen') does not match"
+        assert rx.search("getattr(os, 'sep\")"), host + " " + label + ": a mixed-quote literal is read as one plain literal"
+PY
+)"; then echo "  ✅ GH #796: both host regexes read getattr literals through a named group"; pass=$((pass + 1))
+else echo "  ❌ GH #796: $_r796" >&2; fail=$((fail + 1)); fi
 gates_summary
