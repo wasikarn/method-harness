@@ -4,11 +4,14 @@
 #
 # Prints only diff classes, counts and up to 3 redacted, truncated sample commands per class:
 # transcripts can hold secrets, so no other command text is ever printed.
-import argparse, glob, io, json, os, random, re, subprocess, sys
+import argparse, glob, io, json, os, random, re, shutil, subprocess, sys, time
 
 TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blocks irrecoverable (onFailure: block)
 # and lets the others through, so a timeout is its own class
 SAMPLES, WIDTH = 3, 100
+DEADLINES = {"irrecoverable": 4.0, "subagent-git-guard": 5.0}  # each gate's own deadline (GH #771, #469)
+NEAR = 0.5  # a fork-mode time over half the deadline re-runs through bash (#889)
+FORK_SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gate-fork-server.py")
 
 
 def secret_patterns(gates_dir):
@@ -164,14 +167,7 @@ def canonical_cwd(tmp, env):
     return cwd
 
 
-def run(gates_dir, gate, data, env, journal, cwd):
-    open(journal, "w").close()
-    try:
-        p = subprocess.run(["bash", os.path.join(gates_dir, gate + ".sh")], input=data,
-                           capture_output=True, env=env, cwd=cwd, timeout=TIMEOUT)
-        code, out, err = str(p.returncode), p.stdout, p.stderr
-    except subprocess.TimeoutExpired:
-        code, out, err = "timeout", b"", b""
+def finish(gates_dir, code, out, err, journal, secs):
     rows = []
     with open(journal) as f:
         for line in f:
@@ -180,11 +176,135 @@ def run(gates_dir, gate, data, env, journal, cwd):
             row.pop("mh_version", None)
             rows.append(row)
     err = err.replace(gates_dir.encode(), b"<GATES>")
-    return code, out, err, rows
+    return code, out, err, rows, secs
+
+
+class BashRunner:
+    # The real path: `bash <gate>.sh`, as hooks.json runs it.
+
+    def __init__(self, gates_dir, gate, env, journal, cwd):
+        self.gates_dir, self.gate, self.env, self.journal, self.cwd = gates_dir, gate, env, journal, cwd
+
+    def run(self, data):
+        open(self.journal, "w").close()
+        t0 = time.monotonic()
+        try:
+            p = subprocess.run(["bash", os.path.join(self.gates_dir, self.gate + ".sh")], input=data,
+                               capture_output=True, env=self.env, cwd=self.cwd, timeout=TIMEOUT)
+            code, out, err = str(p.returncode), p.stdout, p.stderr
+        except subprocess.TimeoutExpired:
+            code, out, err = "timeout", b"", b""
+        return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0)
+
+    def close(self):
+        pass
+
+
+class ServerDied(Exception):
+    pass
+
+
+class ForkRunner:
+    # GH #889: one scripts/_lib/gate-fork-server.py per side, run by the wrapper's own `python3 -S`.
+
+    def __init__(self, gates_dir, gate, env, journal, cwd, work):
+        self.gates_dir, self.journal, self.work = gates_dir, journal, work
+        os.makedirs(work, exist_ok=True)
+        py = shutil.which("python3", path=env.get("PATH", os.defpath))
+        if not py:
+            raise ServerDied("no python3 on the gates' PATH")
+        self.files = {k: os.path.join(work, k) for k in ("in", "out", "err")}
+        self.server_err = open(os.path.join(work, "server.err"), "wb")
+        self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd)
+        if self.p.stdout.readline() != b"ready\n":
+            raise ServerDied(self.died())
+
+    def died(self):
+        self.close()
+        with open(os.path.join(self.work, "server.err"), errors="replace") as f:
+            tail = f.read()[-300:].strip().replace("\n", " | ")
+        return "fork server exited (rc=%s)%s" % (self.p.returncode, ": " + tail if tail else "")
+
+    def run(self, data):
+        open(self.journal, "w").close()
+        with open(self.files["in"], "wb") as f:
+            f.write(data)
+        try:
+            self.p.stdin.write((json.dumps(self.files) + "\n").encode())
+            self.p.stdin.flush()
+            reply = self.p.stdout.readline()
+        except OSError:
+            reply = b""
+        if not reply:
+            raise ServerDied(self.died())
+        r = json.loads(reply)
+        with open(self.files["out"], "rb") as f:
+            out = f.read()
+        with open(self.files["err"], "rb") as f:
+            err = f.read()
+        code = r["code"] if r["code"] == "timeout" else str(r["code"])
+        if code == "timeout":
+            out, err = b"", b""
+        return finish(self.gates_dir, code, out, err, self.journal, r["secs"])
+
+    def close(self):
+        if self.p.poll() is None:
+            try:
+                self.p.stdin.close()
+            except OSError:
+                pass
+            try:
+                self.p.wait(timeout=TIMEOUT + 2)
+            except subprocess.TimeoutExpired:
+                self.p.kill()
+                self.p.wait()
+        self.server_err.close()
+
+
+def fork_blocker(old, new, gate):
+    # GH #889: fork mode skips the wrapper, which is sound only while both sides run the same wrapper:
+    # it hands python the payload unchanged, so then fork mode can add diffs but never hide one. Every
+    # gates-dir file the wrapper text names (its awk, _run.py, ...) must be byte-identical, apart from
+    # the gate's own .py. Returns why fork mode cannot run, or None.
+    sh = gate + ".sh"
+    texts = []
+    for d in (old, new):
+        with open(os.path.join(d, sh), "rb") as f:
+            texts.append(f.read())
+    if not all(b"_run.py" in t for t in texts):
+        return "the wrapper does not run the gate through _run.py"
+    names = {sh}
+    for d in (old, new):
+        for f in os.listdir(d):
+            if f != gate + ".py" and os.path.isfile(os.path.join(d, f)) and any(f.encode() in t for t in texts):
+                names.add(f)
+
+    def content(d, f):
+        try:
+            with open(os.path.join(d, f), "rb") as h:
+                return h.read()
+        except OSError:
+            return None
+    differ = sorted(f for f in names if content(old, f) != content(new, f))
+    return "wrapper files differ: " + ", ".join(differ) if differ else None
 
 
 def journal_sig(rows):
     return ",".join(r.get("decision", "?") + (":" + r["rule"] if r.get("rule") else "") for r in rows) or "none"
+
+
+def diff_class(o, n):
+    parts = []
+    if o[0] != n[0]:
+        parts.append("exit %s->%s" % (o[0], n[0]))
+    if o[1] != n[1]:
+        parts.append("stdout")
+    if o[2] != n[2]:
+        parts.append("stderr")
+    if o[3] != n[3]:
+        parts.append("journal %s->%s" % (journal_sig(o[3]), journal_sig(n[3])))
+    return " | ".join(parts)
 
 
 def main():
@@ -195,6 +315,7 @@ def main():
     ap.add_argument("--cases")
     ap.add_argument("--slug")
     ap.add_argument("--fuzz-seed")
+    ap.add_argument("--runner", choices=("auto", "fork", "bash"), default="auto")
     a = ap.parse_args()
 
     if a.cases:
@@ -216,30 +337,68 @@ def main():
     env = canonical_env(home)
     cwd = canonical_cwd(a.tmp, env)
     jo, jn = os.path.join(a.tmp, "old.jsonl"), os.path.join(a.tmp, "new.jsonl")
+    env_o, env_n = dict(env, MH_GATE_JOURNAL_PATH=jo), dict(env, MH_GATE_JOURNAL_PATH=jn)
     # Both sides: a change that drops a pattern must not unredact the commands it now misses.
     patterns = secret_patterns(a.old) + secret_patterns(a.new)
     real_home = os.environ.get("HOME", "")
+    deadline = DEADLINES.get(a.gate)
+
+    bash = (BashRunner(a.old, a.gate, env_o, jo, cwd), BashRunner(a.new, a.gate, env_n, jn, cwd))
+    fork, why = None, "forced by --runner bash" if a.runner == "bash" else fork_blocker(a.old, a.new, a.gate)
+    if not why:
+        started = []
+        try:
+            for side, d, e, j in (("old", a.old, env_o, jo), ("new", a.new, env_n, jn)):
+                started.append(ForkRunner(d, a.gate, e, j, cwd, os.path.join(a.tmp, "fork-" + side)))
+            fork = tuple(started)
+        except ServerDied as e:
+            why = str(e)
+            for r in started:
+                r.close()
+    dropped = near = 0
+
+    def pair(runners, data):
+        return runners[0].run(data), runners[1].run(data)
+
+    def measure(data):
+        # -> (old result, new result, the runners that gave them)
+        nonlocal fork, why, dropped, near
+        if fork:
+            try:
+                o, n = pair(fork, data)
+            except ServerDied as e:
+                why = "%s; bash from that command on" % e
+                for r in fork:
+                    r.close()
+                fork = None
+            else:
+                if deadline and max(o[4], n[4]) > NEAR * deadline:
+                    near += 1  # near the deadline, load decides: only the real path's result counts
+                    return pair(bash, data) + (bash,)
+                if diff_class(o, n):  # every fork diff is confirmed through the real path, or dropped
+                    o, n = pair(bash, data)
+                    dropped += not diff_class(o, n)
+                    return o, n, bash
+                return o, n, fork
+        return pair(bash, data) + (bash,)
 
     classes = {}
     for text in corpus:
         data = json.dumps(payload(a.gate, text)).encode()
-        o = run(a.old, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jo), jo, cwd)
-        n = run(a.new, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jn), jn, cwd)
-        parts = []
-        if o[0] != n[0]:
-            parts.append("exit %s->%s" % (o[0], n[0]))
-        if o[1] != n[1]:
-            parts.append("stdout")
-        if o[2] != n[2]:
-            parts.append("stderr")
-        if o[3] != n[3]:
-            parts.append("journal %s->%s" % (journal_sig(o[3]), journal_sig(n[3])))
-        if parts:
-            classes.setdefault(" | ".join(parts), []).append(text)
+        o, n, _ = measure(data)
+        name = diff_class(o, n)
+        if name:
+            classes.setdefault(name, []).append(text)
+    for r in bash + (fork or ()):
+        r.close()
 
     total = sum(len(v) for v in classes.values())
     print("gate-differential: %s corpus=%d (base=%d replay=%d fuzz=%d) diffs=%d classes=%d"
           % (a.gate, len(corpus), len(base), len(replay), len(fz), total, len(classes)))
+    if fork:
+        print("  runner: fork (fork-only diffs dropped: %d, near-deadline re-runs: %d)" % (dropped, near))
+    else:
+        print("  runner: bash (%s)" % why)
     if a.replay:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):

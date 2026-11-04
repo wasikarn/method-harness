@@ -267,6 +267,15 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   replay holding the queue kept every push waiting (2026-10-27). Both sides run in a canonical env
   (GH #888): the cwd is a fresh dir outside any git repo, and no `MH_*` or `GIT_*` variable reaches
   the gates, so a caller's gate knob or a mid-merge checkout cannot change the result.
+  **Fork mode** (GH #889, the default when both sides' wrapper files are byte-identical; `--runner bash`
+  forces the old path): one `scripts/_lib/gate-fork-server.py` per side, under the wrapper's own
+  `python3 -S`, imports the stdlib and warms the regex cache once, then forks a child per command
+  that imports the gate afresh. It skips bash and python start-up (on the fixtures: irrecoverable
+  9.5 s against 47 s, subagent-git-guard 5.4 s against 34 s). Every diff it finds and every command
+  over half the gate's deadline (4 s, 5 s) is re-run through `bash <gate>.sh` on both sides, and only
+  that result counts; the summary says how many fork-only diffs were dropped. Never run the gates in
+  one process in a loop: they call `os._exit`. `test_deny`/`test_allow` in `tests/_lib/gates-harness.sh`
+  stay on real spawns, the only check of the wrapper's fast-path token list.
 
 - **Acceptance:** 0 commands that `develop` denies and the branch allows, apart from a category
   the PR names as intended. Over-denies are the safe direction and are reported, not blocking.

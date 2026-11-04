@@ -2,7 +2,9 @@
 # scripts/gate-differential.sh (GH #411): old-vs-new gate replay that prints diff classes only.
 # Checks: identical copies give 0 diffs; a planted one-rule change gives exactly its class and
 # never prints the secret-shaped command it replayed; a --slug outside this project is refused;
-# --replay reads only this project's transcript dirs; the real gate journal is never written.
+# --replay reads only this project's transcript dirs; the real gate journal is never written;
+# the caller's env and cwd never reach the gates (GH #888); fork mode matches bash mode and drops
+# fork-only diffs (GH #889); a slower new side lands in `slower` (GH #890).
 # Run standalone: bash tests/scripts/test-gate-differential.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -203,6 +205,14 @@ if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" && /usr/bin/grep -q 
    && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 1,' <<<"$out"; then
   ok "fork-only diff dropped after the bash re-check; the confirmed one is kept"
 else bad "fork-only re-check (rc=$rc): $out"; fi
+
+echo "=== a fork server that dies falls back to the bash runner (GH #889) ==="
+# A gate that os._exits while the server warms it up kills the server: the run goes on through bash.
+stub "$T/s-exit" 'import os; os._exit(0)'
+out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-exit" "$T/s-exit" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && /usr/bin/grep -q '^  runner: bash (fork server exited' <<<"$out"; then
+  ok "a dead fork server falls back to bash"
+else bad "dead fork server (rc=$rc): $out"; fi
 
 echo "=== a wrapper change falls back to the bash runner (GH #889) ==="
 cp -R "$GATES" "$T/wrapped"

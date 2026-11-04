@@ -14,7 +14,11 @@
 #   --slug S        read only that transcript dir; refused unless it is this project's slug
 #                   or one of its worktrees' (<slug>--claude-worktrees-*)
 #   --fuzz-seed S   add seeded mutations of the corpus
+#   --runner R      auto (default): fork mode when both wrappers are byte-identical, else bash;
+#                   bash: every command through `bash <gate>.sh` (GH #889)
 # Exit: 0 no diffs, 1 diffs, 2 usage error or refusal.
+# Fork mode (GH #889) loads python once per side and forks per command; every diff it finds, and
+# every command over half the gate's deadline, is re-run through bash, and only bash's result counts.
 # Both sides write their journal rows to a temp file (MH_GATE_JOURNAL_PATH) under a temp HOME, so
 # the operator's real gate journal is never touched; the temp dir is deleted at exit through scripts/_lib/tmp_delete.py.
 # It runs at the lowest CPU priority and never takes the gauntlet's queue: holding it, a
@@ -22,9 +26,9 @@
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
-usage() { sed -n '5,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '5,18p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-cases="" replay=0 slug="" seed=""
+cases="" replay=0 slug="" seed="" runner=auto
 pos=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -32,6 +36,7 @@ while [ $# -gt 0 ]; do
     --replay) [ $# -ge 2 ] || usage; replay="$2"; shift 2 ;;
     --slug) [ $# -ge 2 ] || usage; slug="$2"; shift 2 ;;
     --fuzz-seed) [ $# -ge 2 ] || usage; seed="$2"; shift 2 ;;
+    --runner) [ $# -ge 2 ] || usage; runner="$2"; shift 2 ;;
     -h|--help) usage ;;
     -*) echo "gate-differential: unknown option $1" >&2; usage ;;
     *) pos+=("$1"); shift ;;
@@ -43,6 +48,7 @@ case ${#pos[@]} in
   *) usage ;;
 esac
 case "$gate" in irrecoverable|subagent-git-guard|secret-scan) : ;; *) echo "gate-differential: unknown gate $gate" >&2; usage ;; esac
+case "$runner" in auto|fork|bash) : ;; *) echo "gate-differential: --runner takes auto, fork or bash" >&2; exit 2 ;; esac
 case "$replay" in ''|*[!0-9]*) echo "gate-differential: --replay takes a number" >&2; exit 2 ;; esac
 
 # Transcript slug: Claude Code names a project dir after the session cwd with every
@@ -79,7 +85,7 @@ done
 
 set -- --old "$old" --new "$new" --gate "$gate" --tmp "$tmp" --replay "$replay" \
   --projects "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" "--own-slug=$own_slug" \
-  --fixtures "$ROOT/tests/hooks/fixtures"
+  --fixtures "$ROOT/tests/hooks/fixtures" --runner "$runner"
 [ -n "$cases" ] && set -- "$@" --cases "$cases"
 [ -n "$slug" ] && set -- "$@" "--slug=$slug"
 [ -n "$seed" ] && set -- "$@" --fuzz-seed "$seed"
