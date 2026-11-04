@@ -5149,9 +5149,16 @@ def _trash_raw_trees(c):
         for m in _TRASH_ARGS_RAW_RE.finditer(c.replace("\\\n", " ")):
             ops = m.group(1).split()
             pwd = pwd or any(_trash_norm(r, False) in _PWD_SUBST_WORDS for r in ops)
-            home = home or bool(_HOME_BRACED_RAW_RE.search(m.group(1))) or any(_trash_norm(r) == "${HOME}" for r in ops)
+            home = home or bool(_HOME_BRACED_RAW_RE.search(m.group(1))) or any(  # GH #876: "${HOME:?HOME unset}" is one
+                _TRASH_HOME_KEEP_RE.fullmatch(_trash_norm(r))                       # operand, its message spaces dropped
+                for r in _TRASH_BRACE_WS_RE.sub(lambda b: "".join(b.group(0).split()), m.group(1)).split())
         _TRASH_RAW_MEMO[c] = (pwd, home)
     return _TRASH_RAW_MEMO[c]
+# GH #876: ${HOME} as written, or with a modifier that cannot change a set HOME (:?, ?, :-, - take effect only when it
+# is unset or empty; %/ and %%/ drop a trailing slash): "${HOME:?}"/* is the whole home. Not :+, #, or %/* (another
+# path). Here, not in _HOME_BRACED_RAW_RE, which chmod shares.
+_TRASH_HOME_KEEP_RE = re.compile(r"\$\{HOME(?::?[?-][^}]*|%%?/)?\}")
+_TRASH_BRACE_WS_RE = re.compile(r"\$\{HOME[:?-][^}]{0,200}\}")  # bounded: no quadratic scan on many unclosed ${HOME:
 
 def _chmod_world(rest, recursive=False):
     # recursive: the mode reaches every file anyway (a find -exec action, GH #587).
