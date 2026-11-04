@@ -5137,6 +5137,8 @@ def _trash_whole_tree(rest):
         w0, w = w, _trash_norm(w)
         if w in _TRASH_TREE_WORDS or (w.startswith("/") and PH not in w and os.path.normpath(w) in ("/", home)):
             return True
+        if _TRASH_HOME_KEEP_RE.fullmatch(w):  # GH #881: inside $( .. ) a ${HOME} word reaches here as written
+            return True
         # A placeholder word: each raw operand of trash, normalized the same way, is read for $(pwd) / `pwd` (only for a
         # word that is bare without the /.* strip too: $(x)/.* is not, as on develop) or for the home in a braced form.
         # GH #795: the raw operands are read once per command (_trash_raw_trees), not once per word (4000 "$(true)"
@@ -5159,9 +5161,40 @@ def _trash_raw_trees(c):
             pwd = pwd or any(_trash_norm(r, False) in _PWD_SUBST_WORDS for r in ops)
             home = home or bool(_HOME_BRACED_RAW_RE.search(m.group(1))) or any(  # GH #876: "${HOME:?HOME unset}" is one
                 _TRASH_HOME_KEEP_RE.fullmatch(_trash_norm(r))                       # operand, its message spaces dropped
-                for r in _TRASH_BRACE_WS_RE.sub(lambda b: "".join(b.group(0).split()), m.group(1)).split())
+                for w in _TRASH_BRACE_WS_RE.sub(lambda b: "".join(b.group(0).split()), m.group(1)).split()
+                for r in _trash_home_ops(w))
         _TRASH_RAW_MEMO[c] = (pwd, home)
     return _TRASH_RAW_MEMO[c]
+
+def _trash_home_ops(w):
+    # GH #881: one raw operand as the shell reads it for the home check. It ends at a ) that closes the enclosing
+    # ( subshell ) or $( .. ), or at a redirect (< or >), when unquoted and outside any ${..} or $(..) of its own:
+    # (trash "${HOME}"/*), "${HOME:?}"/*>/dev/null. A trailing brace list is each of its words: "${HOME}"/{*,.*}.
+    # One pass over the word; anything unclosed leaves it whole.
+    q, depth, i, n = "", 0, 0, len(w)
+    while i < n:
+        ch = w[i]
+        if q == "'":
+            q = "" if ch == "'" else q
+        elif ch == "\\":
+            i += 1
+        elif ch == "$" and w[i + 1:i + 2] in ("{", "("):
+            depth, i = depth + 1, i + 1
+        elif depth and ch == "(" and not q:
+            depth += 1
+        elif depth and ch in "})":
+            depth -= 1
+        elif ch == '"':
+            q = "" if q else '"'
+        elif not q and not depth and ch in ")<>":
+            w = w[:i]
+            break
+        elif ch == "'" and not q:
+            q = "'"
+        i += 1
+    b = _TRASH_BRACE_LIST_RE.fullmatch(w)
+    return [b.group(1) + a for a in b.group(2).split(",")] if b else [w]
+_TRASH_BRACE_LIST_RE = re.compile(r"(.*)\{([^{}'\"]*,[^{}'\"]*)\}")
 # GH #876: ${HOME} as written, or with a modifier that cannot change a set HOME (:?, ?, :-, -, :=, = act only when it
 # is unset or empty; %/ and %%/ drop a trailing slash): "${HOME:?}"/* is the whole home. Not :+, #, or %/* (another
 # path). Here, not in _HOME_BRACED_RAW_RE, which chmod shares.
