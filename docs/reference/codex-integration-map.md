@@ -140,7 +140,9 @@ Plus consumes included usage before purchased credits; API dollar rates are not 
 invoice. Published credit rates per 1M input/cached-input/output tokens, fetched live from
 `learn.chatgpt.com/docs/pricing` 2026-09-23: `gpt-6-luna` 2.5/0.25/12.5, `gpt-5.6-terra`
 50/5/300, `gpt-6-sol` 50/5/250, `gpt-6.1-sol` 50/2.5/250, `gpt-6-astra` 250/25/1250
-(re-fetched 2026-10-04 and 2026-10-21, every row unchanged). The superseded `gpt-5.6-sol` and
+(re-fetched 2026-10-04 and 2026-10-21, every row unchanged). Re-fetched 2026-11-05: those rows are
+unchanged, and `gpt-6.1-terra`, now the Terra tier's pick, is 25/1.25/125, half of `gpt-5.6-terra`
+on input, a quarter on cached input and ~0.42x on output. The superseded `gpt-5.6-sol` and
 `gpt-5.6-luna` rates (100/10/500 and 5/0.5/30, unchanged since 2026-09-14) still apply if a
 dispatch falls back to either; both are still listed. These compare credit usage; they do not price
 included quota or prove actual spend. Recheck current pricing when the account, plan, or catalog
