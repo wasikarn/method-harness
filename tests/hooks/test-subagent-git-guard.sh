@@ -1971,6 +1971,12 @@ test_deny "GH #844" $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit stash\nF' $'echo \
 _c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-replay-allow.txt")
 rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "PR #872 replay: a real 3.8 KB python heredoc with dense quoted JSON is allowed, as on develop (rc $rc)" "$ok"
+# ... while a brace expansion within the command size cap keeps its views (`git {stash,}` after a cut or a
+# quote in a heredoc body: the anchor only appears once the braces expand).
+test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\ngit {stash,}' $'cat <<\'E\'\ndon\'t\nE\ngit {status,}'
+test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\n{git,} stash' $'cat <<\'E\'\ndon\'t\nE\n{git,} status'
+test_deny "GH #842" $'echo `echo \'a`#; git {stash,}' $'echo `echo \'a`#; git {status,}'
+test_deny "GH #842" $'{ echo `echo \'a`#; git {stash,}; }' $'{ echo `echo \'a`#; git {status,}; }'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

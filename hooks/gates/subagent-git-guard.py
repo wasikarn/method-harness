@@ -1367,7 +1367,8 @@ def _cut_views(texts, base, prose=None):
             work.append(v)
     return views
 
-_no_views = False  # PR #872: set for the GH #309 brace-expanded reading (see below), which gets no extra views
+_no_views = False  # PR #872: set for a GH #309 brace-expanded reading over _VIEWS_MAX_CHARS (see below): no extra views
+_VIEWS_MAX_CHARS = 16_000  # the default command size cap, fixed (MH_SGG_MAX_CMD_CHARS lifts the cap for stress tests only)
 
 def _extra_views(s, base, based=None):
     # The views of s checked beside (based, base): heredoc bodies blanked (both ways), and each of those and
@@ -1526,12 +1527,14 @@ try:
             _brace_too_big = True
             raise _TooCostly
         if _bx != cmd:
-            # PR #872: the GH #842-#844 extra views read the main text only, not this expansion. A brace
-            # list in quoted JSON (`{"k":1,"v":2}`) expands a 3.8 KB command to 117 KB, which develop scans
-            # just under the work budget; views on top of it went over and denied a real command develop
-            # allows. Develop has no views in any reading, so leaving them out here reads no less than it.
+            # PR #872: the GH #842-#844 extra views read this expansion only while it is within the default
+            # command size cap (_VIEWS_MAX_CHARS), so they cost no more here than on any command. A brace list
+            # in quoted JSON (`{"k":1,"v":2}`) expands a real 3.8 KB command to 117 KB, which develop scans
+            # just under the work budget; views on top of that went over and denied it, where develop allows.
+            # Develop has no views in any reading, so leaving them out reads no less than develop, and a short
+            # expansion (`git {stash,}` after a quote in a heredoc body) keeps them.
             _raw_cmd, cmd = cmd, _bx
-            _no_views = True
+            _no_views = len(_bx) > _VIEWS_MAX_CHARS
             _dollar_joined = False
             for _dollar_join in ("'\"", "'", ""):  # the same three `$` readings as above (git {stash,} $"show")
                 if _dollar_join != "'\"" and not _dollar_joined:
