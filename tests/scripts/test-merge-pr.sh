@@ -114,6 +114,7 @@ n=0; [ ! -f "$STUB_DIR/gauntlet.n" ] || n=$(cat "$STUB_DIR/gauntlet.n"); n=$((n 
   echo "lockdir=${GAUNTLET_LOCK_DIR-} lockpid=$(cat "${GAUNTLET_LOCK_DIR-}/pid" 2>/dev/null)"
   if [ -d "$MERGE_PR_LOCK_DIR" ]; then echo "mergelock=held"; else echo "mergelock=free"; fi
   echo "shard=${GAUNTLET_SHARD-}"
+  echo "progress=${GAUNTLET_PROGRESS-unset}"
 } >>"$STUB_DIR/gauntlet.log"
 if [ -n "${STUB_GAUNTLET_FAIL:-}" ]; then
   echo "gauntlet: red" >&2
@@ -529,6 +530,8 @@ setup
 SHARD=1/2 run
 merges "GAUNTLET_SHARD set by the caller"
 if /usr/bin/grep -qx "shard=" "$F/gauntlet.log"; then ok "the merge-time gauntlet runs unsharded"; else bad "gauntlet saw: $(cat "$F/gauntlet.log")"; fi
+# GH #814: merge-pr.sh runs in the background with no TTY, so gauntlet_full turns progress on for it.
+if /usr/bin/grep -qx "progress=1" "$F/gauntlet.log"; then ok "the merge-time gauntlet runs with GAUNTLET_PROGRESS=1"; else bad "gauntlet saw: $(cat "$F/gauntlet.log")"; fi
 
 # 10d. a red pre-commit hook on the sync or the bump commit: refuse, abort the merge, restore the manifests.
 setup; on develop "peer" set_ver 1.1.2

@@ -60,6 +60,19 @@ else
   else
     ok "the 'failed-at:' line leaves out passing rows"
   fi
+  # GH #814: with prog unset (as here) the progress argument falls back to /dev/null: no error in the output.
+  if /usr/bin/grep -q 'No such file' <<<"$out"; then bad "prog unset: an error reached the output: $out"; else ok "with prog unset, run_hook_tests prints no error"; fi
+  # GH #814: with prog set, each test file writes one start and one end event, with its exit code.
+  ev_out=$(bash -c "
+    . '$ROOT/scripts/_lib/tmp-delete.sh'
+    $BODY
+    hook_test_files() { printf '%s\n' '$FIX/test-green.sh' '$FIX/test-red.sh'; }
+    prog='$FIX/events'; : >\"\$prog\"
+    run_hook_tests >/dev/null 2>&1
+    awk '{ print \$1, (\$1 == \"E\" ? \$2 \" \" \$4 : \$2) }' \"\$prog\" | LC_ALL=C sort
+  " 2>&1)
+  want=$(printf '%s\n' "E 0 $FIX/test-green.sh" "E 1 $FIX/test-red.sh" "S $FIX/test-green.sh" "S $FIX/test-red.sh")
+  if [ "$ev_out" = "$want" ]; then ok "with prog set, each file writes one S and one E event with its code"; else bad "events: <$ev_out>"; fi
 fi
 safe_tmp_delete "$FIX"
 
