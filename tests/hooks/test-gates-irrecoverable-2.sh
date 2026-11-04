@@ -4953,4 +4953,16 @@ _timed_case 'GH #795: one trash with 4000 "$(true)" words, then trash ~, denied 
 _timed_case 'GH #795: trash ~ first, then one trash with 4000 "$(true)" words, denied in bounded time' 2 "trash ~; trash ${_w795}x"
 _timed_case 'GH #795: one trash with 4000 "$(true)" words and "${HOME}/."* last, denied in bounded time' 2 "trash ${_w795}\"\${HOME}/.\"*"
 _timed_case 'GH #795 control: one trash with 4000 "$(true)" words, allowed in bounded time' 0 "trash ${_w795}x"
+# GH #876: a quoted ${HOME} with a modifier that cannot change a set HOME (:?, ?, %/, %%/, :-, -), the glob outside the
+# quotes: still the whole home. "${HOME:?}" is the docs' advice for guarding an empty variable. ${HOME:+x}, ${HOME#..}
+# and ${HOME%/*} name something else, so they stay allowed (trash is recoverable).
+for _c in 'trash "${HOME:?}"/*' 'trash "${HOME:?}"/.*' 'trash "${HOME%/}"/.*' 'trash "${HOME:?HOME unset}"/*' \
+    'trash "${HOME?}"/*' 'trash "${HOME%%/}"/*' 'trash "${HOME:-/tmp}"/*' 'trash "${HOME-}"/.*' 'trash -- "${HOME:?}"/' \
+    'trash-put "${HOME:?}"/*' 'gio trash "${HOME:?}"/.*' 'trash "${HOME:?}/"*'; do
+  test_deny  "$IRRECOVERABLE" "GH #876: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'trash "${HOME:?}"/x' 'trash "${HOME:-/tmp}/x"' 'trash "${HOME:+/tmp/x}"/*' 'trash "${HOME%/*}"/x' \
+    'trash "${HOME#/}"/x' 'trash "${HOMEDIR:?}"/*' 'echo "${HOME:?}"/*; trash x'; do
+  test_allow "$IRRECOVERABLE" "GH #876 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary
