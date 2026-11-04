@@ -1715,6 +1715,296 @@ _c="$(_pad 'A="x y" ' 1500)git status"
 rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "GH #520 1500 quoted assignments before git status decided inside 8 s as allow (rc $rc, ${#_c} bytes)" "$ok"
 
+# GH #842-#844: three quote masks that hid a git command from the subagent guard. Each test_deny row
+# runs one shape a subagent payload can send (bash 5.2 runs its `git stash`), then its control: the
+# same text with an allowed git command must still pass, so a row cannot go green by denying all.
+_sgg_err="$_JOURNAL_TMP/sgg842.err"
+test_deny() { # test_deny <issue> <command> <allowed control>
+  local rc
+  rc=$(payload "$2" fork | bash "$GATE" 2>"$_sgg_err"; echo $?); ok=1
+  [ "$rc" = "2" ] && ! /usr/bin/grep -qE 'Traceback|internal error' "$_sgg_err" && ok=0
+  check "$1 denied (rc $rc): ${2//$'\n'/<nl>}" "$ok"
+  rc=$(sgg_rc "$3"); ok=1; [ "$rc" = "0" ] && ok=0
+  check "$1 control allowed (rc $rc): ${3//$'\n'/<nl>}" "$ok"
+}
+# GH #842: inside backticks a quote or a comment ends at the next backtick (bash closes the substitution
+# there), so the quote span or comment the mask opened must not hide the text after it.
+test_deny "GH #842" $'echo `echo \'a`#; git stash' $'echo `echo \'a\'`#; git status'
+test_deny "GH #842" $'echo `echo "a`#; git stash' $'echo `echo "a"`#; git status'
+test_deny "GH #842" $'echo `echo $\'a`#; git stash' $'echo `echo $\'a\'`#; git status'
+test_deny "GH #842" $'echo `\'esac`#|git stash' $'echo `\'esac\'`#|git status'
+test_deny "GH #842" $'echo `echo #`; git stash' $'echo `echo #`; git status'
+test_deny "GH #842" $'echo `echo \'a`; git reset --hard' $'echo `echo \'a\'` \'git stash\''
+test_deny "GH #842" $'x=`echo "a`\ngit stash' $'x=`echo "a"`\ngit status'
+# GH #843: a line continuation inside a partly quoted word; bash deletes the pair and joins the word.
+test_deny "GH #843" $'g\\\n"it" stash' $'g\\\n"it" status'
+test_deny "GH #843" $'"g"\\\nit stash' $'"g"\\\nit status'
+test_deny "GH #843" $'g\\\n\'it\' reset --hard' $'echo g\\\n\'it\' reset --hard'
+test_deny "GH #843" $'"gi"\\\n"t" stash' $'"gi"\\\n"t" status'
+test_deny "GH #843" $'g\\\ni\\\n"t" stash' $'g\\\ni\\\n"t" status'
+test_deny "GH #843" $'true; \\\ng\\\n"it" stash' $'true; \\\ng\\\n"it" status'
+test_deny "GH #843" $'"git"\\\n stash' $'"git"\\\n status'
+# GH #844: a quote in a heredoc body opened a mask span that ran past the delimiter.
+test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\ngit stash' $'cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <<\'E\'\n$(date)#\'\nE\ngit stash' $'cat <<\'E\'\n$(date)#\'\nE\ngit status'
+test_deny "GH #844" $'cat <<\'E\'\na\\ #\'\nE\ngit stash' $'cat <<\'E\'\na\\ #\'\nE\ngit status'
+test_deny "GH #844" $'cat <<\'E\'\nfix: $(case a in a) x;; esac)#\' shape\nE\ngit stash' \
+  $'cat <<\'E\'\nfix: $(case a in a) x;; esac)#\' shape\nE\ngit status'
+test_deny "GH #844" $'git commit -F- <<\'E\'\ndon\'t\nE\ngit stash' $'git commit -F- <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <<E\ndon\'t\nE\ngit stash' $'cat <<E\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <<-\'E\'\n\tdon\'t\n\tE\ngit stash' $'cat <<-\'E\'\n\tdon\'t\n\tE\ngit status'
+test_deny "GH #844" $'cat <<\'A\'\ndon\'t\nA\ncat <<\'B\'\nx\'\nB\ngit stash' $'cat <<\'A\'\ndon\'t\nA\ncat <<\'B\'\nx\'\nB\ngit status'
+test_deny "GH #844" $'cat <<A\n"\nA\ncat <<B\nx\'\nB\ngit stash' $'cat <<A\n"\nA\ncat <<B\nx\'\nB\ngit status'
+test_deny "GH #844" $'cat <<A <<B\ndon\'t\nA\nit\'s\nB\ngit stash' $'cat <<A <<B\ndon\'t\nA\nit\'s\nB\ngit status'
+test_deny "GH #844" $'cat <<\'E\'; git stash\ndon\'t\nE' $'cat <<\'E\'; git status\ndon\'t\nE'
+test_deny "GH #844" $'echo "$(cat <<\'E\'\ndon\'t\nE\ngit stash)"' $'echo "$(cat <<\'E\'\ndon\'t\nE\ngit status)"'
+# Fresh-context review round 1: develop's reading of a continuation word is kept beside the joined one
+# (`git stash'E'\<nl>` was denied on develop), a `<blank>\` comment ending is no continuation, and an
+# operator the top-level mask hides (inside "$(..)", body with a lone `"`) still blanks its body.
+test_deny "GH #843" $'git stash\'E\'\\\n' $'git status\'E\'\\\n'
+test_deny "GH #843" $'git stash"x"\\\n' $'git status"x"\\\n'
+test_deny "GH #843" $'# c \\\ng\\\n"it" stash' $'# c \\\ng\\\n"it" status'
+test_deny "GH #844" $'git commit -m "$(cat <<\'EOF\'\nfix: set width to 5"\nEOF\n)" && git stash' \
+  $'git commit -m "$(cat <<\'EOF\'\nfix: set width to 5"\nEOF\n)" && git status'
+test_deny "GH #844" $'echo "$(cat <<\'E\'\n"\nE\n)"; git stash' $'echo "$(cat <<\'E\'\n"\nE\n)"; git status'
+test_deny "GH #844" $'echo "$(cat <<\'E\'\ndon\'t "\nE\n)"; git stash' $'echo "$(cat <<\'E\'\ndon\'t "\nE\n)"; git status'
+test_deny "GH #844" $'cat <<\'A\'\nx\nA\necho "$(cat <<\'E\'\n"\nE\n)"; git stash' $'cat <<\'A\'\nx\nA\necho "$(cat <<\'E\'\n"\nE\n)"; git status'
+# Fresh-context review round 2: a second-parse body (bash -c, sh -c, eval) gets the same extra views.
+test_deny "GH #843" $'bash -c \'g\\\n"it" stash\'' $'bash -c \'g\\\n"it" status\''
+test_deny "GH #843" $'eval \'g\\\n"it" stash\'' $'eval \'g\\\n"it" status\''
+test_deny "GH #843" $'sh -c \'"g"\\\nit stash\'' $'sh -c \'"g"\\\nit status\''
+test_deny "GH #843" $'bash -c \'git s\\\n"tash"\'' $'bash -c \'git s\\\n"tatus"\''
+test_deny "GH #844" $'bash -c "cat <<\'E\'\ndon\'t\nE\ngit stash"' $'bash -c "cat <<\'E\'\ndon\'t\nE\ngit status"'
+test_deny "GH #844" $'eval "cat <<\'E\'\ndon\'t\nE\ngit stash"' $'eval "cat <<\'E\'\ndon\'t\nE\ngit status"'
+test_deny "GH #844" $'sh -c "true <<\'E\'\n\'\nE\ngit reset --soft HEAD"' $'sh -c "true <<\'E\'\n\'\nE\ngit status"'
+# ... and a substitution's continuation view is built from its blanked text, so heredoc prose stays data.
+for _c in \
+  $'git commit -m "$(cat <<\'EOF\'\nfix(hook): stop running stash\n\nExample:\n    ls \\\n      -la\ngit stash is no longer run by the hook.\nEOF\n)"' \
+  $'x="$(cat <<\'EOF\'\na\\\\\ngit reset b\nEOF\n)"' ; do
+  rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+  check "GH #843/#844 review 2 control allowed (rc $rc): ${_c//$'\n'/<nl>}" "$ok"
+done
+_c=$(python3 -c '
+q = chr(39)
+lines = ["gh issue create --title x --body \"$(cat <<" + q + "EOF" + q]
+block = ["echo " + q + "it" + q + q + "s" + q + " # comment with " + q + " quote",
+         "Fix the parser so it doesn" + q + "t hide `git stash` from the guard.",
+         "He said \"hi\" and left `a lone backtick", "Paths: ~/x, C:\\\\temp\\\\z\\\\",
+         "  ls \\", "case $x in a) echo a;; esac", "100% done; 5\" screen; it" + q + "s " + q + "fine" + q]
+lines += block * 22 + ["EOF", ")\" && git log --oneline -3"]
+print("\n".join(lines))
+')
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && [ "${#_c}" -gt 5000 ] && ok=0
+check "GH #843/#844 review 2: a 5 KB issue body through \"\$(cat <<'EOF' ..)\" is allowed (rc $rc, ${#_c} bytes)" "$ok"
+# Fresh-context review round 3: a cut must never change the mask's own reading (develop denied the first
+# rows), and the text after a cut is read as fresh code: joins, continuations and later lines included.
+test_deny "GH #842" $'echo `echo \'a`\\\'; g\\\nit stash' $'echo `echo \'a`\\\'; g\\\nit status'
+test_deny "GH #842" $'echo `echo \'a`\\\'; git st\\\nash' $'echo `echo \'a`\\\'; git st\\\natus'
+test_deny "GH #842" $'echo `echo \'a`\\\'; "g"it stash' $'echo `echo \'a`\\\'; "g"it status'
+test_deny "GH #842" $'echo `echo \'a`\\\'; $\'git\' stash' $'echo `echo \'a`\\\'; $\'git\' status'
+test_deny "GH #842" $'echo `echo #`; "g"it stash' $'echo `echo #`; "g"it status'
+test_deny "GH #842" $'echo `echo #`; git st"ash"' $'echo `echo #`; git st"atus"'
+test_deny "GH #842" $'echo `echo #`; g\\\nit stash' $'echo `echo #`; g\\\nit status'
+test_deny "GH #842" $'echo `echo \'a`; \\\ngit stash' $'echo `echo \'a`; \\\ngit status'
+test_deny "GH #842" $'echo `echo \'a`\ngit stash' $'echo `echo \'a`\ngit status'
+test_deny "GH #842" $'echo `echo \'a` &&\ngit stash' $'echo `echo \'a` &&\ngit status'
+# Fresh-context review round 4: cuts found inside a cut view are followed, a wrapper before the
+# substitution is kept, a view keeps its whole statement, and each source text gets its own cuts.
+test_deny "GH #842" $'echo `echo #`; echo `echo #`; git stash' $'echo `echo #`; echo `echo #`; git status'
+test_deny "GH #842" $'echo `echo \'a`; echo `echo "a`#; git stash' $'echo `echo \'a`; echo `echo "a`#; git status'
+test_deny "GH #842" $'bash -c \'echo `echo #`; echo `echo #`; git stash\'' $'bash -c \'echo `echo #`; echo `echo #`; git status\''
+test_deny "GH #842" $'env `echo #` git stash' $'env `echo #` git status'
+test_deny "GH #842" $'env `echo \'a` git stash' $'env `echo \'a` git status'
+test_deny "GH #842" $'nohup `echo #` git stash' $'nohup `echo #` git status'
+test_deny "GH #843" $'env $(\ntrue\n) g\\\n"it" stash' $'env $(\ntrue\n) g\\\n"it" status'
+test_deny "GH #844" $'env $(\ntrue <<\'E\'\ndon\'t\nE\n) git stash' $'env $(\ntrue <<\'E\'\ndon\'t\nE\n) git status'
+test_deny "GH #844" $'echo `echo \'a`\ncat <<E\nsize 5"\nE\ngit stash' $'echo `echo \'a`\ncat <<E\nsize 5"\nE\ngit status'
+test_deny "GH #844" $'echo `echo \'a`; cat <<E\n5"\nE\ngit stash' $'echo `echo \'a`; cat <<E\n5"\nE\ngit status'
+# Fresh-context review round 5: a view is trimmed only at a newline outside every (, { and backtick, so
+# an escaped separator or a backtick that spans lines keeps the wrapper or the git word in the view.
+test_deny "GH #843" $'git -c core.x=1\\;2 s\\\n"tash"' $'git -c core.x=1\\;2 s\\\n"tatus"'
+test_deny "GH #843" $'X=a\\;b g\\\n"it" stash' $'X=a\\;b g\\\n"it" status'
+test_deny "GH #843" $'X=a\\|b g\\\n"it" stash' $'X=a\\|b g\\\n"it" status'
+test_deny "GH #843" $'env X=a\\;b $(\ntrue\n) g\\\n"it" stash' $'env X=a\\;b $(\ntrue\n) g\\\n"it" status'
+test_deny "GH #842" $'env X=a\\;b `echo #` git stash' $'env X=a\\;b `echo #` git status'
+test_deny "GH #842" $'git -c core.x=1\\;2 -c core.y=`echo \'a` stash' $'git -c core.x=1\\;2 -c core.y=`echo \'a` status'
+test_deny "GH #844" $'env X=a\\;b $(true <<\'E\'\ndon\'t\nE\n) git stash' $'env X=a\\;b $(true <<\'E\'\ndon\'t\nE\n) git status'
+test_deny "GH #843" $'env `\ntrue\n` g\\\n"it" stash' $'env `\ntrue\n` g\\\n"it" status'
+test_deny "GH #843" $'nohup `\n:\n` g\\\n"it" stash' $'nohup `\n:\n` g\\\n"it" status'
+test_deny "GH #844" $'env `\ntrue <<\'E\'\ndon\'t\nE\n` git stash' $'env `\ntrue <<\'E\'\ndon\'t\nE\n` git status'
+# Fresh-context review round 6: views are no longer trimmed (a miscounted nesting dropped the wrapper), a
+# `<<` in a comment or a plain quoted string does not make the lines after it prose for the cut views, and
+# a continuation inside a double-quoted piece is joined.
+test_deny "GH #843" $'env $(: }\n) g\\\n"it" stash' $'env $(: }\n) g\\\n"it" status'
+test_deny "GH #843" $'env $(: \\)\n) git st\\\n"ash"' $'env $(: \\)\n) git st\\\n"atus"'
+test_deny "GH #843" $'env `: \\`\n` g\\\n"it" stash' $'env `: \\`\n` g\\\n"it" status'
+test_deny "GH #843" $'env $(case x in x) :;;\nesac\n) g\\\n"it" stash' $'env $(case x in x) :;;\nesac\n) g\\\n"it" status'
+test_deny "GH #844" $'env $(: }\ntrue <<\'E\'\ndon\'t\nE\n) git stash' $'env $(: }\ntrue <<\'E\'\ndon\'t\nE\n) git status'
+test_deny "GH #842" $'env $(: }\n) `echo #` git stash' $'env $(: }\n) `echo #` git status'
+test_deny "GH #843" $'echo \\`; env `\ntrue\n` g\\\n"it" stash' $'echo \\`; env `\ntrue\n` g\\\n"it" status'
+test_deny "GH #842" $'# write it with <<EOF\necho `echo \'a`#; git stash\ncat > f <<EOF\nx\nEOF' $'# write it with <<EOF\necho `echo \'a`#; git status\ncat > f <<EOF\nx\nEOF'
+test_deny "GH #842" $'echo "a <<E b"\necho `echo #`; git stash\nE' $'echo "a <<E b"\necho `echo #`; git status\nE'
+test_deny "GH #842" $'# <<E\necho `echo \'a`; git reset --hard\nE' $'# <<E\necho `echo \'a`; git status\nE'
+test_deny "GH #843" $'"g\\\nit" stash' $'"g\\\nit" status'
+test_deny "GH #843" $'"gi\\\nt" stash' $'"gi\\\nt" status'
+test_deny "GH #843" $'g"i\\\nt" stash' $'g"i\\\nt" status'
+test_deny "GH #843" $'git "st\\\nash"' $'git "st\\\natus"'
+# Fresh-context review round 7: only a heredoc the substitution scanner opens (quotes, comments, frames
+# and ${..} tracked) makes its body prose for the cut views; a fake `<<` hides no real cut.
+test_deny "GH #842" $'echo \'$( <<E \'\necho `echo \'a`#; git stash\nE' $'echo \'$( <<E \'\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'echo \'` <<E \'\necho `echo \'a`#; git stash\nE' $'echo \'` <<E \'\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'# $( <<E\necho `echo \'a`#; git stash\nE' $'# $( <<E\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'echo \'$( <<E \'\necho `echo "a`#; git stash\nE' $'echo \'$( <<E \'\necho `echo "a`#; git status\nE'
+test_deny "GH #842" $'echo \\<<E\necho `echo \'a`#; git stash\nE' $'echo \\<<E\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'echo ${v:-<<E}\necho `echo \'a`#; git stash\nE}' $'echo ${v:-<<E}\necho `echo \'a`#; git status\nE}'
+# Fresh-context review round 8: a `<<` in a quoted string inside backticks, or a shift in $[..] or an
+# array subscript, opens no heredoc, so its "body" hides no cut and no later command.
+test_deny "GH #842" $'echo `echo \'<<E \'`\necho `echo #`; git stash\nE' $'echo `echo \'<<E \'`\necho `echo #`; git status\nE'
+test_deny "GH #842" $'echo `echo \'<<EOF \'`\necho `echo \'it`; git stash\nEOF' $'echo `echo \'<<EOF \'`\necho `echo \'it`; git status\nEOF'
+test_deny "GH #842" $'x=`echo $\'<<E \'`\necho `echo \'a`; git stash\nE' $'x=`echo $\'<<E \'`\necho `echo \'a`; git status\nE'
+test_deny "GH #842" $'echo $[1<<E]\necho `echo \'a`; git stash\nE]' $'echo $[1<<E]\necho `echo \'a`; git status\nE]'
+test_deny "GH #842" $'a[1<<E]=1\necho `echo #`; git stash\nE]=1' $'a[1<<E]=1\necho `echo #`; git status\nE]=1'
+test_deny "GH #844" $'a[1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]=1' $'a[1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]=1'
+test_deny "GH #844" $'echo $[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]' $'echo $[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]'
+# Fresh-context review round 9: a heredoc counts as prose only where every comment reading of the scanner
+# opens it (`(true)#<<E` is a comment in bash), and the scanner's heredocs give a view of their own, so a
+# fake `<<X` before a real "$(cat <<'E' ..)" hides nothing.
+test_deny "GH #842" $'(true)#<<E\necho `echo \'a`#; git stash\nE' $'(true)#<<E\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'(:)#<<E\necho `echo \'a`; git reset --hard\nE' $'(:)#<<E\necho `echo \'a`; git status\nE'
+test_deny "GH #844" $'# <<X\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'# <<X\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
+test_deny "GH #844" $'echo \'<<X \'\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'echo \'<<X \'\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
+test_deny "GH #844" $'(:)#<<X\necho "$(cat <<\'E\'\n"\nE\n)"; git stash\nX' $'(:)#<<X\necho "$(cat <<\'E\'\n"\nE\n)"; git status\nX'
+# Fresh-context review round 10: each comment reading of the scanner is a heredoc view of its own, so a
+# comment it reads two ways cannot empty the one reading that opens the real heredoc.
+test_deny "GH #844" $'# <<F note\necho x \\\n# don\'t\ngit commit -m "$(cat <<\'EOF\'\nsay "hi\nEOF\n)"; git stash\nF' \
+  $'# <<F note\necho x \\\n# don\'t\ngit commit -m "$(cat <<\'EOF\'\nsay "hi\nEOF\n)"; git status\nF'
+test_deny "GH #844" $'echo "<<F ok"; (true)#\'\nx="$(cat <<\'E\'\nsay "hi\nE\n)"; git stash\nF' \
+  $'echo "<<F ok"; (true)#\'\nx="$(cat <<\'E\'\nsay "hi\nE\n)"; git status\nF'
+# Fresh-context review round 11: the cut views also read each scanner reading's text, so a heredoc only
+# some readings open (`$(..)#<<E`, one word in bash) is blanked under a cut view too.
+test_deny "GH #842" $'echo $(true)#<<E\nsay "hi\nE\necho `echo \'a`; git stash' $'echo $(true)#<<E\nsay "hi\nE\necho `echo \'a`; git status'
+test_deny "GH #842" $'echo $(date)#x; cat <<E\nsay "hi\nE\necho `echo \'a`; git stash' $'echo $(date)#x; cat <<E\nsay "hi\nE\necho `echo \'a`; git status'
+test_deny "GH #842" $'echo `echo \'a`; echo $(true)#x; cat <<E\nsay "hi\nE\ngit stash' $'echo `echo \'a`; echo $(true)#x; cat <<E\nsay "hi\nE\ngit status'
+# Fresh-context review round 12: a run of continuations at the end of a quoted word (only the last pair is
+# in place in the mask), and a `[` that is no assignment subscript (`echo x[; cat <<'E'`) opens no shift.
+test_deny "GH #843" $'"git"\\\n\\\n stash' $'"git"\\\n\\\n status'
+test_deny "GH #843" $'"gi"t\\\n\\\n stash' $'"gi"t\\\n\\\n status'
+test_deny "GH #843" $'git "stash"\\\n\\\n' $'git "status"\\\n\\\n'
+test_deny "GH #843" $'bash -c \'"git"\\\n\\\n\\\n stash\'' $'bash -c \'"git"\\\n\\\n\\\n status\''
+test_deny "GH #844" $'echo x[; cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo x[; cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'grep -c a[ f | cat <<\'E\'\ndon\'t\nE\ngit stash' $'grep -c a[ f | cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo a[ <<\'E\'\ndon\'t\nE\ngit stash' $'echo a[ <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo a[1<<E]\ndon\'t\nE]\ngit stash' $'echo a[1<<E]\ndon\'t\nE]\ngit status'
+# Fresh-context review round 13: whether a `<<` is a shift or a heredoc is read every way in the views
+# (`$$[`, an argument word `a[<<E]=1`, `((echo a) )`), and a continuation inside the operator is deleted.
+test_deny "GH #844" $'echo $$[ && cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo $$[ && cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo a[<<E]=1\ndon\'t\nE]=1\ngit stash' $'echo a[<<E]=1\ndon\'t\nE]=1\ngit status'
+test_deny "GH #844" $'cat a[1<<E]+=1\ndon\'t\nE]+=1\ngit stash' $'cat a[1<<E]+=1\ndon\'t\nE]+=1\ngit status'
+test_deny "GH #844" $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\ngit stash' $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'echo $((echo a)|cat) && cat <<\'E\'\ndon\'t\nE\ngit stash' $'echo $((echo a)|cat) && cat <<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat <\\\n<\'E\'\ndon\'t\nE\ngit stash' $'cat <\\\n<\'E\'\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'cat \\\n<\\\n<-\'E\'\ndon\'t\nE\ngit stash' $'cat \\\n<\\\n<-\'E\'\ndon\'t\nE\ngit status'
+# Fresh-context review round 14: a continuation between `$` and its quote ($\<nl>'git') is joined, and a
+# long line of shift-like `<<` stays fast (no heredoc follows, so no subscript check runs).
+test_deny "GH #843" $'$\\\n\'git\' stash' $'$\\\n\'git\' status'
+test_deny "GH #843" $'$\\\n"git" stash' $'$\\\n"git" status'
+test_deny "GH #843" $'g$\\\n\'it\' stash' $'g$\\\n\'it\' status'
+test_deny "GH #843" $'git $\\\n"stash"' $'git $\\\n"status"'
+test_deny "GH #843" $'$\\\n\\\n\'git\' stash' $'$\\\n\\\n\'git\' status'
+test_deny "GH #843" $'bash -c \'$\\\n"git" stash\'' $'bash -c \'$\\\n"git" status\''
+_c="$(_pad 'a[1<<E]=1 ' 800)"
+rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "GH #844 review 14: 800 shift-like a[1<<E]=1 words on one line decided inside 8 s as allow (rc $rc)" "$ok"
+# Fresh-context review round 15: each heredoc view's text is a cut source too (with its own cap), so a cut
+# after a heredoc only those views find is read.
+test_deny "GH #842" $'cat <\\\n<\'I\'\ndon\'t\nI\necho `echo #`; git stash' $'cat <\\\n<\'I\'\ndon\'t\nI\necho `echo #`; git status'
+test_deny "GH #842" $'cat a[1<<E]+=1\ndon\'t\nE]+=1\necho `echo #`; git stash' $'cat a[1<<E]+=1\ndon\'t\nE]+=1\necho `echo #`; git status'
+test_deny "GH #842" $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\necho `echo #`; git stash' $'((echo a) ) && cat <<\'E\'\ndon\'t\nE\necho `echo #`; git status'
+test_deny "GH #842" $'cat a[1<<E]=1\ndon\'t\nE]=1\nenv `echo #` git stash' $'cat a[1<<E]=1\ndon\'t\nE]=1\nenv `echo #` git status'
+test_deny "GH #842" $'cat <\\\n<\'I\'\n\'\nI\nx=`echo "a`\n"git" stash' $'cat <\\\n<\'I\'\n\'\nI\nx=`echo "a`\n"git" status'
+# Fresh-context review round 16: in an unquoted heredoc body bash deletes a backslash-newline before it
+# compares a line with the delimiter, so `x\` then `E` is no terminator; the continuation-deleted view reads it.
+test_deny "GH #844" $'cat <<E\nx\\\nE\ndon\'t\nE\ngit stash' $'cat <<E\nx\\\nE\ndon\'t\nE\ngit status'
+test_deny "GH #844" $'git commit -F- <<EOF\nfix: wrap \\\nEOF\nit\'s done\nEOF\ngit stash' $'git commit -F- <<EOF\nfix: wrap \\\nEOF\nit\'s done\nEOF\ngit status'
+test_deny "GH #844" $'cat <<-E\n\tx\\\n\tE\ndon\'t\n\tE\ngit stash' $'cat <<-E\n\tx\\\n\tE\ndon\'t\n\tE\ngit status'
+test_deny "GH #844" $'x=$(cat <<E\nx\\\nE\ndon\'t\nE\n)\ngit stash' $'x=$(cat <<E\nx\\\nE\ndon\'t\nE\n)\ngit status'
+test_deny "GH #844" $'bash -c "cat <<E\nx\\\\\nE\ndon\'t\nE\ngit stash"' $'bash -c "cat <<E\nx\\\\\nE\ndon\'t\nE\ngit status"'
+# Fresh-context review round 17: a `<<` bash does not read as a heredoc (an assignment subscript with a
+# blank in it, a compound array assignment) hides no cut or later command; a long continued run stays fast.
+test_deny "GH #842" $'a[1<<E ]=1\necho `echo \'a`#; git stash\nE' $'a[1<<E ]=1\necho `echo \'a`#; git status\nE'
+test_deny "GH #842" $'a[1<<E\t]=1\necho `echo #`; git stash\nE' $'a[1<<E\t]=1\necho `echo #`; git status\nE'
+test_deny "GH #844" $'a[1<<E ]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE' $'a[1<<E ]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE'
+test_deny "GH #844" $'a=(1<<E)\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE' $'a=(1<<E)\ncat <<\'F\'\ndon\'t\nF\ngit status\nE'
+test_deny "GH #842" $'a=(<<E)\necho `echo #`; git stash\nE' $'a=(<<E)\necho `echo #`; git status\nE'
+test_deny "GH #842" $'a+=(<<E)\necho `echo \'a`#; git stash\nE' $'a+=(<<E)\necho `echo \'a`#; git status\nE'
+_c="echo x; g$(_pad $'\\\ng' 5000)'"
+rc=$(sgg_rc8 "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "GH #843 review 17: a 15 KB run of continued word chars decided inside 8 s as allow (rc $rc)" "$ok"
+# Fresh-context review round 18: a word after a backslash-newline that is no continuation (an escaped `\\`,
+# a comment's last `\`) is joined, and a `<<` in any unclosed `name[` is also read as a shift.
+test_deny "GH #843" $'echo a\\\\\ng\\\n"it" stash' $'echo a\\\\\ng\\\n"it" status'
+test_deny "GH #843" $'echo a\\\\\n"git"\\\n stash' $'echo a\\\\\n"git"\\\n status'
+test_deny "GH #843" $'# see C:\\\ng\\\n"it" stash' $'# see C:\\\ng\\\n"it" status'
+test_deny "GH #843" $'git status # it\'s\\\ng\\\n\'it\' stash' $'git status # it\'s\\\ng\\\n\'it\' status'
+test_deny "GH #844" $'a[ 1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]=1' $'a[ 1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]=1'
+test_deny "GH #844" $'a[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]' $'a[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]'
+test_deny "GH #842" $'a[ 1<<E]=1\necho `echo \'a`#; git stash\nE]=1' $'a[ 1<<E]=1\necho `echo \'a`#; git status\nE]=1'
+# Fresh-context review round 19: a word match that runs through a backslash-newline that is no
+# continuation (a comment's last word, `# c\`) no longer hides the word on the next line.
+test_deny "GH #843" $'# c\\\ng\\\n"it" stash' $'# c\\\ng\\\n"it" status'
+test_deny "GH #843" $'echo x # path\\\ng\\\n"it" stash' $'echo x # path\\\ng\\\n"it" status'
+test_deny "GH #843" $'git status # s\\\ng\\\n\'it\' stash' $'git status # s\\\ng\\\n\'it\' status'
+test_deny "GH #843" $'# c\\\n"g"\\\nit stash' $'# c\\\n"g"\\\nit status'
+test_deny "GH #843" $'echo a # b\\\n\\\ng\\\n"it" stash' $'echo a # b\\\n\\\ng\\\n"it" status'
+# Fresh-context review round 20: a line that starts inside a multi-line quote (`"..<nl># Notes"`) only looks
+# like a comment when masked alone, so dropping candidates is its own reading, beside the one that keeps them.
+test_deny "GH #843" $'echo "a\n# b";g\\\n"it" stash' $'echo "a\n# b";g\\\n"it" status'
+test_deny "GH #843" $'git commit -m "fix: x\n# Notes" && g\\\n"it" stash' $'git commit -m "fix: x\n# Notes" && g\\\n"it" status'
+test_deny "GH #843" $'echo \'a\n#\';g\\\n"it" stash' $'echo \'a\n#\';g\\\n"it" status'
+test_deny "GH #843" $'echo x\\\n#;g\\\n"it" stash' $'echo x\\\n#;g\\\n"it" status'
+# ... and an escaped `\<<F` opens no heredoc in the raw-operator views either.
+test_deny "GH #844" $'echo \\<<F; cat <\\\n<\'I\'\n\'\nI\ngit stash\nF' $'echo \\<<F; cat <\\\n<\'I\'\n\'\nI\ngit status\nF'
+test_deny "GH #844" $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit stash\nF' $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit status\nF'
+# PR #872 operator replay: a real 3.8 KB `python3 - <<'EOF'` command dense with quoted JSON fixtures, which
+# develop allows. Its brace-expanded reading (GH #309) is 117 KB; the extra views on top of it went past the
+# work budget, so they read the main text only.
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-replay-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872 replay: a real 3.8 KB python heredoc with dense quoted JSON is allowed, as on develop (rc $rc)" "$ok"
+# A plain heredoc (no quote in its body) followed by a long chain of commands costs about develop's work: a
+# scanner-reading view that differs from the base only inside the blanked bodies is skipped.
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-plain-heredoc-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872 review 23: a plain heredoc then 64 cp/mkdir brace pairs is allowed, as on develop (rc $rc)" "$ok"
+# ... while a brace expansion within the command size cap keeps its views (`git {stash,}` after a cut or a
+# quote in a heredoc body: the anchor only appears once the braces expand).
+test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\ngit {stash,}' $'cat <<\'E\'\ndon\'t\nE\ngit {status,}'
+test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\n{git,} stash' $'cat <<\'E\'\ndon\'t\nE\n{git,} status'
+test_deny "GH #842" $'echo `echo \'a`#; git {stash,}' $'echo `echo \'a`#; git {status,}'
+test_deny "GH #842" $'{ echo `echo \'a`#; git {stash,}; }' $'{ echo `echo \'a`#; git {status,}; }'
+# Realistic scripts with a shell word (`eval "$(ssh-agent -s)"`) beside heredocs cost about develop's work:
+# the heredoc views that differ from the base only inside their bodies are not read (the shell-body shapes
+# they would add are GH #880). Develop allows each of these at 37-39M of the 40M budget.
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-eval-heredoc-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872: eval, a heredoc, then 78 cp/mkdir brace pairs is allowed, as on develop (rc $rc)" "$ok"
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-eval-late-heredoc-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872: eval, 225 ordinary lines, then a heredoc is allowed, as on develop (rc $rc)" "$ok"
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-eval-last-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872: 225 ordinary lines, eval, then a heredoc is allowed, as on develop (rc $rc)" "$ok"
+# ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
+for _c in \
+  $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
+  $'git commit -F- <<\'EOF\'\nfix `echo \'a`#; git stash` case\nEOF' ; do
+  rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+  check "GH #842 review 3 control allowed (rc $rc): ${_c//$'\n'/<nl>}" "$ok"
+done
+# A heredoc body is still data: blanking it for the second view must not read it as code.
+rc=$(sgg_rc $'cat <<\'E\'\ndon\'t git stash\nE\ngit status'); ok=1; [ "$rc" = "0" ] && ok=0
+check "GH #844 control allowed: a git stash line in a quoted heredoc body (rc $rc)" "$ok"
+
 # JSON nesting depth: an extra key nested ~140,000 deep makes json.load raise RecursionError ("Stack
 # overflow ... while decoding a JSON array"); that used to hit the parse-error allow, so a subagent
 # git stash ran. Depth overflow now fails closed for every payload; plain malformed JSON still allows.

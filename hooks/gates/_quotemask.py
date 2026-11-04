@@ -21,7 +21,7 @@
 _WORD_BOUNDARY_CHARS = set(" \t\n;&|()")
 
 
-def mask_quotes(s):
+def mask_quotes(s, cuts=None):
     # Every char inside a quoted span (quotes included) becomes a placeholder
     # that matches neither a separator, a keyword, nor a flag; output length
     # equals input so match positions found against the masked string still
@@ -56,6 +56,15 @@ def mask_quotes(s):
     # a glued "(" is open (ng). A "#" right after an unsure ")" is read both
     # ways: from it to the end the state is unknown (see the loop's first
     # branch), which only reads more, never less.
+    # GH #842: bash ends a backtick substitution at the first unescaped
+    # backtick, quote or comment or not (`echo 'a`#; git stash` runs git).
+    # The mask's own output does not change for it: a caller that passes a
+    # list as cuts gets, for each backtick where bash cuts a quote span or a
+    # comment opened inside a substitution (on the same line), the pair (index
+    # of the backtick that opened the substitution, index of the cut), and
+    # reads the text after the cut as code in a view of its own. Only a
+    # substitution opened on the line is tracked (bt ends at an unquoted
+    # newline), so a lone backtick in earlier prose cuts nothing.
     def _back(k, blanks):
         # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
         # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -101,6 +110,8 @@ def mask_quotes(s):
     au = False  # GH #833 review 9/10: every ")" after an unsure "#" is unsure too
     parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued
     i, n = 0, len(s)
+    bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
+    bo = -1
     at_word_start = True
     while i < n:
         c = s[i]
@@ -115,14 +126,32 @@ def mask_quotes(s):
             at_word_start = False
             continue
         if c == "#" and at_word_start and i >= ie:
+            cut = bt
             while i < n and s[i] != "\n":
+                if cut and s[i] == "\\" and s[i + 1:i + 2] not in ("", "\n"):
+                    out.append(" ")  # GH #842: an escaped char, a backtick too, does not end the substitution
+                    i += 1
+                elif cut and s[i] == "`":
+                    if cuts is not None:  # GH #842: the backtick ends the comment
+                        cuts.append((bo, i))
+                    cut = bt = False
                 out.append(" ")
                 i += 1
             continue
         if c == "'" and i >= ie:
             out.append(" ")
             i += 1
+            cut = bt
             while i < n and s[i] != "'":
+                if cut and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
+                    out.append("Q")  # GH #842: an escaped backtick does not end it
+                    i += 1
+                elif cut and s[i] == "`":
+                    if cuts is not None:  # GH #842: the backtick ends the span
+                        cuts.append((bo, i))
+                    cut = bt = False
+                elif s[i] == "\n":
+                    cut = False  # GH #842: only a backtick on the line the span opened on
                 out.append("Q")
                 i += 1
             if i < n:
@@ -154,12 +183,19 @@ def mask_quotes(s):
             out[-1] = " "
             out.append(" ")
             i = j + 1
+            cut = bt
             while i < n and s[i] != "'":
                 if s[i] == "\\" and i + 1 < n:
                     out.append("Q")
                     out.append("Q")
                     i += 2
                 else:
+                    if cut and s[i] == "`":
+                        if cuts is not None:  # GH #842
+                            cuts.append((bo, i))
+                        cut = bt = False
+                    elif s[i] == "\n":
+                        cut = False
                     out.append("Q")
                     i += 1
             if i < n:
@@ -169,12 +205,19 @@ def mask_quotes(s):
         elif c == '"' and i >= ie:
             out.append(" ")
             i += 1
+            cut = bt
             while i < n and s[i] != '"':
                 if s[i] == "\\" and i + 1 < n:
                     out.append("Q")
                     out.append("Q")
                     i += 2
                 else:
+                    if cut and s[i] == "`":
+                        if cuts is not None:  # GH #842
+                            cuts.append((bo, i))
+                        cut = bt = False
+                    elif s[i] == "\n":
+                        cut = False
                     out.append("Q")
                     i += 1
             if i < n:
@@ -207,7 +250,7 @@ def mask_quotes(s):
             if (j - i) % 2 == 1 and j < n and s[j] in "'\"$":
                 out.append("Q")
                 j += 1
-            elif (j - i) % 2 == 1 and j < n and s[j] in _WORD_BOUNDARY_CHARS:
+            elif (j - i) % 2 == 1 and j < n and (s[j] in _WORD_BOUNDARY_CHARS or s[j] == "`"):  # GH #842: an escaped backtick opens nothing
                 out.append(s[j])  # an escaped blank or separator is part of its word: a "#" after it is no comment
                 j += 1
             i = j
@@ -227,6 +270,10 @@ def mask_quotes(s):
                 ie = n
             else:
                 out.append(c)
+                if c == "`" and i >= ie:
+                    bt, bo = not bt, i  # GH #842: bo is the index of the backtick that opened it
+                elif c == "\n":
+                    bt = False  # GH #842: a substitution is tracked on its own line only
             i += 1
             at_word_start = c in _WORD_BOUNDARY_CHARS
             if at_word_start:

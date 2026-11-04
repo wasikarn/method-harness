@@ -1,0 +1,230 @@
+cd pkg0 && npm run build && cd ..
+cd pkg1 && npm run build && cd ..
+timeout 120 npm test -- --grep 'suite 2' 2>&1 | tail -20
+time pytest tests/test_3.py -q
+ls -la out/4 | head -5
+cd pkg5 && npm run build && cd ..
+time pytest tests/test_6.py -q
+ls -la out/7 | head -5
+sudo -u app ls /srv/app/8
+nice -n 10 make -j4 target9 2>&1 | grep -v warning
+xargs -n1 echo < list10.txt
+time pytest tests/test_11.py -q
+xargs -n1 echo < list12.txt
+env NODE_ENV=test node scripts/check.js --id 13
+time pytest tests/test_14.py -q
+xargs -n1 echo < list15.txt
+time pytest tests/test_16.py -q
+env NODE_ENV=test node scripts/check.js --id 17
+env NODE_ENV=test node scripts/check.js --id 18
+sudo -u app ls /srv/app/19
+ls -la out/20 | head -5
+env NODE_ENV=test node scripts/check.js --id 21
+sudo -u app ls /srv/app/22
+cd pkg23 && npm run build && cd ..
+sudo -u app ls /srv/app/24
+nice -n 10 make -j4 target25 2>&1 | grep -v warning
+ls -la out/26 | head -5
+ls -la out/27 | head -5
+time pytest tests/test_28.py -q
+timeout 120 npm test -- --grep 'suite 29' 2>&1 | tail -20
+timeout 120 npm test -- --grep 'suite 30' 2>&1 | tail -20
+env NODE_ENV=test node scripts/check.js --id 31
+cd pkg32 && npm run build && cd ..
+timeout 120 npm test -- --grep 'suite 33' 2>&1 | tail -20
+ls -la out/34 | head -5
+sudo -u app ls /srv/app/35
+nice -n 10 make -j4 target36 2>&1 | grep -v warning
+sudo -u app ls /srv/app/37
+env NODE_ENV=test node scripts/check.js --id 38
+nice -n 10 make -j4 target39 2>&1 | grep -v warning
+nice -n 10 make -j4 target40 2>&1 | grep -v warning
+nice -n 10 make -j4 target41 2>&1 | grep -v warning
+xargs -n1 echo < list42.txt
+ls -la out/43 | head -5
+env NODE_ENV=test node scripts/check.js --id 44
+env NODE_ENV=test node scripts/check.js --id 45
+sudo -u app ls /srv/app/46
+ls -la out/47 | head -5
+env NODE_ENV=test node scripts/check.js --id 48
+time pytest tests/test_49.py -q
+time pytest tests/test_50.py -q
+env NODE_ENV=test node scripts/check.js --id 51
+sudo -u app ls /srv/app/52
+nice -n 10 make -j4 target53 2>&1 | grep -v warning
+time pytest tests/test_54.py -q
+ls -la out/55 | head -5
+env NODE_ENV=test node scripts/check.js --id 56
+cd pkg57 && npm run build && cd ..
+sudo -u app ls /srv/app/58
+nice -n 10 make -j4 target59 2>&1 | grep -v warning
+time pytest tests/test_60.py -q
+xargs -n1 echo < list61.txt
+nice -n 10 make -j4 target62 2>&1 | grep -v warning
+xargs -n1 echo < list63.txt
+timeout 120 npm test -- --grep 'suite 64' 2>&1 | tail -20
+time pytest tests/test_65.py -q
+ls -la out/66 | head -5
+env NODE_ENV=test node scripts/check.js --id 67
+env NODE_ENV=test node scripts/check.js --id 68
+xargs -n1 echo < list69.txt
+xargs -n1 echo < list70.txt
+timeout 120 npm test -- --grep 'suite 71' 2>&1 | tail -20
+env NODE_ENV=test node scripts/check.js --id 72
+cd pkg73 && npm run build && cd ..
+time pytest tests/test_74.py -q
+nice -n 10 make -j4 target75 2>&1 | grep -v warning
+nice -n 10 make -j4 target76 2>&1 | grep -v warning
+cd pkg77 && npm run build && cd ..
+time pytest tests/test_78.py -q
+ls -la out/79 | head -5
+ls -la out/80 | head -5
+sudo -u app ls /srv/app/81
+env NODE_ENV=test node scripts/check.js --id 82
+sudo -u app ls /srv/app/83
+env NODE_ENV=test node scripts/check.js --id 84
+ls -la out/85 | head -5
+sudo -u app ls /srv/app/86
+nice -n 10 make -j4 target87 2>&1 | grep -v warning
+nice -n 10 make -j4 target88 2>&1 | grep -v warning
+timeout 120 npm test -- --grep 'suite 89' 2>&1 | tail -20
+time pytest tests/test_90.py -q
+env NODE_ENV=test node scripts/check.js --id 91
+nice -n 10 make -j4 target92 2>&1 | grep -v warning
+sudo -u app ls /srv/app/93
+xargs -n1 echo < list94.txt
+sudo -u app ls /srv/app/95
+cd pkg96 && npm run build && cd ..
+timeout 120 npm test -- --grep 'suite 97' 2>&1 | tail -20
+env NODE_ENV=test node scripts/check.js --id 98
+xargs -n1 echo < list99.txt
+nice -n 10 make -j4 target100 2>&1 | grep -v warning
+timeout 120 npm test -- --grep 'suite 101' 2>&1 | tail -20
+env NODE_ENV=test node scripts/check.js --id 102
+timeout 120 npm test -- --grep 'suite 103' 2>&1 | tail -20
+env NODE_ENV=test node scripts/check.js --id 104
+nice -n 10 make -j4 target105 2>&1 | grep -v warning
+env NODE_ENV=test node scripts/check.js --id 106
+cd pkg107 && npm run build && cd ..
+env NODE_ENV=test node scripts/check.js --id 108
+sudo -u app ls /srv/app/109
+env NODE_ENV=test node scripts/check.js --id 110
+timeout 120 npm test -- --grep 'suite 111' 2>&1 | tail -20
+timeout 120 npm test -- --grep 'suite 112' 2>&1 | tail -20
+nice -n 10 make -j4 target113 2>&1 | grep -v warning
+xargs -n1 echo < list114.txt
+env NODE_ENV=test node scripts/check.js --id 115
+ls -la out/116 | head -5
+nice -n 10 make -j4 target117 2>&1 | grep -v warning
+timeout 120 npm test -- --grep 'suite 118' 2>&1 | tail -20
+timeout 120 npm test -- --grep 'suite 119' 2>&1 | tail -20
+cd pkg120 && npm run build && cd ..
+env NODE_ENV=test node scripts/check.js --id 121
+time pytest tests/test_122.py -q
+env NODE_ENV=test node scripts/check.js --id 123
+nice -n 10 make -j4 target124 2>&1 | grep -v warning
+env NODE_ENV=test node scripts/check.js --id 125
+time pytest tests/test_126.py -q
+sudo -u app ls /srv/app/127
+cd pkg128 && npm run build && cd ..
+xargs -n1 echo < list129.txt
+timeout 120 npm test -- --grep 'suite 130' 2>&1 | tail -20
+ls -la out/131 | head -5
+timeout 120 npm test -- --grep 'suite 132' 2>&1 | tail -20
+env NODE_ENV=test node scripts/check.js --id 133
+cd pkg134 && npm run build && cd ..
+nice -n 10 make -j4 target135 2>&1 | grep -v warning
+time pytest tests/test_136.py -q
+sudo -u app ls /srv/app/137
+ls -la out/138 | head -5
+xargs -n1 echo < list139.txt
+nice -n 10 make -j4 target140 2>&1 | grep -v warning
+timeout 120 npm test -- --grep 'suite 141' 2>&1 | tail -20
+xargs -n1 echo < list142.txt
+xargs -n1 echo < list143.txt
+sudo -u app ls /srv/app/144
+time pytest tests/test_145.py -q
+env NODE_ENV=test node scripts/check.js --id 146
+ls -la out/147 | head -5
+xargs -n1 echo < list148.txt
+timeout 120 npm test -- --grep 'suite 149' 2>&1 | tail -20
+ls -la out/150 | head -5
+cd pkg151 && npm run build && cd ..
+time pytest tests/test_152.py -q
+sudo -u app ls /srv/app/153
+cd pkg154 && npm run build && cd ..
+time pytest tests/test_155.py -q
+xargs -n1 echo < list156.txt
+timeout 120 npm test -- --grep 'suite 157' 2>&1 | tail -20
+ls -la out/158 | head -5
+env NODE_ENV=test node scripts/check.js --id 159
+sudo -u app ls /srv/app/160
+timeout 120 npm test -- --grep 'suite 161' 2>&1 | tail -20
+time pytest tests/test_162.py -q
+xargs -n1 echo < list163.txt
+nice -n 10 make -j4 target164 2>&1 | grep -v warning
+ls -la out/165 | head -5
+sudo -u app ls /srv/app/166
+time pytest tests/test_167.py -q
+sudo -u app ls /srv/app/168
+xargs -n1 echo < list169.txt
+time pytest tests/test_170.py -q
+cd pkg171 && npm run build && cd ..
+cd pkg172 && npm run build && cd ..
+env NODE_ENV=test node scripts/check.js --id 173
+timeout 120 npm test -- --grep 'suite 174' 2>&1 | tail -20
+nice -n 10 make -j4 target175 2>&1 | grep -v warning
+sudo -u app ls /srv/app/176
+xargs -n1 echo < list177.txt
+nice -n 10 make -j4 target178 2>&1 | grep -v warning
+nice -n 10 make -j4 target179 2>&1 | grep -v warning
+ls -la out/180 | head -5
+cd pkg181 && npm run build && cd ..
+cd pkg182 && npm run build && cd ..
+timeout 120 npm test -- --grep 'suite 183' 2>&1 | tail -20
+cd pkg184 && npm run build && cd ..
+cd pkg185 && npm run build && cd ..
+timeout 120 npm test -- --grep 'suite 186' 2>&1 | tail -20
+xargs -n1 echo < list187.txt
+ls -la out/188 | head -5
+env NODE_ENV=test node scripts/check.js --id 189
+time pytest tests/test_190.py -q
+xargs -n1 echo < list191.txt
+ls -la out/192 | head -5
+ls -la out/193 | head -5
+timeout 120 npm test -- --grep 'suite 194' 2>&1 | tail -20
+timeout 120 npm test -- --grep 'suite 195' 2>&1 | tail -20
+ls -la out/196 | head -5
+sudo -u app ls /srv/app/197
+time pytest tests/test_198.py -q
+ls -la out/199 | head -5
+timeout 120 npm test -- --grep 'suite 200' 2>&1 | tail -20
+cd pkg201 && npm run build && cd ..
+nice -n 10 make -j4 target202 2>&1 | grep -v warning
+env NODE_ENV=test node scripts/check.js --id 203
+xargs -n1 echo < list204.txt
+timeout 120 npm test -- --grep 'suite 205' 2>&1 | tail -20
+cd pkg206 && npm run build && cd ..
+cd pkg207 && npm run build && cd ..
+sudo -u app ls /srv/app/208
+timeout 120 npm test -- --grep 'suite 209' 2>&1 | tail -20
+nice -n 10 make -j4 target210 2>&1 | grep -v warning
+timeout 120 npm test -- --grep 'suite 211' 2>&1 | tail -20
+timeout 120 npm test -- --grep 'suite 212' 2>&1 | tail -20
+env NODE_ENV=test node scripts/check.js --id 213
+nice -n 10 make -j4 target214 2>&1 | grep -v warning
+env NODE_ENV=test node scripts/check.js --id 215
+nice -n 10 make -j4 target216 2>&1 | grep -v warning
+time pytest tests/test_217.py -q
+time pytest tests/test_218.py -q
+xargs -n1 echo < list219.txt
+env NODE_ENV=test node scripts/check.js --id 220
+ls -la out/221 | head -5
+cd pkg222 && npm run build && cd ..
+env NODE_ENV=test node scripts/check.js --id 223
+eval "$(ssh-agent -s)"
+timeout 120 npm test -- --grep 'suite 224' 2>&1 | tail -20
+cat > notes.md <<'EOF'
+## Plan (draft)
+Run make.
+EOF
