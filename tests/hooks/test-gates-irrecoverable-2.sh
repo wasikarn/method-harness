@@ -4856,4 +4856,81 @@ for host in ("_INTERP_PROC_RE", "_PYNODE_PROC_RE"):
 PY
 )"; then echo "  ✅ GH #796: both host regexes read getattr literals through a named group"; pass=$((pass + 1))
 else echo "  ❌ GH #796: $_r796" >&2; fail=$((fail + 1)); fi
+# GH #839: a case arm inside "$(..)" was masked as quoted text: the pattern's `)` popped the "$( frame, so the arm up
+# to the real `)` read as "..". Each runs claude in bash 5.2. Fail safe: that `)` may be a pattern's or the real one
+# (a case misread from an argument, or an esac never seen), so the text is read both ways and masked only where both
+# readings agree; the traps below must keep denying, and so must a pipe through a comment both readings see (GH #810,
+# review 1) or one the keep reading drifts through and back (review 2), and a piped compound whose closer sits in a
+# real string after a misread case (review 3), in a ${..} word (review 4), a [[ ]] or arithmetic operand (review 5),
+# a \\$( in backticks, or after an esac the scan cannot see (reviews 6, 7), or an arm's argument a consumer takes for
+# a closer or a rich arm a consumer parses unlike bash (review 8, fuzz), or a wrapper cut from its command (review 9).
+for _c in 'echo "$(case a in a) echo hi | claude;; esac)"' 'X=claude; echo "$(case a in a) echo hi | $X;; esac)"' \
+    'X=claude; echo "$(case a in (a) echo hi | $X;; esac)"' 'X=claude; echo "$(case a in a|b) $X -p x;; esac)"' \
+    $'X=claude; echo "$(case a in\n a) $X -p x;;\n esac)"' 'X=claude; echo "x $(case a in a) $X -p x;; esac) y"' \
+    'X=claude; echo "$(case a in b) :;; a) $X -p x;; esac)"' 'X=claude; echo "$(case a in a) echo "q" | $X;; esac)"' \
+    'echo "$(echo do case)" | claude' 'X=claude; echo "$(echo do case)" | $X' \
+    'X=claude; echo "$(case a in a) { :; } esac)" | $X' 'X=claude; echo "$(echo do case a in a) b)" | $X' \
+    'X=claude; echo "$(echo then case a)" "b" | $X' 'X=claude; echo "$(case a in a) :;; esac)" | $X' \
+    $'echo "$(case a in a) :;; esac)"; echo hi | # feed\nclaude' $'echo "$(echo do case)"; echo hi | # feed\nclaude' \
+    $'echo "$(case a in a) :;; esac)"; echo hi | { # }\nclaude; }' $'echo "$(echo do case)"; echo hi | # a "b\nclaude' \
+    $'X=claude; echo "$(echo do case)" | # "; esac) "\n$X' $'X=claude; echo "$(echo do case)" |\n# "; esac) "\n$X' \
+    $'echo "$(echo do case)" | \\\n# "; esac) "\nclaude' $'echo "$(echo do case)" | { # "; esac) "\nclaude; }' \
+    $'echo "$(echo do case)" | ( # "; esac) "\nclaude )' \
+    'X=claude; echo hi | if true; then echo "$(echo do case)" "; esac) "; $X; fi' \
+    'X=claude; echo hi | if true; then echo "$(echo do case); esac) "; $X; fi' \
+    'X=claude; echo hi | case a in a) echo "$(echo then case)" "& esac)"; $X;; esac' \
+    'X=claude; echo hi | while true; do echo "$(echo do case)" "; esac) "; $X; break; done' \
+    'X=claude; echo hi | if true; then echo "$(:; case a in a) :;; esac)" "; esac) "; $X; fi' \
+    'X=claude; echo "$(true && case a in a) echo hi | $X;; esac)"' 'X=claude; echo "$(:; case a in a) $X -p x;; esac)"' \
+    'X=claude; echo hi | if true; then echo "$(echo ${x:-; case b in b) y; esac; fi )})"; $X; fi' \
+    'X=claude; echo hi | case a in a) echo "$(echo ${x:-; case b in b) y; esac; esac )})"; $X;; esac' \
+    'X=claude; echo hi | while true; do echo "$(echo ${x:-; case b in b) y; esac; done )})"; $X; break; done' \
+    'X=claude; echo hi | if true; then echo "$(echo ${x:-&& case b in b) y; esac; fi )})"; $X; fi' \
+    'X=claude; echo hi | if true; then echo "$(echo ${x:-|| case b in b) y; esac; fi )})"; $X; fi' \
+    'X=claude; echo hi | if :; then echo "$(echo ${x/;case b in b)/; esac; fi )})"; $X; fi' \
+    'X=claude; echo "${y}$(:; case a in a) $X -p x;; esac)"' \
+    'echo hi | if true; then echo "$([[ x && case ]]) ; fi; esac ) "; claude; fi' \
+    'X=claude; echo hi | if true; then echo "$([[ x || case ]]) ; fi; esac ) "; $X; fi' \
+    'X=claude; echo hi | case a in a) echo "$([[ x && case ]]) ; esac; esac ) "; $X;; esac' \
+    'X=claude; echo hi | if true; then echo "$(( 1 && case )) ; fi; esac ) ) "; $X; fi' \
+    'X=claude; echo hi | if true; then echo "$(echo $[ 1 && case ]) ; fi; esac ) "; $X; fi' \
+    'X=claude; echo hi | if true; then echo "$(echo ${x:-`echo }`; case b in b) y; esac; fi )})"; $X; fi' \
+    'X=claude; echo "$$(case a in a) y; esac ) " | $X' \
+    'X=claude; echo "$( case a in a) echo hi | $X;; esac)"' 'X=claude; echo "$$$(case a in a) echo hi | $X;; esac)"' \
+    'echo hi | if true; then echo `echo "\\$(case a in a) ; fi; esac ) "`; claude; fi' \
+    'X=claude; echo hi | if true; then echo "`echo "\\$(case a in a) ; fi; esac ) "`"; $X; fi' \
+    'X=claude; echo hi | if true; then echo "$(case a in a) :;; esac>/dev/null) ; fi; esac ) "; $X; fi' \
+    'echo hi | if true; then echo "$(case a in a) :;; esac</dev/null) ; fi; esac ) "; claude; fi' \
+    'echo hi | if true; then echo "$(case a in a) :;; esac>&2) ; fi; esac ) "; claude; fi' \
+    $'echo hi | if true; then echo "$(case a in a) :;; es\\\nac) ; fi; esac ) "; claude; fi' \
+    'echo hi | while true; do echo "$(case a in a) :;; esac>/dev/null) ; done; esac ) "; claude; break; done' \
+    $'echo hi | if true; then X="$(case x in x) echo;; esac>/dev/null; echo in b) fi "; claude; fi # "\nesac ) # "' \
+    $'echo hi | case y in y) X="$(case x in x) echo;; esac>/dev/null; echo in b) esac "; claude;; esac # "\nesac ) # "' \
+    $'echo hi | if true; then X="$(case x in x) echo;; esac<<<q; echo in b) fi "; claude; fi # "\nesac ) # "' \
+    $'echo hi | if true; then X="$(case x in x) echo;; esac>/dev/null; echo \\;; b) fi "; claude; fi # "\nesac ) # "' \
+    $'echo hi | if true; then X="$(case x in x) echo;; esac>/dev/null # ;; b\n) fi "; claude; fi # "\nesac ) # "' \
+    $'echo hi | if true; then X="$(case x in x) echo;; esac>/dev/null; echo case y in b) fi "; claude; fi # "\nesac ) # "' \
+    'echo hi | if true; then X="$(case x in x) echo } fi;; esac)"; claude; fi' \
+    'echo hi | while true; do X="$(case x in x) echo } done;; esac)"; claude; break; done' \
+    'echo hi | case y in y) X="$(case x in x) echo then esac;; esac)"; claude;; esac' \
+    'echo hi | if true; then X="$(case x in x) a=(b) fi;; esac)"; claude; fi' \
+    'echo hi | if true; then X="$(case x in x) echo $(( 1 )) fi;; esac)"; claude; fi' \
+    'echo hi | if true; then X="$(case x in x) echo <(:) fi;; esac)"; claude; fi' \
+    $'echo hi | if true; then X="$(case x in x) echo a\\\nfi;; esac)"; claude; fi' \
+    'echo hi | if true; then X="$( case x in x) echo   fi{ fi;; esac)"; claude; fi' \
+    $'echo hi | if true; then X="$(case x in\n x) echo $(( esac)\\${}|;; y) :;; esac)"; claude; fi' \
+    'X=claude; nice -n "$(case x in x) echo 5;; esac)" $X -p x' 'X=claude; timeout "$(case x in x) echo 5;; esac)" $X -p x' \
+    'X=claude; time "$(case x in x) echo env;; esac)" $X -p x' 'X=claude; env -u "$(case x in x) echo 5;; esac)" "$X" -p x' \
+    'X=claude; echo hi | nice -n "$(case x in x) echo 5;; esac)" $X${IFS}-p${IFS}x' \
+    $'X=claude; nice -n "$(case x in x) echo 5\nesac)" ${X} -p x'; do
+  test_deny  "$IRRECOVERABLE" "GH #839: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
+for _c in 'echo "$(case a in a) echo hi | claude --version;; esac)"' 'X=claude; echo "$(case a in a) $X --version;; esac)"' \
+    'echo "$(echo do case)" | claude --version' 'X=claude; echo "$(case a in a) { :; } esac)" | $X --version' \
+    'X=claude; echo "$(echo do case a in a) b)" | $X --version' \
+    'echo "$(case a in a) echo hi;; esac)"' 'echo "$(case a in a) echo hi;; esac)" | claude --version' \
+    $'echo "$(echo do case)"; echo hi | # feed\nclaude --version' $'echo "$(echo do case)" | \\\n# "; esac) "\nclaude --version' \
+    'X=claude; nice -n "$(case x in x) echo 5;; esac)" $X --version'; do
+  test_allow "$IRRECOVERABLE" "GH #839 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
+done
 gates_summary
