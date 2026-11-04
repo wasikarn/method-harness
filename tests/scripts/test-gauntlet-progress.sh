@@ -74,8 +74,8 @@ printf '%s\n' "$out" >"$T/beat"
   && ok "durations read Ns, then NmSSs" || bad "durations: $(_progress_dur 59) $(_progress_dur 192) $(_progress_dur 3600)"
 
 # 7. no cursor codes, and no line a caller parses: failing:, failed-at:, PASS  , FAIL  , SKIP
-if cat "$T/watch" "$T/beat" | /usr/bin/grep -q $'\r\|\033'; then bad "a progress line holds \\r or ESC"; else ok "no \\r or ESC in progress output"; fi
-if cat "$T/watch" "$T/beat" | /usr/bin/grep -qE '^(failing:|failed-at:|PASS  |FAIL  |SKIP  )'; then
+if /usr/bin/grep -q $'\r\|\033' "$T/watch" "$T/beat"; then bad "a progress line holds \\r or ESC"; else ok "no \\r or ESC in progress output"; fi
+if /usr/bin/grep -qE '^(failing:|failed-at:|PASS  |FAIL  |SKIP  )' "$T/watch" "$T/beat"; then
   bad "a progress line starts with a prefix callers parse"
 else ok "no progress line starts with failing:, failed-at:, PASS, FAIL or SKIP"; fi
 
