@@ -382,7 +382,7 @@ _QPIECE_RE = re.compile(r"(\$?)([\"'])([\w./-]*)[\"']|\\([\w./-])|([\w./-])")
 # no longer sit at their raw offsets. A word with continuations is read by its own pattern (the pattern
 # above must stay _SPAWN_QWORD_RE's twin): pairs at its front or end are blanks in place in the mask, every
 # pair between moved two blanks to the word front, and the pieces are checked against the mask past them.
-_nl_join = False  # GH #843: the joined reading is its own view (see _extra_views), develop's is kept
+_nl_join = 0  # GH #843: 0 off (develop's reading); 1 the joined reading; 2 joined, dropping bogus spans (_nl_view)
 _QWORD_NL_BODY = r"(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])"
 _QWORD_NL_BODY_RE = re.compile(_QWORD_NL_BODY)
 _QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?<!\\\n)(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])")
@@ -463,7 +463,8 @@ def _join_quoted_words(raw, masked):
             if (q - r) % 2 == 1 or _mask_quotes(raw[ls:q + 1])[-1:] == " ":
                 # A match that runs through this pair (`# c\<nl>g\<nl>"it"`) is bogus: bash ends the word at
                 # the real newline. It is dropped, and the word after the pair is tried on its own.
-                cands = [c for c in cands if not c.start() <= q < c.end() - 1]
+                if _nl_join == 2:  # its own reading: masking the line alone can misread one that starts in a quote
+                    cands = [c for c in cands if not c.start() <= q < c.end() - 1]
                 mm = _QWORD_NL_BODY_RE.match(raw, q + 2)
                 if mm and not any(c.start() < mm.end() and mm.start() < c.end() for c in cands):
                     cands.append(mm)
@@ -1274,16 +1275,23 @@ def _hd_view(s, base, raw_ops, mode="sub"):
     return _hd_view_memo[k]
 
 def _nl_view(s, base):
-    # GH #843: s masked with words joined across line continuations, when that differs from its plain mask
+    # GH #843: s masked with words joined across line continuations, in each joined reading that differs from
+    # its plain mask (a list of views). Reading 2 also drops a word match that runs through a backslash-newline
+    # that looks like no continuation; that look comes from masking one line alone, which can misread a line
+    # that starts inside a quote, so it is a reading of its own, never in place of reading 1.
     global _nl_join
     if "\\\n" not in s or ("'" not in s and '"' not in s):
-        return None
-    _nl_join = True
-    try:
-        m = _mask(s)
-    finally:
-        _nl_join = False
-    return (s, m) if m != _mask(s) else None
+        return []
+    out = []
+    for mode in (1, 2):
+        _nl_join = mode
+        try:
+            m = _mask(s)
+        finally:
+            _nl_join = 0
+        if m != _mask(s) and (s, m) not in out:
+            out.append((s, m))
+    return out
 
 # GH #842: bash ends a backtick substitution at the first unescaped backtick, so a quote span or comment
 # the mask opened inside one (`echo 'a`#; git stash`) hides what bash runs after it. The mask reports each
@@ -1407,9 +1415,9 @@ def _extra_views(s, base, based=None):
                 if v not in views:
                     views.append(v)
     for t, mt in [(based, base)] + list(views):
-        v = _nl_view(t, mt)
-        if v and v not in views:
-            views.append(v)
+        for v in _nl_view(t, mt):
+            if v not in views:
+                views.append(v)
     return views
 
 # A quoted-delimiter body is data, never a command. Cutting it out before the substitution scans

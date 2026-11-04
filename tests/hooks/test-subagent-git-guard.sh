@@ -1956,6 +1956,12 @@ test_deny "GH #843" $'echo x # path\\\ng\\\n"it" stash' $'echo x # path\\\ng\\\n
 test_deny "GH #843" $'git status # s\\\ng\\\n\'it\' stash' $'git status # s\\\ng\\\n\'it\' status'
 test_deny "GH #843" $'# c\\\n"g"\\\nit stash' $'# c\\\n"g"\\\nit status'
 test_deny "GH #843" $'echo a # b\\\n\\\ng\\\n"it" stash' $'echo a # b\\\n\\\ng\\\n"it" status'
+# Fresh-context review round 20: a line that starts inside a multi-line quote (`"..<nl># Notes"`) only looks
+# like a comment when masked alone, so dropping candidates is its own reading, beside the one that keeps them.
+test_deny "GH #843" $'echo "a\n# b";g\\\n"it" stash' $'echo "a\n# b";g\\\n"it" status'
+test_deny "GH #843" $'git commit -m "fix: x\n# Notes" && g\\\n"it" stash' $'git commit -m "fix: x\n# Notes" && g\\\n"it" status'
+test_deny "GH #843" $'echo \'a\n#\';g\\\n"it" stash' $'echo \'a\n#\';g\\\n"it" status'
+test_deny "GH #843" $'echo x\\\n#;g\\\n"it" stash' $'echo x\\\n#;g\\\n"it" status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
