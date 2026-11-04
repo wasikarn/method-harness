@@ -731,7 +731,7 @@ def _cmd_word(c, i, word, esc, after, lead, span):
         k = _prev_char(c, k, esc)
     return k < 0 or not esc[k] and (c[k] in after or bool(lead.search(c, max(0, k - span), k + 1)))
 
-def _quote_mask(c, stack=None, hd=False):
+def _quote_mask(c, stack=None, hd=False, keep=False, ce=None):
     # One flag per character of c: quoted ('..', $'..' or "..", its quotes included), backslash-escaped
     # or in a `#` comment. A $(..) or `..` inside ".." is unquoted again (`out="$(claude hi)"` runs claude). Linear, made once
     # per scanned text.
@@ -751,12 +751,40 @@ def _quote_mask(c, stack=None, hd=False):
     # _strip_heredocs strips nothing more. Over-reading only, and only after an unsure #. The quote frames never see "c". esc flags each char an unquoted backslash escapes: an escaped blank or
     # separator is part of its word, and an escaped newline is a line continuation (_prev_char). The ) of an
     # extglob candidate @( !( ?( *( +( is unsure too ("x" on po, _EXTGLOB_OPEN).
+    # GH #839: outside hd, a ) read while "c" tops po inside a "$( frame pops that frame, so a real case arm after its
+    # pattern's ) read as ".." and was masked. Not popping (keep) fails unsafe when the "c" is a misread (`echo "$(echo
+    # do case)" | claude`) or its esac goes unseen: the real ) then closes nothing and the closing " opens a string. So
+    # such a text is read both ways, popping and keeping, and a char stays masked only where both readings mask it:
+    # never more than the popping reading alone, and a comment both readings see stays masked (GH #810's pipe walk).
+    # Every consumer of the mask reads the unmasked text with its own parser, which takes `echo do case` as an argument:
+    # a misread "c" whose keep reading drifts out of step and back (a " in a later string or comment closing the one it
+    # opened, `; esac)` popping the frame) unmasks a real string's or comment's text, and a split comment hides a pipe
+    # from GH #810's walk (review 2) and an unmasked `esac` ends a piped compound early (review 3). Every other lead
+    # proved to hold a misread case: `do`/`then` arguments, `; case` in a ${..} word (review 4), `[[ x && case ]]` and
+    # arithmetic `&&`/`||` (review 5). So only a case right after its `$(` (blanks between) is read both ways: there
+    # bash always reads it as the reserved word (no backtick before it: `..` turns \\$( into text, review 6). The keep
+    # reading skips only the case's first ), and only when `case WORD in [(]PATTERN|..` runs whole from the case to it;
+    # any later ) while that case is open voids it: an esac the scan cannot see (`esac>f`, `esac<<<q`) may have closed
+    # the case, so that ) may be bash's real one (reviews 6, 7). Until such an esac the keep reading follows bash's own
+    # parse, so the ) bash closes on is the one that voids it. Only a plain arm in a string that ends its statement
+    # counts (reviews 8, 9: see the end). And
+    # it counts only when it ends in the
+    # popping reading's quote state, unmasks no char of a comment the popping reading masks, and unmasks nothing outside
+    # the text the popping reading reads in the frame a pop returns to (from that ) to where the frame closes). Else the
+    # popping reading, develop's, stands.
     mask, i, n = bytearray(len(c)), 0, len(c)
+    # GH #839: comments masked, whether each open case is right after its $(, open regions, region edges
+    both, cm, cp, rg, ok, bt, re_ = False, [], [], [], [0] * (len(c) + 1), False, []  # re_: where regions end
     stack = [None] if stack is None else stack
     po, gc, uc, ie, esc = _ParenFlags(), -2, -2, -1, bytearray(len(c))
     au = False  # GH #833 review 9/10: every ) after an unsure # is unsure too
     while i < n:
+        while rg and len(stack) < rg[-1][1]:  # GH #839: a frame a pop returned to has closed
+            ok[rg.pop()[0]] += 1
+            ok[i] -= 1
+            re_.append(i)
         ch, q = c[i], stack[-1]
+        bt = bt or ch == "`"  # GH #839 review 6: `..` turns \\ into \, so a later $( may be text: no sure start
         if q == "!":
             mask[i:] = b"\1" * (n - i)
             break
@@ -770,12 +798,39 @@ def _quote_mask(c, stack=None, hd=False):
                 uc = i  # GH #833 review 7: an extglob group or an operator; a # after it is read both ways
             elif ch == ")" and po and po[-1] == "c":
                 uc = i if po.glued else uc
+                # GH #839: a "$( frame (the only "(" frame outside hd) and a case right after its $(: both ways
+                if q == "(" and not hd and cp and cp[-1][0]:
+                    # review 6/7: only the first ) after the case, closing `case WORD in [(]PATTERN|..` as a whole
+                    pat = not cp[-1][2] and re.compile(
+                        r"case[ \t]+[^\s;&|()<>'\"\\`]+[ \t\n]+in[ \t\n]+\(?[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+"
+                        r"(?:[ \t]*\|[ \t]*[\w*?.\-/@+=:,%^!\[\]~]+)*[ \t]*").fullmatch(c, cp[-1][1], i)
+                    cp[-1][2] = i + 1 if pat else -1  # where its body starts, or -1
+                    if keep and not pat:  # a later ), or no plain first pattern's: an esac it cannot see (`esac>f`)
+                        stack.append("void")  # may have closed the case, so this ) may be bash's real one: void
+                        break
+                    if keep:  # this ) pops nothing (an unsure # after it still counts, au)
+                        uc = i if au else uc
+                        i += 1
+                        continue
+                    if pat:
+                        both = True
+                        rg.append((i, len(stack) - 1))  # the pop below returns to that frame: a region opens
             elif ch == ")" and po and po.pop():
                 gc = i
             elif ch == "c" and _cmd_word(c, i, "case", esc, ";&|()\n", _CASE_LEAD_RE, 6):
                 po.append("c")
+                k = _prev_char(c, i, esc)  # GH #839: right after $( (blanks between), decided once here
+                while k >= 0 and c[k] in " \t" and not esc[k]:
+                    k = _prev_char(c, k, esc)
+                d = k - 1  # an odd run of $ before the (: `$$(` is $$ and a plain (
+                while d >= 0 and c[d] == "$" and not esc[d]:
+                    d -= 1
+                cp.append([k > 0 and c[k] == "(" and not esc[k] and (k - 1 - d) % 2 == 1 and not bt, i, False])
             elif ch == "e" and po and po[-1] == "c" and _cmd_word(c, i, "esac", esc, ";&)\n", _ESAC_LEAD_RE, 128):
                 po.pop()
+                e = cp.pop() if cp else [False]
+                if e[0] and ce is not None and e[2] > 0:  # GH #839: a sure case's body, to the esac that closes it
+                    ce.append((e[2], i))
             uc = i if au and ch == ")" else uc
         if q in _HD_OFF or ch == "<" and i < ie:
             mask[i] = 1
@@ -833,6 +888,7 @@ def _quote_mask(c, stack=None, hd=False):
             j = c.find("\n", i)  # a comment, to the end of its line
             j = n if j < 0 else j
             mask[i:j] = b"\1" * (j - i)
+            cm.append((i, j))
             i = j
             continue
         elif not hd:
@@ -873,6 +929,37 @@ def _quote_mask(c, stack=None, hd=False):
         elif ch == "(" and q == "(":
             stack.append("(")
         i += 1
+    if both and not keep:
+        for s0, _ in rg:  # frames still open at the end
+            ok[s0] += 1
+        ok = list(itertools.accumulate(ok))
+        ks, ce = [None], []
+        kept = _quote_mask(c, ks, False, True, ce)
+        if ks == stack and all(kept.find(0, a, b) < 0 for a, b in cm) and all(
+                k or o or not m for m, k, o in zip(mask, kept, ok)):
+            new = bytearray(a & b for a, b in zip(mask, kept))
+            # reviews 8, 9: an unmasked arm hands its words to consumers that misread richer text (`echo } fi` ends a
+            # piped if early, #864; `$(( esac)` parses unlike bash), so the keep reading counts only for plain arms:
+            # each sure case's body and every char it unmasks hold words, blanks, | ; & $ = . / : , + @ % - and no
+            # reserved word, but for the case's own esac and the ) after it
+            plain = re.compile(r"[\w \t\n|;&$=./:,+@%-]*")
+            word = re.compile(r"(?<![\w-])(?:if|then|else|elif|fi|case|esac|for|select|while|until|do|done|in|function|"
+                              r"time|coproc)(?![\w-])")
+            shown = [ch if m and not k else " " for ch, m, k in zip(c, mask, new)]
+            for b, e in ce:
+                shown[e:e + 4] = "    "
+                j = e + 4
+                while j < n and c[j] in " \t":
+                    j += 1
+                if j < n and c[j] == ")":
+                    shown[j] = " "
+            shown = "".join(shown)
+            # review 9: _text_statements splits at the arm's ;; inside "$(..)", which cuts a wrapper before the string
+            # from the command after it (`nice -n "$(case ..)" $X -p x`), so each string must end its statement
+            end = re.compile(r"[ \t]*(?:[;&|\n)]|$)")
+            if all(plain.fullmatch(t) and not word.search(t) for t in [shown] + [c[b:e] for b, e in ce]) and all(
+                    end.match(c, e) for e in re_):
+                mask = new
     return mask
 
 def _in_subscript(line, mask, starts):
