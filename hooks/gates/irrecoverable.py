@@ -5137,7 +5137,9 @@ def _trash_whole_tree(rest):
         w0, w = w, _trash_norm(w)
         if w in _TRASH_TREE_WORDS or (w.startswith("/") and PH not in w and os.path.normpath(w) in ("/", home)):
             return True
-        if _TRASH_HOME_KEEP_RE.fullmatch(w):  # GH #881: inside $( .. ) a ${HOME} word reaches here as written
+        # GH #881: inside $( .. ) a ${HOME} word reaches here as written, its quotes gone, so a quoted literal
+        # '${HOME}' denies too (review: as '$HOME' and '~' already do).
+        if _TRASH_HOME_KEEP_RE.fullmatch(w):
             return True
         # A placeholder word: each raw operand of trash, normalized the same way, is read for $(pwd) / `pwd` (only for a
         # word that is bare without the /.* strip too: $(x)/.* is not, as on develop) or for the home in a braced form.
@@ -5170,8 +5172,11 @@ def _trash_home_ops(w):
     # GH #881: one raw operand as the shell reads it for the home check. It ends at a ) that closes the enclosing
     # ( subshell ) or $( .. ), or at a redirect (< or >), when unquoted and outside any ${..} or $(..) of its own:
     # (trash "${HOME}"/*), "${HOME:?}"/*>/dev/null. A trailing brace list is each of its words: "${HOME}"/{*,.*}.
-    # One pass over the word; anything unclosed leaves it whole.
-    q, depth, i, n = "", 0, 0, len(w)
+    # One pass over the word; anything unclosed leaves it whole. Only a word naming ${HOME is read (the only caller
+    # matches _TRASH_HOME_KEEP_RE), and the scan only when it holds a ), < or > (review: a 100 KB word per view).
+    if "${HOME" not in w:
+        return [w]
+    q, depth, i, n = "", 0, 0, len(w) if (")" in w or "<" in w or ">" in w) else 0
     while i < n:
         ch = w[i]
         if q == "'":
@@ -5192,9 +5197,14 @@ def _trash_home_ops(w):
         elif ch == "'" and not q:
             q = "'"
         i += 1
-    b = _TRASH_BRACE_LIST_RE.fullmatch(w)
-    return [b.group(1) + a for a in b.group(2).split(",")] if b else [w]
-_TRASH_BRACE_LIST_RE = re.compile(r"(.*)\{([^{}'\"]*,[^{}'\"]*)\}")
+    # The last brace list: the word itself plus each alternative ({,.}* and a comma in a ${HOME:-a,b} keep their
+    # reading). rfind/find, not a regex: a backtracking one was quadratic on a run of commas (review).
+    i = w.rfind("{")
+    j = w.find("}", i + 1) if i >= 0 else -1
+    inner = w[i + 1:j] if j > i else ""
+    if "," not in inner or "'" in inner or '"' in inner:
+        return [w]
+    return [w] + [w[:i] + a + w[j + 1:] for a in inner.split(",")]
 # GH #876: ${HOME} as written, or with a modifier that cannot change a set HOME (:?, ?, :-, -, :=, = act only when it
 # is unset or empty; %/ and %%/ drop a trailing slash): "${HOME:?}"/* is the whole home. Not :+, #, or %/* (another
 # path). Here, not in _HOME_BRACED_RAW_RE, which chmod shares.
