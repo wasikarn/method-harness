@@ -849,9 +849,23 @@ def _bodies_at(raw_cmd, masked_cmd, m, for_subs=False):
         out.append(text)
     return out
 
+_shell_matches_memo = {}
+_body_checked = set()  # the masks whose shell bodies a body check has read (as a whole text, not a _BodyView)
+
+def _shell_matches(masked_cmd, overlap, charge=True):
+    # The pass's shell-word matches in a mask, charged on every call as develop's body check is (the list is
+    # kept so a _BodyView of this base reads the same starts without a second scan or charge).
+    k = (masked_cmd, overlap)
+    if charge:
+        _body_checked.add(masked_cmd)
+    if charge or k not in _shell_matches_memo:
+        _charge(masked_cmd)
+    if k not in _shell_matches_memo:
+        _shell_matches_memo[k] = list(_SHELL_RES[overlap].finditer(masked_cmd))
+    return _shell_matches_memo[k]
+
 def _violation_in_bodies(raw_cmd, masked_cmd, overlap):
-    _charge(masked_cmd)
-    for m in _SHELL_RES[overlap].finditer(masked_cmd):
+    for m in _shell_matches(masked_cmd, overlap):
         for body in _bodies_at(raw_cmd, masked_cmd, m):
             hit = _violation_in_body(body, overlap)
             if hit:
@@ -874,11 +888,7 @@ def _violation_in_body(body, overlap):
 
 def _view_violation(v, overlap):
     if isinstance(v, _BodyView):
-        for body in v[2]:
-            hit = _violation_in_body(body, overlap)
-            if hit:
-                return hit
-        return None
+        return _body_view_violation(v, overlap)
     return _violation(v[1], overlap) or _violation_in_bodies(v[0], v[1], overlap)
 
 # GH #274: the mask blanks everything inside "..." so `echo "$(git clean -fd)"` and backticks
@@ -1280,51 +1290,56 @@ _hd_view_memo = {}
 # PR #872 review 24: a view whose mask matches its base outside the bodies it blanked adds no anchor to
 # _violation, but _violation_in_bodies reads the raw view text at each shell word, and there a `)` in a
 # blanked body no longer ends an unquoted `$(` word (`eval $(cat <<'E'` / `)` / `E` / `echo true)"; git stash"`).
-# Such a view is kept as a _BodyView (text, mask, bodies): the shell bodies its raw text reads that the base
-# text does not read at the same shell word. A body is read forward from its word, so only a word that starts
-# before the last blanked char can read differently; the view's own words are found there (not the base's: a
-# base wrapper walk can run into a body to a lookalike `eval`, so no base match ends at the real word before
-# it). Only its bodies are checked: no anchor passes, and it seeds no line-join or cut views.
+# Such a view is kept as a _BodyView (text, mask, base text, base mask, end), read lazily on each pass by
+# _body_view_violation: the shell bodies its raw text reads that the base does not read at the same word. A
+# body is read forward from its word, so only a match that starts before the last blanked char (end) can read
+# differently; a match starts where a command can, and outside the blanked bodies the view's text is the
+# base's, so every start is one where the base has a match that pass (develop's body check finds and charges
+# those). At each, the view's own matches are tried (a base walk can run into a body to a lookalike `eval`,
+# so no base match ends at the real word before or after it). Only its bodies are checked: no anchor passes,
+# and it seeds no line-join or cut views.
 class _BodyView(tuple):
     pass
 
-_view_words_memo = {}
-# A superset of where _SHELL_RES can match (its shell word follows a blank, a separator, `/` or a backslash): a
-# linear look, so a command with no shell word before its last blanked body pays no shell-word scan.
-_SHELL_HINT_RE = re.compile(r"(?<!\w)(?:bash|sh|zsh|dash|ksh|eval|rtk)(?=\s)")
-
-def _view_words(mt, end):
-    # Every _SHELL_RES match in mt that starts before end: each pattern tried at each place a command can start
-    # (a line start or `|;&({`, where _cmd_start begins), which covers every start a finditer of it finds.
-    # Charged like _charge, for the starts before end.
-    global _work
-    k = (mt, end)
-    if k not in _view_words_memo:
-        pos = [i for i in range(end) if i == 0 or mt[i - 1] == "\n" or mt[i] in "|;&({"]
-        _work += (len(pos) + 1) * len(mt)
-        if _work > _WORK_BUDGET:
-            raise _TooCostly
-        _view_words_memo[k] = [m for i in pos for r in _SHELL_RES for m in [r.match(mt, i)] if m]
-    return _view_words_memo[k]
+# A superset of where _SHELL_RES can match (its shell word follows a blank, a separator, `/` or a backslash, and
+# a shell takes a `-..c` flag): a cheap look, so a command with no shell word pays for no body view.
+_SHELL_HINT_RE = re.compile(r"(?<!\w)(?:(?:bash|sh|zsh|dash|ksh)\s+(?:-\S*\s+)*-[^\Wc]*c|eval\s|rtk\s)")
 
 def _body_view(t, mt, s, base, end):
-    if not _SHELL_HINT_RE.search(mt, 0, end + 5):  # a word that starts before end
-        return None
-    bodies = []
-    for m in _view_words(mt, end):
-        seen = ()
-        for r in _SHELL_RES:  # the base reads this body only where it has the same match
-            mb = r.match(base, m.start())
-            if mb and mb.end(1) == m.end(1):
-                seen = _bodies_at(s, base, mb)
-                break
-        for b in _bodies_at(t, mt, m):
-            if b not in seen and b not in bodies:
-                bodies.append(b)
-    return _BodyView((t, mt, tuple(bodies))) if bodies else None
+    return _BodyView((t, mt, s, base, end)) if _SHELL_HINT_RE.search(base) else None
+
+_shell_tries_memo = {}
+
+def _shell_tries(x, i):
+    # Each _SHELL_RES pattern's match at i in the mask x (charged as a walk from i to the end, each pattern).
+    global _work
+    k = (x, i)
+    if k not in _shell_tries_memo:
+        _work += 3 * (len(x) - i)
+        if _work > _WORK_BUDGET:
+            raise _TooCostly
+        _shell_tries_memo[k] = [m for r in _SHELL_RES for m in [r.match(x, i)] if m]
+    return _shell_tries_memo[k]
+
+def _body_view_violation(v, overlap):
+    t, mt, s, base, end = v
+    checked = base in _body_checked  # else (the text without its continuations) no body of the base is read
+    for m in _shell_matches(base, overlap, False):  # charged here only if no body check of the base ran
+        if m.start() >= end:
+            break
+        base_at = {b.end(1): b for b in _shell_tries(base, m.start())}
+        for w in _shell_tries(mt, m.start()):
+            b = base_at.get(w.end(1)) if checked else None  # the base reads this word's body too (some pass
+            seen = _bodies_at(s, base, b) if b else ()                # reports this match)
+            for body in _bodies_at(t, mt, w):
+                if body not in seen:
+                    hit = _violation_in_body(body, overlap)
+                    if hit:
+                        return hit
+    return None
 
 def _add_view(views, v):
-    # Append v unless an equal view is there (a _BodyView, three items, never equals a full view).
+    # Append v unless an equal view is there (a _BodyView, five items, never equals a full view).
     if v in views:
         return False
     views.append(v)

@@ -2002,6 +2002,13 @@ test_deny "GH #844" $'time bash -c \'"$@"\' sh eval $(cat <<\'E\' >/dev/null\n)\
 _c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-eval-heredoc-allow.txt")
 rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "PR #872 review 25: eval, a heredoc, then 78 cp/mkdir brace pairs is allowed, as on develop (rc $rc)" "$ok"
+# Review 26: the walk can also end at a real word after the body, and a late heredoc must not cost a rescan.
+test_deny "GH #844" $'time x=$(cat <<\'E\' >/dev/null\n)\nuse eval here\nE\n) eval "git stash"; eval x' $'time x=$(cat <<\'E\' >/dev/null\n)\nuse eval here\nE\n) eval "git status"; eval x'
+test_deny "GH #844" $'time x=$(cat <<\'E\' >/dev/null\n)\nuse eval here\nE\n) bash -c "git stash"; eval x' $'time x=$(cat <<\'E\' >/dev/null\n)\nuse eval here\nE\n) bash -c "git status"; eval x'
+test_deny "GH #844" $'time x=$(cat <<\'E\' >/dev/null\n)\nuse eval here\nE\n) eval "git stash"\neval x' $'time x=$(cat <<\'E\' >/dev/null\n)\nuse eval here\nE\n) eval "git status"\neval x'
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-eval-late-heredoc-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872 review 26: eval, 225 ordinary lines, then a heredoc is allowed, as on develop (rc $rc)" "$ok"
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
