@@ -544,6 +544,13 @@ for _c in 'echo "$(trash "$HOME"/x)"' 'echo "$(cat "$HOME")"' 'git commit -m "$(
     'echo "$(echo ")")"' 'echo "$(date "+%F")" && git status' 'echo "\$(trash "$HOME")"'; do
   test_allow "$IRRECOVERABLE" "GH #883 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #883 review: a backtick in the span leaves it to the old reading (a body's backticks are not read again), and a
+# nesting past the body re-read cap fails closed, as develop's depth budget did.
+for _c in 'echo "$(echo "`trash ~`")"' 'x="$(cat "`trash "$HOME"`")"' 'echo "$(echo "x`chmod -R 777 /`")"' \
+    'echo "$(echo "$(echo "$(echo "$(trash "$HOME")")")")"' \
+    "echo $(printf '\"$(%.0s' $(seq 70))trash ~$(printf ')\"%.0s' $(seq 70))"; do
+  test_deny  "$IRRECOVERABLE" "GH #883 review: ${_c:0:60}" "$(bash_payload "$_c")"
+done
 test_deny "$IRRECOVERABLE" "git restore . (discards worktree)" \
   "$(bash_payload 'git restore .')"
 test_deny "$IRRECOVERABLE" "git restore -- file (discards worktree)" \

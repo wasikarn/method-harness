@@ -2224,12 +2224,16 @@ def _copy_squote(s, i, out, mask_from=None):
         _mask_quoted_ops(out, mask_from)
     return j + 1
 
-_DQ_SUBST_WORK = {}
+_DQ_SUBST_WORK = [None]
 def _dq_subst_end(s, i):
     # GH #883: s[i:i + 2] is "$(" inside a double-quoted span. The index just past its closing ")", reading the
     # body as bash does (its own quotes, $( .. ) and parentheses nest; "$(cmd "$arg")" is one span), or -1 when it is
-    # unterminated or this text's scan budget (a few passes over it) is spent: the caller then reads it as before.
-    left = _DQ_SUBST_WORK.get(s, 4 * len(s) + 1000)
+    # unterminated, holds a backtick (review: a body with one is read as before, since bodies' backticks are not
+    # read again), or the scan budget is spent: the caller then reads it as before. One budget per gate call
+    # (review: one per text grew with the number of bodies), a few passes over the command.
+    if _DQ_SUBST_WORK[0] is None:
+        _DQ_SUBST_WORK[0] = 8 * len(globals().get("cmd", "")) + 20000
+    left = _DQ_SUBST_WORK[0]
     stack, j, n = ["("], i + 2, len(s)  # "(": a $( .. ) or ( .. ) body; DQ: a double-quoted span inside one
     while j < n and left > 0:
         left -= 1
@@ -2237,6 +2241,8 @@ def _dq_subst_end(s, i):
         if c == "\\":
             j += 2
             continue
+        if c == "`":
+            break
         if stack[-1] == DQ:
             if c == DQ:
                 stack.pop()
@@ -2254,10 +2260,10 @@ def _dq_subst_end(s, i):
         elif c == ")":
             stack.pop()
             if not stack:
-                _DQ_SUBST_WORK[s] = left
+                _DQ_SUBST_WORK[0] = left
                 return j + 1
         j += 1
-    _DQ_SUBST_WORK[s] = left
+    _DQ_SUBST_WORK[0] = left
     return -1
 
 def _copy_dquote(s, i, out, mask_from=None, join_lines=False):
@@ -2877,11 +2883,15 @@ def _blank_substitutions_read(s):
     # GH #883: a body's own substitutions are blanked too, their bodies appended in turn, so a quoted one in a body
     # (echo "$(echo "$(trash ~)")") is read; an unquoted one was only split out by shlex at its "(". The first
     # _BODY_RESCAN_MAX bodies, and only one holding a $( or <( / >( (a backtick in a body is read as before: its
-    # closer search is not escape-aware, so `..\` would leave a body that cannot be tokenized).
+    # closer search is not escape-aware, so `..\` would leave a body that cannot be tokenized). Review: a body
+    # past the cap that still holds one fails closed, as the depth budget does (develop denied that nesting).
     k = 0
-    while k < len(bodies) and k < _BODY_RESCAN_MAX:
+    while k < len(bodies):
         b = bodies[k]
         if "$(" in b or "<(" in b or ">(" in b:
+            if k >= _BODY_RESCAN_MAX:
+                _DEPTH_BUDGET_BLOWN[0] = True
+                break
             for _ in range(5):
                 nb = _scan_once(b, bodies)
                 if nb == b:
