@@ -246,6 +246,9 @@ relation depth" (always one query), and a CWE-1333/CWE-400 pairing that contradi
 
 ## Changing a deny heuristic in a gate
 
+**Scope first:** fix a gate gap only when a real command hits it or an agent could write it by
+mistake; a deliberately disguised shape is filed `parked` (`docs/adr/0005-gate-scope-agent-mistakes-not-disguised-commands.md`).
+
 Any change to how `hooks/gates/*.py` decides deny versus allow (a tokenizer step, a substitution
 or redirect strip, a shell-syntax rule) needs a differential fuzz against current `develop` before
 merge. Unit tests alone missed every bypass on the 2026-09-29 `irrecoverable.py` work (GH #184,
