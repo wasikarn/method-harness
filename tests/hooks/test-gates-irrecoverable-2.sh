@@ -4463,15 +4463,15 @@ test_allow "$IRRECOVERABLE" 'GH #787 control: 1200 F=x assignments and $F refere
 # GH #787 review: past the cap a var-verb copy that would cost more than its budget is not read, so the command asks
 # (the raw copy, whose scan budget the subshells and references below spend, alone reads `rm -r $G b`).
 # References each walking back past the subshell assignments spend it; a build script reading its $LOG does not.
-# GH #857: at the full budget (3000 x 1500) the row took 3 to 4 s and met the 4 s deadline first on a slower machine;
-# MH_IRR_BUDGET_SCALE=0.1 shrinks the budget so 1000 x 500 spends it in about 0.5 s. Under it (600 references) the
-# copy is read whole and denies, so the ask is the budget's.
-_t787="$(printf 'echo a; %.0s' $(seq 1200))$(printf '(H=1); %.0s' $(seq 500))"
+# GH #857: at the full budget (3000 x 1500) the row took 3 to 4 s and met the 4 s deadline first on a slower machine.
+# MH_IRR_BUDGET_SCALE shrinks the budget instead: this 24 KB text (past the 20 KB cap) peaks at about 620,000 units of
+# copy work, so at 0.1 (400,000) it asks in about 0.6 s, and the same text at 0.5 (2,000,000) is read whole and denies:
+# only the budget differs, so the ask is the budget's.
+_t787="$(printf 'echo a; %.0s' $(seq 1600))$(printf '(H=1); %.0s' $(seq 400))$(printf 'echo $H; %.0s' $(seq 900))F=-r; rm \$F \$G b; G=-i"
 MH_IRR_BUDGET_SCALE=0.1 test_ask_says "$IRRECOVERABLE" 'GH #787 review: a raw copy past its budget asks: F=-r; rm $F $G b; G=-i' \
-  "$(bash_payload "${_t787}$(printf 'echo $H; %.0s' $(seq 1000))F=-r; rm \$F \$G b; G=-i")" \
-  'too many variable readings'
-MH_IRR_BUDGET_SCALE=0.1 test_deny "$IRRECOVERABLE" 'GH #857 control: the same raw copy under its budget is read: rm $F $G b denies' \
-  "$(bash_payload "${_t787}$(printf 'echo $H; %.0s' $(seq 600))F=-r; rm \$F \$G b; G=-i")"
+  "$(bash_payload "$_t787")" 'too many variable readings'
+MH_IRR_BUDGET_SCALE=0.5 test_deny "$IRRECOVERABLE" 'GH #857 control: the same raw copy under a larger budget is read: rm $F $G b denies' \
+  "$(bash_payload "$_t787")"
 _log787="LOG=build.log; rm -f \$LOG; $(printf 'cc -c f.c -o f.o 2>>$LOG || (echo fail; exit 1); %.0s' $(seq 1500))"
 test_allow "$IRRECOVERABLE" 'GH #787 review control: a 73 KB build script, 1500 subshells and $LOG references' "$(bash_payload "$_log787")"
 # GH #787 review 3: the raw copy's spans holding an entry are found once per entry, not once per reference.
