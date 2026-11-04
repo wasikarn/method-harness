@@ -62,7 +62,7 @@ printf '%s\n' "$out" >"$T/watch"
 # 5. heartbeat: a started step with no end, a pid still running
 : >"$prog"; printf 'S tests/hooks/test-slow.sh\n' >>"$prog"
 sleep 3 & w=$!
-out=$(prog_beat=1 timeout 20 bash -c '. "$1"; prog=$2; progress_watch 5 "$3"' _ "$LIB" "$prog" "$w" 2>&1); rc=$?
+out=$(timeout 20 bash -c '. "$1"; prog=$2; prog_beat=1; progress_watch 5 "$3"' _ "$LIB" "$prog" "$w" 2>&1); rc=$?
 wait "$w" 2>/dev/null
 printf '%s\n' "$out" >"$T/beat"
 [ "$rc" = 0 ] && ok "the watcher returns once its pids exit (rc $rc)" || bad "watcher rc=$rc (124 is a hang)"

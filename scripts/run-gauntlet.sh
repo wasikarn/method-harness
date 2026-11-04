@@ -23,6 +23,10 @@
 # --level low|medium --plan <base> (GH #749) runs the level scripts/gauntlet-plan.sh <base> picks, before a
 # PR: low lints the changed files; medium adds validate, harness-audit and only the planned tests. A level
 # below the plan's is refused. Such a run never records a pass; merges still run the full gauntlet.
+# Live progress (GH #814, scripts/_lib/gauntlet-progress.sh) goes to stderr as plain lines: a step count, a
+# "[done/total pct%] PASS|FAIL <step> (time)" line as each layer or test file finishes, a heartbeat after 30 s
+# without one, and "N/N steps finished". GAUNTLET_PROGRESS=1 turns it on, 0 off; unset, it prints only when stderr
+# is a terminal. gauntlet_full (merge-pr.sh, sync-pr-head.sh) defaults it to 1. stdout and the final lines keep their form.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
@@ -39,6 +43,9 @@ unset MH_GATE_NO_FASTPATH  # canary-only switch; exported, it would hide fast-pa
 # themselves never see it.
 shard="${GAUNTLET_SHARD:-}"
 unset GAUNTLET_SHARD
+# GH #814: read and unset like GAUNTLET_SHARD, so a fixture gauntlet a test runs stays quiet.
+prog_mode="${GAUNTLET_PROGRESS:-auto}"
+unset GAUNTLET_PROGRESS
 check_shard() {
   case "$shard" in
     "") return 0 ;;
@@ -87,6 +94,9 @@ LOG="$(mktemp -d)" && [ -d "$LOG" ] || { echo "gauntlet: mktemp -d failed, refus
 # resolves to the cwd and deletes it, a documented repo incident
 # (CHANGELOG.md), so a bare $LOG must never reach trash unchecked.
 trap '[ -n "$LOG" ] && [ "${fail:-0}" -eq 0 ] && tmp_delete "$LOG"' EXIT
+# GH #814: step events (S <step>, E <rc> <secs> <step>), always written, so a kept failing $LOG has per-file times.
+prog="$LOG/progress"
+: >"$prog"
 
 # Claude Code 2.1.289 warns "CLAUDE.md at the plugin root is not loaded as project context" and
 # --strict makes it an error. It is intentional here (docs/METHODOLOGY.md ships via hooks), so a
@@ -106,11 +116,15 @@ run_validate() {
   validate_strict_tolerant &&
   claude plugin validate .claude-plugin/plugin.json
 }
+# check-observer-contract.sh (GH #443): the mh module stays a turn.complete observer.
+run_validate_all() { run_validate && bash scripts/check-observer-contract.sh "$ROOT"; }
 
 # shellcheck source=_lib/gauntlet-lint.sh
 . "$ROOT/scripts/_lib/gauntlet-lint.sh"
 # shellcheck source=_lib/gauntlet-pass.sh
 . "$ROOT/scripts/_lib/gauntlet-pass.sh"
+# shellcheck source=_lib/gauntlet-progress.sh
+. "$ROOT/scripts/_lib/gauntlet-progress.sh"
 # The pass cache (GH #735) keys on the tree a clean checkout starts from; read before any layer runs.
 start_tree=$(gauntlet_pass_start)
 [ "$level" = full ] || start_tree=""  # only a full run records a pass (GH #749)
@@ -177,8 +191,10 @@ run_hook_tests() {
   mkdir -p "$TDIR"
   hook_test_files | xargs ls -S |
     xargs -P "${GAUNTLET_JOBS:-$([ -n "${CI:-}" ] && echo 1 || echo 4)}" -I{} bash -c \
-      'o="$1/${2//\//_}"; case "$2" in *.py) interp=python3;; *) interp=bash;; esac
-       MH_GATE_JOURNAL_PATH="$o.jsonl" "$interp" "$2" >"$o.out" 2>&1; echo $? >"$o.rc"' _ "$TDIR" {}
+      'o="$1/${2//\//_}"; p=${3:-/dev/null}; s=$SECONDS; case "$2" in *.py) interp=python3;; *) interp=bash;; esac
+       printf "S %s\n" "$2" >>"$p"
+       MH_GATE_JOURNAL_PATH="$o.jsonl" "$interp" "$2" >"$o.out" 2>&1; rc=$?; echo $rc >"$o.rc"
+       printf "E %s %s %s\n" "$rc" "$((SECONDS - s))" "$2" >>"$p"' _ "$TDIR" {} "${prog:-/dev/null}"
   local failed=""
   for t in $(hook_test_files); do
     o="$TDIR/${t//\//_}"
@@ -209,19 +225,24 @@ stray_procs_report
 p3="" p4=""
 p1="" p2=""
 if [ "$level" != full ]; then
-  printf '%s\n' "$plan" | sed -n 's/^changed: //p' | run_lint >"$LOG/lint" 2>&1 & p2=$!
+  printf '%s\n' "$plan" | sed -n 's/^changed: //p' | progress_layer lint run_lint & p2=$!
   if [ "$level" = medium ]; then
-    { run_validate && bash scripts/check-observer-contract.sh "$ROOT"; } >"$LOG/validate" 2>&1 & p1=$!
-    bash skills/meta/harness-audit/scripts/audit.sh . >"$LOG/audit" 2>&1 & p4=$!
+    progress_layer validate run_validate_all & p1=$!
+    progress_layer audit bash skills/meta/harness-audit/scripts/audit.sh . & p4=$!
     [ -z "$plan_tests" ] || { run_hook_tests >"$LOG/tests" 2>&1 & p3=$!; }
   fi
 else
   if [ -z "$shard" ] || [ "${shard%/*}" -eq 1 ]; then
-    # check-observer-contract.sh (GH #443): the mh module stays a turn.complete observer.
-    { run_validate && bash scripts/check-observer-contract.sh "$ROOT"; } >"$LOG/validate" 2>&1 & p1=$!
-    git ls-files | run_lint >"$LOG/lint" 2>&1 & p2=$!
+    progress_layer validate run_validate_all & p1=$!
+    git ls-files | progress_layer lint run_lint & p2=$!
   fi
   run_hook_tests >"$LOG/tests" 2>&1 & p3=$!
+fi
+
+if progress_on; then
+  ntests=0
+  [ "$level" = low ] || ntests=$(hook_test_files | awk NF | wc -l | tr -d ' ')
+  progress_watch "$(progress_total "$level" "$shard" "$ntests")" "$p1" "$p2" "$p3" "$p4"
 fi
 
 fail=0
