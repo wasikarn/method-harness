@@ -599,6 +599,17 @@ class _HeredocLine:
         seg = self.line[st[j][0]:st[j][1]]
         return ("sh" in seg.translate(_UNQUOTE) and _reads_stdin_shell(seg)) or self.piped_shell(pos)
 
+    def plain_git(self, pos):
+        # GH #710: pos's stage runs git (past wrappers) and has no frame, alias (!) or assignment (=, GIT_SSH=)
+        # through which git could run a named script; parsed once per stage.
+        k, j, st, _ = self._stage(pos)
+        if (k, "git", j) not in self.stages:
+            seg = self.line[st[j][0]:st[j][1]]
+            w = None if any(c in seg for c in "(`{!=") else _split_words(seg.split("<<", 1)[0])
+            i = _past_run_prefix(w) if w else None
+            self.stages[(k, "git", j)] = i is not None and w[i] == "git"
+        return self.stages[(k, "git", j)]
+
     def stdin_interp(self, pos):
         # GH #681: (the heredoc's own stage, a later stage) runs python/node reading its script on stdin.
         k, j, st, _ = self._stage(pos)
@@ -993,6 +1004,14 @@ def _in_subscript(line, mask, starts):
             br = line[k] == "["
     return False
 
+def _interp_word(ctx, line, end):
+    # GH #710: the first interpreter word before end, skipping a filename suffix (the sh of x.sh) in a stage
+    # whose program is git (git add t/x.sh). Any other shape keeps the match (./x.sh <<'EOF' runs it).
+    for m in _INTERPRETER_RE.finditer(line, 0, end):
+        if line[m.start() - 1:m.start()] != "." or not ctx.plain_git(m.start()):
+            return m
+    return None
+
 def _strip_heredocs(cmd, ends=None, shell_code=False):
     # Heredoc bodies are literal data (a quoted commit message mentioning
     # "rm -rf" must not deny) UNLESS the heredoc is stdin for an interpreter
@@ -1051,7 +1070,7 @@ def _strip_heredocs(cmd, ends=None, shell_code=False):
             continue
         ctx, views, has_client, line_sql = _HeredocLine(line), {}, _may_name_client(line), None
         openers = sorted(k for k, ch in enumerate(line) if ch in "(`") if has_client else []
-        interp = _INTERPRETER_RE.search(line, 0, ms[-1].start())
+        interp = _interp_word(ctx, line, ms[-1].start())
         # once per line, not per opener (GH #741 review 5: quadratic); quotes and backslashes removed, as the shell
         # does, so pyth\on3 names python (GH #801)
         unq = line.translate(_UNQUOTE)

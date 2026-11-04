@@ -1112,6 +1112,22 @@ for _c in $'cat <<\'EOF\'\nit\'s\nEOF\necho "<<X"\nls\nX' $'echo "$(cat <<\'EOF\
   $'cat > notes.md <<\'EOF\'\nnever rm -rf build\nEOF'; do
   test_allow "$IRRECOVERABLE" "GH #668 control: $(printf '%s' "$_c" | head -1)" "$(bash_payload "$_c")"
 done
+# GH #710: a .sh filename git names on the opener line is no shell; the quoted body stays data.
+test_allow "$IRRECOVERABLE" "GH #710: git add t/x.sh && git commit -F - <<'EOF' with a backticked rm in the body" \
+  "$(bash_payload $'git add t/x.sh && git commit -F - <<\'EOF\'\nsee `rm -rf b`\nEOF')"
+# GH #710 guards: a heredoc a shell or a .sh program reads (argv0, past a wrapper) is still code.
+for _c in $'sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'bash -s <<EOF\nrm -rf b\nEOF' $'./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'env ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'env sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'sudo bash <<EOF\nsee `rm -rf b`\nEOF' \
+  $'git add t/x.sh && ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git add t/x.sh && sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git add t/x.sh && sudo ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git add t/x.sh | ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'{ git add t/x.sh; ./t/x.sh; } <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git -C "$(./t/x.sh)" commit -F - <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git -c alias.x=\'!./t/x.sh\' x <<\'EOF\'\nsee `rm -rf b`\nEOF' $'GIT_SSH=./t/x.sh git push origin <<\'EOF\'\nsee `rm -rf b`\nEOF'; do
+  test_deny "$IRRECOVERABLE" "GH #710 guard: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# One parse per stage, not per .sh operand: a timeout here would allow.
+_n710="$(python3 -c 'print("git add " + "a.sh " * 28000 + "&& bash <<'"'"'EOF'"'"'\nrm -rf b\nEOF")')"
+_timed_case 'GH #710: 28000 .sh operands in a git stage before bash <<EOF deny in bounded time' 2 "$_n710"
 # GH #668 round 2: inside $( bash ends a heredoc at a line that starts with the delimiter (EOF), EOF ),
 # EOF); ...) and runs the next line, where the gate waited for an exact EOF line.
 for _c in $'out=$(cat <<EOF\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<EOF\nmsg\nEOF )\nrm -rf build\nEOF' \
