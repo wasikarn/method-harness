@@ -82,8 +82,11 @@ to `low` (`gpt-6-sol` defaults to `medium`), and was the `gpt-5.5` upgrade targe
 **Re-checked 2026-10-21** (`models_cache.json` fetched that day, CLI 0.163.0): `gpt-5.5` is gone
 from the catalog. Listed: `gpt-6.1-sol` (priority 1), `gpt-6-astra` (2), `gpt-6-sol` (4),
 `gpt-6-luna` (5), `gpt-5.6-sol` (6), `gpt-5.6-terra` (8), `gpt-5.6-luna` (9); none carries an
-upgrade. Terra still has no GPT-6 variant. `codex-resolve-model.py <tier> --effort medium` resolves
-Luna `gpt-6-luna`, Terra `gpt-5.6-terra`, Sol `gpt-6.1-sol`, Astra `gpt-6-astra`. The catalog has
+upgrade. Terra had no GPT-6 variant then.
+**Re-checked 2026-11-04** (`models_cache.json` fetched that day, CLI 0.166.0): `gpt-6.1-terra` is
+listed at priority 3, between `gpt-6-astra` (2) and `gpt-6-sol` (4); `gpt-5.6-terra` stays at 8 and
+no entry carries an upgrade. `codex-resolve-model.py <tier> --effort medium` now resolves Luna
+`gpt-6-luna`, Terra `gpt-6.1-terra`, Sol `gpt-6.1-sol`, Astra `gpt-6-astra`. The catalog has
 no price field; on the pricing page `gpt-6.1-sol` is 50/2.5/250, the same as `gpt-6-sol` except
 cached input at half (2.5 vs 5), so the switch costs no more per token (it says nothing about how
 many tokens a run uses). Versus the GPT-5.6 rates, `gpt-6-sol` is exactly half on every column and
