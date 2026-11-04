@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Gate scope: agent mistakes, not deliberately disguised commands
