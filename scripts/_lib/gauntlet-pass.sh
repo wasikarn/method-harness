@@ -64,7 +64,8 @@ gauntlet_full() {
     gauntlet_lock_acquire
     trap gauntlet_lock_release EXIT
     trap 'exit 130' INT TERM HUP
-    bash "$(git rev-parse --show-toplevel)/scripts/run-gauntlet.sh" >&2
+    # GH #814: these callers run in the background with no terminal, so progress is on unless the caller set it.
+    GAUNTLET_PROGRESS="${GAUNTLET_PROGRESS:-1}" bash "$(git rev-parse --show-toplevel)/scripts/run-gauntlet.sh" >&2
   )
 }
 

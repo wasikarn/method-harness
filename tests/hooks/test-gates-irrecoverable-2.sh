@@ -3997,7 +3997,9 @@ _timed_case "GH #767 review 3: 8900 glued X=\`echo 'a b'\` words, then a split-c
   "echo x; $(printf 'X=`echo '"'"'a b'"'"'` %.0s' $(seq 8900)); rm \`echo ' -rf'\` b"
 # GH #691: in a subagent, a view no longer re-runs the body spawn scan (it could only end the view), so padding that
 # spends the spawn budget in the main reading no longer stops ifs-split before a later rm${IFS}-rf / git${IFS}reset.
-_pad691="eval '$(printf 'env a b c d e f g h i j k l m n o p q r s t u v w x y z ; %.0s' $(seq 240))true'; "
+# GH #857: since GH #838 the main reading denies these itself, and a main reading past the budget denies "too dense",
+# so no padding can starve a view now: 40 statements (not 240, up to 3.7 s under load) keep the long-eval-body check.
+_pad691="eval '$(printf 'env a b c d e f g h i j k l m n o p q r s t u v w x y z ; %.0s' $(seq 40))true'; "
 test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then rm\${IFS}-rf b" "$(bash_agent_payload "${_pad691}rm\${IFS}-rf b" fork)"
 test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then bash -c 'rm\${IFS}-rf b'" "$(bash_agent_payload "${_pad691}bash -c 'rm\${IFS}-rf b'" fork)"
 test_deny  "$IRRECOVERABLE" "GH #691: subagent, spawn-budget padding, then git\${IFS}reset --hard" "$(bash_agent_payload "${_pad691}git\${IFS}reset --hard" fork)"
@@ -4460,10 +4462,16 @@ test_allow "$IRRECOVERABLE" 'GH #787 control: 1200 F=x assignments and $F refere
   "$(bash_payload "${_pad787}$(printf 'F=x; echo $F; %.0s' $(seq 1200))")"
 # GH #787 review: past the cap a var-verb copy that would cost more than its budget is not read, so the command asks
 # (the raw copy, whose scan budget the subshells and references below spend, alone reads `rm -r $G b`).
-# 3000 references each walking back past 1500 subshell assignments spend it; a build script reading its $LOG does not.
-test_ask_says "$IRRECOVERABLE" 'GH #787 review: a raw copy past its budget asks: F=-r; rm $F $G b; G=-i' \
-  "$(bash_payload "${_pad787}$(printf '(H=1); %.0s' $(seq 1500))$(printf 'echo $H; %.0s' $(seq 3000))F=-r; rm \$F \$G b; G=-i")" \
-  'too many variable readings'
+# References each walking back past the subshell assignments spend it; a build script reading its $LOG does not.
+# GH #857: at the full budget (3000 x 1500) the row took 3 to 4 s and met the 4 s deadline first on a slower machine.
+# MH_IRR_BUDGET_SCALE shrinks the budget instead: this 24 KB text (past the 20 KB cap) peaks at about 620,000 units of
+# copy work, so at 0.1 (400,000) it asks in about 0.6 s, and the same text at 0.5 (2,000,000) is read whole and denies:
+# only the budget differs, so the ask is the budget's.
+_t787="$(printf 'echo a; %.0s' $(seq 1600))$(printf '(H=1); %.0s' $(seq 400))$(printf 'echo $H; %.0s' $(seq 900))F=-r; rm \$F \$G b; G=-i"
+MH_IRR_BUDGET_SCALE=0.1 test_ask_says "$IRRECOVERABLE" 'GH #787 review: a raw copy past its budget asks: F=-r; rm $F $G b; G=-i' \
+  "$(bash_payload "$_t787")" 'too many variable readings'
+MH_IRR_BUDGET_SCALE=0.5 test_deny "$IRRECOVERABLE" 'GH #857 control: the same raw copy under a larger budget is read: rm $F $G b denies' \
+  "$(bash_payload "$_t787")"
 _log787="LOG=build.log; rm -f \$LOG; $(printf 'cc -c f.c -o f.o 2>>$LOG || (echo fail; exit 1); %.0s' $(seq 1500))"
 test_allow "$IRRECOVERABLE" 'GH #787 review control: a 73 KB build script, 1500 subshells and $LOG references' "$(bash_payload "$_log787")"
 # GH #787 review 3: the raw copy's spans holding an entry are found once per entry, not once per reference.
