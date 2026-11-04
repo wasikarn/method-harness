@@ -264,12 +264,16 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   that did not isolate it left 268k session-less rows in the real journal. The fuzz is a few fixed
   rewrites; the real-shell oracle and a validator's own generator below still apply. It runs at
   the lowest CPU priority (`renice 19`) and never takes the gauntlet's queue: a 28-min
-  replay holding the queue kept every push waiting (2026-10-27).
+  replay holding the queue kept every push waiting (2026-10-27). Both sides run in a canonical env
+  (GH #888): the cwd is a fresh dir outside any git repo, and no `MH_*` or `GIT_*` variable reaches
+  the gates, so a caller's gate knob or a mid-merge checkout cannot change the result.
 
 - **Acceptance:** 0 commands that `develop` denies and the branch allows, apart from a category
   the PR names as intended. Over-denies are the safe direction and are reported, not blocking.
-  A timeout counts as allow: a hook past its `hooks.json` timeout (8 s) lets the call through, so
-  a command `develop` denies in time and the branch does not finish in time is a regression. Time
+  A timeout is per gate (GH #888, `hooks/hooks.json`): irrecoverable has `onFailure: block`, so past
+  its 8 s timeout the call is blocked, and its own 4 s deadline asks first; subagent-git-guard and
+  secret-scan have no `onFailure`, so past 8 s the call goes through, and for those two a command
+  `develop` denies in time and the branch does not finish in time is a regression. Time
   padded shapes (thousands of statements, 20-150 KB) with the target early and late (GH #245: a
   new scan placed before the fast denies turned a 0.03 s deny into a timeout). Any exit other than
   0 or 2 from the `.py` is a finding too, even where the `.sh` wrapper fails it closed.

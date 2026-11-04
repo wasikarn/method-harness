@@ -129,6 +129,111 @@ if ! /usr/bin/grep -q 'gauntlet-lock' <<<"$out" && /usr/bin/grep -q 'diffs=0' <<
   ok "a held gauntlet lock is not waited on and is left to its holder"
 else bad "the run waited on or touched the gauntlet lock: $out"; fi
 
+echo "=== canonical env: a caller's gate knob changes nothing (GH #888) ==="
+# The planted copy ignores MH_IRR_DEADLINE_SECS. If the knob reached the gates, the old side would
+# ask on a 1 us deadline and the new side would deny: a diff that only the caller's env made.
+cp -R "$GATES" "$T/noknob"
+python3 - "$GATES/irrecoverable.py" "$T/noknob/irrecoverable.py" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+k = 'os.environ.get("MH_IRR_DEADLINE_SECS", "")'
+assert s.count(k) == 1, "knob read moved"
+open(sys.argv[2], "w").write(s.replace(k, '""'))
+PY
+printf 'rm -rf build\n' > "$T/rm.txt"
+out=$(MH_IRR_DEADLINE_SECS=0.000001 bash "$SCRIPT" --cases "$T/rm.txt" "$T/old" "$T/noknob" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "MH_IRR_DEADLINE_SECS in the caller's env does not reach the gates"
+else bad "caller knob leaked into the replay (rc=$rc): $out"; fi
+
+echo "=== canonical env: a mid-merge caller cwd or GIT_DIR changes nothing (GH #888) ==="
+# The planted copy never sees a merge. If the gates ran in the caller's cwd (or its GIT_DIR), the
+# old side would allow `git add -A` mid-merge and the new side would deny it.
+cp -R "$GATES" "$T/nomerge"
+python3 - "$GATES/irrecoverable.py" "$T/nomerge/irrecoverable.py" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+k = "def _mid_merge():\n"
+assert s.count(k) == 1, "_mid_merge moved"
+open(sys.argv[2], "w").write(s.replace(k, k + "    return False\n"))
+PY
+M="$T/merging"
+mkdir -p "$M"
+git -C "$M" init -q && git -C "$M" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$M" rev-parse HEAD > "$M/.git/MERGE_HEAD"
+printf 'git add -A\n' > "$T/addall.txt"
+out=$(cd "$M" && bash "$SCRIPT" --cases "$T/addall.txt" "$T/old" "$T/nomerge" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a mid-merge caller cwd does not reach the gates"
+else bad "caller cwd leaked into the replay (rc=$rc): $out"; fi
+out=$(GIT_DIR="$M/.git" bash "$SCRIPT" --cases "$T/addall.txt" "$T/old" "$T/nomerge" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a caller GIT_DIR does not reach the gates"
+else bad "caller GIT_DIR leaked into the replay (rc=$rc): $out"; fi
+
+echo "=== fork runner matches the bash runner on the committed fixtures (GH #889) ==="
+# A planted message change gives a diff on every irrecoverable deny; both runners must report the
+# same classes, counts and samples.
+cp -R "$GATES" "$T/reworded"
+sed 's/\[mh:gate\] BLOCKED/[mh:gate] BLOCKD/' "$GATES/irrecoverable.py" > "$T/reworded/irrecoverable.py"
+fork_out=$(bash "$SCRIPT" --runner fork "$T/old" "$T/reworded" irrecoverable 2>&1); frc=$?
+bash_out=$(bash "$SCRIPT" --runner bash "$T/old" "$T/reworded" irrecoverable 2>&1); brc=$?
+strip() { /usr/bin/grep -v '^  runner:' <<<"$1"; }
+if [ "$frc" -eq 1 ] && [ "$brc" -eq 1 ] && /usr/bin/grep -q '^  runner: fork' <<<"$fork_out" \
+   && /usr/bin/grep -q '^  runner: bash' <<<"$bash_out" && [ "$(strip "$fork_out")" = "$(strip "$bash_out")" ] \
+   && ! /usr/bin/grep -q 'diffs=0 ' <<<"$fork_out"; then
+  ok "fork and bash runners give the same diffs on the fixtures"
+else bad "fork vs bash on the fixtures (frc=$frc brc=$brc): --- fork: $fork_out --- bash: $bash_out"; fi
+
+# Stub gates: copies of the real dir (the wrapper and secret-scan.py stay real) with irrecoverable.py replaced.
+stub() {  # stub DIR PYTHON-BODY: a gates copy whose irrecoverable.py is the given body after reading stdin
+  cp -R "$GATES" "$1"
+  printf 'import json, sys, time\nd = json.load(sys.stdin)\nc = d["tool_input"]["command"]\n%s\nsys.exit(0)\n' "$2" > "$1/irrecoverable.py"
+}
+
+echo "=== a fork-only diff is re-checked through bash and dropped (GH #889) ==="
+# irrecoverable.sh allows `ls -la` on its fast path without python, so bash never sees the stub's deny
+# of it; fork mode runs python for every command, finds that diff, and must drop it. The `rm` deny
+# reaches python on both runners and stays.
+stub "$T/s-allow" 'pass'
+stub "$T/s-deny" 'if c in ("ls -la", "rm -rf build"): sys.exit(2)'
+printf 'ls -la\nrm -rf build\n' > "$T/two.txt"
+out=$(bash "$SCRIPT" --cases "$T/two.txt" "$T/s-allow" "$T/s-deny" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" && /usr/bin/grep -q '^  \[1\] exit 0->2$' <<<"$out" \
+   && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 1,' <<<"$out"; then
+  ok "fork-only diff dropped after the bash re-check; the confirmed one is kept"
+else bad "fork-only re-check (rc=$rc): $out"; fi
+
+echo "=== a wrapper change falls back to the bash runner (GH #889) ==="
+cp -R "$GATES" "$T/wrapped"
+printf '# a changed wrapper\n' >> "$T/wrapped/irrecoverable.sh"
+out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/old" "$T/wrapped" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q '^  runner: bash (wrapper files differ: irrecoverable.sh)' <<<"$out"; then
+  ok "a differing wrapper runs the whole replay through bash"
+else bad "wrapper fallback (rc=$rc): $out"; fi
+
+echo "=== slower: a stub that sleeps on the new side only (GH #890) ==="
+stub "$T/s-slow" 'time.sleep(0.25)'
+out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-allow" "$T/s-slow" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=0 slower=1 ' <<<"$out" && /usr/bin/grep -q '^  slower: 1' <<<"$out"; then
+  ok "3x slower and over 200 ms on the new side lands in slower"
+else bad "slower on the new side (rc=$rc): $out"; fi
+cp -R "$T/s-slow" "$T/s-slow2"
+out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-slow" "$T/s-slow2" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 slower=0 ' <<<"$out"; then
+  ok "equal sleeps on both sides are not slower"
+else bad "equal sleeps (rc=$rc): $out"; fi
+
+echo "=== near-deadline commands go through bash too (GH #889, #890) ==="
+# Over half of irrecoverable's 4 s deadline in fork mode: re-run through bash, and slower on the
+# deadline criterion.
+stub "$T/s-late" 'time.sleep(2.1)'
+out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-allow" "$T/s-late" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=0 slower=1 ' <<<"$out" \
+   && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 0, near-deadline re-runs: 1)' <<<"$out"; then
+  ok "a near-deadline command is re-run through bash and counted slower"
+else bad "near-deadline (rc=$rc): $out"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"
 exit "$fail"

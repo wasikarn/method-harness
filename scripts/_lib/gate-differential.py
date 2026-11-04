@@ -6,7 +6,8 @@
 # transcripts can hold secrets, so no other command text is ever printed.
 import argparse, glob, io, json, os, random, re, subprocess, sys
 
-TIMEOUT = 8  # hooks.json's timeout: a gate past it lets the call through, so a timeout is its own class
+TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blocks irrecoverable (onFailure: block)
+# and lets the others through, so a timeout is its own class
 SAMPLES, WIDTH = 3, 100
 
 
@@ -137,11 +138,37 @@ def payload(gate, text):
     return d
 
 
-def run(gates_dir, gate, data, env, journal):
+def canonical_env(home):
+    # GH #888: the result must not depend on who runs the replay. Gate knobs (MH_IRR_DEADLINE_SECS,
+    # MH_IRR_BUDGET_SCALE, MH_SGG_*, MH_GATE_BATCH_BUDGET_S, MH_GATE_NO_FASTPATH) and GIT_* (GIT_DIR can
+    # point irrecoverable's mid-merge check at the caller's repo) never reach the gates.
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("MH_", "GIT_"))}
+    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env["HOME"] = home
+    return env
+
+
+def canonical_cwd(tmp, env):
+    # GH #888: a fresh dir outside any git repo, so a caller checkout that is mid-merge cannot turn
+    # irrecoverable's `git add -A` deny into an allow (its _mid_merge asks git in the cwd).
+    cwd = os.path.join(tmp, "cwd")
+    os.makedirs(cwd, exist_ok=True)
+    try:
+        r = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=cwd, env=env, capture_output=True)
+        inside = r.returncode == 0
+    except OSError:
+        inside = False  # no git: _mid_merge's own check fails the same way
+    if inside:
+        print("gate-differential: the replay dir %s is inside a git repo; set TMPDIR outside one" % cwd, file=sys.stderr)
+        sys.exit(2)
+    return cwd
+
+
+def run(gates_dir, gate, data, env, journal, cwd):
     open(journal, "w").close()
     try:
         p = subprocess.run(["bash", os.path.join(gates_dir, gate + ".sh")], input=data,
-                           capture_output=True, env=env, timeout=TIMEOUT)
+                           capture_output=True, env=env, cwd=cwd, timeout=TIMEOUT)
         code, out, err = str(p.returncode), p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         code, out, err = "timeout", b"", b""
@@ -186,8 +213,8 @@ def main():
 
     home = os.path.join(a.tmp, "home")
     os.makedirs(home, exist_ok=True)
-    env = dict(os.environ, HOME=home)
-    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env = canonical_env(home)
+    cwd = canonical_cwd(a.tmp, env)
     jo, jn = os.path.join(a.tmp, "old.jsonl"), os.path.join(a.tmp, "new.jsonl")
     # Both sides: a change that drops a pattern must not unredact the commands it now misses.
     patterns = secret_patterns(a.old) + secret_patterns(a.new)
@@ -196,8 +223,8 @@ def main():
     classes = {}
     for text in corpus:
         data = json.dumps(payload(a.gate, text)).encode()
-        o = run(a.old, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jo), jo)
-        n = run(a.new, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jn), jn)
+        o = run(a.old, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jo), jo, cwd)
+        n = run(a.new, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jn), jn, cwd)
         parts = []
         if o[0] != n[0]:
             parts.append("exit %s->%s" % (o[0], n[0]))
