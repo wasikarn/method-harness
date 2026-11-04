@@ -1965,6 +1965,12 @@ test_deny "GH #843" $'echo x\\\n#;g\\\n"it" stash' $'echo x\\\n#;g\\\n"it" statu
 # ... and an escaped `\<<F` opens no heredoc in the raw-operator views either.
 test_deny "GH #844" $'echo \\<<F; cat <\\\n<\'I\'\n\'\nI\ngit stash\nF' $'echo \\<<F; cat <\\\n<\'I\'\n\'\nI\ngit status\nF'
 test_deny "GH #844" $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit stash\nF' $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit status\nF'
+# PR #872 operator replay: a real 3.8 KB `python3 - <<'EOF'` command dense with quoted JSON fixtures, which
+# develop allows. Its brace-expanded reading (GH #309) is 117 KB; the extra views on top of it went past the
+# work budget, so they read the main text only.
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-replay-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872 replay: a real 3.8 KB python heredoc with dense quoted JSON is allowed, as on develop (rc $rc)" "$ok"
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

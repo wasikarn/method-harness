@@ -1367,11 +1367,15 @@ def _cut_views(texts, base, prose=None):
             work.append(v)
     return views
 
+_no_views = False  # PR #872: set for the GH #309 brace-expanded reading (see below), which gets no extra views
+
 def _extra_views(s, base, based=None):
     # The views of s checked beside (based, base): heredoc bodies blanked (both ways), and each of those and
     # the base text itself read with continuation words joined. based is the text base masks (s itself, or
     # s with some heredoc bodies already blanked); the joined reading is of that text, never of s, so the
     # prose of a body base blanked is never read as code.
+    if _no_views:
+        return []
     based = s if based is None else based
     views = []
     hd_srcs = []  # (heredoc view text, the text it came from) for the cut views
@@ -1522,7 +1526,12 @@ try:
             _brace_too_big = True
             raise _TooCostly
         if _bx != cmd:
+            # PR #872: the GH #842-#844 extra views read the main text only, not this expansion. A brace
+            # list in quoted JSON (`{"k":1,"v":2}`) expands a 3.8 KB command to 117 KB, which develop scans
+            # just under the work budget; views on top of it went over and denied a real command develop
+            # allows. Develop has no views in any reading, so leaving them out here reads no less than it.
             _raw_cmd, cmd = cmd, _bx
+            _no_views = True
             _dollar_joined = False
             for _dollar_join in ("'\"", "'", ""):  # the same three `$` readings as above (git {stash,} $"show")
                 if _dollar_join != "'\"" and not _dollar_joined:

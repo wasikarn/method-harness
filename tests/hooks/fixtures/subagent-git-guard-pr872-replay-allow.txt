@@ -1,0 +1,51 @@
+python3 - <<'EOF'
+p='tests/hooks/test-session-stop.sh'; s=open(p).read()
+anchor='assert "same message.id repeated on 3 lines counts once (turns 2, input 107, output 53), dedup_usage:true" "$ok"\ntrash "$fake_home" "$transcript" 2>/dev/null || true\n'
+assert anchor in s
+new = anchor + r'''
+# Last-line-wins (2026-09-04, measured over 119,013 message ids): the first JSONL line
+# of a response carries a streaming placeholder output_tokens, the last the final
+# count. Three lines with id m1 (output 2 / 2 / 1500) → output 1500, turns 1,
+# usage_pick:"last". (The fixture above repeats identical usage, so it is unchanged.)
+fake_home=$(mktemp -d)
+transcript=$(mktemp)
+for o in 2 2 1500; do
+  printf '{"type":"assistant","message":{"id":"m1","model":"claude-sonnet-5","usage":{"input_tokens":100,"output_tokens":%s,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' "$o"
+done > "$transcript"
+payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "lastwins"}))' "$transcript")
+printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" >/dev/null 2>&1
+rc=$?
+row=$(tail -1 "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
+[[ "$rc" == "0" ]] \
+  && printf '%s' "$row" | /usr/bin/grep -q '"usage_pick":"last"' \
+  && printf '%s' "$row" | /usr/bin/grep -q '"turns":1' \
+  && printf '%s' "$row" | /usr/bin/grep -q '"input_tokens":100' \
+  && printf '%s' "$row" | /usr/bin/grep -q '"output_tokens":1500' && ok=1 || ok=0
+assert "same message.id with output 2 / 2 / 1500 across 3 lines → last line wins (output 1500, turns 1), usage_pick:\"last\"" "$ok"
+trash "$fake_home" "$transcript" 2>/dev/null || true
+
+# Same rule inside the verify window: notification → id m1 on two lines (output 2, then
+# 800 on the line that also carries the closing Agent tool_use) → window gets 800 once
+# (v = 100 + 0 + 800 = 900), not 2 and not 802.
+fake_home=$(mktemp -d)
+sess_dir=$(mktemp -d)
+transcript="$sess_dir/verify.jsonl"
+mkdir -p "$sess_dir/verify/subagents"
+{ python3 -c 'import json; print(json.dumps({"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>aaa</task-id>\n<status>completed</status>\n</task-notification>"}}))'
+  printf '%s\n' '{"type":"assistant","message":{"id":"m1","model":"claude-sonnet-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":100,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant","message":{"id":"m1","model":"claude-sonnet-5","content":[{"type":"tool_use","name":"Agent","id":"t1","input":{"subagent_type":"general-purpose"}}],"usage":{"input_tokens":100,"output_tokens":800,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}'
+  make_transcript_line claude-sonnet-5 999 999; } > "$transcript"
+make_transcript_line claude-sonnet-5 10 5 > "$sess_dir/verify/subagents/agent-aaa.jsonl"
+printf '{"agentType":"general-purpose","toolUseId":"t1","spawnDepth":1}' > "$sess_dir/verify/subagents/agent-aaa.meta.json"
+payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "verify-last"}))' "$transcript")
+printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" >/dev/null 2>&1
+rc=$?
+sub_row=$(/usr/bin/grep '"stream":"subagent"' "$fake_home/.local/share/kbg/metrics/costs.jsonl" 2>/dev/null)
+[[ "$rc" == "0" ]] \
+  && printf '%s' "$sub_row" | /usr/bin/grep -q '"returns":1,"verify_tokens":900,"verify_cache_read":0,"verify_per_return":\[900\]' && ok=1 || ok=0
+assert "verify window: same id on 2 lines (output 2 then 800, Agent tool_use on line 2) → window gets the last line once (900)" "$ok"
+trash "$fake_home" "$sess_dir" 2>/dev/null || true
+'''
+open(p,'w').write(s.replace(anchor,new))
+EOF
+bash tests/hooks/test-session-stop.sh 2>&1 | /usr/bin/grep -E "❌|passed"
