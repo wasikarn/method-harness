@@ -67,6 +67,14 @@ An agent-mistake shape without a real hit is filed `parked` and gets no fix sess
 #842 to #844) was approved before the freeze and is the last gate PR under the old criterion 2.
 Work outside the gates (scripts, skills, docs, the gauntlet) is not frozen.
 
+**Risk accepted: agent mistakes.** The freeze drops criterion 2 as a reason to fix ahead of time. A
+dangerous command an agent writes by mistake, in a shape the gates miss, is fixed only after it has
+run (a real miss). That case can cost work: a lost stash, a hard reset, a deleted tree. Parked issues
+close to ordinary mistakes (for example #867) stay unfixed until then. What still limits the damage:
+the denies already shipped, the `permissions.deny` rules for `rm -rf` and force pushes, `trash` in
+place of `rm`, and branch protection on `develop`. Uncommitted work in a subagent's checkout is the
+exposed part. If one such miss happens, reopen its `parked` class and fix it as in-scope.
+
 ## Risk accepted: prompt injection
 
 The realistic author of a disguised command is not a person at the keyboard. It is an agent that read
