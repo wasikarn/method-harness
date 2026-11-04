@@ -50,6 +50,31 @@ Two rules follow:
 This decision only stops new work. Every disguised shape the gates already deny keeps its deny and its
 test rows; nothing is removed.
 
+## Amendment: gate freeze (2026-11-04)
+
+Criterion 2 above still left room for a shape that an agent only *could* write. Review rounds kept
+finding those, and each one still cost 8 to 28 review rounds plus a 1 to 2 hour replay. Of 70 open
+issues triaged on 2026-11-04, 53 were gate gaps of this kind, and only one (#710) cites a real
+command. So the gates are frozen. A change to `hooks/gates/` is allowed only for:
+
+1. **A real false deny:** a real command from a transcript, the gate journal or a replay was wrongly
+   denied or asked.
+2. **A real miss:** an incident where a dangerous command an agent actually ran got through.
+3. **The replay speed-up plan** (#895): work on how gates are tested and replayed, not on what they
+   decide.
+
+An agent-mistake shape without a real hit is filed `parked` and gets no fix session. PR #872 (GH
+#842 to #844) was approved before the freeze and is the last gate PR under the old criterion 2.
+Work outside the gates (scripts, skills, docs, the gauntlet) is not frozen.
+
+**Risk accepted: agent mistakes.** The freeze drops criterion 2 as a reason to fix ahead of time. A
+dangerous command an agent writes by mistake, in a shape the gates miss, is fixed only after it has
+run (a real miss). That case can cost work: a lost stash, a hard reset, a deleted tree. Parked issues
+close to ordinary mistakes (for example #867) stay unfixed until then. What still limits the damage:
+the denies already shipped, the `permissions.deny` rules for `rm -rf` and force pushes, `trash` in
+place of `rm`, and branch protection on `develop`. Uncommitted work in a subagent's checkout is the
+exposed part. If one such miss happens, reopen its `parked` class and fix it as in-scope.
+
 ## Risk accepted: prompt injection
 
 The realistic author of a disguised command is not a person at the keyboard. It is an agent that read
@@ -75,4 +100,5 @@ gates. This ADR accepts that risk for the shapes the gates do not already deny:
 - Gate PRs get smaller and their reviews end. The gates stop slowing down for shapes no real command
   uses.
 - **Revisit when:** a real command or an incident uses a disguised shape. Reopen the `parked` issues of
-  that class and fix them as in-scope.
+  that class and fix them as in-scope. Lift the freeze when the replay plan (#895) makes a gate PR
+  cheap enough that review rounds, not replays, are the cost again.
