@@ -2874,30 +2874,34 @@ def _blank_substitutions(s):
 
 _BODY_RESCAN_MAX = 64
 def _blank_substitutions_read(s):
-    bodies = []
+    bodies, size = [], len(s)
     for _ in range(5):
         new = _scan_once(s, bodies)
         if new == s:
             break
         s = new
     # GH #883: a body's own substitutions are blanked too, their bodies appended in turn, so a quoted one in a body
-    # (echo "$(echo "$(trash ~)")") is read; an unquoted one was only split out by shlex at its "(". The first
-    # _BODY_RESCAN_MAX bodies, and only one holding a $( or <( / >( (a backtick in a body is read as before: its
-    # closer search is not escape-aware, so `..\` would leave a body that cannot be tokenized). Review: a body
-    # past the cap that still holds one fails closed, as the depth budget does (develop denied that nesting).
-    k = 0
+    # (echo "$(echo "$(trash ~)")") is read; an unquoted one was only split out by shlex at its "(". Only a body
+    # holding a $( or <( / >( (a backtick in a body is read as before: its closer search is not escape-aware, so `..\`
+    # would leave a body that cannot be tokenized). Review: a body nested deeper than _BODY_RESCAN_MAX levels, or a
+    # re-read past 16 passes over the text, that still holds one fails closed as the depth budget does (develop
+    # denied that nesting); many shallow bodies (a 70-line script of "$(dirname "$f")") are all read.
+    depth, work, k = [0] * len(bodies), 0, 0
     while k < len(bodies):
         b = bodies[k]
         if "$(" in b or "<(" in b or ">(" in b:
-            if k >= _BODY_RESCAN_MAX:
+            work += len(b)
+            if depth[k] >= _BODY_RESCAN_MAX or work > 16 * size + 10000:
                 _DEPTH_BUDGET_BLOWN[0] = True
                 break
+            first = len(bodies)
             for _ in range(5):
                 nb = _scan_once(b, bodies)
                 if nb == b:
                     break
                 b = nb
             bodies[k] = b
+            depth.extend([depth[k] + 1] * (len(bodies) - first))
         k += 1
     if bodies:
         # A real "\n" before each body ends any open "#" comment (a plain " ; "

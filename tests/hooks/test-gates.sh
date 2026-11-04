@@ -551,6 +551,12 @@ for _c in 'echo "$(echo "`trash ~`")"' 'x="$(cat "`trash "$HOME"`")"' 'echo "$(e
     "echo $(printf '\"$(%.0s' $(seq 70))trash ~$(printf ')\"%.0s' $(seq 70))"; do
   test_deny  "$IRRECOVERABLE" "GH #883 review: ${_c:0:60}" "$(bash_payload "$_c")"
 done
+# GH #883 review 2: the re-read cap is on nesting depth, so many shallow bodies (an agent's 70-line setup script)
+# are all read and stay allowed; a dangerous one after them is still found.
+_s883=""; for _i in $(seq 70); do _s883="${_s883}v$_i=\"\$(jq -r .a \"\$(dirname \"\$f\")/x.json\")\""$'\n'; done
+test_allow "$IRRECOVERABLE" "GH #883 review 2 control: 70 lines of v=\"\$(jq .. \"\$(dirname ..)\")\"" "$(bash_payload "$_s883")"
+test_deny  "$IRRECOVERABLE" "GH #883 review 2: the same 70 lines, then a nested quoted trash" \
+  "$(bash_payload "${_s883}echo \"\$(echo \"\$(trash \"\$HOME\")\")\"")"
 test_deny "$IRRECOVERABLE" "git restore . (discards worktree)" \
   "$(bash_payload 'git restore .')"
 test_deny "$IRRECOVERABLE" "git restore -- file (discards worktree)" \
