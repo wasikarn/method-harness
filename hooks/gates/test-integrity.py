@@ -194,7 +194,7 @@ FUNC_OPEN_RE = re.compile(
 try:
     from _quotemask import mask_quotes as _mask_quotes_bash
 except Exception:
-    def _mask_quotes_bash(s):
+    def _mask_quotes_bash(s, cuts=None):
         def _back(k, blanks):
             # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
             # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -240,6 +240,8 @@ except Exception:
         au = False  # GH #833 review 9/10: every ")" after an unsure "#" is unsure too
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
+        bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
+        bo = -1
         at_word_start = True
         while i < n:
             c = s[i]
@@ -254,12 +256,30 @@ except Exception:
                 at_word_start = False
                 continue
             if c == "#" and at_word_start and i >= ie:
+                cut = bt
                 while i < n and s[i] != "\n":
-                    out.append(" "); i += 1
+                    if cut and s[i] == "\\" and s[i + 1:i + 2] not in ("", "\n"):
+                        out.append(" ")  # GH #842: an escaped char, a backtick too, does not end the substitution
+                        i += 1
+                    elif cut and s[i] == "`":
+                        if cuts is not None:  # GH #842: the backtick ends the comment
+                            cuts.append((bo, i))
+                        cut = bt = False
+                    out.append(" ")
+                    i += 1
                 continue
             if c == "'" and i >= ie:
                 out.append(" "); i += 1
+                cut = bt
                 while i < n and s[i] != "'":
+                    if cut and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
+                        out.append("Q"); i += 1
+                    elif cut and s[i] == "`":
+                        if cuts is not None:  # GH #842: the backtick ends it
+                            cuts.append((bo, i))
+                        cut = bt = False
+                    elif s[i] == "\n":
+                        cut = False
                     out.append("Q"); i += 1
                 if i < n:
                     out.append(" "); i += 1
@@ -278,20 +298,34 @@ except Exception:
                     i = j; at_word_start = False
                     continue
                 out[-1] = " "; out.append(" "); i = j + 1
+                cut = bt
                 while i < n and s[i] != "'":
                     if s[i] == "\\" and i + 1 < n:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
+                        if cut and s[i] == "`":
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append((bo, i))
+                            cut = bt = False
+                        elif s[i] == "\n":
+                            cut = False
                         out.append("Q"); i += 1
                 if i < n:
                     out.append(" "); i += 1
                 at_word_start = False
             elif c == '"' and i >= ie:
                 out.append(" "); i += 1
+                cut = bt
                 while i < n and s[i] != '"':
                     if s[i] == "\\" and i + 1 < n:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
+                        if cut and s[i] == "`":
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append((bo, i))
+                            cut = bt = False
+                        elif s[i] == "\n":
+                            cut = False
                         out.append("Q"); i += 1
                 if i < n:
                     out.append(" "); i += 1
@@ -312,7 +346,7 @@ except Exception:
                 out.append("\\" * (j - i))
                 if (j - i) % 2 == 1 and j < n and s[j] in "'\"$":  # an escaped "$" is literal too, never an ANSI-C opener
                     out.append("Q"); j += 1
-                elif (j - i) % 2 == 1 and j < n and s[j] in " \t\n;&|()":
+                elif (j - i) % 2 == 1 and j < n and s[j] in " \t\n;&|()`":  # GH #842: an escaped backtick opens nothing
                     out.append(s[j]); j += 1  # an escaped blank or separator is part of its word: a "#" after it is no comment
                 i = j
                 at_word_start = False
@@ -331,6 +365,10 @@ except Exception:
                     ie = n
                 else:
                     out.append(c)
+                    if c == "`" and i >= ie:
+                        bt, bo = not bt, i  # GH #842: bo is the index of the backtick that opened it
+                    elif c == "\n":
+                        bt = False  # GH #842: a substitution is tracked on its own line only
                 i += 1
                 at_word_start = c in set(" \t\n;&|()")
                 if at_word_start:

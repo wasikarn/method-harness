@@ -125,6 +125,43 @@ CORPUS = [
     "echo $(case a in a) !(true)#;esac\n;; b)#'\n;; esac); git stash\n'",
     "( !(true)#$(\n)#'\ngit stash\n'",
     "!(true)#\\\n#'\ngit stash #'",
+    # GH #842: inside backticks a quote span or comment ends at the next unescaped backtick; no quote or
+    # comment opens after it, and "<" stays visible
+    "echo `echo 'a`#; git stash",
+    "echo `echo \"a`#; git stash",
+    "echo `echo $'a`#; git stash",
+    "echo `'esac`#|git stash",
+    "X=claude; `'esac`#|$X",
+    "echo `echo #`; git stash",
+    "echo `echo 'a`; git reset --hard",
+    "x=`echo \"a`\ngit stash",
+    "echo `echo 'a'`#; git status",
+    "echo `echo 'a'` 'git stash'",
+    "echo `echo 'a\\`'`#; git stash",
+    "echo `echo # x\\` y`; git stash",
+    "echo \\`echo 'a\\` 'x'; git stash",
+    "echo `echo 'a`'x' </dev/null git stash",
+    "echo `echo 'a`#<<E\ngit stash\nE",
+    # GH #843: a line continuation inside a partly quoted word
+    "g\\\n\"it\" stash",
+    "\"g\"\\\nit stash",
+    "g\\\n'it' reset --hard",
+    "\"gi\"\\\n\"t\" stash",
+    "g\\\ni\\\n\"t\" stash",
+    "\"git\"\\\n stash",
+    # GH #844: a quote in a heredoc body
+    "cat <<'E'\ndon't\nE\ngit stash",
+    "cat <<'E'\n$(date)#'\nE\ngit stash",
+    "cat <<'E'\na\\ #'\nE\ngit stash",
+    "cat <<'E'\nfix: $(case a in a) x;; esac)#' shape\nE\ngit stash",
+    "git commit -F- <<'E'\ndon't\nE\ngit stash",
+    "cat <<A <<B\ndon't\nA\nit's\nB\ngit stash",
+    # GH #842 review 3: the mask's own reading never changes at a cut; the cuts are reported apart
+    "echo `echo 'a`\\'; g\\\nit stash",
+    "echo `echo #`; \"g\"it stash",
+    "echo `echo 'a`\ngit stash",
+    "echo `\necho 'a`#; git stash",
+    "He said `x` and `don't\nIt's the `\"$(cat` shape",
 ]
 
 
@@ -147,6 +184,12 @@ for label, fn in copies:
     for s in CORPUS:
         if fn(s) != mask_quotes(s):
             print("DRIFT %s on %r: %r != %r" % (label, s, fn(s), mask_quotes(s)))
+            bad += 1
+        a, b = [], []  # GH #842: the backtick cuts each copy reports must agree too
+        fn(s, a)
+        mask_quotes(s, b)
+        if a != b:
+            print("DRIFT %s cuts on %r: %r != %r" % (label, s, a, b))
             bad += 1
 print("OK" if not bad else "FAIL")
 sys.exit(1 if bad else 0)

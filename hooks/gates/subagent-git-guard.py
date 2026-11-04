@@ -145,7 +145,7 @@ except (AttributeError, ValueError, OSError):
 try:
     from _quotemask import mask_quotes as _mask_quotes
 except Exception:
-    def _mask_quotes(s):
+    def _mask_quotes(s, cuts=None):
         def _back(k, blanks):
             # GH #833: the index of the char bash reads before s[k] (-1 at the start) and whether a backslash escapes it,
             # stepping over line continuations (an odd backslash run, then a newline) and, with blanks, unescaped blanks
@@ -191,6 +191,8 @@ except Exception:
         au = False  # GH #833 review 9/10: every ")" after an unsure "#" is unsure too
         parens = []  # GH #820 item 5: per open unquoted "(", whether it is glued ($( <( >( =()
         i, n = 0, len(s)
+        bt = False  # GH #842: inside an unquoted backtick substitution opened on this line
+        bo = -1
         at_word_start = True
         while i < n:
             c = s[i]
@@ -205,12 +207,30 @@ except Exception:
                 at_word_start = False
                 continue
             if c == "#" and at_word_start and i >= ie:
+                cut = bt
                 while i < n and s[i] != "\n":
-                    out.append(" "); i += 1
+                    if cut and s[i] == "\\" and s[i + 1:i + 2] not in ("", "\n"):
+                        out.append(" ")  # GH #842: an escaped char, a backtick too, does not end the substitution
+                        i += 1
+                    elif cut and s[i] == "`":
+                        if cuts is not None:  # GH #842: the backtick ends the comment
+                            cuts.append((bo, i))
+                        cut = bt = False
+                    out.append(" ")
+                    i += 1
                 continue
             if c == "'" and i >= ie:
                 out.append(" "); i += 1
+                cut = bt
                 while i < n and s[i] != "'":
+                    if cut and s[i] == "\\" and s[i + 1:i + 2] in ("`", "\\"):
+                        out.append("Q"); i += 1
+                    elif cut and s[i] == "`":
+                        if cuts is not None:  # GH #842: the backtick ends it
+                            cuts.append((bo, i))
+                        cut = bt = False
+                    elif s[i] == "\n":
+                        cut = False
                     out.append("Q"); i += 1
                 if i < n:
                     out.append(" "); i += 1
@@ -229,20 +249,34 @@ except Exception:
                     i = j; at_word_start = False
                     continue
                 out[-1] = " "; out.append(" "); i = j + 1
+                cut = bt
                 while i < n and s[i] != "'":
                     if s[i] == "\\" and i + 1 < n:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
+                        if cut and s[i] == "`":
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append((bo, i))
+                            cut = bt = False
+                        elif s[i] == "\n":
+                            cut = False
                         out.append("Q"); i += 1
                 if i < n:
                     out.append(" "); i += 1
                 at_word_start = False
             elif c == '"' and i >= ie:
                 out.append(" "); i += 1
+                cut = bt
                 while i < n and s[i] != '"':
                     if s[i] == "\\" and i + 1 < n:
                         out.append("Q"); out.append("Q"); i += 2
                     else:
+                        if cut and s[i] == "`":
+                            if cuts is not None:  # GH #842: the backtick ends it
+                                cuts.append((bo, i))
+                            cut = bt = False
+                        elif s[i] == "\n":
+                            cut = False
                         out.append("Q"); i += 1
                 if i < n:
                     out.append(" "); i += 1
@@ -263,7 +297,7 @@ except Exception:
                 out.append("\\" * (j - i))
                 if (j - i) % 2 == 1 and j < n and s[j] in "'\"$":  # an escaped "$" is literal too, never an ANSI-C opener
                     out.append("Q"); j += 1
-                elif (j - i) % 2 == 1 and j < n and s[j] in " \t\n;&|()":
+                elif (j - i) % 2 == 1 and j < n and s[j] in " \t\n;&|()`":  # GH #842: an escaped backtick opens nothing
                     out.append(s[j]); j += 1  # an escaped blank or separator is part of its word: a "#" after it is no comment
                 i = j
                 at_word_start = False
@@ -282,6 +316,10 @@ except Exception:
                     ie = n
                 else:
                     out.append(c)
+                    if c == "`" and i >= ie:
+                        bt, bo = not bt, i  # GH #842: bo is the index of the backtick that opened it
+                    elif c == "\n":
+                        bt = False  # GH #842: a substitution is tracked on its own line only
                 i += 1
                 at_word_start = c in set(" \t\n;&|()")
                 if at_word_start:
@@ -338,46 +376,148 @@ def _drop_escapes(m):
 # can only lower a verdict through the `stash list|show` carve-out, which is why the readings matter there.
 _QWORD_RE = re.compile(r"(?<![^\s;&|()<>{])(?:[\w./-]|\\[\w./-]|\$?\"[\w./-]*\"|\$?'[\w./-]*')+(?![^\s;&|()<>}])")
 _QPIECE_RE = re.compile(r"(\$?)([\"'])([\w./-]*)[\"']|\\([\w./-])|([\w./-])")
+
+# GH #843: a line continuation inside such a word (`g\<nl>"it" stash`, `"g"\<nl>it stash`) is deleted by the
+# shell, and the mask (GH #306) moves its two blanks to the front of the word, so the word's quoted pieces
+# no longer sit at their raw offsets. A word with continuations is read by its own pattern (the pattern
+# above must stay _SPAWN_QWORD_RE's twin): pairs at its front or end are blanks in place in the mask, every
+# pair between moved two blanks to the word front, and the pieces are checked against the mask past them.
+_nl_join = 0  # GH #843: 0 off (develop's reading); 1 the joined reading; 2 joined, dropping bogus spans (_nl_view)
+_QWORD_NL_BODY = r"(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])"
+_QWORD_NL_BODY_RE = re.compile(_QWORD_NL_BODY)
+_QWORD_NL_RE = re.compile(r"(?<![^\s;&|()<>{])(?<!\\\n)(?:[\w./-]|\\[\w./-]|\\\n|(?:\$(?:\\\n)*)?\"(?:[\w./-]|\\\n)*\"|(?:\$(?:\\\n)*)?'[\w./-]*')+(?![^\s;&|()<>}])")
+# Its pieces: a `$` (continuations may stand between it and its quote: $\<nl>'git' is $'git'), a quoted piece (inside "..", a continuation is deleted too: "g\<nl>it" is git), an
+# escaped letter, a continuation outside quotes, a plain letter.
+_QPIECE_NL_RE = re.compile(r"((?:\$(?:\\\n)*)?)(\"(?:[\w./-]|\\\n)*\"|'[\w./-]*')|\\([\w./-])|(\\\n)|([\w./-])")
 _dollar_join = "'\""  # the `$` quote kinds joined in this pass
 _dollar_joined = False  # a word with a `$` piece was joined, so the other readings differ
+
+def _join_pieces(word, k0, masked):
+    # The letters of `word` (no continuations in it) if the mask at k0 shows it outside every quote, else None.
+    letters = []
+    for p in _QPIECE_RE.finditer(word):
+        k = k0 + p.start()
+        if p.group(5):
+            ok = masked[k] == p.group(5)
+            letters.append(p.group(5))
+        elif p.group(4):
+            ok = masked[k:k + 2] == p.group()
+            letters.append(p.group(4))
+        elif p.group(1) and p.group(2) not in _dollar_join:
+            ok = False
+        else:
+            d, body = len(p.group(1)), p.group(3)
+            ok = (masked[k:k + d] in ("", " ", "$") and masked[k + d:k + d + 1] == " " and
+                  masked[k + d + 1:k + d + 1 + len(body)] == "Q" * len(body) and masked[k + d + 1 + len(body):k + d + 2 + len(body)] == " ")
+            letters.append(body)
+        if not ok:
+            return None
+    return "".join(letters)
+
+def _join_pieces_nl(pieces, k, masked):
+    # The letters of _QPIECE_NL_RE pieces (no continuation outside quotes among them) if the mask from k
+    # shows them outside every quote, else None. A quoted piece is masked as blank, one Q per char, blank.
+    letters = []
+    for p in pieces:
+        t = p.group()
+        if p.group(5):
+            ok = masked[k:k + 1] == t
+            letters.append(t)
+        elif p.group(3):
+            ok = masked[k:k + 2] == t
+            letters.append(p.group(3))
+        else:
+            # The pairs between `$` and its quote moved to the word front in the mask (see the caller), so
+            # the piece is masked as `$` (or the blank of a $'..' opener), then blank, one Q per char, blank.
+            d, q = min(len(p.group(1)), 1), p.group(2)
+            body = q[1:-1]
+            ok = (not d or q[0] in _dollar_join) and masked[k:k + d] in ("", " ", "$") and \
+                masked[k + d:k + d + len(q)] == " " + "Q" * len(body) + " "
+            letters.append(body.replace("\\\n", "") if q[0] == '"' else body)
+            k += d + len(q)
+            if not ok:
+                return None
+            continue
+        if not ok:
+            return None
+        k += len(t)
+    return "".join(letters)
 
 def _join_quoted_words(raw, masked):
     global _dollar_joined
     if len(raw) != len(masked) or ("'" not in raw and '"' not in raw):
         return masked
-    out, last = [], 0
+    reps = []  # (start, end, joined text), checked against the mask as it came in
+    if _nl_join and "\\\n" in raw:
+        cands = list(_QWORD_NL_RE.finditer(raw))
+        # _QWORD_NL_RE starts no word right after a backslash-newline (that made a long continued run
+        # quadratic), but one that is no continuation ends its line: an even backslash run (`a\\<nl>`) or a
+        # comment's last `\` (the mask of that physical line alone blanks it; the whole mask cannot say,
+        # since it moves a continuation's blanks to its word front). A word is tried there too.
+        for q in (i for i in range(len(raw) - 1) if raw.startswith("\\\n", i)):
+            r = q
+            while r > 0 and raw[r - 1] == "\\":
+                r -= 1
+            ls = raw.rfind("\n", 0, q) + 1
+            _scan_cost(q + 1 - ls)
+            if (q - r) % 2 == 1 or _mask_quotes(raw[ls:q + 1])[-1:] == " ":
+                # A match that runs through this pair (`# c\<nl>g\<nl>"it"`) is bogus: bash ends the word at
+                # the real newline. It is dropped, and the word after the pair is tried on its own.
+                if _nl_join == 2:  # its own reading: masking the line alone can misread one that starts in a quote
+                    cands = [c for c in cands if not c.start() <= q < c.end() - 1]
+                mm = _QWORD_NL_BODY_RE.match(raw, q + 2)
+                if mm and not any(c.start() < mm.end() and mm.start() < c.end() for c in cands):
+                    cands.append(mm)
+        for m in cands:  # GH #843: only the words _QWORD_RE cannot read whole
+            w = m.group()
+            if "\\\n" not in w or ("'" not in w and '"' not in w):
+                continue
+            ps = list(_QPIECE_NL_RE.finditer(w))
+            a, b = 0, len(ps)
+            while a < b and ps[a].group(4):
+                a += 1
+            while b - 1 > a and ps[b - 1].group(4):
+                b -= 1
+            core = [p for p in ps[a:b] if not p.group(4)]
+            # Blanks the mask moved to the word front, one pair each: every inner pair, and every trailing
+            # pair but the last (a backslash follows it, so it glues); only the last trailing pair is in place.
+            inner = 2 * (b - a - len(core)) + 2 * max(len(ps) - b - 1, 0) + \
+                sum(len(p.group(1) or "") - 1 for p in core if p.group(1) and len(p.group(1)) > 1)
+            tail = ps[-1].start() if b < len(ps) else len(w)
+            # Leading pairs are in place, or (a comment that ends in `<blank>\`, which is no continuation)
+            # are not pairs at all: read the word both with them and from after them.
+            for lead in ((0, 2 * a) if a else (0,)):
+                k0 = m.start() + lead
+                front = 2 * a - lead + inner
+                if masked[k0:k0 + front] != " " * front or masked[m.start() + tail:m.end()].strip():
+                    continue
+                j = _join_pieces_nl(core, k0 + front, masked)
+                if j is not None:
+                    _dollar_joined = _dollar_joined or any(p.group(1) for p in core)
+                    reps.append((k0, m.end(), j))
+                    break
+    taken = list(reps)
     for m in _QWORD_RE.finditer(raw):
         if "'" not in m.group() and '"' not in m.group():
             continue
-        a, letters, ok = m.start(), [], True
-        for p in _QPIECE_RE.finditer(m.group()):
-            k = a + p.start()
-            if p.group(5):
-                ok = masked[k] == p.group(5)
-                letters.append(p.group(5))
-            elif p.group(4):
-                ok = masked[k:k + 2] == p.group()
-                letters.append(p.group(4))
-            elif p.group(1) and p.group(2) not in _dollar_join:
-                ok = False
-            else:
-                d, body = len(p.group(1)), p.group(3)
-                ok = (masked[k:k + d] in ("", " ", "$") and masked[k + d] == " " and
-                      masked[k + d + 1:k + d + 1 + len(body)] == "Q" * len(body) and masked[k + d + 1 + len(body)] == " ")
-                letters.append(body)
-            if not ok:
-                break
-        if ok:
+        if any(x < m.end() and m.start() < y for x, y, _ in taken):
+            continue  # part of a word GH #843 already joined whole
+        j = _join_pieces(m.group(), m.start(), masked)
+        if j is not None:
             _dollar_joined = _dollar_joined or "$" in m.group()
-            j = "".join(letters)
-            out.append(masked[last:a]); out.append(" " * (m.end() - a - len(j)) + j); last = m.end()
+            reps.append((m.start(), m.end(), j))
+    if not reps:
+        return masked
+    out, last = [], 0
+    for x, y, j in sorted(reps):
+        out.append(masked[last:x]); out.append(" " * (y - x - len(j)) + j); last = y
     return "".join(out) + masked[last:]
 
 # The whole command is masked again by _shell_bodies; on a 2 MB command each mask costs about 1 s.
 _mask_memo = {}
 
 def _mask(s):
-    k = (_dollar_join, s)
+    k = (_dollar_join, _nl_join, s)
     if k not in _mask_memo:
         _mask_memo[k] = _WORD_TOKEN_RE.sub(_drop_escapes, _join_quoted_words(s, _mask_quotes(s)))
     return _mask_memo[k]
@@ -717,6 +857,10 @@ def _violation_in_bodies(raw_cmd, masked_cmd, overlap):
             hit = _violation(mb, False) or (overlap and _violation(mb, overlap))
             if hit:
                 return hit
+            for t, mt in _extra_views(body, mb):  # GH #843/#844: then the body read the other ways too
+                hit = _violation(mt, False) or (overlap and _violation(mt, overlap))
+                if hit:
+                    return hit
     return None
 
 # GH #274: the mask blanks everything inside "..." so `echo "$(git clean -fd)"` and backticks
@@ -748,6 +892,37 @@ def _in_arith(s, i):
     line = _mask_quotes(s[ls:i])
     return line.rfind("((") > line.rfind("))")
 
+def _in_subscript(s, i, loose=False):
+    # GH #842/#844, the new views only: a `<<` inside an unclosed `$[` on its line (`$[1<<E]`), inside the
+    # subscript of an assignment word (`a[1<<E ]=1`: a name, `[`, no blank up to the `<<`, `]=` after it), or
+    # inside the parens of a compound array assignment (`a=(1<<E)`),
+    # is a shift, not a heredoc. Any other `[` (`echo x[; cat <<'E'`, `echo a[1<<E]`) leaves it a heredoc.
+    # Develop's paths keep _in_arith alone (there an unreadable heredoc denies), so this never turns a deny
+    # into an allow.
+    ls = s.rfind("\n", 0, i) + 1
+    _scan_cost(i - ls)
+    line = _mask_quotes(s[ls:i])
+    # A compound array assignment (`a=(1<<E)`, `a+=(<<E)`): bash reads no heredoc in its parens.
+    ca = max(line.rfind("=("), line.rfind("+=(") + 1)
+    if ca > line.rfind(")") and ca > 0 and re.search(r"(?:^|[\s;&|(])[A-Za-z_]\w*\+?$", line[:ca]):
+        return True
+    ob = line.rfind("[")
+    if ob <= line.rfind("]") or ob < 1:
+        return False
+    if line[ob - 1] == "$":
+        k = ob - 1
+        while k >= 0 and line[k] == "$":
+            k -= 1
+        return (ob - 1 - k) % 2 == 1  # `$$[` is the PID then a literal `[`
+    if loose:  # the "brk" reading: any unclosed `name[` (`a[ 1<<E]=1`, `a[1<<E]` with no `=`)
+        return line[ob - 1].isalnum() or line[ob - 1] == "_"
+    if re.search(r"[\s;&|()<>]", line[ob + 1:]) or not re.match(r"<<[^\]\n]*\]\+?=", s[i:]):
+        return False
+    k = ob - 1
+    while k >= 0 and (line[k].isalnum() or line[k] == "_"):
+        k -= 1
+    return k < ob - 1 and not line[k + 1].isdigit() and (k < 0 or line[k] in " \t;&|(")
+
 def _scan_cost(k):
     global _work
     _work += k
@@ -767,7 +942,7 @@ def _line_end(s, pos):
             return e
         pos = e + 1
 
-def _heredoc_at(s, i, after=None):
+def _heredoc_at(s, i, after=None, shift=True):
     # A heredoc operator at s[i]: (trigger, body start, body end, terminator end, quoted delimiter),
     # or None when it opens no body (arithmetic shift, or no newline follows). The trigger is the
     # newline where the body begins. A second heredoc on the same line passes `after`, the first
@@ -779,7 +954,7 @@ def _heredoc_at(s, i, after=None):
     # _Unparsed, and the command is denied.
     m = _HD_START_RE.match(s, i)
     eol = _line_end(s, m.end() if m else i)
-    if eol < 0 or _in_arith(s, i):
+    if eol < 0 or shift and _in_arith(s, i):  # GH #844: shift=False reads a `<<` in (( )) as a heredoc too
         return None
     if not m:
         raise _Unparsed
@@ -872,6 +1047,8 @@ def _substitution_bodies(s, depth=0):
                 bodies.extend(_scan_bodies(s, depth, z, lb, False, pc))
     return bodies
 
+_hd_collect = None  # GH #842: (text, list) while _prose asks _scan_bodies which heredocs it opens
+
 def _scan_bodies(s, depth=0, zsh_dollar=False, lookback=True, legacy=False, paren_close=False):
     bodies, n, i = [], len(s), 0
     # frame: kind, body start, open quote, paren depth, open `case` count, saw case, at command
@@ -940,6 +1117,9 @@ def _scan_bodies(s, depth=0, zsh_dollar=False, lookback=True, legacy=False, pare
             h = _heredoc_at(s, i, pend[-1][3] if pend else None)
             if h:
                 pend.append(h)
+                if _hd_collect is not None and _hd_collect[0] is s and not f[7] \
+                        and not any(g[0] == "bt" for g in frames) and not _in_subscript(s, i):
+                    _hd_collect[1].append((h[1], h[3]))  # GH #842: a heredoc this scan opens (see _prose)
             i += 1
         elif c == "`":
             if f[0] == "bt" and f[2] is None:
@@ -1017,6 +1197,242 @@ def _blank_heredocs(s):
         out.append(s[i:a]); out.append(re.sub(r"[^\n]", "Q", s[a:b])); i = b
     return "".join(out) + s[i:]
 
+# GH #844: the main view masks the whole command, heredoc bodies included, so a `'` in a body (`don't`)
+# opened a span that ran past the delimiter and hid the commands after it. Two more views blank the bodies,
+# each checked as well as the main view, never in place of it, so each can only add a deny:
+# - by mask: the operators the mask shows, one at a time, masking again after each blank, so an earlier
+#   body is gone before the next operator is looked for (_heredoc_spans finds them all on one mask, which a
+#   quote in an earlier body throws off). It masks again only after a body that holds a char that can change
+#   the mask's state, and stops after _HD_SEQ_MAX operators (the raw view goes on);
+# - raw: every `<<` in the text in order, the mask not asked, so an operator the top-level mask hides
+#   (`"$(cat <<'EOF'` with a lone `"` in the body) still blanks its body. One inside quotes or a comment
+#   blanks prose, which is why it is a view of its own.
+# An operator either cannot read (_Unparsed) is skipped: a `<<` in prose must never deny by itself.
+_HD_SEQ_MAX = 24
+_HD_STATE_RE = re.compile(r"['\"`\\#$()<]|\b(?:case|esac)\b")
+
+_HD_MODES = ("sub", "dev", "all", "brk")
+_CONT_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # an odd backslash run, then a newline: its last pair
+
+def _blank_heredocs_seq(s, raw_ops, mode="sub"):
+    # mode is how a `<<` that may be a shift is read: "dev" as develop's _in_arith reads it, "sub" also as a
+    # shift in a subscript (_in_subscript), "all" always as a heredoc. Each mode is its own view, so a wrong
+    # answer in one (`((echo a) )` is no arithmetic, `echo a[<<E]=1` no subscript) is covered by another.
+    t, pos, line_end, last, spans = s, 0, -1, None, []
+    mt = None if raw_ops else _mask_quotes(t)
+    while True:
+        if mt is None and not raw_ops:
+            if len(spans) >= _HD_SEQ_MAX:
+                raw_ops = True  # past the cap the mask view goes on as the raw one
+            else:
+                _scan_cost(len(t))
+                mt = _mask_quotes(t)
+        m = _HD_OP_RE.search(t if raw_ops else mt, pos)
+        if not m:
+            return t, spans
+        p = m.start()
+        pos = m.end()
+        r = p
+        while r > 0 and t[r - 1] == "\\":
+            r -= 1
+        if (p - r) % 2 == 1:
+            continue  # `\<<F`: the first `<` is escaped, so no heredoc opens (the raw scan sees `<<` anyway)
+        chained = last is not None and p < line_end  # a second heredoc on the line of the one before
+        try:
+            h = _heredoc_at(t, p, last[3] if chained else None, mode != "all")
+        except _Unparsed:
+            continue
+        if h and mode in ("sub", "brk") and _in_subscript(t, p, mode == "brk"):  # only once a heredoc is found: a long line of shifts stays linear
+            continue
+        if h:
+            if not chained:
+                line_end = t.find("\n", p)
+            last = h
+            # The body and its terminator word become one Q word: offsets hold, and the anchor scans (charged
+            # per line start) see one line where the body had many.
+            spans.append((h[1], h[3]))
+            body = t[h[1]:h[3]]
+            q = "Q" * len(body)
+            t = t[:h[1]] + q + t[h[3]:]
+            if mt is not None and not raw_ops:
+                mt = None if _HD_STATE_RE.search(body) else mt[:h[1]] + q + mt[h[3]:]
+
+_hd_view_memo = {}
+
+def _hd_view(s, base, raw_ops, mode="sub"):
+    # (blanked text, its mask) when it shows something base (a mask of s, or of s with fewer bodies blanked)
+    # does not: a char that differs outside the blanked bodies. Where nothing differs it can add no anchor
+    # (each body starts at a line start and ends at its terminator's line end), and skipping it keeps a big heredoc document under the
+    # work budget.
+    k = (_dollar_join, s, base, raw_ops, mode)
+    if k not in _hd_view_memo:
+        v = None
+        b, spans = _blank_heredocs_seq(s, raw_ops, mode)
+        if spans:
+            mb = _mask(b)
+            keep, last = [], 0
+            for x, y in spans:
+                keep.append((last, x)); last = y
+            keep.append((last, len(s)))
+            if any(mb[x:y] != base[x:y] for x, y in keep):
+                v = (b, mb)
+        _hd_view_memo[k] = v
+    return _hd_view_memo[k]
+
+def _nl_view(s, base):
+    # GH #843: s masked with words joined across line continuations, in each joined reading that differs from
+    # its plain mask (a list of views). Reading 2 also drops a word match that runs through a backslash-newline
+    # that looks like no continuation; that look comes from masking one line alone, which can misread a line
+    # that starts inside a quote, so it is a reading of its own, never in place of reading 1.
+    global _nl_join
+    if "\\\n" not in s or ("'" not in s and '"' not in s):
+        return []
+    out = []
+    for mode in (1, 2):
+        _nl_join = mode
+        try:
+            m = _mask(s)
+        finally:
+            _nl_join = 0
+        if m != _mask(s) and (s, m) not in out:
+            out.append((s, m))
+    return out
+
+# GH #842: bash ends a backtick substitution at the first unescaped backtick, so a quote span or comment
+# the mask opened inside one (`echo 'a`#; git stash`) hides what bash runs after it. The mask reports each
+# such backtick (cuts); a view per cut reads the text after it as fresh code, with the text before it
+# blanked (it is the base's, which the main scans read) and the backtick itself made a word char, so a
+# `#` glued after it stays a word as in bash. Cuts are taken from the text with its heredoc bodies blanked,
+# so a backtick in heredoc prose cuts nothing. At most _CUT_MAX views per text.
+_CUT_MAX = 8
+_prose_memo = {}
+
+def _prose(s, readings=False):
+    # s with the bodies of the heredocs bash opens blanked: the source of the cut views (a backtick in
+    # heredoc prose is no cut) and a heredoc view of its own. Only the substitution scanner's reading counts:
+    # it tracks quotes, comments, $(..) and backtick frames and ${..}, so it opens the body in
+    # "$(cat <<'EOF' ..)", where the top-level mask is thrown off, and no body for a `<<` in a comment, a
+    # quoted string, `\<<E`, `${v:-<<E}`, a backtick frame or a subscript. Its comment rules have readings it
+    # cannot choose between (a `#` after `)` or after a backslash-newline), so a body counts only where every
+    # reading opens it (`(true)#<<E` opens none in bash). If it cannot read a heredoc, nothing is blanked.
+    # With readings=True: the text per reading instead, each a heredoc view of its own (a comment the
+    # scanner reads two ways must not empty the one reading that opens the real heredoc).
+    global _hd_collect
+    if "<<" not in s:
+        return [s] if readings else s
+    if s not in _prose_memo:
+        common, each = None, []
+        try:
+            for lb in (True, False):
+                for pc in (False, True):
+                    spans = []
+                    _hd_collect = (s, spans)
+                    _scan_bodies(s, 0, False, lb, False, pc)
+                    common = set(spans) if common is None else common & set(spans)
+                    each.append(set(spans))
+        except _Unparsed:
+            common = set()
+        finally:
+            _hd_collect = None
+
+        def blank(spans):
+            t = s
+            for x, y in sorted(spans):
+                t = t[:x] + "Q" * (y - x) + t[y:]
+            return t
+        _prose_memo[s] = (blank(common), list(dict.fromkeys(blank(e) for e in each)))
+    return _prose_memo[s][1] if readings else _prose_memo[s][0]
+
+def _cut_views(texts, base, prose=None):
+    # texts: the text(s) to cut, heredoc bodies blanked (see _prose). prose, when given, is the same text with
+    # the bodies every scanner reading opens blanked: a cut there is heredoc prose and is skipped (a source
+    # whose view blanked a fake `<<` instead must not read prose backticks as cuts).
+    # The substitution, from its opening backtick to the cut, becomes word chars, so what stands before it
+    # (`env `echo #` git stash`) keeps its place. A cut view is searched for cuts of its own (a second
+    # substitution on the line), up to _CUT_MAX views in all.
+    views, work, made = [], list(texts), 0
+    while work and made < _CUT_MAX:
+        t = work.pop(0)
+        cuts = []
+        _scan_cost(len(t))
+        _mask_quotes(t, cuts)
+        for o, a in cuts:
+            if made >= _CUT_MAX or prose is not None and prose[a:a + 1] != "`":
+                continue
+            made += 1
+            v = t[:o] + "x" * (a - o + 1) + t[a + 1:]
+            mv = _mask(v)
+            if mv != base:
+                views.append((v, mv))
+            work.append(v)
+    return views
+
+_no_views = False  # PR #872: set for a GH #309 brace-expanded reading over _VIEWS_MAX_CHARS (see below): no extra views
+_VIEWS_MAX_CHARS = 16_000  # the default command size cap, fixed (MH_SGG_MAX_CMD_CHARS lifts the cap for stress tests only)
+
+def _extra_views(s, base, based=None):
+    # The views of s checked beside (based, base): heredoc bodies blanked (both ways), and each of those and
+    # the base text itself read with continuation words joined. based is the text base masks (s itself, or
+    # s with some heredoc bodies already blanked); the joined reading is of that text, never of s, so the
+    # prose of a body base blanked is never read as code.
+    if _no_views:
+        return []
+    based = s if based is None else based
+    views = []
+    hd_srcs = []  # (heredoc view text, the text it came from) for the cut views
+    if "<<" in s:
+        # The raw-operator views and the scanner's per reading below. The mask-found view is left out here:
+        # once "$(cat <<'EOF'" throws the top-level mask off it blanks one body and reads the prose after it
+        # as code, which cost about 3x develop's work on a script of `cat > f <<'EOF'` blocks and commits,
+        # and the scanner views cover the fake operators it was for.
+        for raw_ops in (True,):
+            for mode in _HD_MODES:
+                v = _hd_view(s, base, raw_ops, mode)
+                if v and v not in views:
+                    views.append(v)
+                    hd_srcs.append((v[0], s))
+        for p in _prose(s, True):  # the heredocs the substitution scanner opens, per reading (a fake `<<X`
+            if p != s:             # cannot steer these)
+                mp = _mask(p)
+                # As in _hd_view: a view whose mask differs from the base only inside the bodies it blanked
+                # can add no anchor (each body starts at a line start and ends at its terminator's line end),
+                # and scanning it whole made any heredoc cost about 1.7x develop's work on the rest.
+                if (p, mp) not in views and any(a != b for a, b, c, d in zip(mp, base, p, s) if c == d):
+                    views.append((p, mp))
+    # bash deletes a line continuation before it reads an operator (`<\<nl><'E'`) and, in an unquoted heredoc
+    # body, before it compares a line with the delimiter (`x\<nl>E` is no terminator): the heredoc views of
+    # the text without its continuations (offsets do not matter here, since each view is scanned whole
+    # against its own text). Raw operators only, unless deleting them makes a new operator: the mask-found
+    # view of a long script cost about 3x develop's work (see above).
+    nc = _CONT_RE.sub(r"\1", s) if "\\\n" in s and "<" in s else s
+    if nc != s and "<<" in nc:
+        mnc = _mask(nc)
+        for raw_ops in ((False, True) if nc.count("<<") > s.count("<<") else (True,)):
+            for mode in _HD_MODES:
+                v = _hd_view(nc, mnc, raw_ops, mode)
+                if v and v not in views:
+                    views.append(v)
+                    hd_srcs.append((v[0], nc))
+    if "`" in s:
+        # Cut sources: the scanner's readings (a heredoc only some open is blanked in one of them) and every
+        # heredoc view's text so far (a heredoc only those views find: `cat <\<nl><'E'`, `((echo a) )`).
+        # Each source has its own cap, so one cannot use up the views another needs.
+        srcs = [(t, None) for t in dict.fromkeys([_prose(s)] + _prose(s, True) if "<<" in s else [based])]
+        srcs += [(t, _prose(o)) for t, o in hd_srcs if t not in dict(srcs)]
+        if "<<" in s:  # the raw "sub" and "brk" readings: a `<<` they read as a shift blanks nothing, so no filter
+            for mode in ("sub", "brk"):
+                sub = _blank_heredocs_seq(s, True, mode)[0]
+                srcs = [(t, f) for t, f in srcs if t != sub] + [(sub, None)]
+        for src, prose in srcs:
+            for v in _cut_views([src], base, prose):
+                if v not in views:
+                    views.append(v)
+    for t, mt in [(based, base)] + list(views):
+        for v in _nl_view(t, mt):
+            if v not in views:
+                views.append(v)
+    return views
+
 # A quoted-delimiter body is data, never a command. Cutting it out before the substitution scans
 # keeps a big document written by `cat > f <<'EOF'` from spending the shared work budget (it would
 # otherwise be refused as too costly, a new deny develop never made). Offsets do not matter here:
@@ -1063,12 +1479,28 @@ def _substitution_texts():
                 texts.extend(_substitution_bodies(sb))
         blanked = [_blank_heredocs(b) for b in dict.fromkeys(texts)]
         _sub_texts = [(b, _mask(b)) for b in blanked]
+        for b, (bb, mb) in zip(dict.fromkeys(texts), list(_sub_texts)):  # GH #843/#844: the extra views too
+            for v in _extra_views(b, mb, bb):
+                if v and v not in _sub_texts:
+                    _sub_texts.append(v)
     return _sub_texts
+
+_cmd_views_memo = {}
+
+def _cmd_views():
+    k = (_dollar_join, cmd)
+    if k not in _cmd_views_memo:
+        _cmd_views_memo[k] = _extra_views(cmd, masked)
+    return _cmd_views_memo[k]
 
 def _violation_everywhere(overlap):
     hit = _violation(masked, overlap) or _violation_in_bodies(cmd, masked, overlap)
     if hit:
         return hit
+    for t, mt in _cmd_views():  # GH #843/#844: the command read the other ways, as well
+        hit = _violation(mt, overlap) or _violation_in_bodies(t, mt, overlap)
+        if hit:
+            return hit
     for body, mb in _substitution_texts():
         hit = _violation(mb, overlap) or _violation_in_bodies(body, mb, overlap)
         if hit:
@@ -1098,7 +1530,14 @@ try:
             _brace_too_big = True
             raise _TooCostly
         if _bx != cmd:
+            # PR #872: the GH #842-#844 extra views read this expansion only while it is within the default
+            # command size cap (_VIEWS_MAX_CHARS), so they cost no more here than on any command. A brace list
+            # in quoted JSON (`{"k":1,"v":2}`) expands a real 3.8 KB command to 117 KB, which develop scans
+            # just under the work budget; views on top of that went over and denied it, where develop allows.
+            # Develop has no views in any reading, so leaving them out reads no less than develop, and a short
+            # expansion (`git {stash,}` after a quote in a heredoc body) keeps them.
             _raw_cmd, cmd = cmd, _bx
+            _no_views = len(_bx) > _VIEWS_MAX_CHARS
             _dollar_joined = False
             for _dollar_join in ("'\"", "'", ""):  # the same three `$` readings as above (git {stash,} $"show")
                 if _dollar_join != "'\"" and not _dollar_joined:
