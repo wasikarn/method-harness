@@ -102,7 +102,7 @@ if [ "$rc" -eq 0 ] && ! /usr/bin/grep -q '^gauntlet: \[' <<<"$out" && ! /usr/bin
 # A failing step: the same exit code as with progress off, a FAIL progress line, and the failing: list still last.
 reset; out=$(cd "$R" && PATH="$S:$PATH" LEVELS_FAIL=1 GAUNTLET_PROGRESS=1 bash scripts/run-gauntlet.sh 2>&1); rc_on=$?
 last=$(tail -n 1 <<<"$out")
-reset; out_off=$(cd "$R" && PATH="$S:$PATH" LEVELS_FAIL=1 GAUNTLET_PROGRESS=0 bash scripts/run-gauntlet.sh 2>&1); rc_off=$?
+reset; (cd "$R" && PATH="$S:$PATH" LEVELS_FAIL=1 GAUNTLET_PROGRESS=0 bash scripts/run-gauntlet.sh >/dev/null 2>&1); rc_off=$?
 if [ "$rc_on" -ne 0 ] && [ "$rc_on" = "$rc_off" ]; then ok "a failing step keeps the exit code with progress on ($rc_on)"; else bad "rc on=$rc_on off=$rc_off"; fi
 if /usr/bin/grep -qE '^gauntlet: \[ *[0-9]+/4 +[0-9]+%\] FAIL  tests/scripts/test-b\.sh \([0-9]+s, rc 1\)$' <<<"$out"; then ok "a failing step gets a FAIL progress line with its code"
 else bad "no FAIL progress line: $out"; fi

@@ -32,6 +32,7 @@ s=$(( $(progress_total full 1/2 43) + $(progress_total full 2/2 47) ))
 [ "$s" = "$(progress_total full "" 90)" ] && ok "shard totals sum to the unsharded total ($s)" || bad "shard totals sum to $s"
 
 # 2. on or off
+# shellcheck disable=SC2034 # read by progress_on
 on() { ( prog_mode=$1; progress_on ) 2>"$T/stderr-file"; }
 on 1 && ok "GAUNTLET_PROGRESS=1 is on" || bad "1 is not on"
 if on 0; then bad "0 is on"; else ok "GAUNTLET_PROGRESS=0 is off"; fi
