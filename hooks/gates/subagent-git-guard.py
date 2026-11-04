@@ -1281,30 +1281,43 @@ _hd_view_memo = {}
 # _violation, but _violation_in_bodies reads the raw view text at each shell word, and there a `)` in a
 # blanked body no longer ends an unquoted `$(` word (`eval $(cat <<'E'` / `)` / `E` / `echo true)"; git stash"`).
 # Such a view is kept as a _BodyView (text, mask, bodies): the shell bodies its raw text reads that the base
-# text reads otherwise. Its mask matches the base's outside the blanked bodies, so its shell words are the
-# base's (found once per base, as develop's body check charges it), less any in a blanked body; a body is
-# read forward from its word, so only a word before the last blanked char can read differently. Only its
-# bodies are checked: no anchor passes, and it seeds no line-join or cut views.
+# text does not read at the same shell word. A body is read forward from its word, so only a word that starts
+# before the last blanked char can read differently; the view's own words are found there (not the base's: a
+# base wrapper walk can run into a body to a lookalike `eval`, so no base match ends at the real word before
+# it). Only its bodies are checked: no anchor passes, and it seeds no line-join or cut views.
 class _BodyView(tuple):
     pass
 
-_shell_matches_memo = {}
+_view_words_memo = {}
 # A superset of where _SHELL_RES can match (its shell word follows a blank, a separator, `/` or a backslash): a
 # linear look, so a command with no shell word before its last blanked body pays no shell-word scan.
 _SHELL_HINT_RE = re.compile(r"(?<!\w)(?:bash|sh|zsh|dash|ksh|eval|rtk)(?=\s)")
 
+def _view_words(mt, end):
+    # Every _SHELL_RES match in mt that starts before end: each pattern tried at each place a command can start
+    # (a line start or `|;&({`, where _cmd_start begins), which covers every start a finditer of it finds.
+    # Charged like _charge, for the starts before end.
+    global _work
+    k = (mt, end)
+    if k not in _view_words_memo:
+        pos = [i for i in range(end) if i == 0 or mt[i - 1] == "\n" or mt[i] in "|;&({"]
+        _work += (len(pos) + 1) * len(mt)
+        if _work > _WORK_BUDGET:
+            raise _TooCostly
+        _view_words_memo[k] = [m for i in pos for r in _SHELL_RES for m in [r.match(mt, i)] if m]
+    return _view_words_memo[k]
+
 def _body_view(t, mt, s, base, end):
-    if not _SHELL_HINT_RE.search(base, 0, end + 5):  # a word that starts before end
+    if not _SHELL_HINT_RE.search(mt, 0, end + 5):  # a word that starts before end
         return None
-    k = (s, base)
-    if k not in _shell_matches_memo:
-        _charge(base)
-        _shell_matches_memo[k] = [m for r in _SHELL_RES for m in r.finditer(base)]
     bodies = []
-    for m in _shell_matches_memo[k]:
-        if m.start() >= end or mt[m.start():m.end(1) + 1] != base[m.start():m.end(1) + 1]:
-            continue
-        seen = _bodies_at(s, base, m)
+    for m in _view_words(mt, end):
+        seen = ()
+        for r in _SHELL_RES:  # the base reads this body only where it has the same match
+            mb = r.match(base, m.start())
+            if mb and mb.end(1) == m.end(1):
+                seen = _bodies_at(s, base, mb)
+                break
         for b in _bodies_at(t, mt, m):
             if b not in seen and b not in bodies:
                 bodies.append(b)
