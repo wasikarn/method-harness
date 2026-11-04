@@ -97,10 +97,14 @@ elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
             _p = None
         _cmds = _p if isinstance(_p, list) else [_cmds]
     _ask = ""
-    _t0 = time.monotonic()
+    _t0, _slowest = time.monotonic(), 0.0
     # 4 s of the hook's 8 s timeout. MH_GATE_BATCH_BUDGET_S (tests) only shortens it; a value that is not a
     # finite number >= 0 falls back to 4. The first command is always judged, so a budget of 0 checks just that one.
     # A batch padded past the budget turns a later command's deny into an ask, never an allow.
+    # GH #785: this clock starts after the module deadline's, so with a timer armed that deadline always fired first
+    # and this ask never showed. So a later command also waits only while the module deadline has room for it: 3 x
+    # the slowest command so far, plus 0.3 s. A busy machine makes commands slower, so it asks sooner, not later.
+    # Without a timer (no SIGALRM) this 4 s clock is the only bound.
     _budget = 4.0
     _bv = os.environ.get("MH_GATE_BATCH_BUDGET_S")
     if _bv:
@@ -120,20 +124,29 @@ elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
         if not isinstance(_c, str):
             continue
         _n += 1
-        if _n > 1 and time.monotonic() - _t0 > _budget:
+        try:
+            _left = signal.getitimer(signal.ITIMER_REAL)[0] or None  # 0: no timer armed
+        except Exception:
+            _left = None
+        if _n > 1 and (time.monotonic() - _t0 > _budget or _left is not None and _left < 3 * _slowest + 0.3):
+            _disarm()
             _reason = ("[mh:gate] ctx_batch_execute: the gate's %gs time budget ran out before every command was "
-                       "checked; confirm the batch, or split it into smaller batches" % _budget)
+                       "checked; confirm the batch, or split it into smaller batches" % min(_budget, _DEADLINE))
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                                      "permissionDecisionReason": _reason}}))
             journal(GATE_ID, _tn, "ask", d.get("session_id"))  # structural, no rule id (repo-gotchas.md)
             sys.exit(0)
+        _s = time.monotonic()
         _sub = dict(d, tool_input={"command": _c})
         _r = subprocess.run([sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"), "irrecoverable"],
                             input=json.dumps(_sub), capture_output=True, text=True)
+        _slowest = max(_slowest, time.monotonic() - _s)
         sys.stderr.write(_r.stderr)
         if _r.returncode != 0:
+            _disarm()
             sys.exit(2)  # a deny, or a crash: fail closed
         _ask = _ask or _r.stdout
+    _disarm()
     sys.stdout.write(_ask)
     sys.exit(0)
 
