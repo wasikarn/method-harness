@@ -47,12 +47,31 @@ Two rules follow:
   the builder files it `parked` and does not fix it in the same PR. Only an in-scope finding blocks
   the merge.
 
+This decision only stops new work. Every disguised shape the gates already deny keeps its deny and its
+test rows; nothing is removed.
+
+## Risk accepted: prompt injection
+
+The realistic author of a disguised command is not a person at the keyboard. It is an agent that read
+injected text (a web page, an issue, a PR, a file) telling it to run a command and to slip it past the
+gates. This ADR accepts that risk for the shapes the gates do not already deny:
+
+- **What stays exposed:** a prompt-injected agent that writes a disguised command the gates miss can
+  run it. In a subagent that includes a destructive local command (file deletion, `git reset --hard`,
+  `git stash`), or starting a `claude` session.
+- **Why it is accepted:** the gates read text, and each round showed there is always one more shape.
+  Closing gaps one shape at a time cannot reach zero, and it costs speed on every real command. The
+  replays show that no real command has used a disguised shape so far. That says nothing about a
+  future injection, which is why this section exists.
+- **What still holds:** the denies already shipped, the `settings.json` deny rules, branch protection
+  on `develop` (PR plus `mh/gauntlet`), and the operator's approval of every merge. None of these
+  stops a local destructive command in a subagent.
+- **The right control for this threat** is an OS-level sandbox (filesystem and network limits on the
+  agent's shell), not more text rules. Adopting one is a separate decision.
+
 ## Consequences
 
-- Known disguised bypasses stay open, listed under `parked`. The threat they would need, a subagent
-  steered into hiding a command on purpose (for example by prompt injection), is not one text
-  heuristics can close. Branch protection on `develop`, the merge gauntlet and the operator's merge
-  approval remain the controls for it.
+- Known disguised bypasses stay open, listed under `parked`, as accepted above.
 - Gate PRs get smaller and their reviews end. The gates stop slowing down for shapes no real command
   uses.
 - **Revisit when:** a real command or an incident uses a disguised shape. Reopen the `parked` issues of
