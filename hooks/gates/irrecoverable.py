@@ -546,7 +546,7 @@ def _odd_trailing_bs(line):
 # A heredoc feeding an interpreter is executable code, not inert data: an interpreter word anywhere on the
 # line BEFORE the << counts. GH #559 review 4: not only the heredoc's own pipe stage, since a heredoc on a
 # compound command feeds every command in it ({ bash; } <<EOF, while read x; do bash; done <<EOF), and \b
-# keeps zsh-5.9 and python3.12 interpreters. Matched once per line, at its first interpreter word.
+# keeps zsh-5.9 and python3.12 interpreters. Matched once per line, at the first word _interp_word keeps.
 _INTERPRETER_RE = re.compile(r"\b(bash|sh|zsh|dash|ksh|ash|hush|python3?|python2|perl|ruby|node|nodejs|osascript)\b")
 _HEREDOC_SCAN_BUDGET = [3_000_000]  # chars a $( re-read of heredoc lines may parse; past it, a client is assumed
 
@@ -1009,8 +1009,8 @@ def _in_subscript(line, mask, starts):
     return False
 
 def _interp_word(ctx, line, end):
-    # GH #710: the first interpreter word before end, skipping a filename suffix (the sh of x.sh) in a stage
-    # whose program is git (git add t/x.sh). Any other shape keeps the match (./x.sh <<'EOF' runs it).
+    # GH #710: the first interpreter word before end, skipping a filename suffix (the sh of x.sh) only in a
+    # plain_git stage (git add t/x.sh). Any other shape keeps the match (./x.sh <<'EOF' runs it).
     for m in _INTERPRETER_RE.finditer(line, 0, end):
         if line[m.start() - 1:m.start()] != "." or not ctx.plain_git(m.start()):
             return m
