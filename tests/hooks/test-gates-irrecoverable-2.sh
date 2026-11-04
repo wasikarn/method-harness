@@ -4944,6 +4944,10 @@ for _c in 'trash ${HOME}/x' 'trash "${HOME}/.cache"' 'trash ${HOME}/.*rc' 'trash
     'echo "${HOME}/."*; trash x'; do
   test_allow "$IRRECOVERABLE" "GH #795 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #795 review: a literal home path after a placeholder word in the same trash (built from $HOME when the row runs).
+for _c in "trash \${X}/ $HOME" "trash \"\${X}\"/* $HOME" "trash \${X}/. $HOME/"; do
+  test_deny  "$IRRECOVERABLE" "GH #795 review: a placeholder word, then the literal home path" "$(bash_payload "$_c")"
+done
 _w795="$(printf '"$(true)" %.0s' $(seq 4000))"
 _timed_case 'GH #795: one trash with 4000 "$(true)" words, then trash ~, denied in bounded time' 2 "trash ${_w795}x; trash ~"
 _timed_case 'GH #795: trash ~ first, then one trash with 4000 "$(true)" words, denied in bounded time' 2 "trash ~; trash ${_w795}x"

@@ -5135,8 +5135,8 @@ def _trash_whole_tree(rest):
         # words in one trash took 4 s), and a braced home is also the whole home with every dotfile in it or with its
         # slash quoted (`${HOME}/.*`, `"${HOME}"/.*`, `"${HOME}/"*`, `"${HOME}/."*`).
         if PH in w and w.strip(PH) == "":
-            pwd, home = _trash_raw_trees(cmd)
-            if home or pwd and _trash_norm(w0, False).strip(PH) == "":
+            pwd, braced = _trash_raw_trees(cmd)  # review: not `home`, which holds the home path the next words need
+            if braced or pwd and _trash_norm(w0, False).strip(PH) == "":
                 return True
     return False
 
