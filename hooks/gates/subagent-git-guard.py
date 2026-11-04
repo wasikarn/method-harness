@@ -1232,6 +1232,11 @@ def _blank_heredocs_seq(s, raw_ops, mode="sub"):
             return t, spans
         p = m.start()
         pos = m.end()
+        r = p
+        while r > 0 and t[r - 1] == "\\":
+            r -= 1
+        if (p - r) % 2 == 1:
+            continue  # `\<<F`: the first `<` is escaped, so no heredoc opens (the raw scan sees `<<` anyway)
         chained = last is not None and p < line_end  # a second heredoc on the line of the one before
         try:
             h = _heredoc_at(t, p, last[3] if chained else None, mode != "all")

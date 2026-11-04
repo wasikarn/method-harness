@@ -1962,6 +1962,9 @@ test_deny "GH #843" $'echo "a\n# b";g\\\n"it" stash' $'echo "a\n# b";g\\\n"it" s
 test_deny "GH #843" $'git commit -m "fix: x\n# Notes" && g\\\n"it" stash' $'git commit -m "fix: x\n# Notes" && g\\\n"it" status'
 test_deny "GH #843" $'echo \'a\n#\';g\\\n"it" stash' $'echo \'a\n#\';g\\\n"it" status'
 test_deny "GH #843" $'echo x\\\n#;g\\\n"it" stash' $'echo x\\\n#;g\\\n"it" status'
+# ... and an escaped `\<<F` opens no heredoc in the raw-operator views either.
+test_deny "GH #844" $'echo \\<<F; cat <\\\n<\'I\'\n\'\nI\ngit stash\nF' $'echo \\<<F; cat <\\\n<\'I\'\n\'\nI\ngit status\nF'
+test_deny "GH #844" $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit stash\nF' $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit status\nF'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
