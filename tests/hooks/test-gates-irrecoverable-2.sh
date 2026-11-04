@@ -3913,6 +3913,37 @@ for _bv in abc nan inf -1 4s; do
   test_allow "$IRRECOVERABLE" "GH #770: budget '$_bv' uses the default (git status allowed)" "{\"tool_name\":\"${_CTX}_batch_execute\",\"tool_input\":{\"commands\":[{\"command\":\"ls\"},{\"command\":\"git status\"}]}}"
 done
 unset MH_GATE_BATCH_BUDGET_S
+# GH #785: the batch budget was measured from after the module's own deadline started, so the deadline always fired
+# first and the batch's clearer ask never showed. Now each later command waits only while the module deadline has
+# room for it (3 x the slowest command so far, plus 0.3 s). A 2 s deadline keeps the row short; 300 commands outrun it.
+_b785="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__plugin_context-mode_context-mode__ctx_batch_execute", "tool_input": {"commands": [{"command": "echo $X"}] * 300}}))')"
+MH_IRR_DEADLINE_SECS=2 test_ask_says "$IRRECOVERABLE" "GH #785: a batch that outruns the module deadline asks with the batch's own message" "$_b785" "time budget"
+# GH #785: every exit disarms the deadline first, or a timer firing in that last window turns a deny into an ask, adds a
+# second JSON object, or dies with rc 142. Checked on the source: each sys.exit has a _disarm() earlier in its block.
+if _r785=$(python3 - "$ROOT/hooks/gates/irrecoverable.py" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+def is_call(st, name):
+    return isinstance(st, ast.Expr) and isinstance(st.value, ast.Call) and ast.unparse(st.value.func) == name
+bad = []
+for node in ast.walk(tree):
+    for field in ("body", "orelse", "finalbody"):
+        block = getattr(node, field, None)
+        if not isinstance(block, list):
+            continue
+        seen = False
+        for st in block:
+            seen = seen or is_call(st, "_disarm")
+            if is_call(st, "sys.exit") and not seen:
+                bad.append(st.lineno)
+print(" ".join(map(str, sorted(bad))))
+sys.exit(1 if bad else 0)
+PY
+); then
+  echo "  ✅ GH #785: every sys.exit in irrecoverable.py disarms the deadline first"; pass=$((pass + 1))
+else
+  echo "  ❌ GH #785: sys.exit without an earlier _disarm() in its block, lines: $_r785" >&2; fail=$((fail + 1))
+fi
 # GH #769/#770: the coverage itself lives in hooks.json's matcher (the gate reads tool_input.command for any tool).
 if python3 -c '
 import json, sys
