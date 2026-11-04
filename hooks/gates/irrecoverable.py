@@ -5129,15 +5129,29 @@ def _trash_whole_tree(rest):
         w0, w = w, _trash_norm(w)
         if w in _TRASH_TREE_WORDS or (w.startswith("/") and PH not in w and os.path.normpath(w) in ("/", home)):
             return True
-        # A placeholder word: each raw operand of trash, normalized the same way, is read for $(pwd) / `pwd`. Only a word
-        # that is bare without the /.* strip too ($(x)/.* is not, as on develop): the re-read costs the whole command per
-        # word, so 3100 such words took 6 s (GH #741 review 4).
-        if PH in w and w.strip(PH) == "" and _trash_norm(w0, False).strip(PH) == "" and any(
-                any(_trash_norm(r, False) in _PWD_SUBST_WORDS for r in m.group(1).split())
-                                                or _HOME_BRACED_RAW_RE.search(m.group(1))
-                                                for m in _TRASH_ARGS_RAW_RE.finditer(cmd.replace("\\\n", " "))):
-            return True
+        # A placeholder word: each raw operand of trash, normalized the same way, is read for $(pwd) / `pwd` (only for a
+        # word that is bare without the /.* strip too: $(x)/.* is not, as on develop) or for the home in a braced form.
+        # GH #795: the raw operands are read once per command (_trash_raw_trees), not once per word (4000 "$(true)"
+        # words in one trash took 4 s), and a braced home is also the whole home with every dotfile in it or with its
+        # slash quoted (`${HOME}/.*`, `"${HOME}"/.*`, `"${HOME}/"*`, `"${HOME}/."*`).
+        if PH in w and w.strip(PH) == "":
+            pwd, home = _trash_raw_trees(cmd)
+            if home or pwd and _trash_norm(w0, False).strip(PH) == "":
+                return True
     return False
+
+_TRASH_RAW_MEMO = {}
+def _trash_raw_trees(c):
+    # GH #795: (whether any raw trash operand in c is $(pwd) / `pwd`, whether any is the whole home as ${HOME}), once
+    # per command text. _HOME_BRACED_RAW_RE is chmod's too, so the wider dotfile and quoted-slash forms are read here.
+    if c not in _TRASH_RAW_MEMO:
+        pwd = home = False
+        for m in _TRASH_ARGS_RAW_RE.finditer(c.replace("\\\n", " ")):
+            ops = m.group(1).split()
+            pwd = pwd or any(_trash_norm(r, False) in _PWD_SUBST_WORDS for r in ops)
+            home = home or bool(_HOME_BRACED_RAW_RE.search(m.group(1))) or any(_trash_norm(r) == "${HOME}" for r in ops)
+        _TRASH_RAW_MEMO[c] = (pwd, home)
+    return _TRASH_RAW_MEMO[c]
 
 def _chmod_world(rest, recursive=False):
     # recursive: the mode reaches every file anyway (a find -exec action, GH #587).
