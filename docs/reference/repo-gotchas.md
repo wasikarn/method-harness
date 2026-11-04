@@ -276,6 +276,9 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   that result counts; the summary says how many fork-only diffs were dropped. Never run the gates in
   one process in a loop: they call `os._exit`. `test_deny`/`test_allow` in `tests/_lib/gates-harness.sh`
   stay on real spawns, the only check of the wrapper's fast-path token list.
+  **`slower`** (GH #890) is a class of its own beside the diffs, and also exits 1: the new side's time
+  passes half the deadline and the old side's does not, or it is 3x the old and at least 200 ms. Both
+  times come from the same run and runner, and a command counts only if a re-run agrees.
 
 - **Acceptance:** 0 commands that `develop` denies and the branch allows, apart from a category
   the PR names as intended. Over-denies are the safe direction and are reported, not blocking.

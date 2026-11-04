@@ -10,7 +10,8 @@ TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blo
 # and lets the others through, so a timeout is its own class
 SAMPLES, WIDTH = 3, 100
 DEADLINES = {"irrecoverable": 4.0, "subagent-git-guard": 5.0}  # each gate's own deadline (GH #771, #469)
-NEAR = 0.5  # a fork-mode time over half the deadline re-runs through bash (#889)
+NEAR = 0.5  # a fork-mode time over half the deadline re-runs through bash (#889) and marks a slowdown (#890)
+SLOWER_RATIO, SLOWER_MIN_SECS = 3.0, 0.2  # GH #890: 3x the old time and at least 200 ms
 FORK_SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gate-fork-server.py")
 
 
@@ -307,6 +308,14 @@ def diff_class(o, n):
     return " | ".join(parts)
 
 
+def is_slower(old_secs, new_secs, deadline):
+    # GH #890, times from one run and one runner only. The work-count criterion of #890 waits for a gate
+    # that exposes its count; none does yet.
+    if deadline and new_secs > NEAR * deadline and not old_secs > NEAR * deadline:
+        return True
+    return new_secs >= SLOWER_RATIO * old_secs and new_secs >= SLOWER_MIN_SECS
+
+
 def main():
     ap = argparse.ArgumentParser()
     for a in ("--old", "--new", "--gate", "--tmp", "--projects", "--own-slug", "--fixtures"):
@@ -382,19 +391,26 @@ def main():
                 return o, n, fork
         return pair(bash, data) + (bash,)
 
-    classes = {}
+    classes, slower = {}, []
     for text in corpus:
         data = json.dumps(payload(a.gate, text)).encode()
-        o, n, _ = measure(data)
+        o, n, runners = measure(data)
         name = diff_class(o, n)
         if name:
             classes.setdefault(name, []).append(text)
+        if is_slower(o[4], n[4], deadline):
+            try:  # once more, both sides on one runner: a load spike must not count
+                o, n = pair(runners, data)
+            except ServerDied:
+                o, n = pair(bash, data)
+            if is_slower(o[4], n[4], deadline):
+                slower.append((text, o[4], n[4]))
     for r in bash + (fork or ()):
         r.close()
 
     total = sum(len(v) for v in classes.values())
-    print("gate-differential: %s corpus=%d (base=%d replay=%d fuzz=%d) diffs=%d classes=%d"
-          % (a.gate, len(corpus), len(base), len(replay), len(fz), total, len(classes)))
+    print("gate-differential: %s corpus=%d (base=%d replay=%d fuzz=%d) diffs=%d slower=%d classes=%d"
+          % (a.gate, len(corpus), len(base), len(replay), len(fz), total, len(slower), len(classes)))
     if fork:
         print("  runner: fork (fork-only diffs dropped: %d, near-deadline re-runs: %d)" % (dropped, near))
     else:
@@ -405,7 +421,12 @@ def main():
         print("  [%d] %s" % (len(texts), name))
         for t in texts[:SAMPLES]:
             print("      - " + redact(t, patterns, real_home))
-    return 1 if classes else 0
+    if slower:
+        print("  slower: %d (new time over %g%% of the %s s deadline, or %gx the old and %g s or more; re-run once)"
+              % (len(slower), NEAR * 100, format(deadline, "g") if deadline else "-", SLOWER_RATIO, SLOWER_MIN_SECS))
+        for t, os_, ns in sorted(slower, key=lambda x: -x[2])[:SAMPLES]:
+            print("      - %s (old %.3f s, new %.3f s)" % (redact(t, patterns, real_home), os_, ns))
+    return 1 if classes or slower else 0
 
 
 if __name__ == "__main__":

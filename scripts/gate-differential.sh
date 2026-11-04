@@ -16,7 +16,7 @@
 #   --fuzz-seed S   add seeded mutations of the corpus
 #   --runner R      auto (default): fork mode when both wrappers are byte-identical, else bash;
 #                   bash: every command through `bash <gate>.sh` (GH #889)
-# Exit: 0 no diffs, 1 diffs, 2 usage error or refusal.
+# Exit: 0 no diffs, 1 diffs or slower commands (GH #890), 2 usage error or refusal.
 # Fork mode (GH #889) loads python once per side and forks per command; every diff it finds, and
 # every command over half the gate's deadline, is re-run through bash, and only bash's result counts.
 # Both sides write their journal rows to a temp file (MH_GATE_JOURNAL_PATH) under a temp HOME, so
