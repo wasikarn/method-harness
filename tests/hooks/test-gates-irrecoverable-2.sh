@@ -4974,4 +4974,18 @@ for _c in 'trash "${HOME:?}"/x' 'trash "${HOME:-/tmp}/x"' 'trash "${HOME:+/tmp/x
     'trash "${HOME#/}"/x' 'trash "${HOMEDIR:?}"/*' 'echo "${HOME:?}"/*; trash x'; do
   test_allow "$IRRECOVERABLE" "GH #876 control: $_c" "$(bash_payload "$_c")"
 done
+# GH #881: a braced home operand glued to a closing ), a redirect or a trailing brace list is still the whole home
+# (the raw operands were split on whitespace only). In "${HOME}"/.*2>x the 2 is part of the word (bash takes an fd
+# number only as a whole word), so that one names .*2 and stays allowed.
+for _c in '(trash "${HOME}"/*)' '(trash "${HOME:?}"/*)' '(trash "${HOME}/"*)' 'trash "${HOME:?}"/*>/dev/null' \
+    'trash "${HOME:?}"/*</dev/null' 'trash "${HOME}"/{*,.*}' 'trash "${HOME:?}"/{.*,*}' \
+    'trash "${HOME}"/{x,*}' 'echo "$(trash "${HOME:?}"/*)"' 'x=$(trash "${HOME}"/*)' '(cd /tmp && trash "${HOME:?}"/.*)' \
+    'trash-put "${HOME:?}"/*>/dev/null' 'gio trash "${HOME}"/{*,.*}'; do
+  test_deny  "$IRRECOVERABLE" "GH #881: $_c" "$(bash_payload "$_c")"
+done
+for _c in '(trash "${HOME}"/x)' 'trash "${HOME:?}"/x>/dev/null' 'trash "${HOME}"/{x,y}' 'trash "${HOME:?}"/{a,b}.log' \
+    '(trash "${HOME:?}"/.cache)' 'echo "$(trash "${HOME:?}"/x)"' '(trash "$(mktemp -d)"/x)' \
+    'trash "${HOME}"/x 2>"${HOME}"/err.log' 'trash "${HOME}"/.*2>/dev/null' 'trash "${HOME:?a)b}"/x'; do
+  test_allow "$IRRECOVERABLE" "GH #881 control: $_c" "$(bash_payload "$_c")"
+done
 gates_summary
