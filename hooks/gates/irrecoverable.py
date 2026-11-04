@@ -2211,6 +2211,42 @@ def _copy_squote(s, i, out, mask_from=None):
         _mask_quoted_ops(out, mask_from)
     return j + 1
 
+_DQ_SUBST_WORK = {}
+def _dq_subst_end(s, i):
+    # GH #883: s[i:i + 2] is "$(" inside a double-quoted span. The index just past its closing ")", reading the
+    # body as bash does (its own quotes, $( .. ) and parentheses nest; "$(cmd "$arg")" is one span), or -1 when it is
+    # unterminated or this text's scan budget (a few passes over it) is spent: the caller then reads it as before.
+    left = _DQ_SUBST_WORK.get(s, 4 * len(s) + 1000)
+    stack, j, n = ["("], i + 2, len(s)  # "(": a $( .. ) or ( .. ) body; DQ: a double-quoted span inside one
+    while j < n and left > 0:
+        left -= 1
+        c = s[j]
+        if c == "\\":
+            j += 2
+            continue
+        if stack[-1] == DQ:
+            if c == DQ:
+                stack.pop()
+            elif c == "$" and s[j + 1:j + 2] == "(":
+                stack.append("(")
+                j += 1
+        elif c == SQ:
+            k = s.find(SQ, j + 1)
+            if k < 0:
+                break
+            left -= k - j
+            j = k
+        elif c == DQ or c == "(":
+            stack.append(c)
+        elif c == ")":
+            stack.pop()
+            if not stack:
+                _DQ_SUBST_WORK[s] = left
+                return j + 1
+        j += 1
+    _DQ_SUBST_WORK[s] = left
+    return -1
+
 def _copy_dquote(s, i, out, mask_from=None, join_lines=False):
     # An escaped DQ, backslash, $ or backtick is copied as a pair. join_lines: a backslash-newline
     # is a continuation inside double quotes too, and bash strips both chars.
@@ -2224,6 +2260,14 @@ def _copy_dquote(s, i, out, mask_from=None, join_lines=False):
             out.append(c); out.append(s[i + 1])
             i += 2
             continue
+        if c == "$" and s[i + 1:i + 2] == "(":
+            # GH #883: a $( .. ) is copied whole, so a quote inside it does not end this span.
+            e = _dq_subst_end(s, i)
+            if e > 0:
+                body = s[i:e]
+                out.extend(body.replace("\\\n", "") if join_lines else body)
+                i = e
+                continue
         out.append(c)
         i += 1
         if c == DQ:
