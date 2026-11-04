@@ -44,6 +44,7 @@ unset MH_GATE_NO_FASTPATH  # canary-only switch; exported, it would hide fast-pa
 shard="${GAUNTLET_SHARD:-}"
 unset GAUNTLET_SHARD
 # GH #814: read and unset like GAUNTLET_SHARD, so a fixture gauntlet a test runs stays quiet.
+# shellcheck disable=SC2034 # read by progress_on in _lib/gauntlet-progress.sh
 prog_mode="${GAUNTLET_PROGRESS:-auto}"
 unset GAUNTLET_PROGRESS
 check_shard() {
