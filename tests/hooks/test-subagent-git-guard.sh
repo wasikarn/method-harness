@@ -1949,6 +1949,13 @@ test_deny "GH #843" $'git status # it\'s\\\ng\\\n\'it\' stash' $'git status # it
 test_deny "GH #844" $'a[ 1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]=1' $'a[ 1<<E]=1\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]=1'
 test_deny "GH #844" $'a[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit stash\nE]' $'a[1<<E]\ncat <<\'F\'\ndon\'t\nF\ngit status\nE]'
 test_deny "GH #842" $'a[ 1<<E]=1\necho `echo \'a`#; git stash\nE]=1' $'a[ 1<<E]=1\necho `echo \'a`#; git status\nE]=1'
+# Fresh-context review round 19: a word match that runs through a backslash-newline that is no
+# continuation (a comment's last word, `# c\`) no longer hides the word on the next line.
+test_deny "GH #843" $'# c\\\ng\\\n"it" stash' $'# c\\\ng\\\n"it" status'
+test_deny "GH #843" $'echo x # path\\\ng\\\n"it" stash' $'echo x # path\\\ng\\\n"it" status'
+test_deny "GH #843" $'git status # s\\\ng\\\n\'it\' stash' $'git status # s\\\ng\\\n\'it\' status'
+test_deny "GH #843" $'# c\\\n"g"\\\nit stash' $'# c\\\n"g"\\\nit status'
+test_deny "GH #843" $'echo a # b\\\n\\\ng\\\n"it" stash' $'echo a # b\\\n\\\ng\\\n"it" status'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \

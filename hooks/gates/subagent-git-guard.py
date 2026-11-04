@@ -461,6 +461,9 @@ def _join_quoted_words(raw, masked):
             ls = raw.rfind("\n", 0, q) + 1
             _scan_cost(q + 1 - ls)
             if (q - r) % 2 == 1 or _mask_quotes(raw[ls:q + 1])[-1:] == " ":
+                # A match that runs through this pair (`# c\<nl>g\<nl>"it"`) is bogus: bash ends the word at
+                # the real newline. It is dropped, and the word after the pair is tried on its own.
+                cands = [c for c in cands if not c.start() <= q < c.end() - 1]
                 mm = _QWORD_NL_BODY_RE.match(raw, q + 2)
                 if mm and not any(c.start() < mm.end() and mm.start() < c.end() for c in cands):
                     cands.append(mm)
