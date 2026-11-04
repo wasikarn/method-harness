@@ -534,6 +534,16 @@ test_allow "$IRRECOVERABLE" "GH #233 control: commit message is a quoted ;" \
   "$(bash_payload 'git commit -m ";"')"
 test_allow "$IRRECOVERABLE" "GH #233 control: quoted ; argument to printf then rm word" \
   "$(bash_payload 'printf "%s\n" ";" rm -rf x')"
+# GH #883: a double-quoted $( .. ) whose own words are double-quoted ("$(cmd "$arg")", the usual quoting advice) is one
+# span: its inner quotes do not end it, so its closing ")" is not a quoted operator word (GH #233) and the body is read.
+for _c in 'echo "$(trash "$HOME")"' 'echo "$(trash "/")"' 'echo "$(trash "${HOME:?}")"' 'x="$(trash "$HOME")"' \
+    'echo "$(trash "$HOME" "/")"' 'echo "$(true "x"); $(trash "$HOME")"'; do
+  test_deny  "$IRRECOVERABLE" "GH #883: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'echo "$(trash "$HOME"/x)"' 'echo "$(cat "$HOME")"' 'git commit -m "$(printf "%s" ";")"' \
+    'echo "$(echo ")")"' 'echo "$(date "+%F")" && git status' 'echo "\$(trash "$HOME")"'; do
+  test_allow "$IRRECOVERABLE" "GH #883 control: $_c" "$(bash_payload "$_c")"
+done
 test_deny "$IRRECOVERABLE" "git restore . (discards worktree)" \
   "$(bash_payload 'git restore .')"
 test_deny "$IRRECOVERABLE" "git restore -- file (discards worktree)" \
