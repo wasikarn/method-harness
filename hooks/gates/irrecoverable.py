@@ -556,6 +556,8 @@ _HEREDOC_SCAN_BUDGET = [3_000_000]  # chars a $( re-read of heredoc lines may pa
 _UNQUOTE = str.maketrans("", "", "\"'\\")
 _PYNODE_NAME_RE = re.compile(r"python|node")
 
+_PLAIN_GIT = ("add", "commit", "rm", "mv", "restore", "status")  # GH #710: git subcommands that run no operand
+
 class _HeredocLine:
     # The statements and pipe stages of one line, parsed once however many heredocs it opens, so a line
     # of 20000 openers costs one parse, not one per opener.
@@ -600,14 +602,16 @@ class _HeredocLine:
         return ("sh" in seg.translate(_UNQUOTE) and _reads_stdin_shell(seg)) or self.piped_shell(pos)
 
     def plain_git(self, pos):
-        # GH #710: pos's stage runs git (past wrappers) and has no frame, alias (!) or assignment (=, GIT_SSH=)
-        # through which git could run a named script; parsed once per stage.
+        # GH #710: pos's stage runs git (past wrappers) with a subcommand that never runs an operand (_PLAIN_GIT)
+        # right after it, no global option before it, and no ( ` { ! or = anywhere (a frame, an alias, GIT_SSH=);
+        # parsed once per stage. Any other git (bisect run, rebase --exec, -c alias...) may run the named script.
         k, j, st, _ = self._stage(pos)
         if (k, "git", j) not in self.stages:
             seg = self.line[st[j][0]:st[j][1]]
             w = None if any(c in seg for c in "(`{!=") else _split_words(seg.split("<<", 1)[0])
             i = _past_run_prefix(w) if w else None
-            self.stages[(k, "git", j)] = i is not None and w[i] == "git"
+            self.stages[(k, "git", j)] = (i is not None and w[i] == "git" and i + 1 < len(w)
+                                          and w[i + 1] in _PLAIN_GIT)
         return self.stages[(k, "git", j)]
 
     def stdin_interp(self, pos):

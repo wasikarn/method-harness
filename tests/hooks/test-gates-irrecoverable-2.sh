@@ -1122,7 +1122,10 @@ for _c in $'sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'bash -s <<EOF\nrm -rf b\nEOF' $
   $'git add t/x.sh && ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git add t/x.sh && sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
   $'git add t/x.sh && sudo ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git add t/x.sh | ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
   $'{ git add t/x.sh; ./t/x.sh; } <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git -C "$(./t/x.sh)" commit -F - <<\'EOF\'\nsee `rm -rf b`\nEOF' \
-  $'git -c alias.x=\'!./t/x.sh\' x <<\'EOF\'\nsee `rm -rf b`\nEOF' $'GIT_SSH=./t/x.sh git push origin <<\'EOF\'\nsee `rm -rf b`\nEOF'; do
+  $'git -c alias.x=\'!./t/x.sh\' x <<\'EOF\'\nsee `rm -rf b`\nEOF' $'GIT_SSH=./t/x.sh git push origin <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git bisect run ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git rebase --exec ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git submodule foreach ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git difftool --extcmd ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git -C . add t/x.sh && git commit -F - <<\'EOF\'\nsee `rm -rf b`\nEOF'; do
   test_deny "$IRRECOVERABLE" "GH #710 guard: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
 done
 # One parse per stage, not per .sh operand: a timeout here would allow.
