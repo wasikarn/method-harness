@@ -46,6 +46,14 @@ def _deadline_hit(signum, frame):
         os._exit(0)
 
 _DEADLINE = _dl if 0 < _dl < DEADLINE_SECS else DEADLINE_SECS
+# GH #857: MH_IRR_BUDGET_SCALE (test-only) can only shrink the counted work budgets below (_SPAWN_ANCHOR_BUDGET,
+# _LONG_COPY_BUDGET), so a test row reaches its budget with a small input, well under the deadline on a slow machine.
+# A spent budget denies or asks, never allows, so shrinking one only reads more safely.
+try:
+    _bs = float(os.environ.get("MH_IRR_BUDGET_SCALE", ""))
+except ValueError:
+    _bs = 1.0
+_BUDGET_SCALE = _bs if 0 < _bs < 1 else 1.0
 try:
     import signal
     signal.signal(signal.SIGALRM, _deadline_hit)
@@ -1627,7 +1635,7 @@ _SPAWN_SCAN_BUDGET = 2_000_000
 # bound to one counter shared by the plain, body and overlapping scans; over budget denies (the
 # same safe direction) with its own message. Real subagent commands stay far under it; only a
 # rare 20 KB+ script is refused.
-_SPAWN_ANCHOR_BUDGET = 26_000_000
+_SPAWN_ANCHOR_BUDGET = int(26_000_000 * _BUDGET_SCALE)
 _spawn_anchor_work = 0
 _spawn_over_budget = False
 
@@ -7347,7 +7355,7 @@ class _LongCopy(Exception):
 # GH #787: past _VIEW_LEN_CAP the raw and scoped copies scan their subshell spans per entry and walk back per reference,
 # which grows with the square of the text; one budget of that work per copy. A copy past it is not read, and the
 # command asks (_VAR_LONG_CUT), as the same text under the cap could deny.
-_LONG_COPY_BUDGET = 4_000_000
+_LONG_COPY_BUDGET = int(4_000_000 * _BUDGET_SCALE)
 _VAR_LONG_CUT = [False]
 
 _MAY_SET_RE = re.compile(r"(?<![\w$-])(?:source|\.|eval)[ \t]")
