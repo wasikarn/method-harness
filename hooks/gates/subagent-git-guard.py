@@ -853,15 +853,33 @@ def _violation_in_bodies(raw_cmd, masked_cmd, overlap):
     _charge(masked_cmd)
     for m in _SHELL_RES[overlap].finditer(masked_cmd):
         for body in _bodies_at(raw_cmd, masked_cmd, m):
-            mb = _mask(body)
-            hit = _violation(mb, False) or (overlap and _violation(mb, overlap))
+            hit = _violation_in_body(body, overlap)
             if hit:
                 return hit
-            for t, mt in _extra_views(body, mb):  # GH #843/#844: then the body read the other ways too
-                hit = _violation(mt, False) or (overlap and _violation(mt, overlap))
-                if hit:
-                    return hit
     return None
+
+def _violation_in_body(body, overlap):
+    mb = _mask(body)
+    hit = _violation(mb, False) or (overlap and _violation(mb, overlap))
+    if hit:
+        return hit
+    for v in _extra_views(body, mb):  # GH #843/#844: then the body read the other ways too
+        if isinstance(v, _BodyView):  # read one level deep here, like develop's body check
+            continue
+        t, mt = v
+        hit = _violation(mt, False) or (overlap and _violation(mt, overlap))
+        if hit:
+            return hit
+    return None
+
+def _view_violation(v, overlap):
+    if isinstance(v, _BodyView):
+        for body in v[2]:
+            hit = _violation_in_body(body, overlap)
+            if hit:
+                return hit
+        return None
+    return _violation(v[1], overlap) or _violation_in_bodies(v[0], v[1], overlap)
 
 # GH #274: the mask blanks everything inside "..." so `echo "$(git clean -fd)"` and backticks
 # hid a real command. One linear pass over the raw command collects every $(...) / `...` body at
@@ -1259,9 +1277,50 @@ def _blank_heredocs_seq(s, raw_ops, mode="sub"):
 
 _hd_view_memo = {}
 
+# PR #872 review 24: a view whose mask matches its base outside the bodies it blanked adds no anchor to
+# _violation, but _violation_in_bodies reads the raw view text at each shell word, and there a `)` in a
+# blanked body no longer ends an unquoted `$(` word (`eval $(cat <<'E'` / `)` / `E` / `echo true)"; git stash"`).
+# Such a view is kept as a _BodyView (text, mask, bodies): the shell bodies its raw text reads that the base
+# text reads otherwise. Its mask matches the base's outside the blanked bodies, so its shell words are the
+# base's (found once per base, as develop's body check charges it), less any in a blanked body; a body is
+# read forward from its word, so only a word before the last blanked char can read differently. Only its
+# bodies are checked: no anchor passes, and it seeds no line-join or cut views.
+class _BodyView(tuple):
+    pass
+
+_shell_matches_memo = {}
+# A superset of where _SHELL_RES can match (its shell word follows a blank, a separator, `/` or a backslash): a
+# linear look, so a command with no shell word before its last blanked body pays no shell-word scan.
+_SHELL_HINT_RE = re.compile(r"(?<!\w)(?:bash|sh|zsh|dash|ksh|eval|rtk)(?=\s)")
+
+def _body_view(t, mt, s, base, end):
+    if not _SHELL_HINT_RE.search(base, 0, end + 5):  # a word that starts before end
+        return None
+    k = (s, base)
+    if k not in _shell_matches_memo:
+        _charge(base)
+        _shell_matches_memo[k] = [m for r in _SHELL_RES for m in r.finditer(base)]
+    bodies = []
+    for m in _shell_matches_memo[k]:
+        if m.start() >= end or mt[m.start():m.end(1) + 1] != base[m.start():m.end(1) + 1]:
+            continue
+        seen = _bodies_at(s, base, m)
+        for b in _bodies_at(t, mt, m):
+            if b not in seen and b not in bodies:
+                bodies.append(b)
+    return _BodyView((t, mt, tuple(bodies))) if bodies else None
+
+def _add_view(views, v):
+    # Append v unless an equal view is there (a _BodyView, three items, never equals a full view).
+    if v in views:
+        return False
+    views.append(v)
+    return True
+
 def _hd_view(s, base, raw_ops, mode="sub"):
     # (blanked text, its mask) when it shows something base (a mask of s, or of s with fewer bodies blanked)
-    # does not: a char that differs outside the blanked bodies. Where nothing differs it can add no anchor
+    # does not: a char that differs outside the blanked bodies (else a _BodyView, if a shell word there reads a
+    # body differently). Where nothing differs it can add no anchor
     # (each body starts at a line start and ends at its terminator's line end), and skipping it keeps a big heredoc document under the
     # work budget.
     k = (_dollar_join, s, base, raw_ops, mode)
@@ -1276,6 +1335,8 @@ def _hd_view(s, base, raw_ops, mode="sub"):
             keep.append((last, len(s)))
             if any(mb[x:y] != base[x:y] for x, y in keep):
                 v = (b, mb)
+            else:
+                v = _body_view(b, mb, s, base, spans[-1][1])
         _hd_view_memo[k] = v
     return _hd_view_memo[k]
 
@@ -1388,8 +1449,7 @@ def _extra_views(s, base, based=None):
         for raw_ops in (True,):
             for mode in _HD_MODES:
                 v = _hd_view(s, base, raw_ops, mode)
-                if v and v not in views:
-                    views.append(v)
+                if v and _add_view(views, v) and not isinstance(v, _BodyView):
                     hd_srcs.append((v[0], s))
         for p in _prose(s, True):  # the heredocs the substitution scanner opens, per reading (a fake `<<X`
             if p != s:             # cannot steer these)
@@ -1397,8 +1457,12 @@ def _extra_views(s, base, based=None):
                 # As in _hd_view: a view whose mask differs from the base only inside the bodies it blanked
                 # can add no anchor (each body starts at a line start and ends at its terminator's line end),
                 # and scanning it whole made any heredoc cost about 1.7x develop's work on the rest.
-                if (p, mp) not in views and any(a != b for a, b, c, d in zip(mp, base, p, s) if c == d):
-                    views.append((p, mp))
+                if any(a != b for a, b, c, d in zip(mp, base, p, s) if c == d):
+                    _add_view(views, (p, mp))
+                else:  # see _BodyView
+                    bv = _body_view(p, mp, s, base, max(i for i, (c, d) in enumerate(zip(p, s)) if c != d) + 1)
+                    if bv:
+                        _add_view(views, bv)
     # bash deletes a line continuation before it reads an operator (`<\<nl><'E'`) and, in an unquoted heredoc
     # body, before it compares a line with the delimiter (`x\<nl>E` is no terminator): the heredoc views of
     # the text without its continuations (offsets do not matter here, since each view is scanned whole
@@ -1410,8 +1474,7 @@ def _extra_views(s, base, based=None):
         for raw_ops in ((False, True) if nc.count("<<") > s.count("<<") else (True,)):
             for mode in _HD_MODES:
                 v = _hd_view(nc, mnc, raw_ops, mode)
-                if v and v not in views:
-                    views.append(v)
+                if v and _add_view(views, v) and not isinstance(v, _BodyView):
                     hd_srcs.append((v[0], nc))
     if "`" in s:
         # Cut sources: the scanner's readings (a heredoc only some open is blanked in one of them) and every
@@ -1425,12 +1488,10 @@ def _extra_views(s, base, based=None):
                 srcs = [(t, f) for t, f in srcs if t != sub] + [(sub, None)]
         for src, prose in srcs:
             for v in _cut_views([src], base, prose):
-                if v not in views:
-                    views.append(v)
-    for t, mt in [(based, base)] + list(views):
-        for v in _nl_view(t, mt):
-            if v not in views:
-                views.append(v)
+                _add_view(views, v)
+    for v0 in [(based, base)] + [v for v in views if not isinstance(v, _BodyView)]:
+        for v in _nl_view(*v0):
+            _add_view(views, v)
     return views
 
 # A quoted-delimiter body is data, never a command. Cutting it out before the substitution scans
@@ -1481,8 +1542,8 @@ def _substitution_texts():
         _sub_texts = [(b, _mask(b)) for b in blanked]
         for b, (bb, mb) in zip(dict.fromkeys(texts), list(_sub_texts)):  # GH #843/#844: the extra views too
             for v in _extra_views(b, mb, bb):
-                if v and v not in _sub_texts:
-                    _sub_texts.append(v)
+                if v:
+                    _add_view(_sub_texts, v)
     return _sub_texts
 
 _cmd_views_memo = {}
@@ -1497,12 +1558,12 @@ def _violation_everywhere(overlap):
     hit = _violation(masked, overlap) or _violation_in_bodies(cmd, masked, overlap)
     if hit:
         return hit
-    for t, mt in _cmd_views():  # GH #843/#844: the command read the other ways, as well
-        hit = _violation(mt, overlap) or _violation_in_bodies(t, mt, overlap)
+    for v in _cmd_views():  # GH #843/#844: the command read the other ways, as well
+        hit = _view_violation(v, overlap)
         if hit:
             return hit
-    for body, mb in _substitution_texts():
-        hit = _violation(mb, overlap) or _violation_in_bodies(body, mb, overlap)
+    for v in _substitution_texts():
+        hit = _view_violation(v, overlap)
         if hit:
             return hit
     return None

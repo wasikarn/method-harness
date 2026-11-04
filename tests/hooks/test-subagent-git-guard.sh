@@ -1982,6 +1982,15 @@ test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\ngit {stash,}' $'cat <<\'E\'\ndon\'
 test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\n{git,} stash' $'cat <<\'E\'\ndon\'t\nE\n{git,} status'
 test_deny "GH #842" $'echo `echo \'a`#; git {stash,}' $'echo `echo \'a`#; git {status,}'
 test_deny "GH #842" $'{ echo `echo \'a`#; git {stash,}; }' $'{ echo `echo \'a`#; git {status,}; }'
+# PR #872 review 24: a scanner view whose mask matches the base outside its bodies still reads a different
+# raw text for `eval` / `bash -c` bodies (a `)` in the heredoc body no longer ends the `$(` word), so the
+# bodies it reads differently are checked.
+test_deny "GH #844" $'eval $(cat <<\'E\' >/dev/null\n)\nE\necho true)"; git stash"' $'eval $(cat <<\'E\' >/dev/null\n)\nE\necho true)"; git status"'
+test_deny "GH #844" $'bash -c $(cat <<E >/dev/null\nx)\nE\necho true)\'; git stash\'' $'bash -c $(cat <<E >/dev/null\nx)\nE\necho true)\'; git status\''
+test_deny "GH #844" $'sh -c $(cat <<\\E >/dev/null\n))\nE\necho true)";"git\\ stash"' $'sh -c $(cat <<\\E >/dev/null\n))\nE\necho true)";"git\\ status"'
+test_deny "GH #844" $'command eval $(cat <<-\'E\' >/dev/null\nesac)\nE\necho true)"; git stash"' $'command eval $(cat <<-\'E\' >/dev/null\nesac)\nE\necho true)"; git status"'
+test_deny "GH #844" $'env bash -c $(cat <<\'E\' >/dev/null\n} )\nE\necho true)"; git stash"' $'env bash -c $(cat <<\'E\' >/dev/null\n} )\nE\necho true)"; git status"'
+test_deny "GH #844" $'eval $(cat <<\'E\' >/dev/null\n#)\nE\necho true)"; git stash"' $'eval $(cat <<\'E\' >/dev/null\n#)\nE\necho true)"; git status"'
 # ... and a backtick in a quoted heredoc body is prose: no cut reads it as code.
 for _c in \
   $'git commit -F- <<\'EOF\'\nHandle `don\'t` in bodies; git stash stays denied\nEOF' \
