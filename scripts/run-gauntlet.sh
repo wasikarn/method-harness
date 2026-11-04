@@ -239,10 +239,11 @@ else
   run_hook_tests >"$LOG/tests" 2>&1 & p3=$!
 fi
 
+# Every fork the watcher makes comes from this one subshell, forked while the layers still run (see progress_watch):
+# a fork from the main shell on a finished layer's reused pid would change what report()'s `wait` reads.
 if progress_on; then
-  ntests=0
-  [ "$level" = low ] || ntests=$(hook_test_files | awk NF | wc -l | tr -d ' ')
-  progress_watch "$(progress_total "$level" "$shard" "$ntests")" "$p1" "$p2" "$p3" "$p4"
+  ( [ "$level" = low ] && ntests=0 || ntests=$(hook_test_files | awk NF | wc -l | tr -d ' ')
+    progress_watch "$(progress_total "$level" "$shard" "$ntests")" "$p1" "$p2" "$p3" "$p4" )
 fi
 
 fail=0

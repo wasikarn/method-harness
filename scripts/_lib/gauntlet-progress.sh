@@ -29,7 +29,7 @@ progress_total() {
 }
 
 # progress_event <words...>: append one event line; never fails the caller.
-progress_event() { printf '%s\n' "$*" >>"${prog:-/dev/null}" 2>/dev/null || true; }
+progress_event() { { printf '%s\n' "$*" >>"${prog:-/dev/null}"; } 2>/dev/null || true; }  # review: silent if unwritable
 
 # progress_layer <name> <cmd...>: run one non-test layer as one step, its output to $LOG/<name>, its code returned.
 progress_layer() {
@@ -47,11 +47,14 @@ _progress_dur() {
 }
 
 # progress_watch <total> <pid...>: print a header, then a line per finished step, and a heartbeat after prog_beat
-# quiet seconds, until no pid is alive or every step has finished; then the "finished" line. It runs in the
-# foreground, so it cannot outlive the script (a background child would hold merge-pr's $(... | tee) open), and every
-# line it prints comes before report()'s, so the last line is still the failing: list (GH #387). Empty pids are skipped.
+# quiet seconds, until no pid is alive or every step has finished; then the "finished" line. Run it in a foreground
+# ( subshell ), forked while the layers still run: bash drops a finished job's saved status when a later fork of the
+# same shell reuses its pid, so the watcher's forks in the main shell could hand report()'s `wait` a wrong code
+# (review). The foreground keeps it from outliving the script (a background child would hold merge-pr's
+# $(... | tee) open), and every line it prints comes before report()'s, so the last line is still the failing: list
+# (GH #387). Empty pids are skipped.
 progress_watch() {
-  local total=$1 seen=0 n done=0 last=$SECONDS t0=$SECONDS alive p kind a b c running="" now pct line
+  local total=$1 seen=0 n done=0 last=$SECONDS t0=$SECONDS alive p kind rest a b c running="" now pct line
   shift
   printf 'gauntlet: %d steps\n' "$total" >&2
   while :; do
@@ -60,13 +63,14 @@ progress_watch() {
     n=$(wc -l <"$prog" 2>/dev/null | tr -d ' ')
     n=${n:-0}
     if [ "$n" -gt "$seen" ]; then
-      while read -r kind a b c; do
+      while read -r kind rest; do
         case "$kind" in
-          S) running="$running$a $SECONDS"$'\n' ;;
+          S) running="$running$rest"$'\t'"$SECONDS"$'\n' ;;  # a tab: a name may hold a space (review)
           E)
+            read -r a b c <<<"$rest"
             done=$((done + 1))
             [ "$done" -le "$total" ] || total=$done
-            running=$(printf '%s' "$running" | awk -v n="$c" 'NF && $1 != n { print }')
+            running=$(printf '%s' "$running" | awk -F '\t' -v n="$c" 'NF && $1 != n { print }')
             [ -z "$running" ] || running="$running"$'\n'
             if [ "$a" = 0 ]; then line="PASS  $c ($(_progress_dur "$b"))"; else line="FAIL  $c ($(_progress_dur "$b"), rc $a)"; fi
             printf 'gauntlet: [%*d/%d %3d%%] %s\n' ${#total} "$done" "$total" $((done * 100 / total)) "$line" >&2
@@ -82,7 +86,7 @@ progress_watch() {
       pct=0
       [ "$total" -eq 0 ] || pct=$((done * 100 / total))
       printf 'gauntlet: [%*d/%d %3d%%] running %s (%s elapsed)\n' ${#total} "$done" "$total" "$pct" \
-        "$(printf '%s' "$running" | awk -v now="$now" 'NF { d = now - $2; printf "%s%s %s", sep, $1, (d >= 60 ? sprintf("%dm%02ds", d / 60, d % 60) : d "s"); sep = ", " }')" \
+        "$(printf '%s' "$running" | awk -F '\t' -v now="$now" 'NF { d = now - $2; printf "%s%s %s", sep, $1, (d >= 60 ? sprintf("%dm%02ds", d / 60, d % 60) : d "s"); sep = ", " }')" \
         "$(_progress_dur $((now - t0)))" >&2
       last=$now
     fi

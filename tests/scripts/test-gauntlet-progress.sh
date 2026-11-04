@@ -50,7 +50,7 @@ ev=$(awk '{ print $1, ($1 == "E" ? $2 " " $4 : $2) }' "$prog" | tr '\n' ';')
 
 # 4. the watcher: count, percent, FAIL with its code, a total that rises, the finished line
 : >"$prog"
-( sleep 1; printf 'S a\nE 0 1 a\n' >>"$prog"; printf 'S b\nE 1 2 b\n' >>"$prog"; printf 'S c\nE 0 0 c\n' >>"$prog" ) & w=$!
+( sleep 1; printf 'S a\nE 0 1 a\nS b\nE 1 2 b\nS c\nE 0 0 c\n' >>"$prog" ) & w=$!  # one write: no tick between
 out=$(prog_beat=60 progress_watch 2 "$w" "" 2>&1 >/dev/null); wait "$w"
 printf '%s\n' "$out" >"$T/watch"
 /usr/bin/grep -qxF 'gauntlet: 2 steps' "$T/watch" && ok "header names the step count" || bad "no header: $out"
@@ -68,6 +68,39 @@ printf '%s\n' "$out" >"$T/beat"
 [ "$rc" = 0 ] && ok "the watcher returns once its pids exit (rc $rc)" || bad "watcher rc=$rc (124 is a hang)"
 /usr/bin/grep -qE '^gauntlet: \[0/5   0%\] running tests/hooks/test-slow\.sh [0-9]+s \([0-9]+s elapsed\)$' "$T/beat" \
   && ok "a heartbeat names the step still running" || bad "no heartbeat: $out"
+
+# 5b. review: a step name with a space leaves the running list when it ends (the heartbeat no longer names it)
+: >"$prog"; printf 'S tests/a b.sh\nE 0 2 tests/a b.sh\nS tests/slow.sh\n' >>"$prog"
+sleep 3 & w=$!
+out=$(timeout 20 bash -c '. "$1"; prog=$2; prog_beat=1; progress_watch 5 "$3"' _ "$LIB" "$prog" "$w" 2>&1); wait "$w" 2>/dev/null
+if /usr/bin/grep -q 'running tests/slow\.sh' <<<"$out" && ! /usr/bin/grep -q 'running.*tests/a' <<<"$out"; then
+  ok "a finished step whose name has a space leaves the running list"; else bad "running list: $out"; fi
+# 5c. review: an events path that cannot be written prints nothing and changes no code
+out=$( (prog=/nonexistent-gh814/dir/p; progress_event S x; echo "rc=$?") 2>&1)
+[ "$out" = "rc=0" ] && ok "an unwritable events path prints nothing" || bad "unwritable events path printed: $out"
+
+# 5d. review (F1): bash drops a finished background job's saved status when a later fork of the same shell
+# reuses its pid, so report()'s `wait "$pN"` could read the fork's code: a failing layer read as passing. Every
+# watcher fork must come from one subshell forked while the layers still run. The script check holds everywhere;
+# the pid-reuse rows need to set the next pid (root, /proc/sys/kernel/ns_last_pid) and say SKIP otherwise.
+G="$ROOT/scripts/run-gauntlet.sh"
+blk=$(sed -n '/^if progress_on; then$/,/^fi$/p' "$G")
+body=$(sed '1d;$d' <<<"$blk")
+outside=$(sed '/^if progress_on; then$/,/^fi$/d' "$G" | /usr/bin/grep -v '^ *#' | /usr/bin/grep -cE 'progress_watch|progress_total|hook_test_files \| awk')
+if [ -n "$body" ] && [[ "$(head -n 1 <<<"$body")" =~ ^[[:space:]]*\( ]] && [[ "$(tail -n 1 <<<"$body")" =~ \)[[:space:]]*$ ]] \
+  && /usr/bin/grep -q progress_watch <<<"$body" && [ "$outside" = 0 ]; then
+  ok "run-gauntlet.sh runs the watcher and its counting only inside one ( subshell )"
+else bad "watcher block: <$blk>, calls outside it: $outside"; fi
+NS=/proc/sys/kernel/ns_last_pid
+if [ -w "$NS" ]; then
+  r=$(bash -c '( exit 3 ) & p=$!; sleep 1; echo $((p - 1)) >"$1"; x=$(:); wait "$p"; echo $?' _ "$NS")
+  if [ "$r" != 3 ]; then ok "control: a main-shell fork on a finished layer's pid changes its wait code (got $r)"
+  else echo "  SKIP: this kernel did not hand out the forced pid; the reuse row proves nothing here"; fi
+  r=$(bash -c '. "$1"; prog=$3; : >"$prog"; ( sleep 1; exit 3 ) & p=$!
+    ( sleep 2; echo $((p - 1)) >"$2"; x=$(:); prog_beat=60 progress_watch 1 "$p" ) 2>/dev/null
+    wait "$p"; echo $?' _ "$LIB" "$NS" "$T/reuse-events")
+  [ "$r" = 3 ] && ok "a fork in the watcher subshell on a finished layer's pid keeps the layer's code (3)" || bad "wait read $r, not 3"
+else echo "  SKIP: pid-reuse rows need a writable $NS (root on Linux)"; fi
 
 # 6. durations
 [ "$(_progress_dur 59)" = 59s ] && [ "$(_progress_dur 192)" = 3m12s ] && [ "$(_progress_dur 3600)" = 60m00s ] \
