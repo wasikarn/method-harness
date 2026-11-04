@@ -284,7 +284,8 @@ check "mutation proof: a _VIEW_ENFORCED id with no call site is reported" "$ok"
 for _view in ifs-split var-verb; do
   SH_V="$WORK/shadow-$_view"; shadow_copy "$SH_V" "\"$_view\""
   case "$_view" in
-    ifs-split) _vcmd='rm${IFS}-rf build' ;;
+    # GH #838: the main reading reads a bare ${IFS} as a break, so the view-only spelling is an operator form
+    ifs-split) _vcmd='rm${IFS:0:1}-rf build' ;;
     var-verb) _vcmd='X=mkfs.ext4; $X /dev/sda1' ;;  # GH #767: rm's rules enforce in var-verb, mkfs's stay shadow
   esac
   J7="$WORK/case7/$_view.jsonl"

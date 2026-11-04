@@ -2452,6 +2452,52 @@ def _close_param(s, j, depth_work_used, closer="}", _depth=0):
         _DEPTH_BUDGET_BLOWN[0] = True
     return None
 
+_IFS_DEFAULT = []
+_IFS_REF_RE = re.compile(r"\$(?:\{IFS\}|IFS(?![A-Za-z0-9_]))")
+# GH #838 reviews 6-7: an `=` / `+=` after a name character or `]`: an assignment, maybe (`X=a${IFS}echo`,
+# `X=$(true)a${IFS}echo`, `A[0]=..`). A lookbehind, so linear.
+_ASSIGN_EQ_RE = re.compile(r"(?<=[A-Za-z0-9_\]])\+?=")
+_IFS_HASH_RE = re.compile(r"(\$(?:\{IFS\}|IFS(?![A-Za-z0-9_])))#")
+
+def _ifs_default():
+    # GH #838: whether the main reading reads a bare unquoted ${IFS} as the word break bash makes of it. Only in the
+    # command's own top-level text (review 5: text a shell reads again, an echo fed to `| bash` or a -c body, is no
+    # longer what ${IFS} was where it was written: `unset I""FS; echo g${IFS}it reset --hard | bash`), and only when
+    # _ifs_plain holds; otherwise develop's placeholder.
+    return _IFS_SCAN_TOP[0] and _ifs_plain()
+
+def _ifs_plain():
+    # GH #838: the command's own signs that a bare ${IFS} is surely a word break or nothing. Made once.
+    # - The main parse has begun (`_ambig` set): the readings before it (the interp-pipe text) keep develop's.
+    # - No ambiguity shape: the brace ambiguity denies a plain `git reset` (`echo {a,b}; git${IFS}reset --soft HEAD~1`
+    #   is allowed, GH #718, as develop reads it).
+    # - No `<<` (review 2): a here-string or unquoted heredoc body does no word splitting, so ${IFS} there is IFS's text,
+    #   the default's newline starting a command (`bash <<< "echo"${IFS}"rm -rf x"`).
+    # - IFS named only as a bare $IFS / ${IFS} (review 1): `IFS=m; bash <<< "r"${IFS}" -rf x"`. A spelling the text
+    #   hides (`printf -v I""FS m`) changes nothing outside those bodies: an unquoted expansion is field-split whatever
+    #   IFS holds, and the ifs-split copy that reads it as nothing covers an emptied IFS.
+    # - No assignment before it (reviews 6-7): an assignment word is not split.
+    # - No quoted or escaped $IFS / ${IFS} (review 4): it is IFS's text, newline included, and an echo fed to a shell
+    #   drops the quotes before its body is read (`echo "x${IFS}rm -rf x" | bash`). The raw command, as cmd has its
+    #   heredoc bodies stripped.
+    if "_ambig" not in globals() or _ambig:
+        return False
+    if not _IFS_DEFAULT:
+        raw = d["tool_input"].get("command", "")
+        ok = "<<" not in raw and "IFS" not in _IFS_REF_RE.sub("", raw)
+        if ok:
+            mask = _quote_mask(raw)
+            ok = not any(mask[m.start()] for m in _IFS_REF_RE.finditer(raw))
+        # Reviews 6-7: an assignment word is not split (`X=a${IFS}echo git push${IFS}--force origin x` pushes), and its
+        # value may hold any substitution or a backslash-newline: any NAME= before the last bare ${IFS} keeps it too.
+        if ok:
+            last = None
+            for last in _IFS_REF_RE.finditer(raw):
+                pass
+            ok = last is None or not _ASSIGN_EQ_RE.search(raw, 0, last.start())
+        _IFS_DEFAULT.append(ok)
+    return _IFS_DEFAULT[0]
+
 def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param):
     # The substitution that starts at s[i] (a backtick, "$(", "${", or an unquoted "<(" / ">("):
     # (placeholder, index just past it), its command body appended to `bodies`. None when s[i]
@@ -2471,6 +2517,12 @@ def _substitution_at(s, i, in_dquote, bodies, depth_work_used, _depth, in_param)
         # GH #726: a ${...} word is read quote-blind, so its "..." is unseen there: split in every word.
         bodies.append(_newlines_to_seps(s[i + 2:j - 1]) if in_dquote or in_param else s[i + 2:j - 1])
         return PH, j
+    if c == "$" and nxt == "{" and not in_dquote and not in_param and s.startswith("${IFS}", i) and _ifs_default():
+        # GH #838: a bare unquoted ${IFS} is a word break or, with IFS empty, nothing; never other text (GH #834).
+        # As a placeholder it read as any text, so `ls${IFS}-p ls${IFS}-p x` (`ls -p ls -p x`) was `<any> <any> x`, a
+        # git restore. Read as the break here (review 3: as nothing it glued `sh -c 'claude -p'${IFS}x` into
+        # `claude -px`); an ifs-split copy reads nothing (_views). Any other ${NAME} stays a placeholder.
+        return " ", i + 6
     if c == "$" and nxt == "{":
         # A bash 5.3 funsub/valsub (`${ cmd; }`, `${| cmd; }`) is a command, so a quoted "}" in it
         # (`${ echo 'a}'; V; }`) is no closer: find it quote-aware, as for <(...).
@@ -2636,14 +2688,33 @@ def _scan_once(s, bodies, depth_work_used=None, _depth=0, in_param=False):
             if sub:
                 out.append(sub[0])
                 i = sub[1]
-                last_escaped = False
+                # GH #838: a ${IFS} read as a break is still inside its word as bash parses it, so a `#` after it is
+                # no comment (`echo ${IFS}#; rm -rf x` runs the rm)
+                last_escaped = sub[0] == " "
                 continue
         out.append(c)
         i += 1
         last_escaped = False
     return "".join(out)
 
+_IFS_SCAN_TOP = [False]  # GH #838 review 5: the text _blank_substitutions reads is the command's own top-level text
+_IFS_TOP_TEXT = []  # that text, made once (the main parse blanks thousands of bodies: GH #559's timed rows)
+
 def _blank_substitutions(s):
+    # GH #838 review 5: only the command's own top-level text reads a bare ${IFS} as a break (_ifs_default); a body
+    # (echo text fed to `| bash`, a -c body) is text read again, where ${IFS} is no longer what it was where written.
+    top = False
+    if "IFS" in s and "_ambig" in globals():
+        if not _IFS_TOP_TEXT:
+            _IFS_TOP_TEXT.append(_newlines_to_seps(_normalize_ansi_c_quotes(cmd)))
+        top = s == _IFS_TOP_TEXT[0]
+    _IFS_SCAN_TOP[0] = top
+    try:
+        return _blank_substitutions_read(s)
+    finally:
+        _IFS_SCAN_TOP[0] = False
+
+def _blank_substitutions_read(s):
     bodies = []
     for _ in range(5):
         new = _scan_once(s, bodies)
@@ -3845,9 +3916,10 @@ _INTERP_NAME_RE = re.compile(r"(python)[23]?(?:\.\d+)?|(perl)(?:5[\d.]*)?|(ruby)
 # GH #741: asyncio's create_subprocess_shell/exec and posix_spawn(p) (a bare name in a -c body, a call in a heredoc
 # script, GH #741 review 3), and a process module reached by name
 # (getattr(os, ...), importlib.import_module("os"), __import__("subprocess")), where the call is built at run time.
-# A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review).
-_PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*([\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
-                 r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)\1)\w+\1\s*[,)])"
+# A getattr whose name is one plain literal naming no process API (getattr(os, "sep")) is no call (GH #741 review);
+# its quote is a named group, so a capturing group added to a host regex cannot shift the backreference (GH #796).
+_PROC_BY_NAME = (r"|\bgetattr\s*\(\s*(?:os|posix|subprocess|asyncio|pty)\b(?!\s*\.)(?!\s*,\s*(?P<gq>[\"'])(?!(?:system|popen\d?|spawn\w*|exec\w*|"
+                 r"posix_spawnp?|fork\w*|run|call|check_\w+|Popen|getoutput|getstatusoutput|create_subprocess_\w+)(?P=gq))\w+(?P=gq)\s*[,)])"
                  r"|\b(?:import_module|__import__)\s*\(\s*[\"'](?:os|posix|subprocess|asyncio|pty|child_process)[\"']"
                  # GH #801: read at once as an attribute that names no process API (__import__('os').path) it is no
                  # call built at run time; .system, .execvp etc. still count, stored or called (f = ....system)
@@ -6679,6 +6751,54 @@ def _ifs_empty(text):
         return m.group(0) if mask[m.start()] else ""
     return _BARE_IFS_RE.sub(sub, text)
 
+# GH #840 row 3: NAME= a word of plain characters and bare $IFS / ${IFS} (`X=git${IFS}restore`), ended as
+# _PLAIN_ASSIGN_RE's bare word is. _PLAIN_ASSIGN_RE reads no value with a $ in it. Only at a word start (review 6: a
+# start after each `=` of `a=a=a=..b<x` rescanned the word from each one).
+_IFS_ASSIGN_RE = re.compile(
+    r"(?<![^\s;&|()])([A-Za-z_]\w*)=((?:[^\s;&|()<>'\"$`\\]|\$\{IFS\}|\$IFS(?![A-Za-z0-9_]))*)(?=[\s;&|()]|$)")
+
+def _ifs_var_text(text):
+    # GH #840 row 3: an assignment does no field splitting, so `X=git${IFS}restore` holds git<IFS>restore, and an
+    # unquoted `$X` splits it: `X=git${IFS}restore; $X x` runs `git restore x`. The text with each $NAME / ${NAME}
+    # read as the value assigned most recently before it (else the last), its ${IFS} a blank, for the names a value
+    # with a bare ${IFS} is assigned to; a reference whose latest value is another one stays as written. A quoted
+    # "$X" keeps its quotes, so it stays one word. None when the copy would grow past _VAR_LONG_READ.
+    if "IFS" not in text:
+        return text
+    by_end = {}  # name -> {assignment end: its split value, or None for a value with no bare ${IFS}}
+    for m in _IFS_ASSIGN_RE.finditer(text):
+        v = m.group(2)
+        by_end.setdefault(m.group(1), {})[m.end()] = _BARE_IFS_RE.sub(" ", v) if "IFS" in v and _BARE_IFS_RE.search(v) else None
+    if not any(v is not None for d_ in by_end.values() for v in d_.values()):
+        return text
+    for m in _PLAIN_ASSIGN_RE.finditer(text):  # a quoted plain value (`X='ls'`) the bare-word form above misses
+        by_end.setdefault(m.group(1), {}).setdefault(m.end(), None)
+    sets = {}
+    for name, d in by_end.items():
+        if any(v is not None for v in d.values()):
+            ends = sorted(d)
+            sets[name] = (ends, [d[e] for e in ends])
+    if not sets:
+        return text
+    lit, out, last, grown = _literal_dollars(text), [], 0, len(text)
+    for m in _VAR_REF_RE.finditer(text):
+        name = m.group(1) or m.group(2)
+        if name not in sets or m.start() in lit:
+            continue
+        ends, vals = sets[name]
+        k = bisect.bisect(ends, m.start())
+        r = vals[k - 1] if k else vals[-1]
+        if r is None:
+            continue
+        grown += len(r) - len(m.group(0))
+        if grown > _VAR_LONG_READ:
+            return None
+        out.append(text[last:m.start()])
+        out.append(r)
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out)
+
 def _subst_literals(text, glued=True):
     # The text with each literal substitution replaced by what it prints: one copy per quoted mode (see below).
     out = []
@@ -6754,6 +6874,22 @@ def _views():
     v = _ifs_split(cmd)
     if v != cmd:
         out.append(("ifs-split", v))
+        # GH #838 review 3: the main reading reads a bare ${IFS} as a break (_ifs_default); this copy reads it as
+        # nothing, an IFS emptied under a spelling the text hides (`printf -v I""FS ''; gi${IFS}t restore x`).
+        # A `#` after the ${IFS} is inside its word, no comment (`echo ${IFS}#x | gi${IFS}t restore y`), so escaped.
+        e = _ifs_empty(_IFS_HASH_RE.sub(r"\1\\#", cmd)) if _ifs_plain() else cmd
+        if e != cmd and ("ifs-split", e) not in out:
+            out.append(("ifs-split", e))
+        # GH #840 row 3: one more ifs-split copy that also puts back a value holding a bare ${IFS}, split where the
+        # unquoted reference splits it (`X=git${IFS}restore; $X x`). Only such values: a plain one is var-verb's
+        # (shadow but for rm), and a ${IFS} in a value is never ordinary shell.
+        w = _ifs_var_text(cmd)
+        if w is None:
+            _VAR_LONG_CUT[0] = True
+        elif w != cmd:
+            w = _ifs_split(w)
+            if ("ifs-split", w) not in out:
+                out.append(("ifs-split", w))
     # GH #589: the command with each literal substitution replaced by what it prints. Enforced, and read as
     # far as the parser does, like ifs-split (a substitution in rm's flags hid `-rf` from every rule).
     # A second copy leaves every quoted default as written: a view whose quotes do not balance is dropped
@@ -6804,6 +6940,18 @@ def _views():
             _VAR_LONG_CUT[0] = True
             v = ifs
         if v != ifs and ("var-verb", v) not in out:
+            _VAR_SPAWN_TEXTS.add(v)
+            out.append(("var-verb", v))
+    dc = _normalize_ansi_c_quotes(cmd, live_only=True) if "$'" in cmd else cmd
+    if dc != cmd:
+        # GH #840 row 1: an ANSI-C value (`X=$'\x63laude'; $X -p x`) is no plain value as written, so one in-order copy
+        # of the text with each live $'..' decoded puts it back. Spawn-scanned like the in-order copy.
+        try:
+            v = _ordered_var_text(dc, True, long=_VAR_RM_ONLY and "raise")
+        except _LongCopy:
+            _VAR_LONG_CUT[0] = True
+            v = dc
+        if v != dc and ("var-verb", v) not in out:
             _VAR_SPAWN_TEXTS.add(v)
             out.append(("var-verb", v))
     if vals and "#" in cmd:
@@ -7335,6 +7483,44 @@ _CMD_VALS = None
 _NESTED_VALS = {}  # GH #816: the bodies' own plain assignments, read only by the unescaped copies
 _BODY_VAR_WORK, _BODY_VAR_BUDGET = 0, 300_000  # characters substituted, summed over every body and pass
 
+_CMD_DQ = None  # GH #840: one flag per character of cmd, set inside a top-level "..." (_sq_in_dquote)
+
+def _sq_in_dquote(body):
+    # GH #840 row 2: whether some '<body>' in cmd sits inside a top-level "...", whose shell turns `\$` into `$` before
+    # the '...' is parsed: `bash -c "X=claude; bash -c '\$X -p x'"` runs `$X -p x` in the inner shell. Its '...' is
+    # text there, not a quote (a $(..) in the "..." is read as text too, the over-deny direction). Bounded: the flags
+    # are made once, and at most 50 occurrences are looked at.
+    global _CMD_DQ
+    w = "'" + body + "'"
+    if '"' not in cmd:
+        return False
+    if _CMD_DQ is None:
+        _CMD_DQ, dq, sq, i, n = bytearray(len(cmd)), False, False, 0, len(cmd)
+        while i < n:
+            c = cmd[i]
+            if sq:
+                sq = c != "'"
+            elif c == "\\":
+                if dq:
+                    _CMD_DQ[i:i + 2] = b"\1\1"[:len(cmd[i:i + 2])]
+                i += 2
+                continue
+            elif c == '"':
+                dq = not dq
+            elif c == "'" and not dq:
+                sq = True
+            if dq:
+                _CMD_DQ[i] = 1
+            i += 1
+    k = cmd.find(w)
+    for _ in range(50):
+        if k < 0:
+            return False
+        if _CMD_DQ[k]:
+            return True
+        k = cmd.find(w, k + 1)
+    return True  # past the bound, read the unescaped copy too: an extra reading only
+
 def _scan_body_vars(body, unescaped=False):
     # GH #812 / #810 item 2: a body is a script of its own, so its $NAME reads, in order, the plain value the body
     # assigns before it (`bash -c 'X=claude; $X -p x'`), else the outer command's last one (the child's environment:
@@ -7353,7 +7539,7 @@ def _scan_body_vars(body, unescaped=False):
     # (`bash -c 'bash -c "\$X -p x"'`). A copy with them unescaped is read too, unless the body is written
     # single-quoted only (`bash -c '\$Y -p x'` runs a command named `$Y`).
     u = re.sub(r"\\([$`])", r"\1", body) if unescaped else body
-    if u != body and not ("'" + body + "'" in cmd and '"' + body + '"' not in cmd):
+    if u != body and not ("'" + body + "'" in cmd and '"' + body + '"' not in cmd and not _sq_in_dquote(body)):
         starts.append(u)
     seen = None
     outer = _CMD_VALS
