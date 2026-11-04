@@ -3768,12 +3768,12 @@ for _p in 'import asyncio; print("create_subprocess_shell is async")' 'import os
   test_allow "$IRRECOVERABLE" "GH #741 control python heredoc: $_p" "$(bash_payload "python3 - <<'EOF'"$'\n'"${_p//; /$'\n'}"$'\nEOF')"
 done
 # GH #741: trash-whole-tree also reads every dotfile of home (~/.*, $HOME/.*). A quoted braced home glob ("${HOME}/"*,
-# "${HOME}/."*) keeps develop's reading: its widened raw regex failed two reviews on time (GH #741 reviews 1 and 3).
+# "${HOME}/."*) kept develop's reading then: its widened raw regex failed two reviews on time (GH #741 reviews 1 and 3).
+# GH #795 denies those two, once the raw operands are read once per command (rows under # GH #795 below).
 for _c in 'trash ~/.*' 'trash $HOME/.*' 'trash "$HOME"/.*' 'trash ./.*' 'gio trash ~/.*'; do
   test_deny "$IRRECOVERABLE" "GH #741 trash whole tree: $_c" "$(bash_payload "$_c")"
 done
-for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 'trash "${HOME}/"*.log' 'trash ./.cache' \
-  'trash "${HOME}/"*' 'trash "${HOME}/."*'; do
+for _c in 'trash ~/foo' 'trash ~/.cache' 'trash ~/.*.bak' 'trash "${HOME}/foo"' 'trash "${HOME}/"*.log' 'trash ./.cache'; do
   test_allow "$IRRECOVERABLE" "GH #741 trash control: $_c" "$(bash_payload "$_c")"
 done
 # GH #741 review: a full-path argv0 in an exec argv list, and a getattr on a process
