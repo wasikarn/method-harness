@@ -14,8 +14,8 @@ in scope, so every review round could find a new one, and every finding was fixe
 
 Rounds 5 to 7 of the gate work (2026-11-02 to 2026-11-04) measured what that costs:
 
-- 7 issues closed (GH #833, #834, #835, #796, #838, #840, #839), and 23 new gate issues filed
-  (#846 to #871) by the same PRs' reviews.
+- 7 issues fixed (GH #833, #834, #835, #796, #838, #840, #839), and about 23 new issues filed
+  (#846 to #871, nearly all gate gaps) by the same PRs' reviews.
 - 8 to 15 fresh-context review rounds per PR; every round found another hand-built shape.
 - Every PR was replayed against the full local pool of real Bash commands (about 54,000). No real
   command changed its allow/deny decision in any of them. None of the closed gaps had ever appeared in
@@ -65,7 +65,7 @@ gates. This ADR accepts that risk for the shapes the gates do not already deny:
   future injection, which is why this section exists.
 - **What still holds:** the denies already shipped, the `settings.json` deny rules, branch protection
   on `develop` (PR plus `mh/gauntlet`), and the operator's approval of every merge. None of these
-  stops a local destructive command in a subagent.
+  stops a disguised local destructive command in a subagent: the deny rules read text too.
 - **The right control for this threat** is an OS-level sandbox (filesystem and network limits on the
   agent's shell), not more text rules. Adopting one is a separate decision.
 
