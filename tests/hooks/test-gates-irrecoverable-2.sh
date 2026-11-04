@@ -4933,4 +4933,20 @@ for _c in 'echo "$(case a in a) echo hi | claude --version;; esac)"' 'X=claude; 
     'X=claude; nice -n "$(case x in x) echo 5;; esac)" $X --version'; do
   test_allow "$IRRECOVERABLE" "GH #839 control: subagent: $_c" "$(bash_agent_payload "$_c" fork)"
 done
+# GH #795: trash of the whole home in its braced forms (`${HOME}` is blanked to a placeholder, so these are read on
+# trash's raw operands): every dotfile in it, or everything in it with the slash quoted. The raw operands are now read
+# once per command, not once per placeholder word, which made one trash with 4000 "$(true)" words take 4 s.
+for _c in 'trash ${HOME}/.*' 'trash "${HOME}"/.*' 'trash "${HOME}/"*' 'trash "${HOME}/."*' 'trash -- "${HOME}/."*' \
+    'trash-put "${HOME}"/.*' 'gio trash "${HOME}/"*'; do
+  test_deny  "$IRRECOVERABLE" "GH #795: $_c" "$(bash_payload "$_c")"
+done
+for _c in 'trash ${HOME}/x' 'trash "${HOME}/.cache"' 'trash ${HOME}/.*rc' 'trash "${HOME}/.cache/"*' 'trash "$(pwd)"/.*' \
+    'echo "${HOME}/."*; trash x'; do
+  test_allow "$IRRECOVERABLE" "GH #795 control: $_c" "$(bash_payload "$_c")"
+done
+_w795="$(printf '"$(true)" %.0s' $(seq 4000))"
+_timed_case 'GH #795: one trash with 4000 "$(true)" words, then trash ~, denied in bounded time' 2 "trash ${_w795}x; trash ~"
+_timed_case 'GH #795: trash ~ first, then one trash with 4000 "$(true)" words, denied in bounded time' 2 "trash ~; trash ${_w795}x"
+_timed_case 'GH #795: one trash with 4000 "$(true)" words and "${HOME}/."* last, denied in bounded time' 2 "trash ${_w795}\"\${HOME}/.\"*"
+_timed_case 'GH #795 control: one trash with 4000 "$(true)" words, allowed in bounded time' 0 "trash ${_w795}x"
 gates_summary
