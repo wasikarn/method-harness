@@ -1394,7 +1394,10 @@ def _extra_views(s, base, based=None):
         for p in _prose(s, True):  # the heredocs the substitution scanner opens, per reading (a fake `<<X`
             if p != s:             # cannot steer these)
                 mp = _mask(p)
-                if mp != base and (p, mp) not in views:
+                # As in _hd_view: a view whose mask differs from the base only inside the bodies it blanked
+                # can add no anchor (each body starts at a line start and ends at its terminator's line end),
+                # and scanning it whole made any heredoc cost about 1.7x develop's work on the rest.
+                if (p, mp) not in views and any(a != b for a, b, c, d in zip(mp, base, p, s) if c == d):
                     views.append((p, mp))
     # bash deletes a line continuation before it reads an operator (`<\<nl><'E'`) and, in an unquoted heredoc
     # body, before it compares a line with the delimiter (`x\<nl>E` is no terminator): the heredoc views of

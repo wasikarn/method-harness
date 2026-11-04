@@ -1971,6 +1971,11 @@ test_deny "GH #844" $'echo \\<<F\ncat <<\'I\'\ndon\'t\nI\ngit stash\nF' $'echo \
 _c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-replay-allow.txt")
 rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
 check "PR #872 replay: a real 3.8 KB python heredoc with dense quoted JSON is allowed, as on develop (rc $rc)" "$ok"
+# A plain heredoc (no quote in its body) followed by a long chain of commands costs about develop's work: a
+# scanner-reading view that differs from the base only inside the blanked bodies is skipped.
+_c=$(cat "$ROOT/tests/hooks/fixtures/subagent-git-guard-pr872-plain-heredoc-allow.txt")
+rc=$(sgg_rc "$_c"); ok=1; [ "$rc" = "0" ] && ok=0
+check "PR #872 review 23: a plain heredoc then 64 cp/mkdir brace pairs is allowed, as on develop (rc $rc)" "$ok"
 # ... while a brace expansion within the command size cap keeps its views (`git {stash,}` after a cut or a
 # quote in a heredoc body: the anchor only appears once the braces expand).
 test_deny "GH #844" $'cat <<\'E\'\ndon\'t\nE\ngit {stash,}' $'cat <<\'E\'\ndon\'t\nE\ngit {status,}'
