@@ -11,7 +11,8 @@ argument-hint: "[proposal file or topic]"
 Break a proposed fix before anyone builds it. Research what the fix must get right, have an
 attacker from a different model family hunt for **breaks**, revise, then have a fresh validator
 confirm each break is closed. The output is a vetted proposal, not code; the build follows
-test-first (`mattpocock-skills:tdd`).
+test-first (`mattpocock-skills:tdd`). GO means safe to build, not safe to merge: step 7 checks the
+built code.
 
 A **break** is one concrete input or state that makes the fix do the wrong thing once built:
 
@@ -161,3 +162,21 @@ waits on the operator.
 - Independence: the Codex slug per lane, or "independence reduced".
 - The build's first tests: each closed break becomes a failing test row before its fix (Rule 4),
   and a row counts only if reverting its fix turns it red.
+- The full absolute paths of the validator's corpus and generator, if it left any in its scratch
+  dir: step 7 reruns them.
+
+## 7. After the build
+
+The validator judged a design, so the built code gets its own check before merge:
+
+- Run every closed break's input, plus the validator's corpus and generator, against the built
+  code. Each must stay closed.
+- For a change to one of mh's own gates (`hooks/gates/`), also compare the old and new gate on
+  the same inputs and on real commands from this project's transcripts, from the mh repo root:
+  `bash scripts/gate-differential.sh origin/develop <gate> --cases <corpus file> --replay 2000`,
+  `<gate>` being `irrecoverable`, `subagent-git-guard` or `secret-scan`. A deny that turns into an
+  allow goes to the operator.
+- Then run `mh:deep-audit` on the change.
+
+Done when every closed break stays closed on the built code, the differential (for a gate) shows
+no unexplained change, and deep-audit passes. A break that reopens sends the work back to step 4.
