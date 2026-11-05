@@ -50,6 +50,8 @@ esac
 case "$_norm$_norm_nows" in
   *python*|*node*|*perl*|*ruby*) case "$_norm" in *'<<'*'|'*|*'|'*'<<'*|*'|'*sh*|*'>('*sh*) _has_subst=1 ;; esac ;;
 esac
+# GH #911: a ctx_execute payload always goes to python, which denies an unknown language whatever its code says.
+case "$_input" in *__ctx_execute*) _has_subst=1 ;; esac
 case "$_norm$_norm_nows" in
   *rm*|*find*|*git*|*gp*|*ggf*|*grename*|*gh*|*dd*|*mysql*|*psql*|*sqlite3*|*mariadb*|*dropdb*|*mongo*|*redis*|*rsync*|*claude*|*mkfs*|*mke2fs*|*chmod*|*source*|*trash*) : ;;  # candidate -> python
   *) [ "$_has_subst" -eq 1 ] || exit 0 ;;                          # no destructive token possible -> allow (unless obfuscated)
