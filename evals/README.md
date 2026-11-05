@@ -16,6 +16,15 @@ agents, one planted-defect case and one clean control per agent, the same fires/
 | `finding.md` / `clean.md` | `regex` | the planted defect was found at its file, or the clean control got the clean verdict |
 | `criteria.md` | `llm` | the finding is the right one, sized right, with no manufactured extras |
 
+A grader that checks the plugin's own mechanism (`agent-fired.md`, `dispatch-confirmed.md` on
+`tool: Agent`, `critic-dispatched.md`, `reviewer-dispatched.md`, post-mortem's `skill-loaded.md`,
+ideate-run's `fanout.md`, idea-audit's `isolation-fan-out.md`) sets `arm: with-only`. A two-arm run (the default whenever the plugin resolves) scores every other
+grader in both arms. Without the plugin these say nothing about the task: the `not found` regexes
+fail by construction (inflating Δ), and an Agent check can pass on the failed dispatch call. The CLI
+already leaves `tool_used` on `tool: Skill` out of the score, so `skill-fired.md` needs no `arm:`.
+`tests/evals/test-eval-cases.sh` fails on a mechanism grader with no `arm:`. A two-arm Δ from
+before 2026-11-06 on these cases is high by about one scored grader's share (0.33 to 0.5 a case).
+
 Five for the `tech-humanize` skill (tag `tech-humanize`): three planted cases (English prose,
 Thai standup, Thai UI copy), a clean human-written control that must survive lightly edited, and a file-input
 case that proves the prose-only constraint (frontmatter and code block byte-identical, graded on
@@ -245,7 +254,7 @@ actual edit's correctness (a half-rename leaving a `NameError` behind would have
 `backend-architect`/`code-architect`/`performance-optimizer`/`ideate-critic` only proved the trace
 *lacked* an "agent not found" error, never that dispatch actually happened (added a
 `dispatch-confirmed.md` display-only `tool_used` trigger to each, `input_match` values confirmed
-against each case's own `subagent_type`, `arm` left unset); and `test-eval-cases.sh` skipped its
+against each case's own `subagent_type`; `arm: with-only` on the `tool: Agent` ones since 2026-11-06, see the top); and `test-eval-cases.sh` skipped its
 own frontmatter/regex-compile validator entirely for prompt.md-only cases (an early `continue`,
 contradicting its own comment) and counted "outcome graders" via a whole-file grep that a grader's
 body prose could accidentally trip (both now scoped correctly — see the script's own comments).

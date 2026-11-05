@@ -3,6 +3,7 @@ type: tool_used
 tool: Agent
 input_match: '"subagent_type"\s*:\s*"(?:mh:)?plan-reviewer"'
 min: 1
+arm: with-only
 ---
 The blueprint reached the second specialist: the session dispatched `mh:plan-reviewer` rather than
 reviewing its own blueprint inline or skipping the review. This is the chain break the

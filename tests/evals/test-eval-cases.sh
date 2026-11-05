@@ -19,8 +19,9 @@
 # every case including prompt.md-only ones (no case.yaml to scaffold).
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
-. "$HERE/../../scripts/_lib/tmp-delete.sh"
-EVALS="$HERE/../../evals"
+ROOT="$HERE/../.."
+. "$ROOT/scripts/_lib/tmp-delete.sh"
+EVALS="$ROOT/evals"
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }
@@ -50,6 +51,59 @@ if lines and lines[0] == "---":
             break
 rx = re.compile(r"\bplanted\b|\brubric\b|\bgrader\b|\bno bugs?\b|\baccurate\b|correctly implemented", re.I)
 hits = [f"{i + 1}: {l.strip()}" for i, l in enumerate(lines) if i >= start and rx.search(l)]
+print("\n".join(hits))
+sys.exit(1 if hits else 0)
+PY
+}
+
+# A grader that checks the plugin's own mechanism (its agent dispatched, its skill's text loaded, no
+# "not found" error for it) fails by construction in the no-plugin arm. In a two-arm run (the default
+# whenever the plugin resolves) the CLI scores every grader in both arms except `arm: with-only`,
+# `tool_used` on `tool: Skill`, and mock_calls graders (plugin-evals doc, "Score against the no-plugin
+# baseline"; confirmed in the 2.1.318 binary), so an un-armed one inflates delta. Flags such graders
+# that set no `arm:`; any value counts as a deliberate choice (`both` for a must-not-dispatch check).
+# Shapes: an `agent-fired.md` / `dispatch-confirmed.md` not on `tool: Skill`, an Agent check naming one
+# of the plugin's agents, a regex on the missing-plugin errors, and a `trace` regex that matches the
+# plugin's own agent or skill text (an outcome grader hit by that last rule wants `arm: both`).
+# Not caught: an Agent count with no `input_match` (ideate-run's `fanout.md` and idea-audit's
+# `isolation-fan-out.md` are armed by hand).
+# Args: <evals dir> <plugin root>. Prints one path per hit, exits 1 on any.
+unarmed_mechanism_graders() {
+  python3 - "$1" "$2" <<'PY'
+import glob, json, os, re, sys
+evals, root = sys.argv[1], sys.argv[2]
+agents = [os.path.basename(f)[:-3] for f in glob.glob(os.path.join(root, "agents", "*.md"))]
+own_text = "".join(open(f).read() for f in glob.glob(os.path.join(root, "agents", "*.md"))
+                   + glob.glob(os.path.join(root, "skills", "**", "*.md"), recursive=True))
+def val(fm, key):
+    m = re.search(r"^%s: (.*)$" % key, fm, re.M)
+    if not m: return None
+    v = m.group(1).strip()
+    if v[:1] == "'" and v[-1:] == "'": return v[1:-1].replace("''", "'")
+    if v[:1] == '"' and v[-1:] == '"':
+        try: return json.loads(v)
+        except ValueError: return v[1:-1]  # the per-case check reports an undecodable pattern
+    return v
+hits = []
+for g in sorted(glob.glob(os.path.join(evals, "*", "graders", "*.md"))):
+    m = re.match(r"---\n([\s\S]*?)\n---\n", open(g).read())
+    if not m or val(m.group(1), "arm"): continue
+    fm = m.group(1)
+    kind, pat = val(fm, "type"), val(fm, "pattern") or ""
+    if kind == "tool_used" and val(fm, "tool") == "Agent":
+        hit = any(a in (val(fm, "input_match") or "") for a in agents)
+    elif kind == "regex":
+        try:
+            own = (val(fm, "target") == "trace" and (val(fm, "match") or "contains") == "contains"
+                   and re.search(pat, own_text) is not None)
+        except re.error:
+            own = False  # the per-case check reports a bad pattern
+        hit = "Agent type '" in pat or "Unknown skill:" in pat or own
+    else:
+        hit = False
+    if os.path.basename(g) in ("agent-fired.md", "dispatch-confirmed.md") and val(fm, "tool") != "Skill":
+        hit = True
+    if hit: hits.append(os.path.relpath(g, evals))
 print("\n".join(hits))
 sys.exit(1 if hits else 0)
 PY
@@ -299,6 +353,32 @@ ctl="$EVALS/deep-audit-planted/prompt.md"
 if prompt_tells "$ctl" >/dev/null; then ok "prompt_tells passes a clean prompt"; else bad "prompt_tells flags the clean control $ctl"; fi
 cp "$ctl" "$TMP/tell-control.md" && echo "There is no planted bug in this fixture." >> "$TMP/tell-control.md"
 if prompt_tells "$TMP/tell-control.md" >/dev/null; then bad "prompt_tells missed a tell appended to a clean prompt"; else ok "prompt_tells catches an appended tell"; fi
+
+if hits=$(unarmed_mechanism_graders "$EVALS" "$ROOT"); then
+  ok "every plugin-mechanism grader sets arm:"
+else
+  bad "plugin-mechanism graders without arm: (scored in the no-plugin arm, inflating delta; add 'arm: with-only'):"$'\n'"$hits"
+fi
+# Controls for the check above: each un-armed mechanism shape is flagged, and stops being flagged once
+# it sets arm:; un-armed `tool: Skill` graders (auto-excluded by the CLI), an Agent check on a built-in
+# agent, and an outcome regex are not.
+actl="$TMP/armctl/c/graders"; mkdir -p "$actl"
+printf -- '---\ntype: tool_used\ntool: Skill\ninput_match: %s\n---\n' "'deep-audit'" >"$actl/skill-fired.md"
+printf -- '---\ntype: tool_used\ntool: Skill\ninput_match: %s\n---\n' "'code-architect'" >"$actl/dispatch-confirmed.md"
+printf -- '---\ntype: tool_used\ntool: Agent\ninput_match: %s\n---\n' "'general-purpose'" >"$actl/generic-agent.md"
+printf -- '---\ntype: regex\ntarget: last_message\npattern: %s\n---\n' "'not found'" >"$actl/outcome.md"
+if unarmed_mechanism_graders "$TMP/armctl" "$ROOT" >/dev/null; then ok "arm check passes Skill, built-in Agent and outcome graders"; else bad "arm check flags a Skill, built-in Agent or outcome grader"; fi
+for shape in "mech.md|type: regex\ntarget: trace\nmatch: not_contains\npattern: \"Agent type '[^']*' not found\"" \
+             "mech.md|type: regex\ntarget: trace\nmatch: not_contains\npattern: 'Unknown skill: code-architect'" \
+             "mech.md|type: tool_used\ntool: Agent\ninput_match: 'plan-reviewer'" \
+             "mech.md|type: regex\ntarget: trace\npattern: 'Four inputs or no draft'" \
+             "agent-fired.md|type: regex\ntarget: last_message\npattern: 'specialist report'"; do
+  f="${shape%%|*}"; fm="${shape#*|}"
+  printf -- '---\n%b\n---\n' "$fm" >"$actl/$f"
+  if unarmed_mechanism_graders "$TMP/armctl" "$ROOT" >/dev/null; then bad "arm check missed: $f $fm"; else ok "arm check flags an un-armed mechanism grader"; fi
+  printf -- '---\n%b\narm: with-only\n---\n' "$fm" >"$actl/$f"
+  if unarmed_mechanism_graders "$TMP/armctl" "$ROOT" >/dev/null; then ok "arm check passes it once armed"; else bad "arm check still flags an armed grader: $f $fm"; fi
+done
 
 [ "$n" -ge 40 ] || bad "expected at least 40 eval cases (sanity floor -- \$EVALS glob may be wrong), found $n"
 
