@@ -3,6 +3,7 @@ type: tool_used
 tool: Agent
 input_match: '"subagent_type"\s*:\s*"(?:mh:)?plan-reviewer"'
 min: 1
+arm: with-only
 ---
 Unprompted chain: the prompt asks for the plan to be "checked properly" but never names
 `mh:plan-reviewer`. This passes only if the session chose on its own to hand the blueprint to that
