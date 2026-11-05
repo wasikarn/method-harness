@@ -5825,9 +5825,6 @@ _RM_PLAIN_DASHDASH = re.fullmatch(r"[ \t]*rm(?:[ \t]+(?:-[A-Za-z]+|--[a-z-]+))*[
                                   cmd) is not None
 
 # GH #912: zsh runs `=word` as the full path of `word` (EQUALS), so a command word's leading `=` is not part of its name.
-def _cmd_basename(p):
-    p = p.rsplit("/", 1)[-1]
-    return p[1:] if p.startswith("=") else p
 
 # GH #912: a command word with `?`, `*` or a `[..]` class (`/bin/r?`) is read as each program name it can spell.
 # Only these three forms: zsh alternation `(a|b)` and numeric ranges `<->` are split or blanked by the tokenizer
@@ -5853,18 +5850,18 @@ def _glob_names(word):
 
 # GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
 # `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
-_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}")
+_GLOB_QUAL_RE = re.compile(r"[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}")
 
 def _check_window(_wi, w):
     global _cur_depth
-    basename = _cmd_basename  # GH #912: this function's argv0 reads see through `=word`
     _cur_depth = _WDEPTH.get(_wi, 0)
     for _t in w:
         if "e" in _t and len(_t) <= 512:  # a long token cannot be a qualifier worth the backtracking
             _q = _GLOB_QUAL_RE.fullmatch(_t.replace(PH, ""))
             if _q:
                 _qb = _q.group("a") or _q.group("b") or _q.group("c")
-                _scan_body(_qb)
+                if not _q.group("d") or _q.group("d") not in _qb:
+                    _scan_body(_qb)
                 if _q.group("d"):  # `(e:a:e:b:)`: each body between delimiters is its own command
                     for _part in _qb.split(_q.group("d")):
                         _scan_body(_part)
@@ -6130,6 +6127,8 @@ def _check_window(_wi, w):
 
     rest = rest[o:]
     _gn = _glob_names(argv0) if rest else None  # a lone glob word (`for f in *`) runs nothing with arguments
+    if rest and not _gn and "[[:" in argv0 and PH not in argv0:  # POSIX class: fnmatch cannot read it, so ask
+        ask("a command word with a POSIX class can spell any program - confirm what it runs", rule="glob-command-word")
     if _gn:
         if len(_gn) > _GLOB_ASK_OVER or _GLOB_WINDOWS[0] + len(_gn) > _GLOB_WINDOWS_MAX:
             # A word of only wildcards (`*`, `??`) is also what a brace view leaves of `{*,}`: it asks nothing.

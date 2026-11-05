@@ -21,6 +21,7 @@ for _c in "noglob $_rm" "nocorrect $_rm" "- $_rm" "=rm -rf ~" "repeat 1 $_rm" "r
   "/usr/bin/en? rm -rf ~" "noglob /usr/bin/en? rm -rf ~" "/usr/bin/nohu? rm -rf ~" "/bin/z?h -c 'rm -rf ~'"; do
   test_deny "$IRRECOVERABLE" "GH #912: $_c" "$(bash_payload "$_c")"
 done
+test_ask "$IRRECOVERABLE" "GH #912: a POSIX class in a command word asks" "$(bash_payload '/bin/[[:lower:]]m -rf ~')"
 test_ask "$IRRECOVERABLE" "GH #912: a command word with a glob matching over 12 programs could be any" "$(bash_payload '/bin/*o* -rf ~')"
 
 for _c in 'ls *.py' 'curl -s -d {"name":"x","type":"y"} http://h' 'echo e.g. make done' 'echo =foo' 'repeat 3 echo hi' 'noglob git push origin HEAD:feat/x' '/bin/l? -la' \
