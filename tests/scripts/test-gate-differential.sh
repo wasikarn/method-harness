@@ -181,11 +181,19 @@ sed 's/\[mh:gate\] BLOCKED/[mh:gate] BLOCKD/' "$GATES/irrecoverable.py" > "$T/re
 fork_out=$(bash "$SCRIPT" --runner fork "$T/old" "$T/reworded" irrecoverable 2>&1); frc=$?
 bash_out=$(bash "$SCRIPT" --runner bash "$T/old" "$T/reworded" irrecoverable 2>&1); brc=$?
 strip() { /usr/bin/grep -v '^  runner:' <<<"$1"; }
-if [ "$frc" -eq 1 ] && [ "$brc" -eq 1 ] && /usr/bin/grep -q '^  runner: fork' <<<"$fork_out" \
+if [ "$frc" -eq 1 ] && [ "$brc" -eq 1 ] && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 0,' <<<"$fork_out" \
    && /usr/bin/grep -q '^  runner: bash' <<<"$bash_out" && [ "$(strip "$fork_out")" = "$(strip "$bash_out")" ] \
    && ! /usr/bin/grep -q 'diffs=0 ' <<<"$fork_out"; then
-  ok "fork and bash runners give the same diffs on the fixtures"
+  ok "fork and bash runners give the same diffs on the fixtures, none dropped"
 else bad "fork vs bash on the fixtures (frc=$frc brc=$brc): --- fork: $fork_out --- bash: $bash_out"; fi
+cp -R "$GATES" "$T/sgg-reworded"
+sed 's/\[mh:gate\] BLOCKED/[mh:gate] BLOCKD/' "$GATES/subagent-git-guard.py" > "$T/sgg-reworded/subagent-git-guard.py"
+fork_out=$(bash "$SCRIPT" --runner fork "$T/old" "$T/sgg-reworded" subagent-git-guard 2>&1); frc=$?
+bash_out=$(bash "$SCRIPT" --runner bash "$T/old" "$T/sgg-reworded" subagent-git-guard 2>&1); brc=$?
+if [ "$frc" -eq 1 ] && [ "$brc" -eq 1 ] && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 0,' <<<"$fork_out" \
+   && [ "$(strip "$fork_out")" = "$(strip "$bash_out")" ] && ! /usr/bin/grep -q 'diffs=0 ' <<<"$fork_out"; then
+  ok "subagent-git-guard: fork and bash give the same diffs on the fixtures, none dropped"
+else bad "sgg fork vs bash on the fixtures (frc=$frc brc=$brc): --- fork: $fork_out --- bash: $bash_out"; fi
 
 # Stub gates: copies of the real dir (the wrapper and secret-scan.py stay real) with irrecoverable.py replaced.
 stub() {  # stub DIR PYTHON-BODY: a gates copy whose irrecoverable.py is the given body after reading stdin
@@ -202,8 +210,8 @@ stub "$T/s-deny" 'if c in ("ls -la", "rm -rf build"): sys.exit(2)'
 printf 'ls -la\nrm -rf build\n' > "$T/two.txt"
 out=$(bash "$SCRIPT" --cases "$T/two.txt" "$T/s-allow" "$T/s-deny" irrecoverable 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" && /usr/bin/grep -q '^  \[1\] exit 0->2$' <<<"$out" \
-   && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 1,' <<<"$out"; then
-  ok "fork-only diff dropped after the bash re-check; the confirmed one is kept"
+   && /usr/bin/grep -q '^      - ls -la$' <<<"$(/usr/bin/grep -A1 '^  runner: fork (fork-only diffs dropped: 1,' <<<"$out")"; then
+  ok "fork-only diff dropped after the bash re-check and named; the confirmed one is kept"
 else bad "fork-only re-check (rc=$rc): $out"; fi
 
 echo "=== a fork server that dies falls back to the bash runner (GH #889) ==="
@@ -214,6 +222,35 @@ if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && /usr/bin/grep -q 
   ok "a dead fork server falls back to bash"
 else bad "dead fork server (rc=$rc): $out"; fi
 
+echo "=== a gate that hangs the server's warm-up falls back to bash in bounded time (GH #889) ==="
+stub "$T/s-hang" 'while c == "ls -la": pass'
+start=$(date +%s)
+out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-allow" "$T/s-hang" irrecoverable 2>&1); rc=$?
+took=$(( $(date +%s) - start ))
+if [ "$rc" -eq 0 ] && [ "$took" -lt 30 ] && /usr/bin/grep -q '^  runner: bash (fork server .*did not answer' <<<"$out"; then
+  ok "a hung warm-up falls back to bash (${took} s)"
+else bad "hung warm-up (rc=$rc, ${took} s): $out"; fi
+
+echo "=== a timed-out gate's own children are killed with it (GH #889) ==="
+# The stub starts a child and outlives the 8 s timeout, on both runners (fork, then bash as a
+# near-deadline re-run): each runner kills the gate's whole process group.
+mark="$$.$RANDOM"
+stub "$T/s-orphan" "if c == 'rm -rf build':
+    import subprocess; subprocess.Popen(['sleep', '987.$mark']); time.sleep(100)"
+out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-orphan" "$T/s-orphan" irrecoverable 2>&1); rc=$?
+left=$(pgrep -f "sleep 987.$mark" | wc -l | tr -d ' ')
+if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
+  ok "no child of a timed-out gate is left running"
+else bad "orphans after a timeout (rc=$rc, left=$left): $out"; pkill -f "sleep 987.$mark"; fi
+
+echo "=== a child set-up failure is reported, never read as the gate's exit (GH #889) ==="
+mkdir -p "$T/srv"
+reply=$(printf '{"in": "%s", "out": "%s", "err": "%s"}\n' "$T/srv/missing" "$T/srv/out" "$T/srv/err" \
+  | (cd "$T/srv" && python3 -S "$ROOT/scripts/_lib/gate-fork-server.py" "$T/s-allow" irrecoverable 8 2>"$T/srv/server.err"))
+if /usr/bin/grep -q '"code": "setup-failed"' <<<"$reply" && /usr/bin/grep -q 'Traceback' "$T/srv/server.err"; then
+  ok "set-up failure: reply setup-failed, traceback on the server's stderr"
+else bad "set-up failure: reply=$reply stderr=$(cat "$T/srv/server.err" 2>&1)"; fi
+
 echo "=== a wrapper change falls back to the bash runner (GH #889) ==="
 cp -R "$GATES" "$T/wrapped"
 printf '# a changed wrapper\n' >> "$T/wrapped/irrecoverable.sh"
@@ -221,6 +258,12 @@ out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/old" "$T/wrapped" irrecoverable 2>&
 if [ "$rc" -eq 0 ] && /usr/bin/grep -q '^  runner: bash (wrapper files differ: irrecoverable.sh)' <<<"$out"; then
   ok "a differing wrapper runs the whole replay through bash"
 else bad "wrapper fallback (rc=$rc): $out"; fi
+
+echo "=== --runner fork refuses to fall back (GH #889) ==="
+out=$(bash "$SCRIPT" --runner fork --cases "$T/rm.txt" "$T/old" "$T/wrapped" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'fork mode cannot run' <<<"$out"; then
+  ok "--runner fork with a changed wrapper exits 2"
+else bad "--runner fork fallback (rc=$rc): $out"; fi
 
 echo "=== slower: a stub that sleeps on the new side only (GH #890) ==="
 stub "$T/s-slow" 'time.sleep(0.25)'

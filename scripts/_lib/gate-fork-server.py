@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Fork server for scripts/_lib/gate-differential.py (GH #889); never run by hand.
-# Usage: python3 -S gate-fork-server.py GATES_DIR GATE   (the same python3 and -S as the gate wrapper)
+# Usage: python3 -S gate-fork-server.py GATES_DIR GATE TIMEOUT   (the wrapper's own python3 and -S)
 #
 # Starting bash and python3 for every command is most of a replay's time. This process imports the
 # stdlib and warms the regex cache once, then forks one child per command. The child drops every
@@ -11,13 +11,23 @@
 # back to the bash runner.
 #
 # Protocol: one JSON line per command on stdin, {"in": path, "out": path, "err": path}; one JSON line
-# back on stdout, {"code": int | "timeout" | "sigN", "secs": float}. The child's exit code is the
-# gate's, as the interpreter would give it; the wrapper's own mapping is left to the bash runner.
+# back on stdout, {"code": int | "timeout" | "sigN" | "setup-failed", "secs": float}. The child's exit
+# code is the gate's, as the interpreter would give it; the wrapper's own mapping is left to the bash
+# runner. "setup-failed" (the child could not open its files, traceback on this process's stderr) is
+# never a gate result: the engine falls back to bash, since both sides failing alike would read as
+# no diff.
+#
+# Why a fork result can add a diff but never hide one, while both sides run the same wrapper (the
+# engine checks that), rests on two assumptions; revisit them if a gate or the wrapper changes:
+# - warm() puts back the state it lists (streams, argv, recursion limit, int digit limit, the journal
+#   env var, the timer and SIGALRM, the gates-dir modules), but not os.environ, the cwd or sys.path
+#   changes a gate makes at import time. No gate makes any today.
+# - The child imports the gate directly, not through _run.py, so a change in _run.py itself is only
+#   seen through the wrapper-identity check (_run.py is a wrapper file there).
+# Neither the gates nor _journal.py use atexit, and the wrapper exports nothing to python.
 import io, json, os, select, signal, sys, time, traceback
 
-TIMEOUT = 8  # hooks.json's timeout, the same as the bash runner's
-
-gates_dir, gate = sys.argv[1], sys.argv[2]
+gates_dir, gate, TIMEOUT = sys.argv[1], sys.argv[2], float(sys.argv[3])  # TIMEOUT: hooks.json's, from the engine
 run_py = os.path.join(gates_dir, "_run.py")
 proto_in = io.open(0, "rb", closefd=False)
 # Copy the stream settings this interpreter chose for itself (the wrapper's python3 gets the same
@@ -63,8 +73,10 @@ def warm():
         sys.stdin, sys.stdout, sys.stderr = io.StringIO(json.dumps(d)), io.StringIO(), io.StringIO()
         try:
             __import__(gate)
+        except SystemExit:
+            pass  # a gate ends by exiting
         except BaseException:
-            pass
+            traceback.print_exc(file=sys.__stderr__)  # server.err; a crash here may repeat in every child
         finally:
             quiet()
             drop_gate_modules()
@@ -102,6 +114,8 @@ def exit_code(e):
 def child(req, w):
     code = 1
     try:
+        os.setpgid(0, 0)  # its own group: a timeout or a dying server kills the gate's children too
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)  # the server's handler is not the gate's
         for fd, path, flags in ((0, req["in"], os.O_RDONLY),
                                 (1, req["out"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC),
                                 (2, req["err"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC)):
@@ -111,6 +125,8 @@ def child(req, w):
         sys.stdin = sys.__stdin__ = stream(0, "r", STREAMS[0])
         sys.stdout = sys.__stdout__ = stream(1, "w", STREAMS[1])
         sys.stderr = sys.__stderr__ = stream(2, "w", STREAMS[2])
+        os.write(w, b"S")  # set-up done: from here on the exit code is the gate's; w stays open until exit
+        os.close(SERVER_ERR)  # the gate sees only fds 0, 1 and 2, as under the wrapper
         sys.argv = [run_py, gate]
         drop_gate_modules()
         try:
@@ -129,11 +145,46 @@ def child(req, w):
             sys.stderr.flush()
         except Exception:
             pass
+    except BaseException:
+        try:  # before the "S": fd 2 is still the server's stderr unless the dup2 got that far
+            os.write(SERVER_ERR, traceback.format_exc().encode(errors="replace"))
+        except Exception:
+            pass
+        code = 1
     finally:
         try:
             os._exit(code)
         except (OverflowError, TypeError):
             os._exit(1)
+
+
+CURRENT = [None]  # the running child's pid, which is also its process group
+
+
+def kill_child():
+    if CURRENT[0]:
+        try:
+            os.killpg(CURRENT[0], signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def on_term(signum, frame):
+    kill_child()  # the engine stops a hung server with SIGTERM: take the gate's group with it
+    os._exit(1)
+
+
+def wait_child(r, t0):
+    # -> (set-up done, finished in time). The child writes "S" after set-up and holds w until it exits;
+    # subprocess children close it (close_fds).
+    setup, left = False, TIMEOUT
+    while left > 0 and select.select([r], [], [], left)[0]:
+        b = os.read(r, 1)
+        if not b:
+            return setup, True
+        setup = True
+        left = TIMEOUT - (time.monotonic() - t0)
+    return setup, False
 
 
 def serve():
@@ -142,20 +193,28 @@ def serve():
         if not line:
             return
         req = json.loads(line)
-        r, w = os.pipe()  # the child holds w until it exits; subprocess children close it (close_fds)
+        r, w = os.pipe()
         t0 = time.monotonic()
         pid = os.fork()
         if pid == 0:
             os.close(r)
             child(req, w)
+        CURRENT[0] = pid
+        try:
+            os.setpgid(pid, pid)  # the child does it too: whichever runs first, no race with killpg
+        except OSError:
+            pass
         os.close(w)
-        done = select.select([r], [], [], TIMEOUT)[0]
+        setup, done = wait_child(r, t0)
         if not done:
-            os.kill(pid, signal.SIGKILL)
+            kill_child()
         _, status = os.waitpid(pid, 0)
+        CURRENT[0] = None
         secs = time.monotonic() - t0
         os.close(r)
-        if not done:
+        if not setup:
+            code = "setup-failed"
+        elif not done:
             code = "timeout"
         elif os.WIFSIGNALED(status):
             code = "sig%d" % os.WTERMSIG(status)
@@ -164,6 +223,8 @@ def serve():
         os.write(1, (json.dumps({"code": code, "secs": secs}) + "\n").encode())
 
 
+SERVER_ERR = os.dup(2)  # kept for a child whose set-up fails after replacing fd 2
+signal.signal(signal.SIGTERM, on_term)
 sys.path[0] = gates_dir  # the wrapper runs gates_dir/_run.py, so the gates dir is sys.path[0]
 warm()
 os.write(1, b"ready\n")

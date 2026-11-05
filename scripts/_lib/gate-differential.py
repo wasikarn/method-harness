@@ -4,7 +4,7 @@
 #
 # Prints only diff classes, counts and up to 3 redacted, truncated sample commands per class:
 # transcripts can hold secrets, so no other command text is ever printed.
-import argparse, glob, io, json, os, random, re, shutil, subprocess, sys, time
+import argparse, collections, glob, io, json, os, random, re, select, shutil, signal, subprocess, sys, time
 
 TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blocks irrecoverable (onFailure: block)
 # and lets the others through, so a timeout is its own class
@@ -168,6 +168,9 @@ def canonical_cwd(tmp, env):
     return cwd
 
 
+Result = collections.namedtuple("Result", "code out err rows secs")
+
+
 def finish(gates_dir, code, out, err, journal, secs):
     rows = []
     with open(journal) as f:
@@ -177,7 +180,7 @@ def finish(gates_dir, code, out, err, journal, secs):
             row.pop("mh_version", None)
             rows.append(row)
     err = err.replace(gates_dir.encode(), b"<GATES>")
-    return code, out, err, rows, secs
+    return Result(code, out, err, rows, secs)
 
 
 class BashRunner:
@@ -189,11 +192,19 @@ class BashRunner:
     def run(self, data):
         open(self.journal, "w").close()
         t0 = time.monotonic()
+        # Its own process group, so a timeout kills the gate's own children (git) too, not just bash.
+        p = subprocess.Popen(["bash", os.path.join(self.gates_dir, self.gate + ".sh")], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, cwd=self.cwd,
+                             start_new_session=True)
         try:
-            p = subprocess.run(["bash", os.path.join(self.gates_dir, self.gate + ".sh")], input=data,
-                               capture_output=True, env=self.env, cwd=self.cwd, timeout=TIMEOUT)
-            code, out, err = str(p.returncode), p.stdout, p.stderr
+            out, err = p.communicate(data, timeout=TIMEOUT)
+            code = str(p.returncode)
         except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.communicate()
             code, out, err = "timeout", b"", b""
         return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0)
 
@@ -207,6 +218,7 @@ class ServerDied(Exception):
 
 class ForkRunner:
     # GH #889: one scripts/_lib/gate-fork-server.py per side, run by the wrapper's own `python3 -S`.
+    # Every read from the server is bounded: a hung server falls back to bash, never hangs the replay.
 
     def __init__(self, gates_dir, gate, env, journal, cwd, work):
         self.gates_dir, self.journal, self.work = gates_dir, journal, work
@@ -216,16 +228,31 @@ class ForkRunner:
             raise ServerDied("no python3 on the gates' PATH")
         self.files = {k: os.path.join(work, k) for k in ("in", "out", "err")}
         self.server_err = open(os.path.join(work, "server.err"), "wb")
-        self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate], stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd)
-        if self.p.stdout.readline() != b"ready\n":
+        self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate, str(TIMEOUT)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd, bufsize=0)
+        # The warm-up runs a few allowing commands in the server itself, with no deadline of its own.
+        if self.line(TIMEOUT) != b"ready\n":
             raise ServerDied(self.died())
 
-    def died(self):
+    def line(self, secs):
+        # One reply line within secs, else b"" (the server sends each line in one write).
+        fd, buf, end = self.p.stdout.fileno(), b"", time.monotonic() + secs
+        while not buf.endswith(b"\n"):
+            left = end - time.monotonic()
+            if left <= 0 or not select.select([fd], [], [], left)[0]:
+                return b""
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                return b""
+            buf += chunk
+        return buf
+
+    def died(self, what=None):
+        what = what or ("exited (rc=%s)" % self.p.returncode if self.p.poll() is not None else "did not answer in time")
         self.close()
         with open(os.path.join(self.work, "server.err"), errors="replace") as f:
             tail = f.read()[-300:].strip().replace("\n", " | ")
-        return "fork server exited (rc=%s)%s" % (self.p.returncode, ": " + tail if tail else "")
+        return "fork server %s%s" % (what, ": " + tail if tail else "")
 
     def run(self, data):
         open(self.journal, "w").close()
@@ -233,33 +260,38 @@ class ForkRunner:
             f.write(data)
         try:
             self.p.stdin.write((json.dumps(self.files) + "\n").encode())
-            self.p.stdin.flush()
-            reply = self.p.stdout.readline()
+            reply = self.line(TIMEOUT + 5)  # the server itself kills a child at TIMEOUT
         except OSError:
             reply = b""
         if not reply:
             raise ServerDied(self.died())
         r = json.loads(reply)
+        code = str(r["code"])
+        if code == "setup-failed":  # alike on both sides it would read as no diff: never a result
+            raise ServerDied(self.died("could not set up a child"))
         with open(self.files["out"], "rb") as f:
             out = f.read()
         with open(self.files["err"], "rb") as f:
             err = f.read()
-        code = r["code"] if r["code"] == "timeout" else str(r["code"])
         if code == "timeout":
             out, err = b"", b""
         return finish(self.gates_dir, code, out, err, self.journal, r["secs"])
 
     def close(self):
+        # EOF on stdin ends a healthy server; SIGTERM makes a hung one kill its child's group first.
         if self.p.poll() is None:
             try:
                 self.p.stdin.close()
             except OSError:
                 pass
-            try:
-                self.p.wait(timeout=TIMEOUT + 2)
-            except subprocess.TimeoutExpired:
-                self.p.kill()
-                self.p.wait()
+            for stop in (None, self.p.terminate, self.p.kill):
+                if stop:
+                    stop()
+                try:
+                    self.p.wait(timeout=2)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
         self.server_err.close()
 
 
@@ -297,14 +329,14 @@ def journal_sig(rows):
 
 def diff_class(o, n):
     parts = []
-    if o[0] != n[0]:
-        parts.append("exit %s->%s" % (o[0], n[0]))
-    if o[1] != n[1]:
+    if o.code != n.code:
+        parts.append("exit %s->%s" % (o.code, n.code))
+    if o.out != n.out:
         parts.append("stdout")
-    if o[2] != n[2]:
+    if o.err != n.err:
         parts.append("stderr")
-    if o[3] != n[3]:
-        parts.append("journal %s->%s" % (journal_sig(o[3]), journal_sig(n[3])))
+    if o.rows != n.rows:
+        parts.append("journal %s->%s" % (journal_sig(o.rows), journal_sig(n.rows)))
     return " | ".join(parts)
 
 
@@ -364,29 +396,40 @@ def main():
             why = str(e)
             for r in started:
                 r.close()
-    dropped = near = 0
+    if why and a.runner == "fork":
+        print("gate-differential: --runner fork: fork mode cannot run (%s)" % why, file=sys.stderr)
+        return 2
+    forked, dropped, near = fork is not None, [], 0
+
+    def fork_failed(e):
+        # The rest of the run goes through bash; --runner fork asked for fork mode only, so it stops.
+        nonlocal fork, why
+        for r in fork or ():
+            r.close()
+        fork, why = None, "%s; bash from that command on" % e
+        if a.runner == "fork":
+            print("gate-differential: --runner fork: fork mode cannot run (%s)" % e, file=sys.stderr)
+            sys.exit(2)
 
     def pair(runners, data):
         return runners[0].run(data), runners[1].run(data)
 
-    def measure(data):
+    def measure(text, data):
         # -> (old result, new result, the runners that gave them)
-        nonlocal fork, why, dropped, near
+        nonlocal near
         if fork:
             try:
                 o, n = pair(fork, data)
             except ServerDied as e:
-                why = "%s; bash from that command on" % e
-                for r in fork:
-                    r.close()
-                fork = None
+                fork_failed(e)
             else:
-                if deadline and max(o[4], n[4]) > NEAR * deadline:
+                if deadline and max(o.secs, n.secs) > NEAR * deadline:
                     near += 1  # near the deadline, load decides: only the real path's result counts
                     return pair(bash, data) + (bash,)
                 if diff_class(o, n):  # every fork diff is confirmed through the real path, or dropped
                     o, n = pair(bash, data)
-                    dropped += not diff_class(o, n)
+                    if not diff_class(o, n):
+                        dropped.append(text)
                     return o, n, bash
                 return o, n, fork
         return pair(bash, data) + (bash,)
@@ -394,27 +437,32 @@ def main():
     classes, slower = {}, []
     for text in corpus:
         data = json.dumps(payload(a.gate, text)).encode()
-        o, n, runners = measure(data)
+        o, n, runners = measure(text, data)
         name = diff_class(o, n)
         if name:
             classes.setdefault(name, []).append(text)
-        if is_slower(o[4], n[4], deadline):
+        if is_slower(o.secs, n.secs, deadline):
             try:  # once more, both sides on one runner: a load spike must not count
                 o, n = pair(runners, data)
-            except ServerDied:
+            except ServerDied as e:
+                fork_failed(e)
                 o, n = pair(bash, data)
-            if is_slower(o[4], n[4], deadline):
-                slower.append((text, o[4], n[4]))
+            if is_slower(o.secs, n.secs, deadline):
+                slower.append((text, o.secs, n.secs))
     for r in bash + (fork or ()):
         r.close()
 
     total = sum(len(v) for v in classes.values())
     print("gate-differential: %s corpus=%d (base=%d replay=%d fuzz=%d) diffs=%d slower=%d classes=%d"
           % (a.gate, len(corpus), len(base), len(replay), len(fz), total, len(slower), len(classes)))
+    counts = "fork-only diffs dropped: %d, near-deadline re-runs: %d" % (len(dropped), near)
     if fork:
-        print("  runner: fork (fork-only diffs dropped: %d, near-deadline re-runs: %d)" % (dropped, near))
+        print("  runner: fork (%s)" % counts)
     else:
-        print("  runner: bash (%s)" % why)
+        print("  runner: bash (%s%s)" % (why, "; before that, " + counts if forked else ""))
+    # A fork-only diff is how a gap in the wrapper's fast-path token list shows: name the first few.
+    for t in dropped[:SAMPLES]:
+        print("      - " + redact(t, patterns, real_home))
     if a.replay:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):

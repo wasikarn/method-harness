@@ -273,7 +273,9 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   that imports the gate afresh. It skips bash and python start-up (on the fixtures: irrecoverable
   9.5 s against 47 s, subagent-git-guard 5.4 s against 34 s). Every diff it finds and every command
   over half the gate's deadline (4 s, 5 s) is re-run through `bash <gate>.sh` on both sides, and only
-  that result counts; the summary says how many fork-only diffs were dropped. Never run the gates in
+  that result counts; the summary names the fork-only diffs it dropped (a wrapper fast-path gap shows
+  up there). A server that hangs, dies or cannot set up a child sends the rest of the run through bash
+  (`--runner fork` exits 2 instead), and a timeout kills the gate's whole process group. Never run the gates in
   one process in a loop: they call `os._exit`. `test_deny`/`test_allow` in `tests/_lib/gates-harness.sh`
   stay on real spawns, the only check of the wrapper's fast-path token list.
   **`slower`** (GH #890) is a class of its own beside the diffs, and also exits 1: the new side's time

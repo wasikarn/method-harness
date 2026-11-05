@@ -15,6 +15,7 @@
 #                   or one of its worktrees' (<slug>--claude-worktrees-*)
 #   --fuzz-seed S   add seeded mutations of the corpus
 #   --runner R      auto (default): fork mode when both wrappers are byte-identical, else bash;
+#                   fork: fork mode or exit 2;
 #                   bash: every command through `bash <gate>.sh` (GH #889)
 # Exit: 0 no diffs, 1 diffs or slower commands (GH #890), 2 usage error or refusal.
 # Fork mode (GH #889) loads python once per side and forks per command; every diff it finds, and
@@ -26,7 +27,7 @@
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
-usage() { sed -n '5,18p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '5,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 cases="" replay=0 slug="" seed="" runner=auto
 pos=()
