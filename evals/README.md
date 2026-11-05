@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-79 cases in Claude Code's native `claude plugin eval` layout (count:
+85 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -99,6 +99,37 @@ quote no dollar figure, and create no log (`no-log-created.md` is `tool_used: Ba
 redirect into `costs.jsonl`; Write and Edit are not granted). The prompt points the script at the
 workspace log with `MH_COSTS_FILE`, since the sandbox HOME is fresh and case `env` keys must be
 `EVAL_*`. Needs `--allow-tools Bash`.
+
+Two for `gate-report` (tag `gate-report`, user-invoked, so each prompt opens with `/mh:gate-report`).
+`gate-report-planted` scaffolds a 14-line `metrics/gate-decisions.jsonl` that exercises every
+read-back rule: deny/ask rows for two gates, a `count: 5` `allow-suppressed` row, `would_deny`/
+`would_ask` shadow rows, three session-less rows, and the made-up ids `test-session` and `s`. The
+session must quote the script's `12 ask/deny event(s)` headline as printed, give 7 as the real
+block/interrupt count (the headline already holds the 5 suppressed matches), say the shadow rows
+were allowed, report the 3 session-less rows and both non-UUID ids, and leave the journal
+byte-identical. `gate-report-not-set-up` has no journal: relay `Gate journal not set up.`, quote no
+count, create no journal (`max: 0` Bash check, `arm: both`). Needs `--allow-tools Bash`.
+
+Two for `model-bench` (tag `model-bench`, user-invoked, prompts open with `/mh:model-bench`), on the
+free `--diff-only` path only: the paid path starts nested `claude plugin eval` runs, which must never
+happen inside an eval. Each scaffold writes two finished `aggregate-result.json` files copied from
+`tests/scripts/fixtures/model-bench/`. `model-bench-diff` must relay the script's per-case deltas
+(`+0.200`, not a hand-made `+0.2`), the judge-family WARN and the two one-sided cases;
+`model-bench-partial` (one side `partial: true`) must report the HARD-FAIL and quote no delta. In
+both, `no-paid-run.md` is a must-not Bash check (`max: 0`, `arm: both`) on `claude plugin eval` or a
+`model-bench.sh` call without `--diff-only`. Needs `--allow-tools Bash`.
+
+Two for `attack-proposal` (tag `attack-proposal`, model-invocable; the fire prompt names
+`skill: "mh:attack-proposal"`). In `attack-proposal-prefix-bypass`, `PROPOSAL.md` confines upload
+writes with `abspath(...).startswith(UPLOAD_ROOT)`, which blocks `..` traversal and absolute paths but
+lets the sibling `var/uploads-archive/` (and a symlink inside the root) through. The report must name
+that break with a concrete input, close or drop it before any GO, and leave `src/storage.py`
+byte-identical: the skill vets a proposal, it does not build it. With no Codex login in the sandbox the
+attacker runs on the `general-purpose` fallback; `attacker-dispatched.md` (Agent, min 1) is
+`arm: with-only`. Plus one should-NOT-fire case: a security fix that is already committed goes to
+`/codex:adversarial-review` or `mh:deep-audit` per the skill's own scope line, so the review must not
+invoke the skill and must still find that `startswith("/")` lets `//evil.example` through
+(`built-diff-misroute`). Needs `--allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write`.
 
 Note for future suites (not skill-specific, kept from the removed `handoff` suite):
 `context.scaffold_script` must be a relative path to an external `.sh` file in the case dir (e.g.
