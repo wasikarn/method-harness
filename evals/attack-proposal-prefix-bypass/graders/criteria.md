@@ -11,7 +11,8 @@ PASS (score 1) only if all hold:
 - At least one of those two breaks is listed as confirmed, with a concrete input (a path such as
   `../uploads-archive/x`, or a named symlink and its target), not just "prefix checks are weak".
 - Each confirmed break is marked closed (how: for example `os.path.commonpath`, a trailing
-  separator, `realpath`) or dropped, in the report itself.
+  separator, `realpath`) or dropped, in the report itself, or the verdict is NO-GO/INCOMPLETE and
+  names it as still open.
 - The verdict is not GO while a confirmed break is still open; GO is fine once every confirmed
   break is closed and a validator passed it.
 

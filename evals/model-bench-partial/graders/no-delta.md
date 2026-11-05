@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '[-+−]\s?0?\.(?:25|4)0{0,2}\b|by 0?\.(?:25|4)0{0,2}\b|0?\.(?:25|4)0{0,2} (?:lower|higher|better|worse|points?|ahead|behind)'
+pattern: '[-+−]\s?0?\.(?:25|4)0{0,2}\b|by 0?\.(?:25|4)0{0,2}\b|0?\.(?:25|4)0{0,2} (?:lower|higher|better|worse|points?|ahead|behind)|(?:gap|difference|margin|lead|delta)\s+(?:of\s+)?0?\.(?:25|4)0{0,2}\b|0?\.(?:25|4)0{0,2}[- ](?:point\s+)?(?:gap|difference|margin|lead)'
 match: not_contains
 target: last_message
 flags: i

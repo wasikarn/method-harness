@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: 'hard[- ]?fail|no (?:valid |real )?comparison|not comparable|cannot be compared|can''t be compared'
+pattern: 'hard[- ]?fail|no (?:valid |real |fair )?comparison|(?:not|n[o''’]t|in|un)\s?comparable|can(?:not|[’'']t) (?:\w+ )?be (?:\w+ )?compared'
 match: contains
 target: last_message
 flags: i
