@@ -16,14 +16,14 @@ for _c in "noglob $_rm" "nocorrect $_rm" "- $_rm" "=rm -rf ~" "repeat 1 $_rm" "r
   "/bin/r? -rf ~" "/bin/r* -rf ~" "/bin/[r]m -rf ~" "noglob /bin/r? -rf ~" "repeat 1 /bin/r? -rf ~" \
   "ls *(e:'rm -rf ~':)" "ls *(e['rm -rf ~'])" "ls *(e{'rm -rf ~'})" \
   "ls *(.e:'rm -rf ~':)" "ls *(N.e:'rm -rf ~':)" "ls *(om[1]e:'rm -rf ~':)" "/bin/[^x]m -rf ~" \
-  "/usr/bin/redis-c?i flushall" "ls *(e:'rm -rf ~':N)" "ls *(e['rm -rf ~']N)" "ls *(e:'true':e:'rm -rf ~':)" "ls *(Fe:'rm -rf ~':)" "ls *(e:'rm -rf ~':F)" "/usr/bin/gchmo? -R 777 ." "/usr/bin/mariadb-admi? drop app" "/usr/bin/gi? trash ~" \
+  "/usr/bin/redis-c?i flushall" "ls *(e:'rm -rf ~':N)" "ls *(e['rm -rf ~']N)" "repeat 1 do X=1 rm -rf ~; done" "repeat 1 do X=1 /bin/r? -rf ~; done" "ls *(e:'true':e:'rm -rf ~':)" "ls *(Fe:'rm -rf ~':)" "ls *(e:'rm -rf ~':F)" "/usr/bin/gchmo? -R 777 ." "/usr/bin/mariadb-admi? drop app" "/usr/bin/gi? trash ~" \
   "noglob git push --force origin HEAD:develop" "nocorrect git reset --hard HEAD~3" \
   "/usr/bin/en? rm -rf ~" "noglob /usr/bin/en? rm -rf ~" "/usr/bin/nohu? rm -rf ~" "/bin/z?h -c 'rm -rf ~'"; do
   test_deny "$IRRECOVERABLE" "GH #912: $_c" "$(bash_payload "$_c")"
 done
 test_ask "$IRRECOVERABLE" "GH #912: a command word with a glob matching over 12 programs could be any" "$(bash_payload '/bin/*o* -rf ~')"
 
-for _c in 'ls *.py' 'echo =foo' 'repeat 3 echo hi' 'noglob git push origin HEAD:feat/x' '/bin/l? -la' \
+for _c in 'ls *.py' 'curl -s -d {"name":"x","type":"y"} http://h' 'echo e.g. make done' 'echo =foo' 'repeat 3 echo hi' 'noglob git push origin HEAD:feat/x' '/bin/l? -la' \
   'noglob find . -name *.py' 'noglob rm a.txt' 'grep -e x file' "ls *(e:'true':)" 'ls *(.)' \
   '[ -f x ] && echo ok' '[[ -n x ]] && echo ok' 'nocorrect ls' '- ls' '=ls -la' 'repeat 2 noglob ls *.py'; do
   test_allow "$IRRECOVERABLE" "GH #912 control: $_c" "$(bash_payload "$_c")"

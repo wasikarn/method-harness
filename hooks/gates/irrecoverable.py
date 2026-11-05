@@ -5852,13 +5852,14 @@ def _glob_names(word):
 
 # GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
 # `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
-_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?\S*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})\S*")
+_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}")
 
 def _check_window(_wi, w):
     global _cur_depth
     basename = _cmd_basename  # GH #912: this function's argv0 reads see through `=word`
+    _cur_depth = _WDEPTH.get(_wi, 0)
     for _t in w:
-        if "e" in _t:
+        if "e" in _t and len(_t) <= 512:  # a long token cannot be a qualifier worth the backtracking
             _q = _GLOB_QUAL_RE.fullmatch(_t.replace(PH, ""))
             if _q:
                 _qb = _q.group("a") or _q.group("b") or _q.group("c")
@@ -5866,7 +5867,6 @@ def _check_window(_wi, w):
                 if _q.group("d"):  # `(e:a:e:b:)`: each body between delimiters is its own command
                     for _part in _qb.split(_q.group("d")):
                         _scan_body(_part)
-    _cur_depth = _WDEPTH.get(_wi, 0)
     _s = 0  # an index, one slice: a flood of `!` / NAME=v words must stay linear
     while _s < len(w) and (w[_s] in SHELL_KEYWORDS or _assignment(w[_s])):
         _s += 1
@@ -5903,6 +5903,8 @@ def _check_window(_wi, w):
     while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
+            while o < len(rest) and _assignment(rest[o - 1]):  # `repeat 1 do X=1 rm`: the assignment is not the command
+                argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
             # GH #560: -S STRING / --split-string=STRING splits STRING into the command and its first
             # words, so it is a command line like a `sh -c` body (any words after it are appended).
@@ -7172,6 +7174,7 @@ def _view_windows(text):
     # about this view's text, and read as this view's own blow-out it dropped the view unread.
     _DEPTH_BUDGET_BLOWN[0] = False
     _XARGS_HANDOVERS[0] = 0  # the 50-handover bound is per reading: the main reading spent its own
+    _GLOB_WINDOWS[0] = 0  # GH #912: the glob budget is per reading too, or a padded main reading silences a view
     try:
         toks = _tokens(_blanked(text))
     except ValueError:
@@ -7197,6 +7200,7 @@ def _view_windows(text):
 # time). Nothing else: a default rewritten away must not change what another rule reads.
 _BRACED_REF_RE = re.compile(r"\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}]*)?\}")
 def _braced_reading():
+    _GLOB_WINDOWS[0] = 0  # GH #912: its own glob budget, like _view_windows
     v = cmd
     for _ in range(3):
         w = _BRACED_REF_RE.sub(lambda m: "$" + m.group(1), v)
