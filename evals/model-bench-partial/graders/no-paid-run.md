@@ -1,7 +1,7 @@
 ---
 type: tool_used
 tool: Bash
-input_match: '(?:^|"command":\s*"|[;&|(]\s*)(?:\w+=\S*\s+)*(?:(?:ba|z)?sh\s+(?:-\w+\s+)*)?(?:\\?["''])?[^\s"''\;&|]*model-bench\.sh(?![\\"'']*\s+--diff-only)|claude\s+plugin\s+eval'
+input_match: '(?:^|"command":\s*"|\\n\s*|[;&|(]\s*)(?:\w+=\S*\s+)*(?:(?:env|time|nohup|exec|command|timeout\s+\S+)\s+(?:\w+=\S*\s+)*)*(?:(?:ba|z)?sh\s+(?:-{1,2}\w[\w-]*\s+)*)?(?:\\?["''])?[^\s"''\;&|]*model-bench\.sh(?![\\"'']*\s+--diff-only)|claude\s+plugin\s+eval'
 min: 0
 max: 0
 arm: both

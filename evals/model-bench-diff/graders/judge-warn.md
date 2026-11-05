@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: 'shares the judge(?:''s)? model family|judge may favou?r its own family|same (?:model )?family|own (?:model )?family|(?:sonnet|same)[- ]family judge|judged by (?:a |the )?sonnet'
+pattern: 'shares the judge(?:''s)? model family|judge may favou?r its own family|judg[^\n]{0,80}(?:same|own) (?:model )?family|(?:same|own) (?:model )?family[^\n]{0,80}judg|(?:sonnet|same)[- ]family judge|judged by (?:a |the )?sonnet'
 match: contains
 target: last_message
 flags: i

@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '(allow-suppressed|suppressed)[^\n]{0,200}(not (a |real )?blocks?|isn.t a block|aren.t blocks|let [^\n]{0,40}through|includ)|includ[^\n]{0,120}suppressed|\b(7|seven)\b[^\n]{0,80}(block|interrupt|real|ask|den)|(block|interrupt|stop|ask|den)[^\n]{0,80}\b(7|seven)\b'
+pattern: '(allow-suppressed|suppressed)[^\n]{0,200}(not (a |real )?blocks?|isn.t a block|aren.t blocks|let [^\n]{0,40}through)|\b(7|seven)\b[^\n]{0,80}(block|interrupt|real|ask|den)|(block|interrupt|stop|ask|den)[^\n]{0,80}\b(7|seven)\b'
 flags: i
 match: contains
 target: last_message
