@@ -165,8 +165,9 @@ waits on the operator.
   and a row counts only if reverting its fix turns it red.
 - The scratch dir you gave the validator in `FILES YOU OWN`, with its full absolute path: keep it,
   since step 7 reruns its corpus and generator. If the build happens in a later session, first move
-  the proposal file and that dir out of the session scratchpad (onto the build branch, or a path
-  the operator names): the scratchpad does not outlive the session.
+  the proposal file and the validator's corpus, generator and multi-line input files (never its
+  repo copy) out of the session scratchpad, onto the build branch or a path the operator names:
+  the scratchpad does not outlive the session.
 
 ## 7. After the build
 
@@ -180,7 +181,8 @@ The validator judged a design, so the built code gets its own check before merge
   `bash scripts/gate-differential.sh origin/develop <gate> --cases <corpus file> --replay 2000`,
   `<gate>` being `irrecoverable`, `subagent-git-guard` or `secret-scan`. `<corpus file>` is one
   command per line, merging the closed-break inputs and the generator's output; a multi-line
-  input stays in its own file and runs under the first bullet. Step 4's deny-to-allow rule applies.
+  input stays in its own file and runs under the first bullet. A deny that turns into an allow
+  goes to the operator before merge, as in step 4.
 - Then run `mh:deep-audit` on the change.
 
 Done when every closed break stays closed on the built code, the differential (for a gate) shows
