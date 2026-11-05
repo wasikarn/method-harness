@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '^(?=[\s\S]*test-session)(?=[\s\S]*(?:[`"''’]s[`"''’]|(?<![\w''’(/.-])s(?![\w''’/.-])))'
+pattern: '^(?=[\s\S]*test-session)(?=[\s\S]*(?:[`"''’]s[`"''’]|(?<![\w''’(/.-])s(?![\w''’/-]|\.\w)))'
 match: contains
 target: last_message
 ---
