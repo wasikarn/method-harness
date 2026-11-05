@@ -1637,7 +1637,7 @@ _SPAWN_LEAD = r"(?:(?:builtin[ \t]+(?:--[ \t]+)?)+(?=" + _WRAPPER_ALT + r"))?"
 def _spawn_anchor_body(wrapper_prefix):
     # `(?!\s)` keeps the glued alternative disjoint from `{` + blank, so no `{` is walked twice.
     return (r"(?:^|[|;&()]|&&|\|\||\{(?=\s)|(?<![^\s;&|(){])\{(?!\s))\s*" + _KEYWORD_PREFIX + r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*" +
-            _SPAWN_LEAD + wrapper_prefix + r"\\?(?:\S*/)?claude(?![-\w./])")
+            _SPAWN_LEAD + wrapper_prefix + r"\\?=?(?:\S*/)?claude(?![-\w./])")
 _SPAWN_ANCHOR_RES = (re.compile(r"(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r")", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r"))", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX_LAZY) + r"))", re.MULTILINE))
@@ -5852,7 +5852,7 @@ def _glob_names(word):
 
 # GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
 # `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
-_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*")
+_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?\S*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})\S*")
 
 def _check_window(_wi, w):
     global _cur_depth
@@ -5861,7 +5861,11 @@ def _check_window(_wi, w):
         if "e" in _t:
             _q = _GLOB_QUAL_RE.fullmatch(_t.replace(PH, ""))
             if _q:
-                _scan_body(_q.group("a") or _q.group("b") or _q.group("c"))
+                _qb = _q.group("a") or _q.group("b") or _q.group("c")
+                _scan_body(_qb)
+                if _q.group("d"):  # `(e:a:e:b:)`: each body between delimiters is its own command
+                    for _part in _qb.split(_q.group("d")):
+                        _scan_body(_part)
     _cur_depth = _WDEPTH.get(_wi, 0)
     _s = 0  # an index, one slice: a flood of `!` / NAME=v words must stay linear
     while _s < len(w) and (w[_s] in SHELL_KEYWORDS or _assignment(w[_s])):
