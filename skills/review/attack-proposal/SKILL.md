@@ -87,10 +87,10 @@ python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-citations.p
 count. **Accept** the lane when `codex exec` exits 0, `check-verdict.py` exits 0, and at least one
 `checked` entry carries a citation. A `pass: false` with evidenced breaks is a successful run.
 
-**Fallback** on any other outcome (non-zero exit, empty or malformed output, timeout, auth or quota
-failure, no cited `checked` entry, a refusal in prose): one `general-purpose` agent with the same
-brief, its raw final message through the same two checkers, and "independence reduced" noted for
-that lane. Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input files: it runs
+**Fallback** on any other outcome except an exit 2 (non-zero exit, empty or malformed output,
+timeout, auth or quota failure, no cited `checked` entry, a refusal in prose): one
+`general-purpose` agent with the same brief, its raw final message through the same two checkers,
+and "independence reduced" noted for that lane. Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input files: it runs
 under the gates, which match raw command text. It has no sandbox: capture `git status --porcelain`
 before and after; any difference is a violation.
 
@@ -98,8 +98,8 @@ before and after; any difference is a violation.
 inputs, measured against existing files) and run it once more; a second stop marks the lane
 INCOMPLETE (cut short).
 
-Done when every lane has an accepted verdict, or is marked INCOMPLETE (cut short or
-fallback-failed).
+Done when every lane has an accepted verdict, is marked INCOMPLETE (cut short or
+fallback-failed), or waits on the operator's answer to its `NEEDS-DECISION`.
 
 ## 4. Triage and revise
 
@@ -131,25 +131,28 @@ Validate its raw final message with deep-audit's 6-key checker:
 python3 "${CLAUDE_SKILL_DIR}/../deep-audit/scripts/check-verdict.py" <<< "$VALIDATOR_FINAL_MESSAGE"
 ```
 
-Exit 0 accepts; exit 1 rejects (re-dispatch once, then report "verification incomplete"); exit 2 is
-a `NEEDS-DECISION` for the operator. Capture `git status --porcelain` before and after the
-dispatch: a difference, or `scope_ok: false`, means the validator wrote into the repo; reject that
-round. Read `pass` as false when any finding starts `OPEN:` or `NEW:`, or a confirmed break has no
-`CLOSED:` line, whatever the field says.
+Exit 0 accepts; exit 1 rejects; exit 2 is a `NEEDS-DECISION` for the operator. Capture
+`git status --porcelain` before and after the dispatch: a difference, or `scope_ok: false`, means
+the validator wrote into the repo, which also rejects. A rejected dispatch is re-run once and does
+not count toward the round limit below; a second reject marks validation INCOMPLETE. Read `pass` as
+false when any finding starts `OPEN:` or `NEW:`, or a confirmed break has no `CLOSED:` line,
+whatever the field says.
 
 `pass: false` sends its findings back to step 4, then re-validate. Re-attack (step 3) only a piece
 whose mechanism the revision replaced. Stop after 3 validator rounds: the fault is then in the
 plan, not the patch (Rule 13).
 
-Done when the validator passes, or round 3 fails.
+Done when the validator passes, round 3 fails, validation is INCOMPLETE, or a `NEEDS-DECISION`
+waits on the operator.
 
 ## 6. Report
 
 - **Verdict:** GO (validator passed, every lane accepted), NO-GO (round 3 failed, or a confirmed
-  break has no close), or INCOMPLETE (a lane was cut short or its fallback failed: name it; the
-  operator decides, as Rule 14 does for insufficient data).
+  break is neither closed nor dropped), or INCOMPLETE (a lane was cut short or its fallback
+  failed, or validation is INCOMPLETE: name which; the operator decides, as Rule 14 does for
+  insufficient data). NO-GO wins when both apply: a known open break outweighs a missing check.
 - **Confidence:** high (every lane on Codex, validator passed in round 1), medium (a lane ran on
-  the fallback, or the validator needed more than one round), low (any lane INCOMPLETE).
+  the fallback, or the validator needed more than one round), low (anything INCOMPLETE).
 - The proposal file's full absolute path and its last revision number.
 - Each confirmed break in one line, closed how or dropped; each dismissed break with its reason,
   the strongest dismissed one first.
