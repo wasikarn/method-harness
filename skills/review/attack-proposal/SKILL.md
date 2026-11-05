@@ -148,7 +148,8 @@ waits on the operator.
 
 ## 6. Report
 
-- **Verdict:** GO (validator passed, every lane accepted), NO-GO (round 3 failed, or a confirmed
+- **Verdict:** GO (validator passed, every lane accepted; step 7 is still owed on the built code,
+  so say so in the report), NO-GO (round 3 failed, or a confirmed
   break is neither closed nor dropped), or INCOMPLETE (a lane was cut short or its fallback
   failed, or validation is INCOMPLETE: name which; the operator decides, as Rule 14 does for
   insufficient data). NO-GO wins when both apply: a known open break outweighs a missing check.
@@ -162,8 +163,10 @@ waits on the operator.
 - Independence: the Codex slug per lane, or "independence reduced".
 - The build's first tests: each closed break becomes a failing test row before its fix (Rule 4),
   and a row counts only if reverting its fix turns it red.
-- The full absolute paths of the validator's corpus and generator, if it left any in its scratch
-  dir: step 7 reruns them.
+- The scratch dir you gave the validator in `FILES YOU OWN`, with its full absolute path: keep it,
+  since step 7 reruns its corpus and generator. If the build happens in a later session, first move
+  the proposal file and that dir out of the session scratchpad (onto the build branch, or a path
+  the operator names): the scratchpad does not outlive the session.
 
 ## 7. After the build
 
@@ -172,10 +175,12 @@ The validator judged a design, so the built code gets its own check before merge
 - Run every closed break's input, plus the validator's corpus and generator, against the built
   code. Each must stay closed.
 - For a change to one of mh's own gates (`hooks/gates/`), also compare the old and new gate on
-  the same inputs and on real commands from this project's transcripts, from the mh repo root:
+  the same inputs and on real commands from this project's transcripts. Run it from the root of
+  the checkout that holds the built change (the script's NEW side is its own checkout's gates):
   `bash scripts/gate-differential.sh origin/develop <gate> --cases <corpus file> --replay 2000`,
-  `<gate>` being `irrecoverable`, `subagent-git-guard` or `secret-scan`. A deny that turns into an
-  allow goes to the operator.
+  `<gate>` being `irrecoverable`, `subagent-git-guard` or `secret-scan`. `<corpus file>` is one
+  command per line, merging the closed-break inputs and the generator's output; a multi-line
+  input stays in its own file and runs under the first bullet. Step 4's deny-to-allow rule applies.
 - Then run `mh:deep-audit` on the change.
 
 Done when every closed break stays closed on the built code, the differential (for a gate) shows

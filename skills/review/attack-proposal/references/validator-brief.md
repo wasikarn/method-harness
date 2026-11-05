@@ -21,7 +21,8 @@ Confirmed breaks:
   parses it, what the hook receives, how the rule matches) on the current code.
 - To run anything beyond a read, work in a scratch copy: `git archive HEAD | tar -x -C <scratch
   dir>`. A small prototype of the mechanism, a generator or a corpus file belongs in
-  <scratch dir>, passed to commands by path.
+  <scratch dir>, passed to commands by path. Write a corpus one command per line, and each
+  multi-line input as its own file: the host reruns them on the built code later.
 - Then hunt for a NEW break the revision opens: bypass, over-block or damage, same bar (a concrete
   input plus a citation).
 
