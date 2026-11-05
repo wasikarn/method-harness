@@ -60,12 +60,12 @@ gh pr comment <N> --body "Fresh-context review: MERGE @ <full head sha>" && bash
 
 A running session still loads the new version only after a restart or `/reload-plugins`.
 Write the verdict exactly as above, with `--body`: Bash rules match case-sensitively on the command
-text, so another casing or `--body-file` skips the comment rule (the merge-pr.sh rule still prompts).
+text, so another casing or `--body-file` skips the comment rule (the merge-pr.sh rules still prompt).
 Do not ask with `AskUserQuestion` instead: the auto-mode classifier
 strips tool results, so it never sees that answer and blocks the merge as self-approval, while a
 content-matching `ask` rule prompts before the classifier runs (code.claude.com/docs/en/permission-modes
 and /permissions, checked 2026-10-31). On the cloud path below, the MCP comment and merge have no
-rule, and the read-only `merge-pr.sh --verify` step also prompts, since the rules match every run.
+rule, and the read-only `merge-pr.sh --verify` step also prompts, since the rules match it like any other run.
 
 Run it from the PR's own checkout, on its branch, with a clean tree (untracked files count), and
 start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. Do not edit that
