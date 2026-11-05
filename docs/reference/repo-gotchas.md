@@ -233,10 +233,10 @@ already set alone.
   one that a peer session owns is the operator's call.
 - **Read `scripts/merge-pr.sh` with the Read or Grep tool, not Bash.** The ask rule
   `Bash(*scripts/merge-pr.sh *)` in `.claude/settings.json` matches any Bash command where text
-  follows the path, reads included (`grep ... scripts/merge-pr.sh | head`, `wc -l
-  scripts/merge-pr.sh other.sh`); about a fifth of its prompts were reads (GH #907). The rule stays
-  broad on purpose: a run-only version let `env scripts/merge-pr.sh 904` merge with no prompt,
-  since the script's own `gh pr merge` runs in a subprocess no gate sees.
+  follows the path, reads included (`grep ... scripts/merge-pr.sh | head`,
+  `wc -l scripts/merge-pr.sh other.sh`); about a fifth of its prompts were reads (GH #907). The
+  rule stays broad on purpose: a run-only version would let `env scripts/merge-pr.sh 904` merge
+  with no prompt, since the script's own `gh pr merge` runs in a subprocess no gate sees.
 
 ## Research: check qmd before web search
 
