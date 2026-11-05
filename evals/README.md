@@ -39,9 +39,12 @@ regression test, graded on all 11 sections in order, no hedging, a Rule 4 failur
 LLM rubric for the checklist and anchoring; and a missing-input case that withholds the
 validation input and must get a question, not a draft. The skill is user-invoked
 (`disable-model-invocation`), so `prompt.md` opens with `/mh:post-mortem` and `skill-loaded.md`
-is a `trace` regex on the skill's own text rather than `tool_used: Skill`. Two runner facts are
-undocumented and the first live run settles both: whether a slash command in `prompt.md` is
-expanded, and whether `target: trace` is accepted (these are the only two graders using it).
+is a `trace` regex rather than `tool_used: Skill`. Settled by a kept run on 2026-11-06 (CC 2.1.318):
+the eval child does expand a slash command in `prompt.md` (its own transcript holds
+`<command-name>/mh:post-mortem</command-name>` and the skill text), but the graders' `trace.jsonl`
+omits that expanded user turn, so a regex on the skill's own text never matches. Every slash-invoked
+case's `skill-loaded.md` therefore matches the `system`/`init` event's `skills` list instead, which
+names `mh:<skill>` only when the plugin loaded it.
 
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run
