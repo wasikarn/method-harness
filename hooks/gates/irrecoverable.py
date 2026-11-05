@@ -1511,6 +1511,9 @@ _RTK_SHELL_RUNNERS = ("err", "test", "summary")
 _RUN_WRAPPERS = {
     "flock": (("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"), 1, ("-c", "--command"), False),
     "caffeinate": (("-t", "-w"), 0, (), False),
+    # GH #912: zsh precommand modifiers and `repeat N` run the command after them (`-` is the shortest).
+    "noglob": ((), 0, (), False), "nocorrect": ((), 0, (), False), "-": ((), 0, (), False),
+    "repeat": ((), 1, (), False),
     "xcrun": (("-sdk", "--sdk", "-toolchain", "--toolchain", "-log"), 0, (), False),
     "chronic": ((), 0, (), False), "unbuffer": ((), 0, (), False),
     "strace": (("-o", "-e", "-p", "-s", "-u", "-E", "-a", "-b", "-I", "-O", "-P", "-S", "-X"), 0, (), False),
@@ -1634,7 +1637,7 @@ _SPAWN_LEAD = r"(?:(?:builtin[ \t]+(?:--[ \t]+)?)+(?=" + _WRAPPER_ALT + r"))?"
 def _spawn_anchor_body(wrapper_prefix):
     # `(?!\s)` keeps the glued alternative disjoint from `{` + blank, so no `{` is walked twice.
     return (r"(?:^|[|;&()]|&&|\|\||\{(?=\s)|(?<![^\s;&|(){])\{(?!\s))\s*" + _KEYWORD_PREFIX + r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*" +
-            _SPAWN_LEAD + wrapper_prefix + r"\\?(?:\S*/)?claude(?![-\w./])")
+            _SPAWN_LEAD + wrapper_prefix + r"\\?=?(?:\S*/)?claude(?![-\w./])")
 _SPAWN_ANCHOR_RES = (re.compile(r"(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r")", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX) + r"))", re.MULTILINE),
                      re.compile(r"(?=(" + _spawn_anchor_body(_WRAPPER_PREFIX_LAZY) + r"))", re.MULTILINE))
@@ -3949,7 +3952,8 @@ for _w in windows:
 windows = _aug
 
 def basename(p):
-    return p.rsplit("/", 1)[-1]
+    p = p.rsplit("/", 1)[-1]
+    return p[1:] if p[:1] == "=" and len(p) > 1 else p  # GH #912: zsh's `=word` is the full path of `word'
 
 def _past_dash_words(rest, i=0):
     # Index of the first word from i on that does not start with "-" once placeholders are stripped.
@@ -5820,9 +5824,47 @@ def _gh_written_subs():
 _RM_PLAIN_DASHDASH = re.fullmatch(r"[ \t]*rm(?:[ \t]+(?:-[A-Za-z]+|--[a-z-]+))*[ \t]+--(?:[ \t]+[\w./+,:@%-]+)+[ \t]*",
                                   cmd) is not None
 
+# GH #912: zsh runs `=word` as the full path of `word` (EQUALS), so a command word's leading `=` is not part of its name.
+
+# GH #912: a command word with `?`, `*` or a `[..]` class (`/bin/r?`) is read as each program name it can spell.
+# Only these three forms: zsh alternation `(a|b)` and numeric ranges `<->` are split or blanked by the tokenizer
+# before the rule loop sees the word (a known residual, docs/reference/repo-gotchas.md).
+_GLOB_WORD_RE = re.compile(r"[?*]|\[(?:\[:\w+:\]|[^\]])+\]")
+_GLOB_EXTRA_NAMES = ("xargs", "rsync", "dropdb", "mysqladmin", "claude", "source", "trash", "trash-put", "chmod",
+                     "mkfs", "mke2fs", "eval", "gchmod", "mariadb-admin", "gio")
+_GLOB_ASK_OVER = 12  # more matches than this (`*`, `?`) ask: the word could be any program
+_GLOB_WINDOWS_MAX = 64  # a chain of `n* n* n*` multiplies; past this budget the gate asks, never allows
+_GLOB_WINDOWS = [0]
+_GLOB_NAMES_ALL = []  # built once, on the first globbed word
+
+def _glob_names(word):
+    if PH in word or not _GLOB_WORD_RE.search(word):  # a substituted word is _candidates' job, not a glob's
+        return None
+    pat = word.replace("[^", "[!")  # zsh negates a class with `^`; fnmatch uses `!`
+    import fnmatch
+    if not _GLOB_NAMES_ALL:
+        _GLOB_NAMES_ALL.extend(sorted(set(PREFIX_WRAPPERS) | set(_UNWRAP_ONLY) | set(_RUN_WRAPPERS) | set(_SHELLS)
+                                      | set(KNOWN_DANGEROUS) | set(_SHELL_PUSH_ALIASES) | set(_CONTAINER_TOOLS)
+                                      | set(_GLOB_EXTRA_NAMES) | set(_SQL_CLIENTS)))
+    return [n for n in _GLOB_NAMES_ALL if n[:1].isalpha() and fnmatch.fnmatchcase(n, pat)]
+
+# GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
+# `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
+_GLOB_QUAL_RE = re.compile(r"[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})[A-Za-z0-9.\^\-/%@*,\[\]]{0,16}")
+
 def _check_window(_wi, w):
     global _cur_depth
     _cur_depth = _WDEPTH.get(_wi, 0)
+    for _t in w:
+        if "e" in _t and len(_t) <= 512:  # a long token cannot be a qualifier worth the backtracking
+            _q = _GLOB_QUAL_RE.fullmatch(_t.replace(PH, ""))
+            if _q:
+                _qb = _q.group("a") or _q.group("b") or _q.group("c")
+                if not _q.group("d") or _q.group("d") not in _qb:
+                    _scan_body(_qb)
+                if _q.group("d"):  # `(e:a:e:b:)`: each body between delimiters is its own command
+                    for _part in _qb.split(_q.group("d")):
+                        _scan_body(_part)
     _s = 0  # an index, one slice: a flood of `!` / NAME=v words must stay linear
     while _s < len(w) and (w[_s] in SHELL_KEYWORDS or _assignment(w[_s])):
         _s += 1
@@ -5859,6 +5901,8 @@ def _check_window(_wi, w):
     while o < len(rest) and (argv0 in PREFIX_WRAPPERS or argv0 in _UNWRAP_ONLY or argv0 in SHELL_KEYWORDS or argv0 in _RUN_WRAPPERS):
         if argv0 in SHELL_KEYWORDS:  # GH #213: `time ! rm -rf x`; the segment-start strip ran once
             argv0, o = basename(rest[o]), o + 1
+            while o < len(rest) and _assignment(rest[o - 1]):  # `repeat 1 do X=1 rm`: the assignment is not the command
+                argv0, o = basename(rest[o]), o + 1
         elif argv0 == "env":
             # GH #560: -S STRING / --split-string=STRING splits STRING into the command and its first
             # words, so it is a command line like a `sh -c` body (any words after it are appended).
@@ -6060,6 +6104,9 @@ def _check_window(_wi, w):
                 break  # su without -c runs a login shell, no command
             if body is None:
                 i += npos
+                if argv0 == "repeat":  # `repeat 2 x=1 rm`: a simple command may start with assignments
+                    while i < len(rest) and _assignment(rest[i]):
+                        i += 1
             if body is None and i < len(rest) and argv0 == "flock" and rest[i].replace(PH, "") in ("-c", "--command"):
                 body = rest[i + 1] if i + 1 < len(rest) else None
             if body is not None or join:
@@ -6079,6 +6126,19 @@ def _check_window(_wi, w):
             argv0, o = basename(rest[i]), i + 1
 
     rest = rest[o:]
+    _gn = _glob_names(argv0) if rest else None  # a lone glob word (`for f in *`) runs nothing with arguments
+    if rest and not _gn and "[[:" in argv0 and PH not in argv0:  # POSIX class: fnmatch cannot read it, so ask
+        ask("a command word with a POSIX class can spell any program - confirm what it runs", rule="glob-command-word")
+    if _gn:
+        if len(_gn) > _GLOB_ASK_OVER or _GLOB_WINDOWS[0] + len(_gn) > _GLOB_WINDOWS_MAX:
+            # A word of only wildcards (`*`, `??`) is also what a brace view leaves of `{*,}`: it asks nothing.
+            if re.search(r"[^?*\[\]]", argv0):
+                ask("a command word with a glob can spell any program - confirm what it runs", rule="glob-command-word")
+        else:
+            for _n in _gn:
+                _GLOB_WINDOWS[0] += 1
+                _WDEPTH[len(windows)] = _cur_depth
+                windows.append([_n] + rest)
     if argv0 in _SHELL_PUSH_ALIASES:  # GH #750: after the wrappers, so `sudo gp -f` reads as a git push too
         argv0, rest = "git", _SHELL_PUSH_ALIASES[argv0] + rest
     elif argv0 == "grename" and rest:  # its second push takes NEW as one word: `grename x -f` force-pushes
@@ -6656,7 +6716,16 @@ def _check_window(_wi, w):
         ask("rsync --delete removes every destination file the source lacks — confirm the source and destination",
             rule="rsync-delete")
 
+# GH #912: an unquoted qualifier body may hold spaces (`*(e:rm -rf ~:)`), which the tokenizer splits across words, so the
+# raw command text is read once for `<glob>(<letters>e<delim>body<delim>)`.
+_RAW_QUAL_RE = re.compile(r"[*?\]]\([.\^\-/%@*,\[\]A-Za-z0-9]{0,16}?e(?:([^\w\s()\[{])(.+?)\1|\[(.+?)\]|\{(.+?)\})")
+_RAW_QUAL_DONE = [False]
+
 def _run_windows(i):
+    if not _RAW_QUAL_DONE[0]:
+        _RAW_QUAL_DONE[0] = True
+        for _m in _RAW_QUAL_RE.finditer(cmd):
+            _scan_body(_m.group(2) or _m.group(3) or _m.group(4))
     while i < len(windows):  # a window's checks may append more (bash -c / eval bodies, find, xargs)
         _check_window(i, windows[i])
         i += 1
@@ -7117,6 +7186,7 @@ def _view_windows(text):
     # about this view's text, and read as this view's own blow-out it dropped the view unread.
     _DEPTH_BUDGET_BLOWN[0] = False
     _XARGS_HANDOVERS[0] = 0  # the 50-handover bound is per reading: the main reading spent its own
+    _GLOB_WINDOWS[0] = 0  # GH #912: the glob budget is per reading too, or a padded main reading silences a view
     try:
         toks = _tokens(_blanked(text))
     except ValueError:
@@ -7142,6 +7212,7 @@ def _view_windows(text):
 # time). Nothing else: a default rewritten away must not change what another rule reads.
 _BRACED_REF_RE = re.compile(r"\$\{([A-Za-z_]\w*)(?:[:\-=+?%#/^,\[][^{}]*)?\}")
 def _braced_reading():
+    _GLOB_WINDOWS[0] = 0  # GH #912: its own glob budget, like _view_windows
     v = cmd
     for _ in range(3):
         w = _BRACED_REF_RE.sub(lambda m: "$" + m.group(1), v)
