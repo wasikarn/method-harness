@@ -65,7 +65,8 @@ PY
 # Shapes: an `agent-fired.md` / `dispatch-confirmed.md` not on `tool: Skill`, an Agent check naming one
 # of the plugin's agents, a regex on the missing-plugin errors, and a `trace` regex that matches the
 # plugin's own agent or skill text (an outcome grader hit by that last rule wants `arm: both`).
-# Not caught: an Agent count with no `input_match` (ideate-run's `fanout.md` is armed by hand).
+# Not caught: an Agent count with no `input_match` (ideate-run's `fanout.md` and idea-audit's
+# `isolation-fan-out.md` are armed by hand).
 # Args: <evals dir> <plugin root>. Prints one path per hit, exits 1 on any.
 unarmed_mechanism_graders() {
   python3 - "$1" "$2" <<'PY'
