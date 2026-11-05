@@ -84,16 +84,30 @@ if not isinstance(d, dict) or not isinstance(d.get("tool_input"), dict):
     journal(GATE_ID, None, "deny", None)
     sys.exit(2)
 
-# GH #769/#770: Monitor carries tool_input.command like Bash (a "ws" Monitor has none); context-mode's
-# ctx_execute(_file) runs tool_input.code as shell only for language "shell"; ctx_batch_execute runs each
-# commands[].command, judged one per run so one command can't hide the next (an open heredoc); the strictest wins.
-# Each run gets the outer payload (agent_id, cwd, tool_name) with only tool_input swapped; having no "commands",
-# it takes the plain path below.
+# GH #769/#770: Monitor carries tool_input.command like Bash (a "ws" Monitor has none). context-mode's
+# ctx_batch_execute (1.x) and ctx_batch (2.x, GH #911) run each command string, judged one per run so one command
+# can't hide the next (an open heredoc); the strictest wins. Each run gets the outer payload (agent_id, cwd,
+# tool_name) with only tool_input swapped; having no "commands", it takes the plain path below.
+# GH #911: ctx_execute(_file) code is judged as Bash for "shell"/"sh"/"bash" (context-mode runs sh or bash -c) and
+# not judged for its non-shell languages (#784 tracks their process APIs). Every other language is denied:
+# context-mode 2.1.0 looks any language string up on PATH and runs a shell under any name (Bash, zsh-5.9, a
+# renamed copy), and zsh, dash, ksh, fish, csh and PowerShell parse code differently from the Bash this gate reads.
+# irrecoverable.sh sends every __ctx_execute payload here, so this deny also covers code with no destructive token.
 _tn = str(d.get("tool_name") or "")
 _ti = d["tool_input"]
+_CTX_SHELL = ("shell", "sh", "bash")
+_CTX_NON_SHELL = ("javascript", "typescript", "python", "python3", "node")
 if _tn.endswith(("__ctx_execute", "__ctx_execute_file")):
-    _ti["command"] = _ti.get("code", "") if _ti.get("language") == "shell" else ""
-elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
+    _lang, _code = _ti.get("language"), _ti.get("code", "")
+    if _lang not in _CTX_SHELL + _CTX_NON_SHELL:  # tuple membership compares with ==, so a list or dict can't raise
+        _disarm()
+        print("[mh:gate] BLOCKED: ctx_execute language %.60r: the gate reads only shell/sh/bash code; "
+              "use language \"shell\"" % (_lang,), file=sys.stderr)
+        journal(GATE_ID, _tn, "deny", d.get("session_id"), rule="ctx-language")
+        sys.exit(2)
+    # Non-string code: context-mode's schema rejects it, so nothing runs.
+    _ti["command"] = (_code if isinstance(_code, str) else "") if _lang in _CTX_SHELL else ""
+elif _tn.endswith(("__ctx_batch_execute", "__ctx_batch")) and "commands" in _ti:
     import subprocess, time
     # Mirrors context-mode 1.0.169's coerceCommandsArray (src/server.ts): a non-blank string is JSON-parsed
     # if it gives a list, else lifted to [str]; a string item is its own command.
@@ -138,8 +152,8 @@ elif _tn.endswith("__ctx_batch_execute") and "commands" in _ti:
             _left = None
         if _n > 1 and (time.monotonic() - _t0 > _budget or _left is not None and _left < 3 * _slowest + 0.3):
             _disarm()
-            _reason = ("[mh:gate] ctx_batch_execute: the gate's %gs time budget ran out before every command was "
-                       "checked; confirm the batch, or split it into smaller batches" % min(_budget, _DEADLINE))
+            _reason = ("[mh:gate] %s: the gate's %gs time budget ran out before every command was "
+                       "checked; confirm the batch, or split it into smaller batches" % (_tn.rsplit("__", 1)[-1], min(_budget, _DEADLINE)))
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                                      "permissionDecisionReason": _reason}}))
             journal(GATE_ID, _tn, "ask", d.get("session_id"))  # structural, no rule id (repo-gotchas.md)
