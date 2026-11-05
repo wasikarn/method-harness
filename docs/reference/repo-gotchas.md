@@ -240,6 +240,8 @@ already set alone.
   a subprocess no gate sees. Shapes they still miss are deliberate evasions
   (`bash scripts/MERGE-PR.SH 904`, `bash "scripts/"merge-pr.sh 904`,
   `set -- 904; source scripts/merge-pr.sh`); in auto mode the classifier is the only backstop.
+  A commit message or PR/issue text that names the script with text after it prompts too: pass it
+  with `git commit -F <file>` or `--body-file`, and keep the script's name out of `--title`.
 
 ## Research: check qmd before web search
 
