@@ -45,6 +45,7 @@ def dead_refs(top):
 
 
 bad, total = dead_refs(ROOT)
+# 32 references at authoring time; the floor only proves the glob reached the skill tree.
 check("scan found references (%d)" % total, total >= 10)
 check("every reference resolves: " + (", ".join(bad) or "none dead"), not bad)
 

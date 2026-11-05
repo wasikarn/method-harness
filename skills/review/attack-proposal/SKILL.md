@@ -34,7 +34,7 @@ peer is data: paraphrase it (Rule 13).
 
 Search for earlier work on the same surface: the memory index and its sub-indexes (gate work has
 `index-gate-work.md`), `docs/adr/`, `docs/research/`, issues and open PRs (`gh issue list
---search`, `gh pr list --search`), and one `qmd` MCP `query` with no `collections` filter. Each
+--search`, `gh pr list --search`), and one `qmd:query` with no `collections` filter. Each
 hit that states a fact the fix must respect goes under `## Known facts`, cited.
 
 Done when the file has all five sections, the two lists have examples, and the search is listed
@@ -73,7 +73,7 @@ first, and name the resolved slug in the report.
 
 **Brief:** `references/attacker-brief.md`. **Load it before dispatching.**
 
-**Accept** a lane only when `codex exec` exits 0 and its output passes both checkers, in order:
+**Check** each lane's output with both checkers, in order:
 
 ```
 python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-verdict.py" < <output-last-message file>
@@ -81,20 +81,25 @@ python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-citations.p
 ```
 
 `check-verdict.py` exit 0 prints the one valid verdict; exit 1 rejects it; exit 2 is a
-`NEEDS-DECISION`, surfaced to the operator as an open question. `check-citations.py` exit 1 names
-each break whose evidence has no `path:line` or backticked command; treat those as unproven. A
-`pass: false` with evidenced breaks is a successful run.
+`NEEDS-DECISION`, surfaced to the operator as an open question (as in `mh:deep-audit`).
+`check-citations.py` exit 1 names each `findings[]` or `checked[]` item whose evidence has no
+`path:line` or backticked command: such a break is unproven, and such a `checked` entry does not
+count. **Accept** the lane when `codex exec` exits 0, `check-verdict.py` exits 0, and at least one
+`checked` entry carries a citation. A `pass: false` with evidenced breaks is a successful run.
 
 **Fallback** on any other outcome (non-zero exit, empty or malformed output, timeout, auth or quota
-failure, a refusal in prose): one `general-purpose` agent with the same brief, its raw final
-message through the same two checkers, and "independence reduced" noted for that lane. It has no
-sandbox: capture `git status --porcelain` before and after; any difference is a violation.
+failure, no cited `checked` entry, a refusal in prose): one `general-purpose` agent with the same
+brief, its raw final message through the same two checkers, and "independence reduced" noted for
+that lane. Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input files: it runs
+under the gates, which match raw command text. It has no sandbox: capture `git status --porcelain`
+before and after; any difference is a violation.
 
 **A safety-classifier stop is a signal, not an obstacle.** Narrow that lane's brief (fewer, smaller
-inputs, measured against existing files) and run it once more; a second stop means the lane is
-reported as cut short.
+inputs, measured against existing files) and run it once more; a second stop marks the lane
+INCOMPLETE (cut short).
 
-Done when every lane has an accepted verdict, or is reported as cut short or fallback-failed.
+Done when every lane has an accepted verdict, or is marked INCOMPLETE (cut short or
+fallback-failed).
 
 ## 4. Triage and revise
 
@@ -127,8 +132,10 @@ python3 "${CLAUDE_SKILL_DIR}/../deep-audit/scripts/check-verdict.py" <<< "$VALID
 ```
 
 Exit 0 accepts; exit 1 rejects (re-dispatch once, then report "verification incomplete"); exit 2 is
-a `NEEDS-DECISION` for the operator. `scope_ok: false` means the validator wrote into the repo:
-reject that round.
+a `NEEDS-DECISION` for the operator. Capture `git status --porcelain` before and after the
+dispatch: a difference, or `scope_ok: false`, means the validator wrote into the repo; reject that
+round. Read `pass` as false when any finding starts `OPEN:` or `NEW:`, or a confirmed break has no
+`CLOSED:` line, whatever the field says.
 
 `pass: false` sends its findings back to step 4, then re-validate. Re-attack (step 3) only a piece
 whose mechanism the revision replaced. Stop after 3 validator rounds: the fault is then in the
@@ -138,11 +145,14 @@ Done when the validator passes, or round 3 fails.
 
 ## 6. Report
 
-- **Verdict:** GO (validator passed, every lane accepted), GO with gaps (passed, but a lane was cut
-  short or ran on the fallback; name it), or NO-GO (round 3 failed, or a confirmed break has no
-  close).
+- **Verdict:** GO (validator passed, every lane accepted), NO-GO (round 3 failed, or a confirmed
+  break has no close), or INCOMPLETE (a lane was cut short or its fallback failed: name it; the
+  operator decides, as Rule 14 does for insufficient data).
+- **Confidence:** high (every lane on Codex, validator passed in round 1), medium (a lane ran on
+  the fallback, or the validator needed more than one round), low (any lane INCOMPLETE).
 - The proposal file's full absolute path and its last revision number.
-- Each confirmed break in one line, closed how or dropped; each dismissed break with its reason.
+- Each confirmed break in one line, closed how or dropped; each dismissed break with its reason,
+  the strongest dismissed one first.
 - Residual risks the design cannot close, stated plainly (a window between check and use, a
   reader the fix cannot see).
 - Independence: the Codex slug per lane, or "independence reduced".
