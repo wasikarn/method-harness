@@ -17,6 +17,8 @@ _norm="$(printf '%s' "$_input" | sed "s/\\\\\\\\/$_bs/g; s/\\\\[nt]/ /g" | tr -s
 _norm_nows="$(printf '%s' "$_norm" | tr -d '[:space:]')"
 _has_subst=0
 case "$_input" in *'`'*|*'$'*) _has_subst=1 ;; esac
+# GH #912: a glob in a command word (/bin/r?, /bin/[r]m) spells a program name no literal token shows; python reads it.
+case "$_input" in *'?'*|*'*'*|*'['*) _has_subst=1 ;; esac
 # GH #309: a brace group can hide any word, argv0 included ("r{m,} -rf" runs rm, "{f,\"x y\"}ind" runs
 # find), so a command with a brace group that can expand (a "," or ".." at its own level, nested groups
 # included: "r{{x},m}", and a stray "}" before the comma: "{A=1}},git}") defers to python. brace-route.awk

@@ -334,3 +334,5 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
 
 Per-issue measurements (GH #245, #246, #248, #273, #274, #276, #307, #317, #318, #320, #322, #327,
 #336, #339, #340, #344, #349, #375, #382, #469, #681): [`gate-heuristic-history.md`](gate-heuristic-history.md).
+
+- **zsh command-word shapes (GH #912):** the irrecoverable gate reads `noglob`, `nocorrect`, `-`, `repeat N`, a leading `=` (zsh's full path of the word), a command word with `?`, `*` or a `[..]` class (read as each program name it can spell, asking past 12 matches) and a qualifier `(e:cmd:)` or `e[..]`/`e{..}` body. Known residuals, each a tokenizer limit with no exact fix yet: zsh alternation `(a|b)` and POSIX classes in a command word, numeric ranges `<->`, a qualifier `e<..>` or `+func`, a globbed shell or interpreter in a pipe stage, and a quoted `='git'` in `subagent-git-guard.py` (adding `=` to its quoted-word class over-blocks `"A=1" git stash`). The `.sh` fast path defers to Python on `?`, `*`, `[` only.

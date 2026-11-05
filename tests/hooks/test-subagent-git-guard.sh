@@ -2045,6 +2045,19 @@ check "truncated JSON with agent_id: still allows with 'unparseable stdin, allow
 rc=$(deep_rc 'git stash' agent-x 1); ok=1; [ "$rc" = "2" ] && ok=0
 check "shallow subagent git stash with an empty extra array: denied (rc $rc)" "$ok"
 
+# --- GH #912: zsh precommand words and `=git` (zsh's full path of git) must not hide git from the guard --- #
+for cmd in "noglob git stash" "nocorrect git stash" "- git stash" "repeat 2 git stash" "=git stash" "noglob =git stash" \
+  "sudo noglob =git stash" "command noglob git reset --hard"; do
+  run_gate "$cmd" "agent1"; rc=$?
+  ok=1; [ "$rc" -eq 2 ] && ok=0
+  check "GH #912: subagent denied: $cmd" "$ok"
+done
+for cmd in "noglob git status" "repeat 3 echo hi" "echo =git stash" "X=git stash" '"A=1" git stash' "- ls"; do
+  run_gate "$cmd" "agent1"; rc=$?
+  ok=1; [ "$rc" -eq 0 ] && ok=0
+  check "GH #912 control: subagent allowed: $cmd" "$ok"
+done
+
 echo ""
 echo "=== $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]

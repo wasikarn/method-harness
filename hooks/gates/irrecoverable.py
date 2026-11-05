@@ -1511,6 +1511,9 @@ _RTK_SHELL_RUNNERS = ("err", "test", "summary")
 _RUN_WRAPPERS = {
     "flock": (("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"), 1, ("-c", "--command"), False),
     "caffeinate": (("-t", "-w"), 0, (), False),
+    # GH #912: zsh precommand modifiers and `repeat N` run the command after them (`-` is the shortest).
+    "noglob": ((), 0, (), False), "nocorrect": ((), 0, (), False), "-": ((), 0, (), False),
+    "repeat": ((), 1, (), False),
     "xcrun": (("-sdk", "--sdk", "-toolchain", "--toolchain", "-log"), 0, (), False),
     "chronic": ((), 0, (), False), "unbuffer": ((), 0, (), False),
     "strace": (("-o", "-e", "-p", "-s", "-u", "-E", "-a", "-b", "-I", "-O", "-P", "-S", "-X"), 0, (), False),
@@ -5820,8 +5823,42 @@ def _gh_written_subs():
 _RM_PLAIN_DASHDASH = re.fullmatch(r"[ \t]*rm(?:[ \t]+(?:-[A-Za-z]+|--[a-z-]+))*[ \t]+--(?:[ \t]+[\w./+,:@%-]+)+[ \t]*",
                                   cmd) is not None
 
+# GH #912: zsh runs `=word` as the full path of `word` (EQUALS), so a command word's leading `=` is not part of its name.
+def _cmd_basename(p):
+    p = p.rsplit("/", 1)[-1]
+    return p[1:] if p.startswith("=") else p
+
+# GH #912: a command word with `?`, `*` or a `[..]` class (`/bin/r?`) is read as each program name it can spell.
+# Only these three forms: zsh alternation `(a|b)` and numeric ranges `<->` are split or blanked by the tokenizer
+# before the rule loop sees the word (a known residual, docs/reference/repo-gotchas.md).
+_GLOB_WORD_RE = re.compile(r"[?*]|\[[^\]]+\]")
+_GLOB_EXTRA_NAMES = ("xargs", "rsync", "dropdb", "mysqladmin", "claude", "source", "trash", "trash-put", "chmod",
+                     "mkfs", "mke2fs", "eval")
+_GLOB_ASK_OVER = 12  # more matches than this (`*`, `?`) ask: the word could be any program
+_GLOB_WINDOWS_MAX = 64  # a chain of `n* n* n*` multiplies; past this budget the gate asks, never allows
+_GLOB_WINDOWS = [0]
+
+def _glob_names(word):
+    if PH in word or not _GLOB_WORD_RE.search(word):  # a substituted word is _candidates' job, not a glob's
+        return None
+    pat = word
+    import fnmatch
+    names = (set(PREFIX_WRAPPERS) | set(_UNWRAP_ONLY) | set(_RUN_WRAPPERS) | set(_SHELLS) | set(KNOWN_DANGEROUS)
+             | set(_SHELL_PUSH_ALIASES) | set(_CONTAINER_TOOLS) | set(_GLOB_EXTRA_NAMES))
+    return sorted(n for n in names if fnmatch.fnmatchcase(n, pat))
+
+# GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
+# `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
+_GLOB_QUAL_RE = re.compile(r"[\^-]*e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})")
+
 def _check_window(_wi, w):
     global _cur_depth
+    basename = _cmd_basename  # GH #912: this function's argv0 reads see through `=word`
+    for _t in w:
+        if _t[:1] in ("e", "^", "-"):
+            _q = _GLOB_QUAL_RE.fullmatch(_t.replace(PH, ""))
+            if _q:
+                _scan_body(_q.group("a") or _q.group("b") or _q.group("c"))
     _cur_depth = _WDEPTH.get(_wi, 0)
     _s = 0  # an index, one slice: a flood of `!` / NAME=v words must stay linear
     while _s < len(w) and (w[_s] in SHELL_KEYWORDS or _assignment(w[_s])):
@@ -6079,6 +6116,17 @@ def _check_window(_wi, w):
             argv0, o = basename(rest[i]), i + 1
 
     rest = rest[o:]
+    _gn = _glob_names(argv0) if rest else None  # a lone glob word (`for f in *`) runs nothing with arguments
+    if _gn:
+        if len(_gn) > _GLOB_ASK_OVER or _GLOB_WINDOWS[0] + len(_gn) > _GLOB_WINDOWS_MAX:
+            # A word of only wildcards (`*`, `??`) is also what a brace view leaves of `{*,}`: it asks nothing.
+            if re.search(r"[^?*\[\]]", argv0):
+                ask("a command word with a glob can spell any program - confirm what it runs", rule="glob-command-word")
+        else:
+            for _n in _gn:
+                _GLOB_WINDOWS[0] += 1
+                _WDEPTH[len(windows)] = _cur_depth
+                windows.append([_n] + rest)
     if argv0 in _SHELL_PUSH_ALIASES:  # GH #750: after the wrappers, so `sudo gp -f` reads as a git push too
         argv0, rest = "git", _SHELL_PUSH_ALIASES[argv0] + rest
     elif argv0 == "grename" and rest:  # its second push takes NEW as one word: `grename x -f` force-pushes
