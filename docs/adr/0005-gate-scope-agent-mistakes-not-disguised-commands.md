@@ -69,8 +69,9 @@ command. So the gates are frozen. A change to `hooks/gates/` is allowed only for
 
 A deny that held only by accident and is lost by an allowed fix is not "removed" in the sense of the
 Decision's "nothing is removed". By accident means no rule meant to catch that shape: the deny came
-from a match on something else, such as the `sh` of a file named `a.sh` read as an interpreter. The fix
-PR names each such shape, and it is filed `parked` like any other gap. PR #900 (GH #710) lost such
+from a match on something else, such as the `sh` of a file named `a.sh` read as an interpreter. A deny
+that has its own deny test row, or a rule or comment that names the shape as one to deny, is never
+accidental. The fix PR names each such shape, and it is filed `parked` like any other gap. PR #900 (GH #710) lost such
 denies on 5 heredoc shapes (`git add a.sh && source /dev/stdin <<'EOF'`); they are parked in #902.
 
 An agent-mistake shape without a real hit is filed `parked` and gets no fix session. PR #872 (GH
