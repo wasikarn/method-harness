@@ -275,7 +275,8 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   over half the gate's deadline (4 s, 5 s) is re-run through `bash <gate>.sh` on both sides, and only
   that result counts; the summary names the fork-only diffs it dropped (a wrapper fast-path gap shows
   up there). A server that hangs, dies or cannot set up a child sends the rest of the run through bash
-  (`--runner fork` exits 2 instead), and a timeout kills the gate's whole process group. Never run the gates in
+  (`--runner fork` exits 2 instead), and a timeout kills the gate's whole process group. A child that
+  cannot lead its own group (EPERM from `setpgid` on macOS, PR #899) runs that one command through bash. Never run the gates in
   one process in a loop: they call `os._exit`. `test_deny`/`test_allow` in `tests/_lib/gates-harness.sh`
   stay on real spawns, the only check of the wrapper's fast-path token list.
   **`slower`** (GH #890) is a class of its own beside the diffs, and also exits 1: the new side's time

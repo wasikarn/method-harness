@@ -203,8 +203,10 @@ class BashRunner:
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # the whole group exited between the timeout and the kill
+            except OSError:
+                # ESRCH: the group is gone; EPERM on macOS: its only member is the unreaped bash. Kill bash
+                # itself, so communicate() cannot wait on a live one.
+                p.kill()
             p.communicate()
             code, out, err = "timeout", b"", b""
         return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0)
@@ -214,6 +216,11 @@ class BashRunner:
 
 
 class ServerDied(Exception):
+    pass
+
+
+class NoGroup(Exception):
+    # The fork child could not lead its own process group: this one command goes through bash.
     pass
 
 
@@ -273,6 +280,8 @@ class ForkRunner:
             raise ServerDied(self.died("sent a garbled reply"))
         if code == "setup-failed":  # alike on both sides it would read as no diff: never a result
             raise ServerDied(self.died("could not set up a child"))
+        if code == "no-group":
+            raise NoGroup()
         with open(self.files["out"], "rb") as f:
             out = f.read()
         with open(self.files["err"], "rb") as f:
@@ -406,7 +415,7 @@ def main():
 
     if why and a.runner == "fork":
         refuse(why)
-    fork_started, dropped, near = fork is not None, [], 0
+    fork_started, dropped, near, nogroup = fork is not None, [], 0, 0
 
     def fork_failed(e):
         # The rest of the run goes through bash; --runner fork asked for fork mode only, so it stops.
@@ -422,10 +431,13 @@ def main():
 
     def measure(text, data):
         # -> (old result, new result, the runners that gave them)
-        nonlocal near
+        nonlocal near, nogroup
         if fork:
             try:
                 o, n = pair(fork, data)
+            except NoGroup:
+                nogroup += 1
+                return pair(bash, data) + (bash,)
             except ServerDied as e:
                 fork_failed(e)
             else:
@@ -450,6 +462,8 @@ def main():
         if is_slower(o.secs, n.secs, deadline):
             try:  # once more, both sides on one runner: a load spike must not count
                 o, n = pair(runners, data)
+            except NoGroup:
+                o, n = pair(bash, data)
             except ServerDied as e:
                 fork_failed(e)
                 o, n = pair(bash, data)
@@ -462,6 +476,8 @@ def main():
     print("gate-differential: %s corpus=%d (base=%d replay=%d fuzz=%d) diffs=%d slower=%d classes=%d"
           % (a.gate, len(corpus), len(base), len(replay), len(fz), total, len(slower), len(classes)))
     counts = "fork-only diffs dropped: %d, near-deadline re-runs: %d" % (len(dropped), near)
+    if nogroup:
+        counts += ", no-own-group re-runs: %d" % nogroup
     if fork:
         print("  runner: fork (%s)" % counts)
     else:

@@ -11,11 +11,12 @@
 # back to the bash runner.
 #
 # Protocol: one JSON line per command on stdin, {"in": path, "out": path, "err": path}; one JSON line
-# back on stdout, {"code": int | "timeout" | "sigN" | "setup-failed", "secs": float}. The child's exit
+# back on stdout, {"code": int | "timeout" | "sigN" | "setup-failed" | "no-group", "secs": float}. The child's exit
 # code is the gate's, as the interpreter would give it; the wrapper's own mapping is left to the bash
 # runner. "setup-failed" (the child could not open its files, traceback on this process's stderr) is
 # never a gate result: the engine falls back to bash, since both sides failing alike would read as
-# no diff.
+# no diff. "no-group" (the child could not lead a process group of its own, so a timeout could not
+# kill the gate's children) is per command: the engine runs that one command through bash.
 #
 # Why a fork result can add a diff but never hide one, while both sides run the same wrapper (the
 # engine checks that), rests on two assumptions; revisit them if a gate or the wrapper changes:
@@ -111,10 +112,20 @@ def exit_code(e):
     return 1
 
 
-def child(req, w):
+def child(req, w, go):
     code = 1
     try:
-        os.setpgid(0, 0)  # its own group: a timeout or a dying server kills the gate's children too
+        try:
+            os.setpgid(0, 0)  # its own group: a timeout or a dying server kills the gate's children too
+        except OSError:
+            # macOS sometimes gives EPERM here partway through a full pool (PR #899). The parent's
+            # setpgid(pid, pid) may do it instead: wait for its attempt ("go"), then check. Without a
+            # group of our own, killpg could hit a stranger's group, so this command goes to bash.
+            os.read(go, 1)
+            if os.getpgrp() != os.getpid():
+                os.write(w, b"G")
+                os._exit(1)
+        os.close(go)
         signal.signal(signal.SIGTERM, signal.SIG_DFL)  # the server's handler is not the gate's
         for fd, path, flags in ((0, req["in"], os.O_RDONLY),
                                 (1, req["out"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC),
@@ -165,8 +176,13 @@ def kill_child():
     if CURRENT[0]:
         try:
             os.killpg(CURRENT[0], signal.SIGKILL)
-        except ProcessLookupError:
-            pass  # the child and its group already exited
+        except OSError:
+            # ESRCH: the group is gone; EPERM on macOS: its only member is the unreaped child (PR #899).
+            # Kill the child itself, so waitpid() cannot wait on a live one; a zombie ignores it.
+            try:
+                os.kill(CURRENT[0], signal.SIGKILL)
+            except OSError:
+                pass  # already reaped elsewhere: nothing left to kill
 
 
 def on_term(signum, frame):
@@ -175,16 +191,16 @@ def on_term(signum, frame):
 
 
 def wait_child(r, t0):
-    # -> (set-up done, finished in time). The child writes "S" after set-up and holds w until it exits;
-    # subprocess children close it (close_fds).
-    setup, left = False, TIMEOUT
+    # -> (the child's first byte or b"", finished in time). The child writes "S" after set-up ("G": no
+    # group of its own) and holds w until it exits; subprocess children close it (close_fds).
+    first, left = b"", TIMEOUT
     while left > 0 and select.select([r], [], [], left)[0]:
         b = os.read(r, 1)
         if not b:
-            return setup, True
-        setup = True
+            return first, True
+        first = first or b
         left = TIMEOUT - (time.monotonic() - t0)
-    return setup, False
+    return first, False
 
 
 def serve():
@@ -194,25 +210,35 @@ def serve():
             return
         req = json.loads(line)
         r, w = os.pipe()
+        go_r, go_w = os.pipe()
         t0 = time.monotonic()
         pid = os.fork()
         if pid == 0:
             os.close(r)
-            child(req, w)
+            os.close(go_w)
+            child(req, w, go_r)
+        os.close(go_r)
         CURRENT[0] = pid
         try:
             os.setpgid(pid, pid)  # the child does it too: whichever runs first, no race with killpg
         except OSError:
-            pass
+            pass  # the child's own call, or its check after "go", decides
+        try:
+            os.write(go_w, b"x")
+        except BrokenPipeError:
+            pass  # the usual case: the child got its group itself and already closed its end
+        os.close(go_w)
         os.close(w)
-        setup, done = wait_child(r, t0)
+        first, done = wait_child(r, t0)
         if not done:
             kill_child()
         _, status = os.waitpid(pid, 0)
         CURRENT[0] = None
         secs = time.monotonic() - t0
         os.close(r)
-        if not setup:
+        if first == b"G":
+            code = "no-group"
+        elif first != b"S":
             code = "setup-failed"
         elif not done:
             code = "timeout"

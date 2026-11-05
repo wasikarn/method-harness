@@ -222,18 +222,25 @@ if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && /usr/bin/grep -q 
   ok "a dead fork server falls back to bash"
 else bad "dead fork server (rc=$rc): $out"; fi
 
+# bounded SECS DIR ARGS...: run the differential on ARGS in the background, killed at SECS, so a regressed
+# bound turns a row red instead of hanging the gauntlet (it has no per-test timeout). DIR is a stub dir
+# every process of the run names on its command line. Sets out, rc and took.
+bounded() {
+  local secs=$1 dir=$2 start pid; shift 2
+  start=$(date +%s)
+  bash "$SCRIPT" "$@" > "$T/bounded.out" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ $(( $(date +%s) - start )) -lt "$secs" ]; do sleep 1; done
+  # The run may exit between the check and the kill, so a failed kill is fine.
+  if kill -0 "$pid" 2>/dev/null; then pkill -9 -f "$dir"; kill -9 "$pid" 2>/dev/null; fi
+  wait "$pid"; rc=$?
+  took=$(( $(date +%s) - start ))
+  out=$(cat "$T/bounded.out")
+}
+
 echo "=== a gate that hangs the server's warm-up falls back to bash in bounded time (GH #889) ==="
-# The run itself is bounded here too (90 s): a regressed bound must turn this row red, not hang the
-# gauntlet, which has no per-test timeout. Every process of the run names $T/s-hang on its command line.
 stub "$T/s-hang" 'while c == "ls -la": pass'
-start=$(date +%s)
-bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-allow" "$T/s-hang" irrecoverable > "$T/hang.out" 2>&1 &
-pid=$!
-while kill -0 "$pid" 2>/dev/null && [ $(( $(date +%s) - start )) -lt 90 ]; do sleep 1; done
-if kill -0 "$pid" 2>/dev/null; then pkill -9 -f "$T/s-hang"; kill -9 "$pid" 2>/dev/null; fi
-wait "$pid"; rc=$?
-out=$(cat "$T/hang.out")
-took=$(( $(date +%s) - start ))
+bounded 90 "$T/s-hang" --cases "$T/rm.txt" "$T/s-allow" "$T/s-hang" irrecoverable
 if [ "$rc" -eq 0 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q '^  runner: bash (fork server .*did not answer' <<<"$out"; then
   ok "a hung warm-up falls back to bash (${took} s)"
 else bad "hung warm-up (rc=$rc, ${took} s): $out"; fi
@@ -244,21 +251,14 @@ echo "=== a timed-out gate's own children are killed with it (GH #889) ==="
 # The sleep must be valid on GNU and BSD (one dot, digits: 987.<pid>.<n> exited at once and made this row
 # pass vacuously) and outlive the run. Unkilled, it also holds the bash runner's pipes, so that run waits
 # for the stub's own 100 s: the row checks the time too, and is itself bounded so it fails, never hangs.
-mark="120.$$$RANDOM"
+sleep_arg="120.$$$RANDOM"
 stub "$T/s-orphan" "if c == 'rm -rf build':
-    import subprocess; subprocess.Popen(['sleep', '$mark']); time.sleep(100)"
-start=$(date +%s)
-bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-orphan" "$T/s-orphan" irrecoverable > "$T/orphan.out" 2>&1 &
-pid=$!
-while kill -0 "$pid" 2>/dev/null && [ $(( $(date +%s) - start )) -lt 150 ]; do sleep 1; done
-if kill -0 "$pid" 2>/dev/null; then pkill -9 -f "$T/s-orphan"; kill -9 "$pid" 2>/dev/null; fi
-wait "$pid"; rc=$?
-took=$(( $(date +%s) - start ))
-out=$(cat "$T/orphan.out")
-left=$(pgrep -f "sleep $mark" | wc -l | tr -d ' ')
+    import subprocess; subprocess.Popen(['sleep', '$sleep_arg']); time.sleep(100)"
+bounded 150 "$T/s-orphan" --cases "$T/rm.txt" "$T/s-orphan" "$T/s-orphan" irrecoverable
+left=$(pgrep -f "sleep $sleep_arg" | wc -l | tr -d ' ')
 if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
   ok "no child of a timed-out gate is left running (${took} s)"
-else bad "orphans after a timeout (rc=$rc, left=$left, ${took} s): $out"; pkill -f "sleep $mark"; fi
+else bad "orphans after a timeout (rc=$rc, left=$left, ${took} s): $out"; pkill -f "sleep $sleep_arg"; fi
 
 echo "=== a child set-up failure is reported, never read as the gate's exit (GH #889) ==="
 mkdir -p "$T/srv"
@@ -283,21 +283,29 @@ for line in sys.stdin:
         rep = '{"code": "setup-failed", "secs": 0}'
     elif mode[0] == "garble":
         rep = "not json"
-    else:  # die-after-2 CODE: answer two commands with CODE and empty output, then exit 3
+    else:  # die-after-2 CODE: answer two commands with CODE and empty output (the second one near the
+        # deadline: over half of 4 s), then exit 3
         if n > 2:
             sys.exit(3)
         for k in ("out", "err"):
             open(req[k], "w").close()
-        rep = json.dumps({"code": int(mode[1]), "secs": 0.001})
+        rep = json.dumps({"code": int(mode[1]), "secs": 0.001 if n == 1 else 2.5})
     sys.stdout.write(rep + "\n"); sys.stdout.flush()
 PY
-fake() {  # fake OLD NEW CASES RUNNER: the engine with the fake server, through a fresh temp dir
+fake() {  # fake OLD NEW CASES RUNNER: the engine with $SERVER (default the fake server), through a fresh temp dir
   local tmp; tmp=$(mktemp -d "$T/fake.XXXXXX")
-  python3 - "$ROOT/scripts/_lib/gate-differential.py" "$T/fake-server.py" "$1" "$2" "$3" "$4" "$tmp" <<'PY' 2>&1
+  python3 - "$ROOT/scripts/_lib/gate-differential.py" "${SERVER:-$T/fake-server.py}" "$1" "$2" "$3" "$4" "$tmp" <<'PY' 2>&1
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
 gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
 gd.FORK_SERVER = sys.argv[2]
+import os
+if os.environ.get("GD_TIMEOUT"):  # a short hook timeout for the timeout rows
+    gd.TIMEOUT = float(os.environ["GD_TIMEOUT"])
+if os.environ.get("KILLPG_EPERM"):  # what macOS gives for a group whose only member is a zombie
+    def _eperm(*a):
+        raise PermissionError(1, "Operation not permitted")
+    os.killpg = _eperm
 old, new, cases, runner, tmp = sys.argv[3:8]
 sys.argv = ["gd", "--old", old, "--new", new, "--gate", "irrecoverable", "--tmp", tmp, "--projects", tmp,
             "--own-slug", "x", "--fixtures", tmp, "--cases", cases, "--runner", runner]
@@ -321,13 +329,68 @@ cp -R "$T/s-allow" "$T/f-die-b"; echo "die-after-2 2" > "$T/f-die-b/fake-mode"
 printf 'ls -la\nrm -rf build\necho three\n' > "$T/three.txt"
 out=$(fake "$T/f-die-a" "$T/f-die-b" "$T/three.txt" auto); rc=$?
 if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" \
-   && /usr/bin/grep -q '^  runner: bash (fork server exited (rc=3); bash from that command on; before that, fork-only diffs dropped: 2, near-deadline re-runs: 0)$' <<<"$out"; then
+   && /usr/bin/grep -q '^  runner: bash (fork server exited (rc=3); bash from that command on; before that, fork-only diffs dropped: 1, near-deadline re-runs: 1)$' <<<"$out"; then
   ok "a server dying mid-run: bash for the rest, both counts kept"
 else bad "engine mid-run death (rc=$rc): $out"; fi
 out=$(fake "$T/f-die-a" "$T/f-die-b" "$T/three.txt" fork); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'fork mode cannot run (fork server exited (rc=3)' <<<"$out"; then
   ok "--runner fork exits 2 when a server dies mid-run"
 else bad "--runner fork mid-run death (rc=$rc): $out"; fi
+
+echo "=== an EPERM from the child's setpgid keeps fork mode (PR #899, full-pool replay on macOS) ==="
+# The real server with os.setpgid patched to raise EPERM: for the child's own call only (the parent's
+# setpgid(pid, pid) still gives it its group, so nothing changes), or for every call (no group: that
+# one command goes through bash, and fork mode goes on).
+eperm_server() {  # eperm_server OUT child|all
+  python3 - "$ROOT/scripts/_lib/gate-fork-server.py" "$1" "$2" <<'PY'
+import sys
+src, out, which = sys.argv[1:4]
+s = open(src).read()
+k = "import io, json, os, select, signal, sys, time, traceback\n"
+assert s.count(k) == 1, "server imports moved"
+patch = ("_real_setpgid = os.setpgid\n"
+         "def _eperm(pid, pg):\n"
+         "    if %r == 'all' or pid == 0:\n"
+         "        raise PermissionError(1, 'Operation not permitted')\n"
+         "    return _real_setpgid(pid, pg)\n"
+         "os.setpgid = _eperm\n") % which
+open(out, "w").write(s.replace(k, k + patch))
+PY
+}
+eperm_server "$T/eperm-child.py" child
+eperm_server "$T/eperm-all.py" all
+out=$(SERVER="$T/eperm-child.py" fake "$T/s-allow" "$T/s-deny" "$T/two.txt" auto); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" \
+   && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 1, near-deadline re-runs: 0)$' <<<"$out"; then
+  ok "EPERM in the child with the group already set: fork mode as usual"
+else bad "child EPERM (rc=$rc): $out"; fi
+out=$(SERVER="$T/eperm-all.py" fake "$T/s-allow" "$T/s-deny" "$T/two.txt" fork); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" \
+   && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 0, near-deadline re-runs: 0, no-own-group re-runs: 2)$' <<<"$out"; then
+  ok "no own process group: that command through bash, fork mode kept (even with --runner fork)"
+else bad "no own group (rc=$rc): $out"; fi
+
+echo "=== killpg EPERM on a timeout crashes neither runner (PR #899 round 3, macOS) ==="
+# macOS raises EPERM from killpg when the group's only member is an unreaped zombie. Both runners must
+# then kill the process itself and go on. A 1 s hook timeout and a 3 s gate keep the row short.
+python3 - "$ROOT/scripts/_lib/gate-fork-server.py" "$T/killpg-eperm.py" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+k = "import io, json, os, select, signal, sys, time, traceback\n"
+assert s.count(k) == 1, "server imports moved"
+patch = ("def _eperm(*a):\n    raise PermissionError(1, 'Operation not permitted')\nos.killpg = _eperm\n")
+open(sys.argv[2], "w").write(s.replace(k, k + patch))
+PY
+stub "$T/s-3s" 'time.sleep(3)'
+out=$(GD_TIMEOUT=1 KILLPG_EPERM=1 SERVER="$T/killpg-eperm.py" fake "$T/s-3s" "$T/s-3s" "$T/rm.txt" fork); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && /usr/bin/grep -q '^  runner: fork (' <<<"$out" \
+   && ! /usr/bin/grep -q 'Traceback' <<<"$out"; then
+  ok "fork runner: killpg EPERM on a timeout, the child is killed and fork mode goes on"
+else bad "fork killpg EPERM (rc=$rc): $out"; fi
+out=$(GD_TIMEOUT=1 KILLPG_EPERM=1 fake "$T/s-3s" "$T/s-3s" "$T/rm.txt" bash); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && ! /usr/bin/grep -q 'Traceback' <<<"$out"; then
+  ok "bash runner: killpg EPERM on a timeout, bash is killed and the run goes on"
+else bad "bash killpg EPERM (rc=$rc): $out"; fi
 
 echo "=== a wrapper change falls back to the bash runner (GH #889) ==="
 cp -R "$GATES" "$T/wrapped"
