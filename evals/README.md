@@ -17,8 +17,8 @@ agents, one planted-defect case and one clean control per agent, the same fires/
 | `criteria.md` | `llm` | the finding is the right one, sized right, with no manufactured extras |
 
 A grader that checks the plugin's own mechanism (`agent-fired.md`, `dispatch-confirmed.md` on
-`tool: Agent`, `critic-dispatched.md`, `reviewer-dispatched.md`, post-mortem's `skill-loaded.md`)
-sets `arm: with-only`. A two-arm run (the default whenever the plugin resolves) scores every other
+`tool: Agent`, `critic-dispatched.md`, `reviewer-dispatched.md`, post-mortem's `skill-loaded.md`,
+ideate-run's `fanout.md`) sets `arm: with-only`. A two-arm run (the default whenever the plugin resolves) scores every other
 grader in both arms. Without the plugin these say nothing about the task: the `not found` regexes
 fail by construction (inflating Δ), and an Agent check can pass on the failed dispatch call. The CLI
 already leaves `tool_used` on `tool: Skill` out of the score, so `skill-fired.md` needs no `arm:`.
