@@ -231,12 +231,15 @@ already set alone.
   names long-running CPU-heavy process groups of yours, a flood of low-CPU workers included
   (`scripts/_lib/stray-procs.sh`, warn-only), but it can only catch a stray after the fact; killing
   one that a peer session owns is the operator's call.
-- **Read `scripts/merge-pr.sh` with the Read or Grep tool, not Bash.** The ask rule
-  `Bash(*scripts/merge-pr.sh *)` in `.claude/settings.json` matches any Bash command where text
-  follows the path, reads included (`grep ... scripts/merge-pr.sh | head`,
-  `wc -l scripts/merge-pr.sh other.sh`); about a fifth of its prompts were reads (GH #907). The
-  rule stays broad on purpose: a run-only version would let `env scripts/merge-pr.sh 904` merge
-  with no prompt, since the script's own `gh pr merge` runs in a subprocess no gate sees.
+- **Read `scripts/merge-pr.sh` with the Read or Grep tool, not Bash.** The merge ask rules in
+  `.claude/settings.json` (`Bash(*/merge-pr.sh *)` and six more, GH #909) match any Bash command
+  where text follows the script's path or name, reads included
+  (`grep ... scripts/merge-pr.sh | head`, `wc -l scripts/merge-pr.sh other.sh`); about a fifth of
+  the prompts were reads (GH #907). The rules stay broad on purpose: a run-only version would let
+  `env scripts/merge-pr.sh 904` merge with no prompt, since the script's own `gh pr merge` runs in
+  a subprocess no gate sees. Shapes they still miss are deliberate evasions
+  (`bash scripts/MERGE-PR.SH 904`, `bash "scripts/"merge-pr.sh 904`,
+  `set -- 904; source scripts/merge-pr.sh`); in auto mode the classifier is the only backstop.
 
 ## Research: check qmd before web search
 
