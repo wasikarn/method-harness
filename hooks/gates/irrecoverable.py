@@ -3952,7 +3952,8 @@ for _w in windows:
 windows = _aug
 
 def basename(p):
-    return p.rsplit("/", 1)[-1]
+    p = p.rsplit("/", 1)[-1]
+    return p[1:] if p[:1] == "=" and len(p) > 1 else p  # GH #912: zsh's `=word` is the full path of `word'
 
 def _past_dash_words(rest, i=0):
     # Index of the first word from i on that does not start with "-" once placeholders are stripped.
@@ -6106,6 +6107,9 @@ def _check_window(_wi, w):
                 break  # su without -c runs a login shell, no command
             if body is None:
                 i += npos
+                if argv0 == "repeat":  # `repeat 2 x=1 rm`: a simple command may start with assignments
+                    while i < len(rest) and _assignment(rest[i]):
+                        i += 1
             if body is None and i < len(rest) and argv0 == "flock" and rest[i].replace(PH, "") in ("-c", "--command"):
                 body = rest[i + 1] if i + 1 < len(rest) else None
             if body is not None or join:
