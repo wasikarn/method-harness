@@ -5846,7 +5846,7 @@ def _glob_names(word):
         _GLOB_NAMES_ALL.extend(sorted(set(PREFIX_WRAPPERS) | set(_UNWRAP_ONLY) | set(_RUN_WRAPPERS) | set(_SHELLS)
                                       | set(KNOWN_DANGEROUS) | set(_SHELL_PUSH_ALIASES) | set(_CONTAINER_TOOLS)
                                       | set(_GLOB_EXTRA_NAMES) | set(_SQL_CLIENTS)))
-    return [n for n in _GLOB_NAMES_ALL if fnmatch.fnmatchcase(n, pat)]
+    return [n for n in _GLOB_NAMES_ALL if n[:1].isalpha() and fnmatch.fnmatchcase(n, pat)]
 
 # GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
 # `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
@@ -6716,7 +6716,16 @@ def _check_window(_wi, w):
         ask("rsync --delete removes every destination file the source lacks — confirm the source and destination",
             rule="rsync-delete")
 
+# GH #912: an unquoted qualifier body may hold spaces (`*(e:rm -rf ~:)`), which the tokenizer splits across words, so the
+# raw command text is read once for `<glob>(<letters>e<delim>body<delim>)`.
+_RAW_QUAL_RE = re.compile(r"[*?\]]\([.\^\-/%@*,\[\]A-Za-z0-9]{0,16}?e(?:([^\w\s()\[{])(.+?)\1|\[(.+?)\]|\{(.+?)\})")
+_RAW_QUAL_DONE = [False]
+
 def _run_windows(i):
+    if not _RAW_QUAL_DONE[0]:
+        _RAW_QUAL_DONE[0] = True
+        for _m in _RAW_QUAL_RE.finditer(cmd):
+            _scan_body(_m.group(2) or _m.group(3) or _m.group(4))
     while i < len(windows):  # a window's checks may append more (bash -c / eval bodies, find, xargs)
         _check_window(i, windows[i])
         i += 1
