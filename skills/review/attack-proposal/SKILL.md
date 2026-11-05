@@ -95,17 +95,17 @@ and "independence reduced" noted for that lane. Fill the brief's `FILES YOU OWN`
 under the gates, which match raw command text. It has no sandbox: capture `git status --porcelain`
 before and after; any difference is a violation.
 
-**A safety-classifier stop is a signal, not an obstacle.** A Codex stop sends that lane's full
-brief to its fallback agent, which is now the lane's attack, so the lane counts as on the fallback.
-Also narrow the Codex brief (fewer, smaller inputs, measured against existing files) and run it
-once more as an extra review, triaged with the rest; a second stop drops only that review. A
-narrowed Codex run is a review, not an attack, so it never stands in for the lane. Gate and
-sandbox briefs quote destructive commands, so expect Codex's provider filter to stop them
-(GH #911). A stopped fallback gets the same narrowing and one more run; a second stop there marks
-the lane INCOMPLETE (its fallback failed).
+**A classifier stop is a signal, not an obstacle.** On Codex it is an exit 1, so Fallback above
+already runs the lane's attack on the full brief; gate and sandbox briefs, which quote destructive
+commands, draw it (GH #911). Also run Codex once on a narrowed brief (fewer, smaller inputs,
+measured against existing files) as an extra review: same two checkers, findings triaged with the
+rest, the lane's verdict still the fallback's, since a narrowed brief reviews rather than attacks.
+On the fallback, run it once more with fewer, smaller inputs to execute, keeping the proposal file
+and its Must-stop list; a second stop there fails the fallback.
 
-Done when every lane has an accepted verdict, is marked INCOMPLETE (its fallback failed), or
-waits on the operator's answer to its `NEEDS-DECISION`.
+Done when every lane has an accepted verdict, is marked INCOMPLETE (its fallback failed: a checker
+rejected it, or a classifier stopped it twice), or waits on the operator's answer to its
+`NEEDS-DECISION`, and every extra Codex review has finished.
 
 ## 4. Triage and revise
 
