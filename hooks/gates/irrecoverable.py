@@ -5837,25 +5837,28 @@ _GLOB_EXTRA_NAMES = ("xargs", "rsync", "dropdb", "mysqladmin", "claude", "source
 _GLOB_ASK_OVER = 12  # more matches than this (`*`, `?`) ask: the word could be any program
 _GLOB_WINDOWS_MAX = 64  # a chain of `n* n* n*` multiplies; past this budget the gate asks, never allows
 _GLOB_WINDOWS = [0]
+_GLOB_NAMES_ALL = []  # built once, on the first globbed word
 
 def _glob_names(word):
     if PH in word or not _GLOB_WORD_RE.search(word):  # a substituted word is _candidates' job, not a glob's
         return None
-    pat = word
+    pat = word.replace("[^", "[!")  # zsh negates a class with `^`; fnmatch uses `!`
     import fnmatch
-    names = (set(PREFIX_WRAPPERS) | set(_UNWRAP_ONLY) | set(_RUN_WRAPPERS) | set(_SHELLS) | set(KNOWN_DANGEROUS)
-             | set(_SHELL_PUSH_ALIASES) | set(_CONTAINER_TOOLS) | set(_GLOB_EXTRA_NAMES))
-    return sorted(n for n in names if fnmatch.fnmatchcase(n, pat))
+    if not _GLOB_NAMES_ALL:
+        _GLOB_NAMES_ALL.extend(sorted(set(PREFIX_WRAPPERS) | set(_UNWRAP_ONLY) | set(_RUN_WRAPPERS) | set(_SHELLS)
+                                      | set(KNOWN_DANGEROUS) | set(_SHELL_PUSH_ALIASES) | set(_CONTAINER_TOOLS)
+                                      | set(_GLOB_EXTRA_NAMES)))
+    return [n for n in _GLOB_NAMES_ALL if fnmatch.fnmatchcase(n, pat)]
 
 # GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
 # `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
-_GLOB_QUAL_RE = re.compile(r"[\^-]*e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})")
+_GLOB_QUAL_RE = re.compile(r"[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})")
 
 def _check_window(_wi, w):
     global _cur_depth
     basename = _cmd_basename  # GH #912: this function's argv0 reads see through `=word`
     for _t in w:
-        if _t[:1] in ("e", "^", "-"):
+        if "e" in _t:
             _q = _GLOB_QUAL_RE.fullmatch(_t.replace(PH, ""))
             if _q:
                 _scan_body(_q.group("a") or _q.group("b") or _q.group("c"))
