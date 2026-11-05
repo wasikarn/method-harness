@@ -1,7 +1,13 @@
 {
   "permissions": {
     "ask": [
-      "Bash(*scripts/merge-pr.sh *)",
+      "Bash(*/merge-pr.sh *)",
+      "Bash(* merge-pr.sh *)",
+      "Bash(*/merge-pr.sh\" *)",
+      "Bash(*/merge-pr.sh' *)",
+      "Bash(*\"merge-pr.sh\" *)",
+      "Bash(*'merge-pr.sh' *)",
+      "Bash(*xargs *merge-pr.sh*)",
       "Bash(*gh pr comment *ontext review*)"
     ]
   },

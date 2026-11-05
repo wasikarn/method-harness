@@ -47,8 +47,10 @@ at merge time** (2026-10-25: while each PR bumped itself, every peer merge re-co
 on the two manifest lines, and #581 took about six re-sync and gauntlet cycles to land).
 
 In a local session with `gh`, the agent runs the merge itself and the operator only confirms.
-`.claude/settings.json` has `ask` rules matching any `scripts/merge-pr.sh` call and any
-`gh pr comment` whose text holds `context review`. The orchestrating session (not a review
+`.claude/settings.json` has `ask` rules matching any ordinary run of `merge-pr.sh` (its path or
+bare name followed by arguments, quoted or not, or after `xargs`; `tests/scripts/test-merge-ask-rules.sh`
+pins the shapes, `repo-gotchas.md` lists the ones they miss) and any `gh pr comment` whose text
+holds `context review`. The orchestrating session (not a review
 subagent) posts the verdict, merges and updates the installed plugin in one command, so there is
 one prompt:
 
@@ -58,12 +60,12 @@ gh pr comment <N> --body "Fresh-context review: MERGE @ <full head sha>" && bash
 
 A running session still loads the new version only after a restart or `/reload-plugins`.
 Write the verdict exactly as above, with `--body`: Bash rules match case-sensitively on the command
-text, so another casing or `--body-file` skips the comment rule (the merge-pr.sh rule still prompts).
+text, so another casing or `--body-file` skips the comment rule (the merge-pr.sh rules still prompt).
 Do not ask with `AskUserQuestion` instead: the auto-mode classifier
 strips tool results, so it never sees that answer and blocks the merge as self-approval, while a
 content-matching `ask` rule prompts before the classifier runs (code.claude.com/docs/en/permission-modes
 and /permissions, checked 2026-10-31). On the cloud path below, the MCP comment and merge have no
-rule, and the read-only `merge-pr.sh --verify` step also prompts, since the rule matches every call.
+rule, and the read-only `merge-pr.sh --verify` step also prompts, since the rules match it like any other run.
 
 Run it from the PR's own checkout, on its branch, with a clean tree (untracked files count), and
 start it with `run_in_background`: one run can span a lock wait plus a full gauntlet. Do not edit that
