@@ -47,9 +47,10 @@ at merge time** (2026-10-25: while each PR bumped itself, every peer merge re-co
 on the two manifest lines, and #581 took about six re-sync and gauntlet cycles to land).
 
 In a local session with `gh`, the agent runs the merge itself and the operator only confirms.
-`.claude/settings.json` has `ask` rules matching any run of `merge-pr.sh` (its path or bare name
-followed by arguments, quoted or not, or after `xargs`; `tests/scripts/test-merge-ask-rules.sh`
-pins the shapes) and any `gh pr comment` whose text holds `context review`. The orchestrating session (not a review
+`.claude/settings.json` has `ask` rules matching any ordinary run of `merge-pr.sh` (its path or
+bare name followed by arguments, quoted or not, or after `xargs`; `tests/scripts/test-merge-ask-rules.sh`
+pins the shapes, `repo-gotchas.md` lists the ones they miss) and any `gh pr comment` whose text
+holds `context review`. The orchestrating session (not a review
 subagent) posts the verdict, merges and updates the installed plugin in one command, so there is
 one prompt:
 

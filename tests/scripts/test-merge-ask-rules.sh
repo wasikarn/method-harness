@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# .claude/settings.json's merge ask rules prompt on every run of scripts/merge-pr.sh and not on reads
-# of it or runs of its test (GH #907, #909). merge-pr.sh runs `gh pr merge` in its own subprocess,
-# so these rules are the only prompt before that merge.
+# test-merge-ask-rules.sh — .claude/settings.json's merge ask rules prompt on every ordinary run of
+# scripts/merge-pr.sh and not on reads of it or runs of its test (GH #907, #909). merge-pr.sh runs
+# `gh pr merge` in its own subprocess, so these rules are the only prompt before that merge.
 # The matcher is a model of Claude Code's: `*` = any text, quotes literal, case-sensitive, runs of
 # spaces/tabs collapsed, tested on the whole command and on each subcommand (CC 2.1.318 binary read
-# in #909). A live prompt is the final check; this test catches a rule set narrowed by mistake.
+# in #909). fnmatch also reads `?` and `[...]` as wildcards, which Claude Code does not; no rule
+# uses them. A live prompt is the final check; this test catches a rule set narrowed by mistake.
 # Run standalone: bash tests/scripts/test-merge-ask-rules.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -33,7 +34,10 @@ MUST_ASK = [
     "nohup bash scripts/merge-pr.sh 904 > log 2>&1 &",
     "gh pr comment 904 --body-file s.md && env scripts/merge-pr.sh 904",  # #907 F1
     'gh pr comment 904 --body "Fresh-context review: MERGE @ abc" && bash scripts/merge-pr.sh 904 && claude plugin update mh@wasikarn',
+    "cd ~/Codes/Personals/method-harness/.claude/worktrees/x && bash scripts/merge-pr.sh 904",
     'bash "scripts/merge-pr.sh" 904',  # #909: quoted path
+    "bash 'scripts/merge-pr.sh' 904",
+    'bash "$HOME/Codes/Personals/method-harness/scripts/merge-pr.sh" 904',
     "bash '$HOME/Codes/Personals/method-harness/scripts/merge-pr.sh' 904",
     'cd scripts && bash "merge-pr.sh" 904',
     "cd scripts && bash 'merge-pr.sh' 904",
@@ -44,12 +48,14 @@ MUST_ASK = [
 ]
 MUST_NOT_ASK = [
     "sed -n 30,75p scripts/merge-pr.sh",
+    "cat scripts/merge-pr.sh",
     "rtk read scripts/merge-pr.sh",
     "git log --oneline -- scripts/merge-pr.sh",
     'bash tests/scripts/test-merge-pr.sh 2>&1 | /usr/bin/grep -E "FAIL|self-test"',
     'bash "tests/scripts/test-merge-pr.sh" 2>&1 | tail -3',  # #909 attacker: B1
     "bash 'tests/scripts/test-merge-pr.sh' 2>&1",
     "git push -u origin feat/merge-pr-read-gotcha",
+    "git switch -c feat/merge-pr-read-gotcha origin/develop",
     "gh pr comment 904 --body-file review-summary.md",
 ]
 
