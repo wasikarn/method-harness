@@ -382,7 +382,7 @@ if unarmed_mechanism_graders "$TMP/armctl" "$ROOT" >/dev/null; then ok "arm chec
 for shape in "mech.md|type: regex\ntarget: trace\nmatch: not_contains\npattern: \"Agent type '[^']*' not found\"" \
              "mech.md|type: regex\ntarget: trace\nmatch: not_contains\npattern: 'Unknown skill: code-architect'" \
              "mech.md|type: tool_used\ntool: Agent\ninput_match: 'plan-reviewer'" \
-             "mech.md|type: tool_used\ntool: Bash\ninput_match: 'cost-report-dedup.js'" \
+             "mech.md|type: tool_used\ntool: Bash\ninput_match: 'cost-report-dedup\\.js'" \
              "mech.md|type: regex\ntarget: trace\npattern: 'Four inputs or no draft'" \
              "agent-fired.md|type: regex\ntarget: last_message\npattern: 'specialist report'"; do
   f="${shape%%|*}"; fm="${shape#*|}"

@@ -107,7 +107,7 @@ read-back rule: deny/ask rows for two gates, a `count: 5` `allow-suppressed` row
 session must quote the script's `12 ask/deny event(s)` headline as printed, give 7 as the real
 block/interrupt count (the headline already holds the 5 suppressed matches), say the shadow rows
 were allowed, report the 3 session-less rows and both non-UUID ids, and leave the journal
-byte-identical. `gate-report-not-set-up` has no journal: relay `Gate journal not set up.`, quote no
+unchanged (`log-untouched.md` checks its last row). `gate-report-not-set-up` has no journal: relay `Gate journal not set up.`, quote no
 count, create no journal (`max: 0` Bash check, `arm: both`). Needs `--allow-tools Bash`.
 
 Two for `model-bench` (tag `model-bench`, user-invoked, prompts open with `/mh:model-bench`), on the
