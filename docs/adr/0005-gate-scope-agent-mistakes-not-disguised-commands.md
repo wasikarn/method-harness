@@ -62,6 +62,13 @@ command. So the gates are frozen. A change to `hooks/gates/` is allowed only for
 2. **A real miss:** an incident where a dangerous command an agent actually ran got through.
 3. **The replay speed-up plan** (#895): work on how gates are tested and replayed, not on what they
    decide.
+4. **Promoting a shadow rule:** deleting an id from `SHADOW_RULES` once its real journal hits show no
+   false positive (`/mh:gate-report`). The decision rests on real hits, as in 1 and 2.
+
+A deny that held only by accident and is lost by an allowed fix is not "removed" in the sense of the
+Decision's "nothing is removed": it is filed `parked` like any other gap. The fix PR names it. PR #900 (GH #710)
+lost such denies on 5 heredoc shapes (`git add a.sh && source /dev/stdin <<'EOF'`, where the `sh` of
+`a.sh` had matched as an interpreter); they are parked in #902.
 
 An agent-mistake shape without a real hit is filed `parked` and gets no fix session. PR #872 (GH
 #842 to #844) was approved before the freeze and is the last gate PR under the old criterion 2.
