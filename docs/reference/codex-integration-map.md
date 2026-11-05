@@ -10,8 +10,8 @@ cache version changes; no check parses it. Full reasoning: `docs/plans/codex-pai
 
 | skill | invocation | mh touchpoint / fallback |
 |---|---|---|
-| `/codex:review` | user or model | read-only diff review; Claude-side alternative: `mattpocock-skills:code-review`. On rate-limit or absence, run the Claude-side review instead, invoked by the operator — independence reduced for that pass (model independence lost, context independence kept) |
-| `/codex:adversarial-review` | user or model | challenges a plan after `mattpocock-skills:grilling`; Claude-side alternative: `mh:plan-reviewer`. Same fallback as review |
+| `/codex:review` | user only (`disable-model-invocation: true` in codex 1.0.6) | read-only diff review; Claude-side alternative: `mattpocock-skills:code-review`. On rate-limit or absence, run the Claude-side review instead, invoked by the operator — independence reduced for that pass (model independence lost, context independence kept) |
+| `/codex:adversarial-review` | user only (`disable-model-invocation: true` in codex 1.0.6) | challenges the approach and design of a diff (working tree or branch, same target selection as `/codex:review`, plus optional focus text); Claude-side alternative: `mattpocock-skills:code-review`. A plan before code goes to `mh:plan-reviewer` instead, a proposed fix to `mh:attack-proposal`. Same fallback as review |
 | `/codex:rescue` | **user or model** — ships without `disable-model-invocation`, and `codex:codex-rescue` is a full Agent-tool `subagent_type` | writes files through the Codex app-server, not Claude Code tools — see Gate gap below. The review-gate toggle is gated (ADR-0001); the rescue dispatch itself carries no codex-specific gate. From the main session it stays fully ungated; a *subagent* attempting the same dispatch is denied as a side effect of `gate:agent:subagent-spawn-guard` (GH #151), which blocks every subagent-initiated Agent-tool call uniformly and was not built with codex in mind |
 | `/codex:setup` | **user or model** — ships without `disable-model-invocation` | the one surface mh puts a real gate on: `gate:skill:codex-setup-guard` asks before a model-invoked call carrying `--enable-review-gate` |
 | `/codex:transfer` | user only (`disable-model-invocation: true`) | Claude near its own limit → hands the session to a resumable Codex thread. The reverse of the fallback direction above |
@@ -33,6 +33,15 @@ the "Silent-refusal gotcha" section's empty-diff detection method below doesn't 
 that method assumes a writer whose refusal shows up as "nothing changed" on disk. Their refusal
 signal is a schema-invalid or semantically-refusing final message instead, caught per the rows
 above.
+
+`--output-schema` forces the final message into the schema's JSON (codex-cli 0.166.0, probed
+2026-11-05: told to reply with a bare `NEEDS-DECISION` line and no JSON, Codex returned schema JSON
+with the question inside a finding and `pass: null`). So `/mh:deep-audit`'s checker and the
+`/mh:idea-audit` and `/mh:attack-proposal` attackers never reach a `check-verdict.py` exit 2 on
+Codex: a decision they need shows as `pass: null`, which their checkers reject (exit 1), sending
+the lane to its Claude fallback. In `/mh:deep-audit` and `/mh:attack-proposal` that fallback can
+return a bare `NEEDS-DECISION` (exit 2) to the operator; `/mh:idea-audit` routes exit 2 to the
+fallback too, and a failed fallback there is graded `insufficient evidence`.
 
 ## Gate gap
 
