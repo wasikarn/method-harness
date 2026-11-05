@@ -104,7 +104,9 @@ for g in sorted(glob.glob(os.path.join(evals, "*", "graders", "*.md"))):
                    and re.search(pat, own_text) is not None)
         except re.error:
             own = False  # the per-case check reports a bad pattern
-        hit = "Agent type '" in pat or "Unknown skill:" in pat or own
+        # an init-event `skills` list names mh: skills only when the plugin loaded (skill-loaded.md)
+        init_skill = val(fm, "target") == "trace" and '"skills"' in pat and "mh:" in pat
+        hit = "Agent type '" in pat or "Unknown skill:" in pat or own or init_skill
     else:
         hit = False
     if os.path.basename(g) in ("agent-fired.md", "dispatch-confirmed.md") and val(fm, "tool") != "Skill":
@@ -384,6 +386,7 @@ for shape in "mech.md|type: regex\ntarget: trace\nmatch: not_contains\npattern: 
              "mech.md|type: tool_used\ntool: Agent\ninput_match: 'plan-reviewer'" \
              "mech.md|type: tool_used\ntool: Bash\ninput_match: 'cost-report-dedup\\.js'" \
              "mech.md|type: regex\ntarget: trace\npattern: 'Four inputs or no draft'" \
+             "mech.md|type: regex\ntarget: trace\npattern: '\"skills\".*\"mh:gate-report\"'" \
              "agent-fired.md|type: regex\ntarget: last_message\npattern: 'specialist report'"; do
   f="${shape%%|*}"; fm="${shape#*|}"
   printf -- '---\n%b\n---\n' "$fm" >"$actl/$f"

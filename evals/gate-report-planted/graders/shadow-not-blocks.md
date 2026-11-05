@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '(shadow|would_(deny|ask|\*))[^\n]{0,200}(not (a |real |actual )?(block|ask|den|interrupt)|aren.t (block|ask|den)|were allowed|was allowed|(call|command)s? (was|were|went|got) (allowed|through)|allowed (the|it|them|anyway)|did\s?n[o.''’]t (block|stop)|matched but allowed|nothing (was |got )?(blocked|stopped)|(commands?|calls?) (still )?ran\b(?!\s+into)|never (block|stop|interrupt)|let[^\n]{0,20}(command|call)s?[^\n]{0,10}run)'
+pattern: '(shadow|would_(deny|ask|\*))[^\n]{0,200}(not (a |real |actual )?(block|ask|den|interrupt)|aren.t (block|ask|den)|were allowed|was allowed|(call|command)s? (was|were|went|got) (allowed|through)|allowed (the|it|them|anyway)|did\s?n[o.''’]t (block|stop)|matched but allowed|nothing (was |got )?(blocked|stopped)|(commands?|calls?) (still )?ran\b(?!\s+into)|(?<!not )(?<!never )(?<!n.t )(?<!refused to )\blets? (the |each |every |them |those )?(commands?|calls?|it|them) (still )?run\b)'
 flags: i
 match: contains
 target: last_message

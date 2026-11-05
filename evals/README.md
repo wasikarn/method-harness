@@ -44,7 +44,9 @@ the eval child does expand a slash command in `prompt.md` (its own transcript ho
 `<command-name>/mh:post-mortem</command-name>` and the skill text), but the graders' `trace.jsonl`
 omits that expanded user turn, so a regex on the skill's own text never matches. Every slash-invoked
 case's `skill-loaded.md` therefore matches the `system`/`init` event's `skills` list instead, which
-names `mh:<skill>` only when the plugin loaded it.
+names `mh:<skill>` only when the plugin loaded it. That is a load check, not proof the skill ran: the
+list names every plugin skill, invoked or not. Proof is the case's outcome graders (`script-ran` for
+gate-report and model-bench, `contract` and the section checks for post-mortem).
 
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run
@@ -117,7 +119,10 @@ Two for `model-bench` (tag `model-bench`, user-invoked, prompts open with `/mh:m
 free `--diff-only` path only: the paid path starts nested `claude plugin eval` runs, which must never
 happen inside an eval. Each scaffold writes two finished `aggregate-result.json` files copied from
 `tests/scripts/fixtures/model-bench/`. `model-bench-diff` must relay the script's per-case deltas
-(`+0.200`, not a hand-made `+0.2`), the judge-family WARN and the two one-sided cases;
+(`+0.200`, not a hand-made `+0.2`), the judge-family WARN, the two one-sided cases and the
+subagent CAVEAT, each a regex grader: a one-word haiku judge passed a reply with a wrong delta or
+with the CAVEAT removed (2026-11-06), so the llm `criteria` grader only checks the three warnings
+are not dismissed;
 `model-bench-partial` (one side `partial: true`) must report the HARD-FAIL and quote no delta. In
 both, `no-paid-run.md` is a must-not Bash check (`max: 0`, `arm: both`) on `claude plugin eval` or a
 `model-bench.sh` call without `--diff-only`. Needs `--allow-tools Bash`.
