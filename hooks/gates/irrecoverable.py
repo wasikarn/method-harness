@@ -5833,7 +5833,7 @@ def _cmd_basename(p):
 # before the rule loop sees the word (a known residual, docs/reference/repo-gotchas.md).
 _GLOB_WORD_RE = re.compile(r"[?*]|\[(?:\[:\w+:\]|[^\]])+\]")
 _GLOB_EXTRA_NAMES = ("xargs", "rsync", "dropdb", "mysqladmin", "claude", "source", "trash", "trash-put", "chmod",
-                     "mkfs", "mke2fs", "eval")
+                     "mkfs", "mke2fs", "eval", "gchmod", "mariadb-admin", "gio")
 _GLOB_ASK_OVER = 12  # more matches than this (`*`, `?`) ask: the word could be any program
 _GLOB_WINDOWS_MAX = 64  # a chain of `n* n* n*` multiplies; past this budget the gate asks, never allows
 _GLOB_WINDOWS = [0]
@@ -5852,7 +5852,7 @@ def _glob_names(word):
 
 # GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
 # `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
-_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})")
+_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*")
 
 def _check_window(_wi, w):
     global _cur_depth
