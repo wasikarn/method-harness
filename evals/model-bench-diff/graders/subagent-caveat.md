@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: 'subagent[^\n]{0,300}(may|might|does|do)\s?n[o.]t[^\n]{0,40}(reflect|measur|come from)[^\n]{0,40}model|(may|might|does|do)\s?n[o.]t[^\n]{0,40}(reflect|measur|come from)[^\n]{0,40}model[^\n]{0,300}subagent|pinned subagent'
+pattern: 'subagent[^\n]{0,300}(may|might|does|do)\s?n[o.]t[^\n]{0,40}(reflect|measur|come from)[^\n]{0,40}model|(may|might|does|do)\s?n[o.]t[^\n]{0,40}(reflect|measur|come from)[^\n]{0,40}model[^\n]{0,300}subagent|pinned subagent|subagent[\s\S]{0,120}(pinned|regardless of --model)'
 match: contains
 target: last_message
 flags: i
