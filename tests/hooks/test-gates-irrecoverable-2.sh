@@ -4762,8 +4762,8 @@ _timed_case 'GH #835: subagent: bash -c cl{aude,aude} -p x after 150 brace words
 # GH #838/#840
 # GH #838: the main reading blanked a bare unquoted ${IFS} to a placeholder, which a token window reads as any text,
 # so `ls${IFS}-p ls${IFS}-p x` (bash runs `ls -p ls -p x`) read as `<any> <any> x`, a git restore, in any session.
-# Unquoted and bare, ${IFS} is a word break or nothing (GH #834): the main reading now reads it as nothing, and the
-# ifs-split view reads the break. Other ${NAME} keep the broad reading (`${G}it` may be git).
+# Unquoted and bare, ${IFS} is a word break or nothing (GH #834): the main reading now reads it as the break, and the
+# ifs-split view reads nothing. Other ${NAME} keep the broad reading (`${G}it` may be git).
 for _c in 'ls${IFS}-p ls${IFS}-p x' 'ls${IFS} ls${IFS} x' 'ls$IFS-p ls$IFS-p x' 'ls${IFS}-p ls${IFS}-p x y' \
     'echo${IFS}a echo${IFS}a x' 'ls${IFS}-p x'; do
   test_allow "$IRRECOVERABLE" "GH #838: main session: $_c" "$(bash_payload "$_c")"
