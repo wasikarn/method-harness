@@ -12,6 +12,7 @@ SAMPLES, WIDTH = 3, 100
 DEADLINES = {"irrecoverable": 4.0, "subagent-git-guard": 5.0}  # each gate's own deadline (GH #771, #469)
 NEAR = 0.5  # a fork-mode time over half the deadline re-runs through bash (#889) and marks a slowdown (#890)
 SLOWER_RATIO, SLOWER_MIN_SECS = 3.0, 0.2  # GH #890: 3x the old time and at least 200 ms
+READY_SECS = 30  # python start-up plus the warm-up, once per run, under renice 19 and gauntlet load
 FORK_SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gate-fork-server.py")
 
 
@@ -202,8 +203,8 @@ class BashRunner:
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(p.pid, signal.SIGKILL)
-            except OSError:
-                pass
+            except ProcessLookupError:
+                pass  # the whole group exited between the timeout and the kill
             p.communicate()
             code, out, err = "timeout", b"", b""
         return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0)
@@ -231,7 +232,7 @@ class ForkRunner:
         self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate, str(TIMEOUT)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd, bufsize=0)
         # The warm-up runs a few allowing commands in the server itself, with no deadline of its own.
-        if self.line(TIMEOUT) != b"ready\n":
+        if self.line(READY_SECS) != b"ready\n":
             raise ServerDied(self.died())
 
     def line(self, secs):
@@ -265,8 +266,11 @@ class ForkRunner:
             reply = b""
         if not reply:
             raise ServerDied(self.died())
-        r = json.loads(reply)
-        code = str(r["code"])
+        try:
+            r = json.loads(reply)
+            code, secs = str(r["code"]), float(r["secs"])
+        except (ValueError, TypeError, KeyError):  # a garbled reply is a broken server, never a result
+            raise ServerDied(self.died("sent a garbled reply"))
         if code == "setup-failed":  # alike on both sides it would read as no diff: never a result
             raise ServerDied(self.died("could not set up a child"))
         with open(self.files["out"], "rb") as f:
@@ -275,7 +279,7 @@ class ForkRunner:
             err = f.read()
         if code == "timeout":
             out, err = b"", b""
-        return finish(self.gates_dir, code, out, err, self.journal, r["secs"])
+        return finish(self.gates_dir, code, out, err, self.journal, secs)
 
     def close(self):
         # EOF on stdin ends a healthy server; SIGTERM makes a hung one kill its child's group first.
@@ -396,10 +400,13 @@ def main():
             why = str(e)
             for r in started:
                 r.close()
+    def refuse(reason):
+        print("gate-differential: --runner fork: fork mode cannot run (%s)" % reason, file=sys.stderr)
+        sys.exit(2)
+
     if why and a.runner == "fork":
-        print("gate-differential: --runner fork: fork mode cannot run (%s)" % why, file=sys.stderr)
-        return 2
-    forked, dropped, near = fork is not None, [], 0
+        refuse(why)
+    fork_started, dropped, near = fork is not None, [], 0
 
     def fork_failed(e):
         # The rest of the run goes through bash; --runner fork asked for fork mode only, so it stops.
@@ -408,8 +415,7 @@ def main():
             r.close()
         fork, why = None, "%s; bash from that command on" % e
         if a.runner == "fork":
-            print("gate-differential: --runner fork: fork mode cannot run (%s)" % e, file=sys.stderr)
-            sys.exit(2)
+            refuse(e)
 
     def pair(runners, data):
         return runners[0].run(data), runners[1].run(data)
@@ -459,7 +465,7 @@ def main():
     if fork:
         print("  runner: fork (%s)" % counts)
     else:
-        print("  runner: bash (%s%s)" % (why, "; before that, " + counts if forked else ""))
+        print("  runner: bash (%s%s)" % (why, "; before that, " + counts if fork_started else ""))
     # A fork-only diff is how a gap in the wrapper's fast-path token list shows: name the first few.
     for t in dropped[:SAMPLES]:
         print("      - " + redact(t, patterns, real_home))

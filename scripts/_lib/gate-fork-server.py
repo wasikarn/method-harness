@@ -165,8 +165,8 @@ def kill_child():
     if CURRENT[0]:
         try:
             os.killpg(CURRENT[0], signal.SIGKILL)
-        except OSError:
-            pass
+        except ProcessLookupError:
+            pass  # the child and its group already exited
 
 
 def on_term(signum, frame):

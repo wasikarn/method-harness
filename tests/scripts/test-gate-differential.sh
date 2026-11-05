@@ -223,25 +223,42 @@ if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && /usr/bin/grep -q 
 else bad "dead fork server (rc=$rc): $out"; fi
 
 echo "=== a gate that hangs the server's warm-up falls back to bash in bounded time (GH #889) ==="
+# The run itself is bounded here too (90 s): a regressed bound must turn this row red, not hang the
+# gauntlet, which has no per-test timeout. Every process of the run names $T/s-hang on its command line.
 stub "$T/s-hang" 'while c == "ls -la": pass'
 start=$(date +%s)
-out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-allow" "$T/s-hang" irrecoverable 2>&1); rc=$?
+bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-allow" "$T/s-hang" irrecoverable > "$T/hang.out" 2>&1 &
+pid=$!
+while kill -0 "$pid" 2>/dev/null && [ $(( $(date +%s) - start )) -lt 90 ]; do sleep 1; done
+if kill -0 "$pid" 2>/dev/null; then pkill -9 -f "$T/s-hang"; kill -9 "$pid" 2>/dev/null; fi
+wait "$pid"; rc=$?
+out=$(cat "$T/hang.out")
 took=$(( $(date +%s) - start ))
-if [ "$rc" -eq 0 ] && [ "$took" -lt 30 ] && /usr/bin/grep -q '^  runner: bash (fork server .*did not answer' <<<"$out"; then
+if [ "$rc" -eq 0 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q '^  runner: bash (fork server .*did not answer' <<<"$out"; then
   ok "a hung warm-up falls back to bash (${took} s)"
 else bad "hung warm-up (rc=$rc, ${took} s): $out"; fi
 
 echo "=== a timed-out gate's own children are killed with it (GH #889) ==="
 # The stub starts a child and outlives the 8 s timeout, on both runners (fork, then bash as a
 # near-deadline re-run): each runner kills the gate's whole process group.
-mark="$$.$RANDOM"
+# The sleep must be valid on GNU and BSD (one dot, digits: 987.<pid>.<n> exited at once and made this row
+# pass vacuously) and outlive the run. Unkilled, it also holds the bash runner's pipes, so that run waits
+# for the stub's own 100 s: the row checks the time too, and is itself bounded so it fails, never hangs.
+mark="120.$$$RANDOM"
 stub "$T/s-orphan" "if c == 'rm -rf build':
-    import subprocess; subprocess.Popen(['sleep', '987.$mark']); time.sleep(100)"
-out=$(bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-orphan" "$T/s-orphan" irrecoverable 2>&1); rc=$?
-left=$(pgrep -f "sleep 987.$mark" | wc -l | tr -d ' ')
-if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
-  ok "no child of a timed-out gate is left running"
-else bad "orphans after a timeout (rc=$rc, left=$left): $out"; pkill -f "sleep 987.$mark"; fi
+    import subprocess; subprocess.Popen(['sleep', '$mark']); time.sleep(100)"
+start=$(date +%s)
+bash "$SCRIPT" --cases "$T/rm.txt" "$T/s-orphan" "$T/s-orphan" irrecoverable > "$T/orphan.out" 2>&1 &
+pid=$!
+while kill -0 "$pid" 2>/dev/null && [ $(( $(date +%s) - start )) -lt 150 ]; do sleep 1; done
+if kill -0 "$pid" 2>/dev/null; then pkill -9 -f "$T/s-orphan"; kill -9 "$pid" 2>/dev/null; fi
+wait "$pid"; rc=$?
+took=$(( $(date +%s) - start ))
+out=$(cat "$T/orphan.out")
+left=$(pgrep -f "sleep $mark" | wc -l | tr -d ' ')
+if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
+  ok "no child of a timed-out gate is left running (${took} s)"
+else bad "orphans after a timeout (rc=$rc, left=$left, ${took} s): $out"; pkill -f "sleep $mark"; fi
 
 echo "=== a child set-up failure is reported, never read as the gate's exit (GH #889) ==="
 mkdir -p "$T/srv"
@@ -250,6 +267,67 @@ reply=$(printf '{"in": "%s", "out": "%s", "err": "%s"}\n' "$T/srv/missing" "$T/s
 if /usr/bin/grep -q '"code": "setup-failed"' <<<"$reply" && /usr/bin/grep -q 'Traceback' "$T/srv/server.err"; then
   ok "set-up failure: reply setup-failed, traceback on the server's stderr"
 else bad "set-up failure: reply=$reply stderr=$(cat "$T/srv/server.err" 2>&1)"; fi
+
+echo "=== the engine never reads a broken fork server's reply as a result (GH #889) ==="
+# A fake server (FORK_SERVER swapped in the loaded engine) replies per a fake-mode file in each gates
+# dir; the bash runner still runs the real stub wrappers. s-allow vs s-deny differ on `rm -rf build`.
+cat > "$T/fake-server.py" <<'PY'
+import json, os, sys
+mode = open(os.path.join(sys.argv[1], "fake-mode")).read().split()
+sys.stdout.write("ready\n"); sys.stdout.flush()
+n = 0
+for line in sys.stdin:
+    n += 1
+    req = json.loads(line)
+    if mode[0] == "setup":
+        rep = '{"code": "setup-failed", "secs": 0}'
+    elif mode[0] == "garble":
+        rep = "not json"
+    else:  # die-after-2 CODE: answer two commands with CODE and empty output, then exit 3
+        if n > 2:
+            sys.exit(3)
+        for k in ("out", "err"):
+            open(req[k], "w").close()
+        rep = json.dumps({"code": int(mode[1]), "secs": 0.001})
+    sys.stdout.write(rep + "\n"); sys.stdout.flush()
+PY
+fake() {  # fake OLD NEW CASES RUNNER: the engine with the fake server, through a fresh temp dir
+  local tmp; tmp=$(mktemp -d "$T/fake.XXXXXX")
+  python3 - "$ROOT/scripts/_lib/gate-differential.py" "$T/fake-server.py" "$1" "$2" "$3" "$4" "$tmp" <<'PY' 2>&1
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+gd.FORK_SERVER = sys.argv[2]
+old, new, cases, runner, tmp = sys.argv[3:8]
+sys.argv = ["gd", "--old", old, "--new", new, "--gate", "irrecoverable", "--tmp", tmp, "--projects", tmp,
+            "--own-slug", "x", "--fixtures", tmp, "--cases", cases, "--runner", runner]
+sys.exit(gd.main())
+PY
+}
+for m in setup garble; do
+  cp -R "$T/s-allow" "$T/f-$m-a"; echo "$m" > "$T/f-$m-a/fake-mode"
+  cp -R "$T/s-deny" "$T/f-$m-b"; echo "$m" > "$T/f-$m-b/fake-mode"
+done
+out=$(fake "$T/f-setup-a" "$T/f-setup-b" "$T/rm.txt" auto); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" && /usr/bin/grep -q '^  runner: bash (fork server could not set up a child' <<<"$out"; then
+  ok "setup-failed on both sides falls back to bash, which finds the diff"
+else bad "engine setup-failed (rc=$rc): $out"; fi
+out=$(fake "$T/f-garble-a" "$T/f-garble-b" "$T/rm.txt" auto); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" && /usr/bin/grep -q '^  runner: bash (fork server sent a garbled reply' <<<"$out"; then
+  ok "a garbled reply falls back to bash"
+else bad "engine garbled reply (rc=$rc): $out"; fi
+cp -R "$T/s-allow" "$T/f-die-a"; echo "die-after-2 0" > "$T/f-die-a/fake-mode"
+cp -R "$T/s-allow" "$T/f-die-b"; echo "die-after-2 2" > "$T/f-die-b/fake-mode"
+printf 'ls -la\nrm -rf build\necho three\n' > "$T/three.txt"
+out=$(fake "$T/f-die-a" "$T/f-die-b" "$T/three.txt" auto); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" \
+   && /usr/bin/grep -q '^  runner: bash (fork server exited (rc=3); bash from that command on; before that, fork-only diffs dropped: 2, near-deadline re-runs: 0)$' <<<"$out"; then
+  ok "a server dying mid-run: bash for the rest, both counts kept"
+else bad "engine mid-run death (rc=$rc): $out"; fi
+out=$(fake "$T/f-die-a" "$T/f-die-b" "$T/three.txt" fork); rc=$?
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'fork mode cannot run (fork server exited (rc=3)' <<<"$out"; then
+  ok "--runner fork exits 2 when a server dies mid-run"
+else bad "--runner fork mid-run death (rc=$rc): $out"; fi
 
 echo "=== a wrapper change falls back to the bash runner (GH #889) ==="
 cp -R "$GATES" "$T/wrapped"
