@@ -95,12 +95,17 @@ and "independence reduced" noted for that lane. Fill the brief's `FILES YOU OWN`
 under the gates, which match raw command text. It has no sandbox: capture `git status --porcelain`
 before and after; any difference is a violation.
 
-**A safety-classifier stop is a signal, not an obstacle.** Narrow that lane's brief (fewer, smaller
-inputs, measured against existing files) and run it once more; a second stop marks the lane
-INCOMPLETE (cut short).
+**A safety-classifier stop is a signal, not an obstacle.** A Codex stop sends that lane's full
+brief to its fallback agent, which is now the lane's attack, so the lane counts as on the fallback.
+Also narrow the Codex brief (fewer, smaller inputs, measured against existing files) and run it
+once more as an extra review, triaged with the rest; a second stop drops only that review. A
+narrowed Codex run is a review, not an attack, so it never stands in for the lane. Gate and
+sandbox briefs quote destructive commands, so expect Codex's provider filter to stop them
+(GH #911). A stopped fallback gets the same narrowing and one more run; a second stop there marks
+the lane INCOMPLETE (its fallback failed).
 
-Done when every lane has an accepted verdict, is marked INCOMPLETE (cut short or
-fallback-failed), or waits on the operator's answer to its `NEEDS-DECISION`.
+Done when every lane has an accepted verdict, is marked INCOMPLETE (its fallback failed), or
+waits on the operator's answer to its `NEEDS-DECISION`.
 
 ## 4. Triage and revise
 
@@ -150,8 +155,8 @@ waits on the operator.
 
 - **Verdict:** GO (validator passed, every lane accepted; step 7 is still owed on the built code,
   so say so in the report), NO-GO (round 3 failed, or a confirmed
-  break is neither closed nor dropped), or INCOMPLETE (a lane was cut short or its fallback
-  failed, or validation is INCOMPLETE: name which; the operator decides, as Rule 14 does for
+  break is neither closed nor dropped), or INCOMPLETE (a lane's fallback failed, or
+  validation is INCOMPLETE: name which; the operator decides, as Rule 14 does for
   insufficient data). NO-GO wins when both apply: a known open break outweighs a missing check.
 - **Confidence:** high (every lane on Codex, validator passed in round 1), medium (a lane ran on
   the fallback, or the validator needed more than one round), low (anything INCOMPLETE).

@@ -43,6 +43,13 @@ the lane to its Claude fallback. In `/mh:deep-audit` and `/mh:attack-proposal` t
 return a bare `NEEDS-DECISION` (exit 2) to the operator; `/mh:idea-audit` routes exit 2 to the
 fallback too, and a failed fallback there is graded `insufficient evidence`.
 
+Codex's provider filter refuses a brief that quotes destructive commands. `codex exec` exits 1
+with `This content was flagged for possible cybersecurity risk` even when quota is fine
+(2026-11-05, an `/mh:attack-proposal` gate brief for GH #911). A defensive rewrite that leaves out
+the payloads does run, but it is a review, not an attack. So `/mh:attack-proposal` also sends that
+lane's full brief to its Claude fallback, and the fallback's result counts for the lane. The error
+links OpenAI's cyber access program. Joining it is the operator's call, and it is not set up.
+
 ## Gate gap
 
 `/codex:rescue` edits files through the Codex app-server, not through Claude Code's tool-call
