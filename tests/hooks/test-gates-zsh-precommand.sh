@@ -16,6 +16,7 @@ for _c in "noglob $_rm" "nocorrect $_rm" "- $_rm" "=rm -rf ~" "repeat 1 $_rm" "r
   "/bin/r? -rf ~" "/bin/r* -rf ~" "/bin/[r]m -rf ~" "noglob /bin/r? -rf ~" "repeat 1 /bin/r? -rf ~" \
   "ls *(e:'rm -rf ~':)" "ls *(e['rm -rf ~'])" "ls *(e{'rm -rf ~'})" \
   "ls *(.e:'rm -rf ~':)" "ls *(N.e:'rm -rf ~':)" "ls *(om[1]e:'rm -rf ~':)" "/bin/[^x]m -rf ~" \
+  "/usr/bin/redis-c?i flushall" \
   "noglob git push --force origin HEAD:develop" "nocorrect git reset --hard HEAD~3" \
   "/usr/bin/en? rm -rf ~" "noglob /usr/bin/en? rm -rf ~" "/usr/bin/nohu? rm -rf ~" "/bin/z?h -c 'rm -rf ~'"; do
   test_deny "$IRRECOVERABLE" "GH #912: $_c" "$(bash_payload "$_c")"

@@ -5831,7 +5831,7 @@ def _cmd_basename(p):
 # GH #912: a command word with `?`, `*` or a `[..]` class (`/bin/r?`) is read as each program name it can spell.
 # Only these three forms: zsh alternation `(a|b)` and numeric ranges `<->` are split or blanked by the tokenizer
 # before the rule loop sees the word (a known residual, docs/reference/repo-gotchas.md).
-_GLOB_WORD_RE = re.compile(r"[?*]|\[[^\]]+\]")
+_GLOB_WORD_RE = re.compile(r"[?*]|\[(?:\[:\w+:\]|[^\]])+\]")
 _GLOB_EXTRA_NAMES = ("xargs", "rsync", "dropdb", "mysqladmin", "claude", "source", "trash", "trash-put", "chmod",
                      "mkfs", "mke2fs", "eval")
 _GLOB_ASK_OVER = 12  # more matches than this (`*`, `?`) ask: the word could be any program
@@ -5847,12 +5847,12 @@ def _glob_names(word):
     if not _GLOB_NAMES_ALL:
         _GLOB_NAMES_ALL.extend(sorted(set(PREFIX_WRAPPERS) | set(_UNWRAP_ONLY) | set(_RUN_WRAPPERS) | set(_SHELLS)
                                       | set(KNOWN_DANGEROUS) | set(_SHELL_PUSH_ALIASES) | set(_CONTAINER_TOOLS)
-                                      | set(_GLOB_EXTRA_NAMES)))
+                                      | set(_GLOB_EXTRA_NAMES) | set(_SQL_CLIENTS)))
     return [n for n in _GLOB_NAMES_ALL if fnmatch.fnmatchcase(n, pat)]
 
 # GH #912: a glob qualifier `(e:cmd:)` runs cmd while the word expands; `[..]` and `{..}` pair as delimiters. Residual:
 # `e<..>` (`<` is a redirection to the tokenizer) and the `+func` form (a bare `+word` is an ordinary argument).
-_GLOB_QUAL_RE = re.compile(r"[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})")
+_GLOB_QUAL_RE = re.compile(r"(?:\#q\s*)?[.\^\-/%@*NDMmoOaAcCwWsSpuUgGtTdLlrxXi0-9\[\],]*?e(?:(?P<d>[^\w\s\[{])(?P<a>.+)(?P=d)|\[(?P<b>.+)\]|\{(?P<c>.+)\})")
 
 def _check_window(_wi, w):
     global _cur_depth
