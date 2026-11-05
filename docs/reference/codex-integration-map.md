@@ -38,8 +38,10 @@ above.
 2026-11-05: told to reply with a bare `NEEDS-DECISION` line and no JSON, Codex returned schema JSON
 with the question inside a finding and `pass: null`). So `/mh:deep-audit`'s checker and the
 `/mh:idea-audit` and `/mh:attack-proposal` attackers never reach a `check-verdict.py` exit 2 on
-Codex: a decision they need shows as `pass: null`, which their checkers reject (exit 1), and it
-reaches the operator through the Claude fallback, which can return a bare `NEEDS-DECISION`.
+Codex: a decision they need shows as `pass: null`, which their checkers reject (exit 1), sending
+the lane to its Claude fallback. In `/mh:deep-audit` and `/mh:attack-proposal` that fallback can
+return a bare `NEEDS-DECISION` (exit 2) to the operator; `/mh:idea-audit` routes exit 2 to the
+fallback too, and a failed fallback there is graded `insufficient evidence`.
 
 ## Gate gap
 
