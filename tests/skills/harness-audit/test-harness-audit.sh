@@ -179,6 +179,8 @@ printf '%s\n' '#!/bin/sh' 'case "$*" in *XXX*) exec /usr/bin/mktemp "$@" ;; esac
   'echo "mktemp: default temp dir blocked" >&2; exit 1' >"$CODEX_TMP/mktemp-stub/mktemp"
 chmod +x "$CODEX_TMP/mktemp-stub/mktemp"
 PATH="$CODEX_TMP/mktemp-stub:$PATH" expect_silent 20 check-20-good-duplicate-distinct
+# A TMPDIR naming a missing dir must not crash check 20 either: the bare `mktemp` it replaced never read TMPDIR.
+TMPDIR="$CODEX_TMP/no-such-dir" expect_silent 20 check-20-good-duplicate-distinct
 setup_codex_state() {
   local fixture="$1" gate="$2" path
   export MH_CODEX_DATA_DIR="$CODEX_TMP/$fixture"
