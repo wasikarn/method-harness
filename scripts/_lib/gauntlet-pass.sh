@@ -51,9 +51,15 @@ gauntlet_time_num() { if [[ "${1-}" =~ ^(0|[1-9][0-9]*)$ ]]; then printf '%s' "$
 # into merge-lock wait, load wait, gauntlet-lock wait and the run. merge-pr.sh sets the plain shell vars
 # GAUNTLET_TIME_MERGE_LOCK_WAIT, GAUNTLET_TIME_LOAD_WAIT and GAUNTLET_TIME_ROUND (null when unset, as on a
 # sync-pr-head.sh run). An empty tree or timeout is null; <cached> is true, false or null; a field that is
-# not a whole number is null. The only writer of the log. A write that fails prints a note; returns 0.
+# not a whole number is null. The only writer of the log. A relative log path or a write that fails
+# prints a note and writes nothing; returns 0 either way.
 gauntlet_time_row() {
   local log="${GAUNTLET_TIME_LOG:-$HOME/.cache/mh/gauntlet-time.jsonl}" tree=null timeout=null
+  # A relative path would land in the checkout the gauntlet ran on, and merge-pr.sh refuses a changed one.
+  case "$log" in
+    /*) ;;
+    *) echo "$1: GAUNTLET_TIME_LOG must be an absolute path (got $log); no timing row written." >&2; return 0 ;;
+  esac
   [ -z "$2" ] || tree="\"$2\""
   [ -z "${7-}" ] || timeout="\"$7\""
   mkdir -p "$(dirname "$log")" && printf '{"time":"%s","who":"%s","tree":%s,"cached":%s,"gauntlet_lock_wait":%s,"run_secs":%s,"rc":%s,"merge_lock_wait":%s,"load_wait":%s,"round":%s,"timeout":%s}\n' \

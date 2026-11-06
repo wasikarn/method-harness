@@ -75,6 +75,7 @@ EOF
 cat >"$STUB/uptime" <<'EOF'
 #!/usr/bin/env bash
 [ -z "${STUB_DIRTY_DURING:-}" ] || echo stray >stray.txt
+[ -z "${STUB_UPTIME_SLEEP:-}" ] || sleep "$STUB_UPTIME_SLEEP"  # a slow uptime: time passes in the load wait
 echo "10:00  up 1 day, 2 users, load averages: $STUB_LOAD 2.00 2.00"
 EOF
 # A pre-commit hook that fails when STUB_PRECOMMIT_FAIL is set (a red lint on the sync or bump commit).
@@ -430,6 +431,14 @@ TIME_LOG=/dev/null/time.jsonl run
 merges "unwritable timing log"
 if [ "$(/usr/bin/grep -c 'could not append the timing row to /dev/null/time.jsonl' <<<"$out")" = 1 ]; then ok "an unwritable timing log prints one note and the merge goes on"
 else bad "unwritable timing log: $out"; fi
+# A relative path would land in the checkout the gauntlet just ran on, which then reads as changed and
+# refuses the merge: the log must never change the outcome, so a relative path writes no row and says so.
+setup
+TIME_LOG=time.jsonl run
+merges "relative timing log path"
+if [ ! -e "$F/work/time.jsonl" ] && /usr/bin/grep -q 'GAUNTLET_TIME_LOG must be an absolute path' <<<"$out"; then
+  ok "a relative timing log path writes nothing into the checkout, prints a note, and the merge goes on"
+else bad "relative timing log: $(ls "$F/work"): $out"; fi
 
 # 3c. GH #742: the mh/gauntlet success status goes on the merged head, after the push and before the merge,
 #     for a green run and for a cached pass; a red gauntlet posts none; a failed post stops the merge.
@@ -607,6 +616,10 @@ untouched "high load"
 if [ "$(trows)" = 1 ] && [ "$(trow "[.who, .timeout, .tree, .cached, .rc, .round, (.load_wait | $isint), (.merge_lock_wait | $isint)]")" = '["merge-pr","load",null,null,null,1,true,true]' ]; then
   ok "a load timeout writes a row naming it, with its waits (3b2)"
 else bad "load timeout row: $(cat "$F/time.jsonl" 2>&1)"; fi
+# The timeout row's load_wait is the wall time spent in the wait, not just the sleeps counted so far.
+setup; STUB_LOAD=7.25 STUB_UPTIME_SLEEP=1 run
+if [ "$(trow '.load_wait >= 1')" = true ]; then ok "a load timeout row counts wall time, not only the sleeps"
+else bad "load timeout wall time: $(cat "$F/time.jsonl" 2>&1)"; fi
 # 12b. no MERGE_PR_LOAD_MAX: the cap is the online core count. A load at it refuses and names it;
 #     a load just under it merges, even when that is above the old fixed cap of 4.
 cores=$(getconf _NPROCESSORS_ONLN)
