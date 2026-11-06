@@ -369,6 +369,39 @@ History, so a mixed-judge comparison reads right:
   `judgeModel differs` WARN; the script adds `expected: perf-regression-routing is judged by
   sonnet` when one side ran only listed cases under their listed judge. Every other case stays
   on haiku (the #510 decision for `backend-architect-security-handoff` was a rubric fix, #511).
+- **The `haiku` alias moved to Haiku 5.5 (seen 2026-11-06, CC 2.1.318, GH #920).** A judge
+  call's debug log reads `dispatching to firstParty model=claude-haiku-5-5`. A default run stores
+  `suite.judgeModel` as `null`, so `model-bench-diff.py` cannot see this change: a haiku-judged result
+  from before it and one after it read as the same judge. The judge answers one word (`Respond
+  with exactly one word: PASS or FAIL`), and a vote is PASS only if the reply contains PASS and not
+  FAIL. That judge passed a reply with a wrong number and one with a required caveat deleted, and
+  failed replies that met their rubric. Re-judging 118 verdicts, sonnet passed 13 that it failed,
+  11 of them in the with-plugin arm. So a number, a quote or a "this caveat is present" check is a
+  regex grader, and an llm grader judges only what a regex can't (a dismissal, a scored structure).
+  The presence checks in `idea-audit-*` and `model-bench-diff` were converted this way rather than
+  given a sonnet row; each llm rubric that stayed was re-tested on the real judge before it shipped.
+
+### Not covered by evals
+
+A break in these paths does not show up in an eval run.
+
+- **The Codex path of `attack-proposal`, `idea-audit` and `deep-audit`.** The eval sandbox has no
+  Codex login and limited network, so every run takes the Claude fallback (2026-11-06 replies:
+  `codex login status` reports "Not logged in"; "Codex couldn't reach the network"). Only the
+  dispatch itself is untested: the verdict a Codex lane returns goes through `check-verdict.py`
+  (`tests/skills/test-idea-audit-check-verdict.sh`, `tests/skills/test-deep-audit-check-verdict.sh`),
+  and the model resolver has `tests/scripts/test-codex-resolve-model.sh`.
+  `docs/reference/codex-integration-map.md` documents the lanes.
+- **`model-bench`'s paid path.** Cases run `--diff-only`, since a nested `claude plugin eval` must
+  never start inside an eval. `tests/scripts/test-model-bench.sh` checks `model-bench.sh`'s argv and
+  env against a stub `claude`; a real two-arm run is untested.
+- **`deep-audit` fixing a real finding that no session claim covers.** Allowed by design (operator
+  decision, 2026-11-06, GH #920): a finding with a concrete trigger survives, and "audit and fix"
+  skips the confirm question. `deep-audit-clean`'s fixture was made truly clean for that reason:
+  `percent()` takes integer counts and computes `part * 100 / total` (correctly rounded, so
+  `percent(7, 100)` is `7.0`), and its commit and NOTES say exactly what changed (a bare
+  `ZeroDivisionError` became a `ValueError`). So no case fails when the skill fixes something beyond
+  the claims.
 
 ### Fold-vs-keep (one agent)
 

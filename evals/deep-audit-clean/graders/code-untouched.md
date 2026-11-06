@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '    if total == 0:\n        raise ValueError\("total must be non-zero"\)\n    return part / total \* 100\n'
+pattern: '    if total == 0:\n        raise ValueError\("total must be non-zero"\)\n    return part \* 100 / total\n'
 match: contains
 target: {source: file, path: calc.py}
 ---

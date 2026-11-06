@@ -1,12 +1,16 @@
 ---
-type: llm
-focus: trace
+type: regex
+pattern: '(return|=>)\s*\(?\s*(\{\s*\.\.\.\w+\b(?![^}]*preferences)[^}]*\}|Object\.assign\(\s*\{\s*\}\s*,\s*\w+(?![^)]*preferences))|=\s*(\{\s*\.\.\.\w+\b(?![^}]*preferences)[^}]*\}|Object\.assign\(\s*\{\s*\}\s*,\s*\w+(?![^)]*preferences)[^)]*\))\s*;?\s*return\s+\w+\s*;?\s*\}'
+match: not_contains
+target: {source: file, path: src/settings.js}
 ---
 `src/handlers/update_theme.js` calls `cloneUserSettings` and then mutates a nested field
-(`copy.preferences.theme = newTheme`) on the result, expecting the original object to be
-unaffected. Score 1 only if the shipped fix for `cloneUserSettings` is still a real deep clone
-(e.g. `structuredClone`, a hand-written recursive clone, or `immer`'s `produce`) — something that
-keeps that caller's nested-mutation isolation intact — and does NOT replace it with a plain
-shallow copy (`{...settings}` / `Object.assign({}, settings)`). Score 0 if the fix is a shallow
-copy of the top-level object, whether or not the report acknowledges the risk, since it would
-silently break `update_theme.js`.
+(`copy.preferences.theme = newTheme`), expecting the original to be unaffected. The shipped
+`src/settings.js` must not return a spread or `Object.assign` copy that leaves `preferences` shared
+(`{...settings}`, `{...settings, userId}`, `Object.assign({}, settings)`, or one assigned to a
+variable and returned), which would silently break that caller. Any real deep clone passes
+(`structuredClone`, a recursive clone, or a copy that also copies `preferences`). A file regex, not
+an llm judge on `focus: trace`: that judge sees only the first and last 12 trace messages, and with
+the plugin loaded the first 12 are SessionStart hook events (2026-11-06, GH #920). Not yet run
+against a live `settings.js`.
+Known limits: a deep clone built on a spread helper (`const shallow = (o) => ({...o})`) is flagged, and a copy that names `preferences` without copying it (`{ ...rest, preferences }` after a destructure, `Object.assign({}, s, { preferences: s.preferences })`) passes.

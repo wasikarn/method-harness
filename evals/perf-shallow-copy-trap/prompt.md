@@ -2,8 +2,8 @@
 name: perf-shallow-copy-trap
 tags: [performance-optimizer, planted]
 runs: 3
-max_turns: 25
-timeout_seconds: 400
+max_turns: 40
+timeout_seconds: 1200
 allowed_tools: [Bash, Read, Write, Edit, Grep, Glob, Agent, Skill]
 ---
 `cloneUserSettings` in `src/settings.js` is on a hot path and `bench.js` shows it's slow (it's

@@ -11,4 +11,5 @@ Use the `mh:idea-audit` skill (Skill tool, `skill: "mh:idea-audit"`) to evaluate
 into this repo. `package.json` and `src/index.js` are this repo's current state; there is no
 existing retry helper here.
 
-Start your final message with the Phase 3 scored decision.
+Start your final message with the Phase 3 scored decision, and include the per-claim verdict table
+in that message.

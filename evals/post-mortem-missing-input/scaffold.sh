@@ -42,5 +42,5 @@ git add src tests && git commit -qm "feat: retry helper"
 sed -i.bak 's/return base \* (2 \*\* (attempt - 1))/return base * (2 ** attempt)/' src/retry.py && rm src/retry.py.bak
 git commit -qam "refactor: simplify backoff exponent"
 sed -i.bak 's/return base \* (2 \*\* attempt)/return base * (2 ** (attempt - 1))/' src/retry.py && rm src/retry.py.bak
-git commit -qam "fix(retry): backoff used a 0-based exponent on a 1-based attempt, doubling every wait (gh-77); regression test test_backoff_first_retry_waits_base"
+git commit -qam "fix(retry): backoff used a 0-based exponent on a 1-based attempt, doubling every wait (gh-77); covered by test_backoff_first_retry_waits_base"
 git log --oneline > GITLOG.txt
