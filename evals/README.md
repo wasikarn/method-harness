@@ -395,9 +395,11 @@ A break in these paths does not show up in an eval run.
   env against a stub `claude`; a real two-arm run is untested.
 - **`deep-audit` fixing a real finding that no session claim covers.** Allowed by design (operator
   decision, 2026-11-06, GH #920): a finding with a concrete trigger survives, and "audit and fix"
-  skips the confirm question. `deep-audit-clean`'s fixture was made truly clean for that reason (its
-  docstring says `percent()` returns an unrounded float), so no case fails when the skill fixes
-  something beyond the claims.
+  skips the confirm question. `deep-audit-clean`'s fixture was made truly clean for that reason:
+  `percent()` takes integer counts and computes `part * 100 / total` (correctly rounded, so
+  `percent(7, 100)` is `7.0`), and its commit and NOTES say exactly what changed (a bare
+  `ZeroDivisionError` became a `ValueError`). So no case fails when the skill fixes something beyond
+  the claims.
 
 ### Fold-vs-keep (one agent)
 
