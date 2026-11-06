@@ -95,17 +95,17 @@ if __name__ == "__main__":
     unittest.main()
 FIXTURE_EOF
 cat > plan.md <<'FIXTURE_EOF'
-# Plan: rename `tmp` to `retry_count` in `run_with_retries`
+# Plan: rename `tmp` to `failed_attempts` in `run_with_retries`
 
 Target: the local variable `tmp` in `run_with_retries()` in `src/worker.py`. It counts failed
 attempts. It is local to that one function, so no other function or file changes.
 
-1. Check the new name is free: `grep -rnw retry_count src tests` must print nothing.
-2. Rename every `tmp` in `run_with_retries()` to `retry_count`.
+1. Check the new name is free: `grep -rnw failed_attempts src tests` must print nothing.
+2. Rename every `tmp` in `run_with_retries()` to `failed_attempts`.
 3. Check the rename is complete: `grep -nw tmp src/worker.py` must print nothing.
 4. Run `python3 -m unittest -v tests.test_worker`; all 6 tests must pass unchanged.
    `test_raises_after_max_attempts` runs the retry-exhausted branch, so every line that uses
    the counter runs in at least one test.
-5. Commit `src/worker.py` alone as `refactor(worker): name the retry counter`.
+5. Commit `src/worker.py` alone as `refactor(worker): name the failed-attempts counter`.
 FIXTURE_EOF
 git add .gitignore plan.md src tests && git commit -qm "feat(worker): run jobs with retries"
