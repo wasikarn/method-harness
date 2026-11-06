@@ -462,6 +462,8 @@ miss_log_row() {
   # ${HOME:+...}: no HOME under set -u gives an empty path (the note below), not an abort.
   local log="${GAUNTLET_MISS_LOG:-${HOME:+$HOME/.cache/mh/gauntlet-miss.jsonl}}" plan
   # GH #930: a relative path would land in the checkout, which require_unchanged_after_gauntlet refuses.
+  # shortcut: an absolute path inside the checkout is not caught, upgrade if a caller ever sets the log
+  # under a checkout (refuse a path under `git rev-parse --show-toplevel`).
   case "$log" in
     /*) ;;
     *) echo "merge-pr: GAUNTLET_MISS_LOG must be an absolute path (got $log); no miss-log row for $head." >&2; return 0 ;;
