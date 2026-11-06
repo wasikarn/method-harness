@@ -218,7 +218,8 @@ PY
   # anchor rejects (deep-audit finding, v1.1.22).
   case "$c" in
     blind-spot-hunter-planted|silent-failure-hunter-planted) sample=$'## Verdict\n\n**1 MEDIUM, 2 LOW**' ;;
-    blind-spot-hunter-clean|silent-failure-hunter-clean)     sample=$'## Verdict\n\n**CLEAN**' ;;
+    blind-spot-hunter-clean)      sample=$'## Verdict\n\n**CLEAN (1 dormant: 1 LOW)**' ;;
+    silent-failure-hunter-clean)  sample=$'## Verdict\n\n**CLEAN**' ;;
     test-gap-analyzer-planted)    sample=$'**Verdict:** `4 GAPS, highest 6/10`' ;;
     test-gap-analyzer-clean)      sample=$'**Verdict:** `COVERED`' ;;
     type-design-analyzer-planted) sample=$'**6 CONCERNS across 4 types, lowest Encapsulation 4/10**' ;;
