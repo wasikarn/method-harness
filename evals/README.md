@@ -387,9 +387,11 @@ A break in these paths does not show up in an eval run.
 
 - **The Codex path of `attack-proposal`, `idea-audit` and `deep-audit`.** The eval sandbox has no
   Codex login and limited network, so every run takes the Claude fallback (2026-11-06 replies:
-  `codex login status` reports "Not logged in"; "Codex couldn't reach the network"). Only the model
-  resolver has a test (`tests/scripts/test-codex-resolve-model.sh`); the Codex attacker and checker
-  dispatch and their verdict handling have none. `docs/reference/codex-integration-map.md` documents them.
+  `codex login status` reports "Not logged in"; "Codex couldn't reach the network"). Only the
+  dispatch itself is untested: the verdict a Codex lane returns goes through `check-verdict.py`
+  (`tests/skills/test-idea-audit-check-verdict.sh`, `tests/skills/test-deep-audit-check-verdict.sh`),
+  and the model resolver has `tests/scripts/test-codex-resolve-model.sh`.
+  `docs/reference/codex-integration-map.md` documents the lanes.
 - **`model-bench`'s paid path.** Cases run `--diff-only`, since a nested `claude plugin eval` must
   never start inside an eval. `tests/scripts/test-model-bench.sh` checks `model-bench.sh`'s argv and
   env against a stub `claude`; a real two-arm run is untested.

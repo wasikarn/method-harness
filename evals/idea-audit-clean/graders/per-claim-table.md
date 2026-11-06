@@ -1,0 +1,10 @@
+---
+type: regex
+pattern: '\|[^\n]*\|\s*\**\s*(MATCH|PARTIAL|GAP|N-?A)\b[^\n]*\n(?:[^\n]*\n){0,12}?[^\n]*\|\s*\**\s*(MATCH|PARTIAL|GAP|N-?A)\b'
+match: contains
+target: last_message
+---
+The final message carries the skill's per-claim verdict table: at least two table rows whose
+verdict cell opens with MATCH, PARTIAL, GAP or N-A. The prompt asks for the table in the message,
+since the skill otherwise writes it only to its `docs/research/` artifact, whose path varies by
+topic and date, so a `focus` file grader cannot target it.

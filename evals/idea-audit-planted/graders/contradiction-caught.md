@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '(zero|no)[- ](runtime )?dependenc[^\n]{0,250}(\bbut\b|contradict|\bGAP\b|mismatch|discrepan|\bfalse\b|untrue|not true)[^\n]{0,250}lodash|lodash[^\n]{0,250}(contradict|\bGAP\b|mismatch|discrepan|\bfalse\b|even though|despite)'
+pattern: '(zero|no)[- ](runtime )?dependenc(?![^\n]{0,40}\bMATCH\b)[^\n]{0,250}(\bbut\b|contradict|\bGAP\b|mismatch|discrepan|\bfalse\b|untrue|not true)[^\n]{0,250}lodash|lodash[^\n]{0,250}(contradict|\bGAP\b|mismatch|discrepan|\bfalse\b|even though|despite)'
 match: contains
 target: last_message
 flags: i
