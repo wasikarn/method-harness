@@ -459,7 +459,13 @@ run_gauntlet_here() {
 # those tests while the plan was below full. A rate well above 0 means the rules need tightening. A log or
 # plan problem prints a note and never stops the merge.
 miss_log_row() {
-  local log="${GAUNTLET_MISS_LOG:-$HOME/.cache/mh/gauntlet-miss.jsonl}" plan
+  # ${HOME:+...}: no HOME under set -u gives an empty path (the note below), not an abort.
+  local log="${GAUNTLET_MISS_LOG:-${HOME:+$HOME/.cache/mh/gauntlet-miss.jsonl}}" plan
+  # GH #930: a relative path would land in the checkout, which require_unchanged_after_gauntlet refuses.
+  case "$log" in
+    /*) ;;
+    *) echo "merge-pr: GAUNTLET_MISS_LOG must be an absolute path (got $log); no miss-log row for $head." >&2; return 0 ;;
+  esac
   if ! plan=$(bash "$HERE/gauntlet-plan.sh" "$dev"); then
     echo "merge-pr: gauntlet-plan.sh failed, so no miss-log row for $head." >&2
     return 0
