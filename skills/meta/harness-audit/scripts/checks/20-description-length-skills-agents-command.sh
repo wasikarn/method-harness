@@ -41,7 +41,10 @@ done
 # build-breaker.
 # A template under $TMPDIR, not a bare `mktemp`: on macOS that writes under /var/folders, which the
 # `claude plugin eval` sandbox blocks, so this check crashed the whole audit there (GH #921).
-_dup_tsv=$(mktemp "${TMPDIR:-/tmp}/ha-check20.XXXXXX")
+# /tmp when TMPDIR names a missing dir, which the bare `mktemp` this replaced never read.
+_tmp_root=${TMPDIR:-/tmp}
+[ -d "$_tmp_root" ] || _tmp_root=/tmp
+_dup_tsv=$(mktemp "$_tmp_root/ha-check20.XXXXXX")
 for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
   case "$f" in */skills/_*) continue ;; esac
