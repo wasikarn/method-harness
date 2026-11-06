@@ -217,8 +217,10 @@ whole-picture pass on top (Rule 13's 3-round stop applies here too — if the fi
 seem to need another combined-fix check, stop and report the loop instead of continuing
 indefinitely).
 
-A clean result from this pass (`CLEAN`, per the agent's own output contract) is reported the same
-way step 3's zero-findings pass is: a legitimate outcome, not a skipped check. A failed dispatch
+A clean result from this pass (`CLEAN` or `CLEAN (N dormant: ...)`, per the agent's own output
+contract) is reported the same way step 3's zero-findings pass is: a legitimate outcome, not a
+skipped check. List each dormant finding in the report as deferred, with the condition that would
+make it live; with nothing to fix until then, it skips the confirm gate. A failed dispatch
 is neither: it did not run, and the Final output says so (see the reference above).
 
 ## 7. Re-score on the same rubric
