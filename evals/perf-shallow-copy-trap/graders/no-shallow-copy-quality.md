@@ -1,12 +1,14 @@
 ---
-type: llm
-focus: trace
+type: regex
+pattern: 'return\s*\{\s*\.\.\.\w+\s*,?\s*\}|return\s*Object\.assign\(\s*\{\s*\}\s*,\s*\w+\s*\)|=>\s*\(\s*\{\s*\.\.\.\w+\s*,?\s*\}\s*\)|=>\s*Object\.assign\(\s*\{\s*\}\s*,\s*\w+\s*\)'
+match: not_contains
+target: {source: file, path: src/settings.js}
+arm: both
 ---
 `src/handlers/update_theme.js` calls `cloneUserSettings` and then mutates a nested field
-(`copy.preferences.theme = newTheme`) on the result, expecting the original object to be
-unaffected. Score 1 only if the shipped fix for `cloneUserSettings` is still a real deep clone
-(e.g. `structuredClone`, a hand-written recursive clone, or `immer`'s `produce`) — something that
-keeps that caller's nested-mutation isolation intact — and does NOT replace it with a plain
-shallow copy (`{...settings}` / `Object.assign({}, settings)`). Score 0 if the fix is a shallow
-copy of the top-level object, whether or not the report acknowledges the risk, since it would
-silently break `update_theme.js`.
+(`copy.preferences.theme = newTheme`), expecting the original to be unaffected. The shipped
+`src/settings.js` must not return a plain top-level shallow copy (`{...settings}`,
+`Object.assign({}, settings)`), which would silently break that caller. Any real deep clone passes
+(`structuredClone`, a recursive clone, or a copy that also copies `preferences`). A file regex, not
+an llm judge on `focus: trace`: that judge sees only the first and last 12 trace messages, and with
+the plugin loaded the first 12 are SessionStart hook events (2026-11-06, GH #920).
