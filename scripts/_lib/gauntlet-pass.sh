@@ -54,8 +54,10 @@ gauntlet_time_num() { if [[ "${1-}" =~ ^(0|[1-9][0-9]*)$ ]]; then printf '%s' "$
 # not a whole number is null. The only writer of the log. A relative log path or a write that fails
 # prints a note and writes nothing; returns 0 either way.
 gauntlet_time_row() {
-  local log="${GAUNTLET_TIME_LOG:-$HOME/.cache/mh/gauntlet-time.jsonl}" tree=null timeout=null
+  # ${HOME:+...}: no HOME under the callers' set -u gives an empty path (the note below), not an abort.
+  local log="${GAUNTLET_TIME_LOG:-${HOME:+$HOME/.cache/mh/gauntlet-time.jsonl}}" tree=null timeout=null
   # A relative path would land in the checkout the gauntlet ran on, and merge-pr.sh refuses a changed one.
+  # shortcut: an absolute path inside the checkout is not caught; keep the log outside any checkout.
   case "$log" in
     /*) ;;
     *) echo "$1: GAUNTLET_TIME_LOG must be an absolute path (got $log); no timing row written." >&2; return 0 ;;
@@ -74,7 +76,7 @@ gauntlet_time_row() {
 # gauntlet lock (GH #158), unless this tree already passed. All output goes to stderr. Returns the
 # gauntlet's status. The lock is taken in a subshell: callers that hold another lock built on the same
 # library (merge-pr.sh's merge lock) share GAUNTLET_LOCK_HELD and MH_GAUNTLET_LOCK_OWNER with it.
-# Each call, cached or run, appends one gauntlet_time_row.
+# Each call, cached or run, appends one gauntlet_time_row; a run stopped by INT/TERM/HUP writes none.
 gauntlet_full() {
   local who=$1 tree d
   tree=$(git rev-parse --verify 'HEAD^{tree}') || return 1
