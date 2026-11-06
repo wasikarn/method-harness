@@ -3,7 +3,8 @@
 Question: can a Claude Code web (cloud) environment's setup script install mh so that its
 skills, agents and gates run in the session? Answer: **yes, with install plus enable.**
 
-Both runs: environment `mh-probe` (network "Limited", the default), repo CodeKatas (not
+All runs: environment `mh-probe` (network "Limited · no domains · package managers on", the
+default; github.com was still reachable, so no run failed for network reasons), repo CodeKatas (not
 method-harness, whose own hooks would confuse the result), the first prompt from
 `mh-cloud-probe-prompt.md`.
 
@@ -37,15 +38,27 @@ method-harness, whose own hooks would confuse the result), the first prompt from
   `[mh:gate] BLOCKED: rm -rf detected — no trash CLI on this machine — ask the user before a
   destructive delete, or install one`; `ls -d` showed the dir still there. **Gates enforce.**
 
+## v3: the shipped setup script (`scripts/cloud-setup.sh`)
+
+Same environment, the shipped script (that run also called `claude plugin enable` for
+mattpocock-skills; that line is removed since).
+- Every step exit 0 except that extra enable: exit 1, "already enabled". mattpocock-skills
+  installs enabled; only mh needs `enable`.
+- `apt-get update` and `apt-get install -y trash-cli` worked as root: `/usr/bin/trash-put`.
+- `claude plugin list`: mattpocock-skills 1.3.2 and mh 1.1.558, both enabled.
+- Skills from both plugins visible in the session.
+- Gate check: `rm -rf` blocked with `[mh:gate] BLOCKED: rm -rf detected — use trash instead`;
+  the dir survived. With trash-cli present, the gate offers the trash path, not "ask the user".
+- The setup-script dialog says the result is cached so later sessions start quickly.
+
 ## What this changes
 
 - The plugin route works in the cloud, contrary to the spec draft's premise
   (`cloud-bundle-spec-draft-2026-11-06.md`, Out of Scope: "not supported by the platform").
   A setup script with marketplace add, install and enable is enough; the vendored `.claude`
   bundle is not needed to get gates into a cloud session.
-- Gap: the irrecoverable gate's fix hint suggests installing trash, which a cloud session has
-  no package for by default. The setup script could install `trash-cli`, or the gate's
-  message could stop suggesting it when `CLAUDE_CODE_REMOTE=true`.
-- Not tested: whether a hook `ask` reaches a person in an interactive web session, unattended
-  (`MH_UNATTENDED`) behaviour, setup-script time on a cold cache, and per-session cost of the
-  marketplace clone.
+- A cloud machine has no trash CLI by default; `scripts/cloud-setup.sh` installs trash-cli, so
+  the gate's own hint applies unchanged.
+- Decision (operator, 2026-11-06): ship the setup script, drop the vendored-bundle plan.
+- Not tested: whether a hook `ask` reaches a person in an interactive web session, and
+  unattended runs.

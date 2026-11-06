@@ -40,6 +40,11 @@ The plugin ships `defaultEnabled: false`; add `"mh@wasikarn": true` to `settings
 `enable` did not. Same-version edits never reach the cache — bump `plugin.json` before
 `claude plugin update`. Uninstall: `/plugin uninstall mh@wasikarn`.
 
+**Claude Code on the web:** paste `scripts/cloud-setup.sh` into the cloud environment's
+"Setup script" box. It installs and enables both plugins and trash-cli; the default "Limited"
+network reaches github.com. Its log is `/tmp/mh-cloud-setup.log`. Evidence:
+`docs/research/mh-cloud-probe-2026-11-06/probe-results.md`.
+
 ## The gates (`hooks/hooks.json`)
 
 One clause per gate; full scope and exceptions: `docs/reference/operating-model.md` §1.

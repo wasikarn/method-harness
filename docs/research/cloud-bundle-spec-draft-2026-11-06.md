@@ -1,3 +1,5 @@
+> **Superseded 2026-11-06, not built.** The cloud probe showed that a setup script which installs and enables the plugin runs mh in a web session, gates included, which disproves this draft's premise. The operator chose the setup script (`scripts/cloud-setup.sh`) over this bundle. Evidence: `mh-cloud-probe-2026-11-06/probe-results.md`.
+
 ## Problem Statement
 
 The operator runs mh as a plugin locally, where its gates (irrecoverable commands, secret content, config writes, subagent git use, test integrity) and its doctrine protect every session. Claude Code on the web does not install plugins: a repo's `enabledPlugins`, user plugins and (for a public marketplace repo) account-synced plugins all fail to load. A web session in the operator's own repos therefore runs unattended with none of mh's protection and none of its doctrine. The web does load a repo's committed hooks, rules, skills and agents, but mh's source is written for a plugin (plugin-root paths, `mh:` names, `$HOME` state), so it cannot simply be copied.
