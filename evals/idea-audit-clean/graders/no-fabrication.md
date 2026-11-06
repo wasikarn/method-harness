@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}\b(is|are|was) (false|untrue|wrong|contradicted)|(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}(?<!no )(?<!not )(?<!n.t )(?<!without )(?<!any )contradict|\b(declares|lists|has|includes) (a|one|[1-9]\d*) (runtime )?dependenc|lists? (a |one |\d+ )?(runtime )?dependenc(y|ies) on|(pulls? in|depends on|brings in) lodash'
+pattern: '(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}\b(is|are|was) (false|untrue|wrong|contradicted)|(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}(?<!no )(?<!not )(?<!n.t )(?<!without )(?<!any )contradict|\b(declares|lists|has|includes) (one|[1-9]\d*) (runtime )?dependenc|\b(declares|lists|has|includes) a (runtime )?dependency\b|lists? (a |one |\d+ )?(runtime )?dependenc(y|ies) on|(pulls? in|depends on|brings in) lodash'
 match: not_contains
 target: last_message
 flags: i
