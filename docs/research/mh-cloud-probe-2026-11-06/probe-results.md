@@ -8,13 +8,13 @@ default; github.com was still reachable, so no run failed for network reasons), 
 method-harness, whose own hooks would confuse the result), the first prompt from
 `mh-cloud-probe-prompt.md`.
 
-## Environment facts (both runs)
+## Environment facts (all runs)
 
 - user root, `HOME=/root`, `CLAUDE_CODE_REMOTE=true`.
 - `claude` at `/opt/node22/bin/claude`, version 2.1.318.
 - github.com/wasikarn/method-harness returned HTTP 200 under "Limited" network.
 - `CLAUDE_ENV_FILE` is not set in the session.
-- No trash CLI on the machine.
+- No trash CLI on the machine by default (v3 and v4 install one).
 
 ## v1: install only
 
@@ -68,18 +68,21 @@ before update). Those changes were checked locally with stub commands, not re-ru
   script's result and the script reruns only when it or the allowed hosts change, or after
   about 7 days. So a gate fix merged to develop can take up to about 7 days to reach cloud
   sessions unless the operator edits the setup script. `scripts/cloud-setup.sh` marks a line
-  for that. Confirmed below (v4).
-- Cloud trash is session-scoped: with trash-cli present the gate says "use trash instead" and
-  an agent deletes without asking, but the trash lives on the session VM. A trashed file is
-  recoverable for the rest of the session, then gone with the VM, the same as every other
-  uncommitted, unpushed file there. The gate is unchanged for the cloud: an "ask" there would
-  stop unattended runs without protecting more than pushing already does.
+  for that. The lag itself is confirmed below (v4, over 15 minutes); the 7-day bound comes
+  from the docs only.
+- Cloud trash is presumably session-scoped: with trash-cli present the gate says "use trash
+  instead" rather than "ask the user", so an agent can delete without asking (inferred from
+  the gate message; no run recorded an agent doing it). The trash lives on the session VM, so a
+  trashed file is recoverable for the rest of the session and presumably gone with the VM, the
+  same as every other uncommitted, unpushed file there. The gate is unchanged for the cloud, on
+  the assumption (unattended runs are untested) that an "ask" there would stall unattended runs
+  without protecting more than pushing already does.
 - Not tested: whether a hook `ask` reaches a person in an interactive web session, unattended
   runs, and whether a resumed cloud session keeps its trash.
 
 ## v4: snapshot lag and the shipped script (after PR #932 merged as mh 1.1.559)
 
-- Snapshot lag, confirmed: a new session at 16:49 UTC, environment unchanged since the v3
+- Snapshot lag, confirmed (the 7-day bound is from the docs, not observed): a new session at 16:49 UTC, environment unchanged since the v3
   run, still had mh 1.1.558 (PR #932 merged 1.1.559 at 16:34 UTC). Its
   `/tmp/mh-cloud-setup.log` was from 16:11 UTC, the snapshot's own run.
 - Saving the final `scripts/cloud-setup.sh` into the environment rebuilt it; the next session
