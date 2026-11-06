@@ -39,7 +39,9 @@ done
 # routing failure (code.claude.com/docs/en/skills) is born from. WARN, not CRIT:
 # an intentional twin pair that drifts into similarity is a routing smell, not a
 # build-breaker.
-_dup_tsv=$(mktemp)
+# A template under $TMPDIR, not a bare `mktemp`: on macOS that writes under /var/folders, which the
+# `claude plugin eval` sandbox blocks, so this check crashed the whole audit there (GH #921).
+_dup_tsv=$(mktemp "${TMPDIR:-/tmp}/ha-check20.XXXXXX")
 for f in "$CLAUDE_DIR/skills"/*/SKILL.md "$CLAUDE_DIR/skills"/*/*/SKILL.md "$CLAUDE_DIR/agents"/*.md; do
   [ -f "$f" ] || continue
   case "$f" in */skills/_*) continue ;; esac
