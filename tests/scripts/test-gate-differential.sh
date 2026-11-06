@@ -403,7 +403,7 @@ stub "$T/s-held" "import subprocess; subprocess.Popen([sys.executable, '-c', 'im
 t0=$SECONDS
 out=$(GD_TIMEOUT=1 fake "$T/s-held" "$T/s-held" "$T/rm.txt" bash); rc=$?
 took=$((SECONDS - t0))
-pkill -f "time.sleep($held)"
+pkill -f "time[.]sleep[(]$held"  # pkill -f takes a regex: bracket the literal . and (
 if [ "$rc" -eq 0 ] && [ "$took" -lt 10 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
   ok "bash runner: a timeout does not wait on a grandchild that holds stdout (${took}s)"
 else bad "held stdout (rc=$rc, ${took}s): $out"; fi
