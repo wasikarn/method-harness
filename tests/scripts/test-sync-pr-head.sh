@@ -24,9 +24,11 @@ ROOT_DIR="$(mktemp -d)"
 [ -n "$ROOT_DIR" ] && [ -d "$ROOT_DIR" ] || { echo "mktemp -d failed" >&2; exit 1; }
 export TMPDIR="$ROOT_DIR"
 # The gauntlet lock and pass cache stay in the sandbox (the gauntlet's own test layer exports
-# GAUNTLET_PASS_CACHE=0; these cases want the cache on).
-export GAUNTLET_LOCK_DIR="$ROOT_DIR/gauntlet.lock" GAUNTLET_PASS_DIR="$ROOT_DIR/pass" GAUNTLET_PASS_CACHE=1
-unset MH_GAUNTLET_LOCK_OWNER STUB_GAUNTLET_FAIL STUB_STATUS_FAIL
+# GAUNTLET_PASS_CACHE=0; these cases want the cache on), and so does the timing log.
+export GAUNTLET_LOCK_DIR="$ROOT_DIR/gauntlet.lock" GAUNTLET_PASS_DIR="$ROOT_DIR/pass" GAUNTLET_PASS_CACHE=1 \
+  GAUNTLET_TIME_LOG="$ROOT_DIR/time.jsonl"
+unset MH_GAUNTLET_LOCK_OWNER STUB_GAUNTLET_FAIL STUB_STATUS_FAIL \
+  GAUNTLET_TIME_MERGE_LOCK_WAIT GAUNTLET_TIME_LOAD_WAIT GAUNTLET_TIME_ROUND
 # gh: only the mh/gauntlet status post (GH #742) reaches it; it logs each call to $STUB_DIR/gh.log and
 # fails when STUB_STATUS_FAIL is set, or with a 422 when the case's origin ($STUB_ORIGIN) lacks the sha
 # (a status posted before the push). Never touches GitHub.
@@ -339,6 +341,17 @@ out=$(cd "$L" && PATH="$gw:$PATH" bash "$SCRIPT" feat/x "$HEAD_SHA" 2>"$ROOT_DIR
 if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(remote_head)" = "$out" ] && /usr/bin/grep -q 'git push exited 141 but origin has' <<<"$err"; then
   ok "push exits 141 after landing: ls-remote finds the head, the sync counts"
 else bad "landed push rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
+
+# 8b. timing log: each gauntlet run appends one row; a sync row has null merge fields (only merge-pr.sh
+#     waits on the merge lock and load). A merge variable that is not a plain integer (07, a quote),
+#     exported by mistake, is written as null, so the row still parses.
+setup none
+GAUNTLET_TIME_LOG="$STUB_DIR/time.jsonl" GAUNTLET_TIME_ROUND=07 GAUNTLET_TIME_LOAD_WAIT='1"x' run_sync feat/x "$HEAD_SHA"
+trow=$(jq -c '[.who, .cached, .rc, .merge_lock_wait, .load_wait, .round, .timeout, .tree]' "$STUB_DIR/time.jsonl" 2>&1)
+if [ "$rc" -eq 0 ] && [ "$(wc -l <"$STUB_DIR/time.jsonl" | tr -d ' ')" = 1 ] \
+  && [ "$trow" = "[\"sync-pr-head\",false,0,null,null,null,null,\"$(git -C "$L" rev-parse "$out^{tree}")\"]" ]; then
+  ok "a sync run writes one timing row with null merge fields; bad merge values become null"
+else bad "sync timing row: rc=$rc row=$trow"; fi
 
 # 9. usage: both arguments are required.
 out=$(bash "$SCRIPT" feat/x 2>&1); rc=$?

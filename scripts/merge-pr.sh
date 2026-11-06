@@ -400,7 +400,7 @@ check_review() {
 wait_for_load() {
   # A fixed 4 on a 12-core machine blocked every merge while peer sessions ran (load 8-12, 2026-10-27).
   # Too high a cap only risks a timing row failing the gauntlet, which refuses the push: safe to retry.
-  local cores load_max wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}" waited=0 load
+  local cores load_max wait_secs="${MERGE_PR_LOAD_WAIT_SECS:-900}" waited=0 load start=$SECONDS
   cores=$(getconf _NPROCESSORS_ONLN) || cores=4  # `|| ` keeps set -e from exiting here
   [ -n "$cores" ] || cores=4  # an empty cap would read as 0 and refuse every merge
   load_max="${MERGE_PR_LOAD_MAX:-$cores}"
@@ -410,6 +410,9 @@ wait_for_load() {
       return 0
     fi
     if [ "$waited" -ge "$wait_secs" ]; then
+      # shellcheck disable=SC2034 # read by gauntlet_time_row
+      GAUNTLET_TIME_LOAD_WAIT=$((SECONDS - start))  # wall time: uptime calls and scheduling, not only the sleeps
+      gauntlet_time_row merge-pr "" null null null null load
       die "load $load is still >= $load_max after ${waited}s; not merging."
     fi
     sleep 30
@@ -456,7 +459,15 @@ run_gauntlet_here() {
 # those tests while the plan was below full. A rate well above 0 means the rules need tightening. A log or
 # plan problem prints a note and never stops the merge.
 miss_log_row() {
-  local log="${GAUNTLET_MISS_LOG:-$HOME/.cache/mh/gauntlet-miss.jsonl}" plan
+  # ${HOME:+...}: no HOME under set -u gives an empty path (the note below), not an abort.
+  local log="${GAUNTLET_MISS_LOG:-${HOME:+$HOME/.cache/mh/gauntlet-miss.jsonl}}" plan
+  # GH #930: a relative path would land in the checkout, which require_unchanged_after_gauntlet refuses.
+  # shortcut: an absolute path inside the checkout is not caught, upgrade if a caller ever sets the log
+  # under a checkout (refuse a path under `git rev-parse --show-toplevel`).
+  case "$log" in
+    /*) ;;
+    *) echo "merge-pr: GAUNTLET_MISS_LOG must be an absolute path (got $log); no miss-log row for $head." >&2; return 0 ;;
+  esac
   if ! plan=$(bash "$HERE/gauntlet-plan.sh" "$dev"); then
     echo "merge-pr: gauntlet-plan.sh failed, so no miss-log row for $head." >&2
     return 0
@@ -529,8 +540,15 @@ if [ "$verify" = 1 ]; then
   exit 0
 fi
 
+# GAUNTLET_TIME_*: plain shell vars (not exported) that gauntlet_full's timing row reads (gauntlet-pass.sh).
+t=$SECONDS
 merge_lock_take
+# shellcheck disable=SC2034 # read by gauntlet_time_row
+GAUNTLET_TIME_MERGE_LOCK_WAIT=$((SECONDS - t))
 if [ "$GAUNTLET_LOCK_HELD" != 1 ]; then
+  # A lock dir still there is held by another run: the wait ran out. None means it could not be made.
+  if [ -d "$merge_lock_dir" ]; then lock_timeout=merge_lock; else lock_timeout=merge_lock_error; fi
+  gauntlet_time_row merge-pr "" null null null null "$lock_timeout"
   die "could not take the merge lock at $merge_lock_dir within ${MERGE_PR_LOCK_WAIT_SECS:-3600}s (another merge-pr.sh is running, or the dir cannot be made); not merging."
 fi
 # develop may have moved while this run waited for the lock.
@@ -538,7 +556,11 @@ fetch_develop "git fetch failed after taking the merge lock; not merging."
 
 round=1
 while :; do
+  # shellcheck disable=SC2034 # read by gauntlet_time_row
+  t=$SECONDS GAUNTLET_TIME_ROUND=$round
   wait_for_load
+  # shellcheck disable=SC2034 # read by gauntlet_time_row
+  GAUNTLET_TIME_LOAD_WAIT=$((SECONDS - t))
   require_clean "after the lock and load waits"
   sync_and_bump
   head=$(git rev-parse HEAD)

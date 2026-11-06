@@ -171,6 +171,16 @@ expect_silent 70 check-70-good-clean-root
 # so this never touches the real, shared ~/.claude/plugins/data/.
 CODEX_TMP=$(mktemp -d)
 trap 'tmp_delete "$CODEX_TMP"' EXIT
+# Check 20 must take its temp file from $TMPDIR. On macOS a bare `mktemp` writes under /var/folders,
+# which the `claude plugin eval` sandbox blocks, so check 20 crashed the audit there (GH #921). The
+# stub refuses any call without a template, as that sandbox does.
+mkdir -p "$CODEX_TMP/mktemp-stub"
+printf '%s\n' '#!/bin/sh' 'case "$*" in *XXX*) exec /usr/bin/mktemp "$@" ;; esac' \
+  'echo "mktemp: default temp dir blocked" >&2; exit 1' >"$CODEX_TMP/mktemp-stub/mktemp"
+chmod +x "$CODEX_TMP/mktemp-stub/mktemp"
+PATH="$CODEX_TMP/mktemp-stub:$PATH" expect_silent 20 check-20-good-duplicate-distinct
+# A TMPDIR naming a missing dir must not crash check 20 either: the bare `mktemp` it replaced never read TMPDIR.
+TMPDIR="$CODEX_TMP/no-such-dir" expect_silent 20 check-20-good-duplicate-distinct
 setup_codex_state() {
   local fixture="$1" gate="$2" path
   export MH_CODEX_DATA_DIR="$CODEX_TMP/$fixture"

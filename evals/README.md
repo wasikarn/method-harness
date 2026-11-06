@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-79 cases in Claude Code's native `claude plugin eval` layout (count:
+85 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -16,6 +16,17 @@ agents, one planted-defect case and one clean control per agent, the same fires/
 | `finding.md` / `clean.md` | `regex` | the planted defect was found at its file, or the clean control got the clean verdict |
 | `criteria.md` | `llm` | the finding is the right one, sized right, with no manufactured extras |
 
+A grader that checks the plugin's own mechanism (`agent-fired.md`, `dispatch-confirmed.md` on
+`tool: Agent`, `critic-dispatched.md`, `reviewer-dispatched.md`, post-mortem's `skill-loaded.md`,
+ideate-run's `fanout.md`, idea-audit's `isolation-fan-out.md`, and each Bash check that names a
+script only the plugin ships, such as `script-ran.md` or `audit-ran.md`) sets `arm: with-only`. A
+two-arm run (the default whenever the plugin resolves) scores every other grader in both arms.
+Without the plugin these say nothing about the task: the `not found` regexes and the script checks
+fail by construction (inflating Δ), and an Agent check can pass on the failed dispatch call. The CLI
+already leaves `tool_used` on `tool: Skill` out of the score, so `skill-fired.md` needs no `arm:`.
+`tests/evals/test-eval-cases.sh` fails on a mechanism grader with no `arm:`. A two-arm Δ from
+before 2026-11-06 on these cases is high by about one scored grader's share (0.33 to 0.5 a case).
+
 Five for the `tech-humanize` skill (tag `tech-humanize`): three planted cases (English prose,
 Thai standup, Thai UI copy), a clean human-written control that must survive lightly edited, and a file-input
 case that proves the prose-only constraint (frontmatter and code block byte-identical, graded on
@@ -28,9 +39,14 @@ regression test, graded on all 11 sections in order, no hedging, a Rule 4 failur
 LLM rubric for the checklist and anchoring; and a missing-input case that withholds the
 validation input and must get a question, not a draft. The skill is user-invoked
 (`disable-model-invocation`), so `prompt.md` opens with `/mh:post-mortem` and `skill-loaded.md`
-is a `trace` regex on the skill's own text rather than `tool_used: Skill`. Two runner facts are
-undocumented and the first live run settles both: whether a slash command in `prompt.md` is
-expanded, and whether `target: trace` is accepted (these are the only two graders using it).
+is a `trace` regex rather than `tool_used: Skill`. Settled by a kept run on 2026-11-06 (CC 2.1.318):
+the eval child does expand a slash command in `prompt.md` (its own transcript holds
+`<command-name>/mh:post-mortem</command-name>` and the skill text), but the graders' `trace.jsonl`
+omits that expanded user turn, so a regex on the skill's own text never matches. Every slash-invoked
+case's `skill-loaded.md` therefore matches the `system`/`init` event's `skills` list instead, which
+names `mh:<skill>` only when the plugin loaded it. That is a load check, not proof the skill ran: the
+list names every plugin skill, invoked or not. Proof is the case's outcome graders (`script-ran` for
+gate-report and model-bench, `contract` and the section checks for post-mortem).
 
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run
@@ -68,16 +84,16 @@ byte-identical. Graders check the skill and a checker agent fired, git and the t
 (`tool_used: Bash` anchored on the command), the fix and its test landed in the named files, and
 the report opens with the Final Verdict line. Needs `--allow-tools Bash,Edit,Write`.
 
-The six `deep-audit-step6-*` cases (the step-6 whole-picture trigger) use the same shape: a
+The five `deep-audit-step6-*` cases (the step-6 whole-picture trigger) use the same shape: a
 `scaffold.sh` builds a two-commit history, the latest commit is the session, and the prompt only
 states the task. Until GH #389 the subject typed that history itself from the prompt, which also
 told it the answer ("no bugs", "nothing else imports this"). Rule for every case here: a case
 prompt states the task, never the expected verdict or the trigger fact. Fixture history goes in
 `scaffold.sh`, never in a narrative the subject types itself. `tests/evals/test-eval-cases.sh`
 fails on a narrow word list (`planted`, `rubric`, `grader`, `no bug(s)`, `accurate`, `correctly
-implemented`) in a prompt body; a paraphrased tell still gets past it. Tradeoff: without the tell,
-a subject that "fixes" a non-bug now fails `zero-fixes-skip`, so that case also measures false
-fixes and overlaps `deep-audit-clean`. The pilot numbers in `c182ffc6` were taken with the tells
+implemented`) in a prompt body; a paraphrased tell still gets past it. A sixth case, `zero-fixes-skip`,
+was dropped (GH #921): over three fixture rounds deep-audit always found and fixed a real gap, so
+the zero-fix path never ran, and SKILL.md step 4 states that rule in one line. The pilot numbers in `c182ffc6` were taken with the tells
 in place, so the two should-not-fire results there are not clean measurements.
 
 Two for `cost-report` (tag `cost-report`): a planted log with a session whose two rows must
@@ -88,6 +104,40 @@ quote no dollar figure, and create no log (`no-log-created.md` is `tool_used: Ba
 redirect into `costs.jsonl`; Write and Edit are not granted). The prompt points the script at the
 workspace log with `MH_COSTS_FILE`, since the sandbox HOME is fresh and case `env` keys must be
 `EVAL_*`. Needs `--allow-tools Bash`.
+
+Two for `gate-report` (tag `gate-report`, user-invoked, so each prompt opens with `/mh:gate-report`).
+`gate-report-planted` scaffolds a 14-line `metrics/gate-decisions.jsonl` that exercises every
+read-back rule: deny/ask rows for two gates, a `count: 5` `allow-suppressed` row, `would_deny`/
+`would_ask` shadow rows, three session-less rows, and the made-up ids `test-session` and `s`. The
+session must quote the script's `12 ask/deny event(s)` headline as printed, give 7 as the real
+block/interrupt count (the headline already holds the 5 suppressed matches), say the shadow rows
+were allowed, report the 3 session-less rows and both non-UUID ids, and leave the journal
+unchanged (`log-untouched.md` checks its last row). `gate-report-not-set-up` has no journal: relay `Gate journal not set up.`, quote no
+count, create no journal (`max: 0` Bash check, `arm: both`). Needs `--allow-tools Bash`.
+
+Two for `model-bench` (tag `model-bench`, user-invoked, prompts open with `/mh:model-bench`), on the
+free `--diff-only` path only: the paid path starts nested `claude plugin eval` runs, which must never
+happen inside an eval. Each scaffold writes two finished `aggregate-result.json` files copied from
+`tests/scripts/fixtures/model-bench/`. `model-bench-diff` must relay the script's per-case deltas
+(`+0.200`, not a hand-made `+0.2`), the judge-family WARN, the two one-sided cases and the
+subagent CAVEAT, each a regex grader: a one-word haiku judge passed a reply with a wrong delta or
+with the CAVEAT removed (2026-11-06), so the llm `criteria` grader only checks the three warnings
+are not dismissed;
+`model-bench-partial` (one side `partial: true`) must report the HARD-FAIL and quote no delta. In
+both, `no-paid-run.md` is a must-not Bash check (`max: 0`, `arm: both`) on `claude plugin eval` or a
+`model-bench.sh` call without `--diff-only`. Needs `--allow-tools Bash`.
+
+Two for `attack-proposal` (tag `attack-proposal`, model-invocable; the fire prompt names
+`skill: "mh:attack-proposal"`). In `attack-proposal-prefix-bypass`, `PROPOSAL.md` confines upload
+writes with `abspath(...).startswith(UPLOAD_ROOT)`, which blocks `..` traversal and absolute paths but
+lets the sibling `var/uploads-archive/` (and a symlink inside the root) through. The report must name
+that break with a concrete input, close or drop it before any GO, and leave `src/storage.py`
+byte-identical: the skill vets a proposal, it does not build it. With no Codex login in the sandbox the
+attacker runs on the `general-purpose` fallback; `attacker-dispatched.md` (Agent, min 1) is
+`arm: with-only`. Plus one should-NOT-fire case: a security fix that is already committed goes to
+`/codex:adversarial-review` or `mh:deep-audit` per the skill's own scope line, so the review must not
+invoke the skill and must still find that `startswith("/")` lets `//evil.example` through
+(`built-diff-misroute`). Needs `--allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write`.
 
 Note for future suites (not skill-specific, kept from the removed `handoff` suite):
 `context.scaffold_script` must be a relative path to an external `.sh` file in the case dir (e.g.
@@ -245,7 +295,7 @@ actual edit's correctness (a half-rename leaving a `NameError` behind would have
 `backend-architect`/`code-architect`/`performance-optimizer`/`ideate-critic` only proved the trace
 *lacked* an "agent not found" error, never that dispatch actually happened (added a
 `dispatch-confirmed.md` display-only `tool_used` trigger to each, `input_match` values confirmed
-against each case's own `subagent_type`, `arm` left unset); and `test-eval-cases.sh` skipped its
+against each case's own `subagent_type`; `arm: with-only` on the `tool: Agent` ones since 2026-11-06, see the top); and `test-eval-cases.sh` skipped its
 own frontmatter/regex-compile validator entirely for prompt.md-only cases (an early `continue`,
 contradicting its own comment) and counted "outcome graders" via a whole-file grep that a grader's
 body prose could accidentally trip (both now scoped correctly — see the script's own comments).
@@ -269,7 +319,7 @@ skills you changed. Notes on single lines:
 
 - The first line also judges `perf-regression-routing` with haiku; its own sonnet run is further
   down.
-- `--tag deep-audit` includes the six `deep-audit-step6-*` cases.
+- `--tag deep-audit` includes the five `deep-audit-step6-*` cases.
 - The `ideate` run case spawns 6 agents (5 plus `mh:ideate-critic`).
 
 The block has no `#` comments: zsh, without `interactivecomments`, runs a pasted `#` line as a
@@ -319,6 +369,44 @@ History, so a mixed-judge comparison reads right:
   `judgeModel differs` WARN; the script adds `expected: perf-regression-routing is judged by
   sonnet` when one side ran only listed cases under their listed judge. Every other case stays
   on haiku (the #510 decision for `backend-architect-security-handoff` was a rubric fix, #511).
+- **The `haiku` alias moved to Haiku 5.5 (seen 2026-11-06, CC 2.1.318, GH #920).** A judge
+  call's debug log reads `dispatching to firstParty model=claude-haiku-5-5`. A default run stores
+  `suite.judgeModel` as `null`, so `model-bench-diff.py` cannot see this change: a haiku-judged result
+  from before it and one after it read as the same judge. The judge answers one word (`Respond
+  with exactly one word: PASS or FAIL`), and a vote is PASS only if the reply contains PASS and not
+  FAIL. That judge passed a reply with a wrong number and one with a required caveat deleted, and
+  failed replies that met their rubric. Re-judging 118 verdicts, sonnet passed 13 that it failed,
+  11 of them in the with-plugin arm. So a number, a quote or a "this caveat is present" check is a
+  regex grader, and an llm grader judges only what a regex can't (a dismissal, a scored structure).
+  The presence checks in `idea-audit-*` and `model-bench-diff` were converted this way rather than
+  given a sonnet row; each llm rubric that stayed was re-tested on the real judge before it shipped.
+
+### Not covered by evals
+
+A break in these paths does not show up in an eval run.
+
+- **The Codex path of `attack-proposal`, `idea-audit` and `deep-audit`.** The eval sandbox has no
+  Codex login and limited network, so every run takes the Claude fallback (2026-11-06 replies:
+  `codex login status` reports "Not logged in"; "Codex couldn't reach the network"). Only the
+  dispatch itself is untested: the verdict a Codex lane returns goes through `check-verdict.py`
+  (`tests/skills/test-idea-audit-check-verdict.sh`, `tests/skills/test-deep-audit-check-verdict.sh`),
+  and the model resolver has `tests/scripts/test-codex-resolve-model.sh`.
+  `docs/reference/codex-integration-map.md` documents the lanes.
+- **`model-bench`'s paid path.** Cases run `--diff-only`, since a nested `claude plugin eval` must
+  never start inside an eval. `tests/scripts/test-model-bench.sh` checks `model-bench.sh`'s argv and
+  env against a stub `claude`; a real two-arm run is untested.
+- **`deep-audit` fixing a real finding that no session claim covers.** Allowed by design (operator
+  decision, 2026-11-06, GH #920): a finding with a concrete trigger survives, and "audit and fix"
+  skips the confirm question. `deep-audit-clean`'s fixture was made truly clean for that reason:
+  `percent()` takes integer counts and computes `part * 100 / total` (correctly rounded, so
+  `percent(7, 100)` is `7.0`), and its commit and NOTES say exactly what changed (a bare
+  `ZeroDivisionError` became a `ValueError`). So no case fails when the skill fixes something beyond
+  the claims.
+- **Invented facts in `tech-humanize` rewrites.** The Grit Gate's fabrication boundary (no new
+  fact, number, cause, name or result) has no grader (GH #921). The one-word haiku judge cannot
+  check it in either phrasing: written "PASS unless", it passed every planted invention (a new
+  person and test count, a new cause and name, a new flag and region); written "Score 1 only if",
+  it failed correct replies 3/3. Presence of the source's specifics is checked by regex instead.
 
 ### Fold-vs-keep (one agent)
 

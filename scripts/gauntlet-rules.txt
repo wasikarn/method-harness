@@ -53,6 +53,7 @@ scripts/check-observer-contract.sh medium tests/scripts/test-observer-contract.s
 scripts/eval-fold.sh              medium tests/scripts/test-eval-fold.sh
 scripts/gate-canary.sh            medium tests/hooks/test-gate-canary.sh tests/hooks/test-secret-scan.sh
 scripts/gate-differential.sh      medium tests/scripts/test-gate-differential.sh
+scripts/cloud-setup.sh            low
 
 # Skills and agents: the skill's own tests plus the eval checks; the audit runs at medium anyway.
 skills/*                          medium tests/evals/test*.sh

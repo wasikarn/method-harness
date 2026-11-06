@@ -231,6 +231,17 @@ already set alone.
   names long-running CPU-heavy process groups of yours, a flood of low-CPU workers included
   (`scripts/_lib/stray-procs.sh`, warn-only), but it can only catch a stray after the fact; killing
   one that a peer session owns is the operator's call.
+- **Read `scripts/merge-pr.sh` with the Read or Grep tool, not Bash.** The merge ask rules in
+  `.claude/settings.json` (`Bash(*/merge-pr.sh *)` and six more, GH #909) match any Bash command
+  where text follows the script's path or name, reads included
+  (`grep ... scripts/merge-pr.sh | head`, `wc -l scripts/merge-pr.sh other.sh`); about a fifth of
+  the prompts were reads (GH #907). The rules stay broad on purpose: a run-only version would let
+  `env scripts/merge-pr.sh 904` merge with no prompt, since the script's own `gh pr merge` runs in
+  a subprocess no gate sees. Shapes they still miss are deliberate evasions
+  (`bash scripts/MERGE-PR.SH 904`, `bash "scripts/"merge-pr.sh 904`,
+  `set -- 904; source scripts/merge-pr.sh`); in auto mode the classifier is the only backstop.
+  A commit message or PR/issue text that names the script with text after it prompts too: pass it
+  with `git commit -F <file>` or `--body-file`, and keep the script's name out of `--title`.
 
 ## Research: check qmd before web search
 
@@ -246,8 +257,11 @@ relation depth" (always one query), and a CWE-1333/CWE-400 pairing that contradi
 
 ## Changing a deny heuristic in a gate
 
-**Scope first:** fix a gate gap only when a real command hits it or an agent could write it by
-mistake; a deliberately disguised shape is filed `parked` (`docs/adr/0005-gate-scope-agent-mistakes-not-disguised-commands.md`).
+**Scope first:** the gates are frozen (ADR 0005 amendment, 2026-11-04). Change `hooks/gates/` only for
+a real false deny, a real miss (an incident), the replay speed-up plan (#895), or promoting a shadow
+rule whose real hits show no false positive. A deny that held only by accident and is lost by such a
+fix is named in the PR and parked. Any other gap, an agent-mistake shape or a disguised one, is
+filed `parked` (`docs/adr/0005-gate-scope-agent-mistakes-not-disguised-commands.md`).
 
 Any change to how `hooks/gates/*.py` decides deny versus allow (a tokenizer step, a substitution
 or redirect strip, a shell-syntax rule) needs a differential fuzz against current `develop` before
@@ -341,3 +355,5 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
 
 Per-issue measurements (GH #245, #246, #248, #273, #274, #276, #307, #317, #318, #320, #322, #327,
 #336, #339, #340, #344, #349, #375, #382, #469, #681): [`gate-heuristic-history.md`](gate-heuristic-history.md).
+
+- **zsh command-word shapes (GH #912):** the irrecoverable gate reads `noglob`, `nocorrect`, `-`, `repeat N`, a leading `=` (zsh's full path of the word), a command word with `?`, `*` or a `[..]` class (read as each program name it can spell, asking past 12 matches) and a qualifier `(e:cmd:)` or `e[..]`/`e{..}` body, also after other qualifier letters (`.e:`, `N.e:`, `om[1]e:`), and `[^x]` negation. Known residuals, each a tokenizer limit with no exact fix yet: zsh alternation `(a|b)` in a command word, numeric ranges `<->`, extendedglob `x#` repetition in a command word, a qualifier `e<..>`, `+func` or `(#q e:..:)` (`#q` reads as a comment), a POSIX class in a command word now asks (not denied), a globbed or `=`-prefixed shell or interpreter in a pipe stage or fed by a here-string (no arguments, so no window),  a command word followed by a glob qualifier (`/bin/r?(.) -rf ~`: the tokenizer splits the `(`), a path whose basename is only a wildcard (`/dir/* -rf ~`, no ask), a globbed `claude` skipping the nested-spawn rule, the glob name set being a hand-kept list (a new exact-name rule needs its name added to `_GLOB_EXTRA_NAMES`), a globbed `g?t` or a qualifier-hidden git in `subagent-git-guard.py` (no glob model there), and a quoted `='git'` in it (adding `=` to its quoted-word class over-blocks `"A=1" git stash`). The `.sh` fast path defers to Python on `?`, `*`, `[` only.

@@ -556,7 +556,8 @@ masked = _mask(cmd) if len(cmd) <= _MAX_CMD_CHARS else ""  # over the cap: denie
 # too: with a bare \b a token that only STARTS with one ("timeout=30") is neither
 # a wrapper nor an ordinary token, and the regex dead-ends.
 _WRAPPER_WORDS = ("env", "command", "nohup", "nice", "time", "sudo", "doas", "xargs",
-                  "exec", "setsid", "timeout", "gtimeout", "stdbuf", "ionice")
+                  "exec", "setsid", "timeout", "gtimeout", "stdbuf", "ionice",
+                  "noglob", "nocorrect", "-", "repeat")  # GH #912: zsh precommand words
 _KEYWORDS = ("!", "if", "elif", "then", "else", "do", "while", "until", "coproc")
 # GH #320: a wrapper written as a path (`/usr/bin/env git stash`) runs the same program, so each
 # wrapper word (and rtk, command and exec below) takes an optional directory prefix. The prefix is
@@ -643,7 +644,7 @@ def _plain_and_overlapping(tail):
             re.compile(r"(?=(" + pattern + r"))", re.MULTILINE),
             re.compile(r"(?=(" + _cmd_start(_WRAPPER_PREFIX_LAZY) + tail + r"))", re.MULTILINE))
 
-_GIT_WORD = r"\\?(?:\S*/)?git\b"
+_GIT_WORD = r"\\?=?(?:\S*/)?git\b"  # GH #912: `=git` is zsh for the full path of git
 _ANCHOR_RES = _plain_and_overlapping(_GIT_WORD)
 _LAZY = 2  # index of the lazy pass in _plain_and_overlapping's tuple
 # `bash -c "<body>"` / `eval "<body>"`: the body is a quoted string, so the masked

@@ -170,8 +170,8 @@ Present the ranked findings and confirm with one **AskUserQuestion**:
 
 - `Apply all fixes now` (findings low-risk and inside the session's scope)
 - `Apply only some` (a finding is out of scope or needs its own decision); ask which
-- `Skip fixes, report findings only` (review-only pass); 0 fixes also skips step 6 (its own
-  trigger, 2+ landed fixes, can't hold) — go straight to step 7 with the baseline as both scores
+- `Skip fixes, report findings only` (review-only pass); 0 fixes also skips step 6 (it needs a
+  landed fix to check) — go straight to step 7 with the baseline as both scores
 
 Skip the ask only when the same turn already said "audit and fix"; an earlier or implied
 authorization is not that.
@@ -196,12 +196,13 @@ quality rationale; a change that only moves the score is left out.
 
 ## 6. Whole-picture adversarial challenge (when step 4's fixes can interact)
 
-Trigger: step 4 applied 2+ fixes, OR applied exactly 1 fix that touched a function, early-exit
-path, return value, or emitted string that other code, a test, or an out-of-scope consumer reads.
-Skip only when
-step 4 applied 0 fixes, or its 1 fix was fully local (nothing else reads what it changed) — step
-3's checker already covers a fully-local single fix point-by-point. Why the trigger is not a bare
-fix count: `references/rationale.md`.
+Trigger: step 4 fixed 2+ defects, OR fixed exactly 1 defect whose change touched a function,
+early-exit path, return value, or emitted string that other code, a test, or an out-of-scope
+consumer reads. Count defects, not changes: a code change and the test that pins it are one fix.
+A test of the very behaviour the fix changes (new from step 4 or already there) is not a reader;
+step 5 re-runs it. Skip only when step 4 fixed 0 defects, or its 1 fix was fully local (nothing
+else reads what it changed) — step 3's checker already covers a fully-local single fix
+point-by-point. Why the trigger is not a bare fix count: `references/rationale.md`.
 
 Dispatch `mh:blind-spot-hunter` (`Agent` tool, reuse — do not write a new agent for this) against
 the **combined delta**: every file step 1 put in scope, unioned with every fix commit from step
@@ -216,8 +217,10 @@ whole-picture pass on top (Rule 13's 3-round stop applies here too — if the fi
 seem to need another combined-fix check, stop and report the loop instead of continuing
 indefinitely).
 
-A clean result from this pass (`CLEAN`, per the agent's own output contract) is reported the same
-way step 3's zero-findings pass is: a legitimate outcome, not a skipped check. A failed dispatch
+A clean result from this pass (`CLEAN` or `CLEAN (N dormant: ...)`, per the agent's own output
+contract) is reported the same way step 3's zero-findings pass is: a legitimate outcome, not a
+skipped check. Report its dormant findings as deferred, each with what would make it live; they
+skip the confirm gate. A failed dispatch
 is neither: it did not run, and the Final output says so (see the reference above).
 
 ## 7. Re-score on the same rubric

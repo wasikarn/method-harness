@@ -10,8 +10,8 @@ cache version changes; no check parses it. Full reasoning: `docs/plans/codex-pai
 
 | skill | invocation | mh touchpoint / fallback |
 |---|---|---|
-| `/codex:review` | user or model | read-only diff review; Claude-side alternative: `mattpocock-skills:code-review`. On rate-limit or absence, run the Claude-side review instead, invoked by the operator — independence reduced for that pass (model independence lost, context independence kept) |
-| `/codex:adversarial-review` | user or model | challenges a plan after `mattpocock-skills:grilling`; Claude-side alternative: `mh:plan-reviewer`. Same fallback as review |
+| `/codex:review` | user only (`disable-model-invocation: true` in codex 1.0.6) | read-only diff review; Claude-side alternative: `mattpocock-skills:code-review`. On rate-limit or absence, run the Claude-side review instead, invoked by the operator — independence reduced for that pass (model independence lost, context independence kept) |
+| `/codex:adversarial-review` | user only (`disable-model-invocation: true` in codex 1.0.6) | challenges the approach and design of a diff (working tree or branch, same target selection as `/codex:review`, plus optional focus text); Claude-side alternative: `mattpocock-skills:code-review`. A plan before code goes to `mh:plan-reviewer` instead, a proposed fix to `mh:attack-proposal`. Same fallback as review |
 | `/codex:rescue` | **user or model** — ships without `disable-model-invocation`, and `codex:codex-rescue` is a full Agent-tool `subagent_type` | writes files through the Codex app-server, not Claude Code tools — see Gate gap below. The review-gate toggle is gated (ADR-0001); the rescue dispatch itself carries no codex-specific gate. From the main session it stays fully ungated; a *subagent* attempting the same dispatch is denied as a side effect of `gate:agent:subagent-spawn-guard` (GH #151), which blocks every subagent-initiated Agent-tool call uniformly and was not built with codex in mind |
 | `/codex:setup` | **user or model** — ships without `disable-model-invocation` | the one surface mh puts a real gate on: `gate:skill:codex-setup-guard` asks before a model-invoked call carrying `--enable-review-gate` |
 | `/codex:transfer` | user only (`disable-model-invocation: true`) | Claude near its own limit → hands the session to a resumable Codex thread. The reverse of the fallback direction above |
@@ -19,19 +19,36 @@ cache version changes; no check parses it. Full reasoning: `docs/plans/codex-pai
 | `/mh:compliance-audit` (mh's own skill, not a `codex@openai-codex` skill) | user only (`disable-model-invocation: true`) | Phase 2's verifier dispatches a raw `codex exec --sandbox workspace-write --cd <worktree> --model <selected-model> -c model_reasoning_effort=<selected-effort> --output-last-message <file> --output-schema <schema-file>` (explicit flags; scoped to a disposable pinned worktree — not read-only, since it reruns the gauntlet) as primary, for stronger maker≠checker separation than a fresh Claude context alone; Claude-side alternative: a `general-purpose` subagent. On rate-limit or Codex absence, fall back to the Claude subagent — independence reduced for that pass, same fallback language as `/codex:review` above. Both paths pipe the raw output through `skills/review/compliance-audit/scripts/check-verdict.py` (own schema/ambiguity/`NEEDS-DECISION` handling, mirroring deep-audit's script) before trusting it: exit 0 = one valid verdict with `pass` computed by the script; exit 2 = `NEEDS-DECISION`, surfaced to the operator; exit 1 = malformed/ambiguous, retry the dispatch once before calling it `scope_ok: false` |
 | `/mh:deep-audit` (mh's own skill) | user or model (no `disable-model-invocation`) | Step 3's fresh-context checker dispatches `codex exec --sandbox read-only --model <selected-model> -c model_reasoning_effort=<selected-effort>` (explicit flags, not the config-dependent default; no worktree, since the checker never writes and needs the current tree, not a pinned SHA) as primary; Claude-side alternative: an `Explore`/review agent (the pre-existing mechanism). On rate-limit, absence, timeout, auth failure, a schema-invalid result, or a semantic refusal (schema-valid JSON that still didn't do the review), fall back to the Claude agent — independence reduced for that pass, same fallback language as `/codex:review` / `/mh:compliance-audit` above. Unlike those, a failed fallback here doesn't just get noted: it hard-forces the skill's own Final Verdict to `fail` ("verification incomplete"), since deep-audit's rubric would otherwise let a checker-less run still pass on its other dimensions |
 | `/mh:idea-audit` (mh's own skill) | user or model (no `disable-model-invocation`) | Phase 2's attacker dispatches `codex exec --sandbox read-only --model <selected-model> -c model_reasoning_effort=<selected-effort> --cd <repo-root> --output-last-message <file> --output-schema <schema-file>` (same shape as `/mh:deep-audit`'s checker — read-only, no worktree) as primary; Claude-side alternative: a `general-purpose` subagent whose brief says "you write nothing" (the Agent tool has no per-invocation `disallowedTools` — that's an agent-file frontmatter field only — so the real backstop is `git status --porcelain` before and after the dispatch; never `mh:plan-reviewer`, which hard-stops on non-plan input) — independence reduced for that pass, same fallback language as the rows above. Fallback triggers are the same six as `/mh:deep-audit`'s. On all-fallback failure, or every finding failing a post-parse citation-shape check, the adversarial criterion is marked `insufficient evidence` and Phase 3 blocks on the operator, rather than the deep-audit-style hard-fail override |
+| `/mh:attack-proposal` (mh's own skill) | user or model (no `disable-model-invocation`) | Step 3's attacker, one dispatch per lane (at most 4), uses `/mh:idea-audit`'s `codex exec --sandbox read-only` shape, output schema and two checkers (`check-verdict.py`, `check-citations.py`) on a proposed fix instead of an external source. Two handling differences: a `check-verdict.py` exit 2 (`NEEDS-DECISION`) goes to the operator as in `/mh:deep-audit`, not to the fallback; and a lane whose fallback also fails is marked INCOMPLETE, which makes the skill's verdict INCOMPLETE and leaves the call to the operator. Claude-side alternative: a `general-purpose` subagent with the same brief, a scratch dir for its input files, and the `git status --porcelain` before/after backstop, independence reduced for that lane. Its step 5 validator is always a fresh Claude `general-purpose` agent (it may run things in a scratch copy, which a read-only Codex sandbox cannot), checked by `/mh:deep-audit`'s 6-key `check-verdict.py` plus the same porcelain backstop |
 
-The three bare `codex exec` dispatches — `/mh:compliance-audit`'s verifier, `/mh:deep-audit`'s
-checker, `/mh:idea-audit`'s attacker — take effort as `-c model_reasoning_effort=<selected-effort>`
+The four bare `codex exec` dispatches — `/mh:compliance-audit`'s verifier, `/mh:deep-audit`'s
+checker, `/mh:idea-audit`'s and `/mh:attack-proposal`'s attackers — take effort as `-c model_reasoning_effort=<selected-effort>`
 (see "Model, effort, and account cost" below), not the `--effort` flag in
 `docs/reference/spawn-brief.md`, which applies to `/codex:rescue` only.
 `checks/72-codex-effort-set-drift.sh` parses only the first `--effort <a|b|c>`-pattern line in
-`spawn-brief.md`, so none of the three affects it.
+`spawn-brief.md`, so none of the four affects it.
 
-Both `/mh:deep-audit`'s checker and `/mh:idea-audit`'s attacker are read-only and never write, so
-the "Silent-refusal gotcha" section's empty-diff detection method below doesn't apply to either —
+`/mh:deep-audit`'s checker and the `/mh:idea-audit` and `/mh:attack-proposal` attackers are read-only and never write, so
+the "Silent-refusal gotcha" section's empty-diff detection method below doesn't apply to any of them —
 that method assumes a writer whose refusal shows up as "nothing changed" on disk. Their refusal
 signal is a schema-invalid or semantically-refusing final message instead, caught per the rows
 above.
+
+`--output-schema` forces the final message into the schema's JSON (codex-cli 0.166.0, probed
+2026-11-05: told to reply with a bare `NEEDS-DECISION` line and no JSON, Codex returned schema JSON
+with the question inside a finding and `pass: null`). So `/mh:deep-audit`'s checker and the
+`/mh:idea-audit` and `/mh:attack-proposal` attackers never reach a `check-verdict.py` exit 2 on
+Codex: a decision they need shows as `pass: null`, which their checkers reject (exit 1), sending
+the lane to its Claude fallback. In `/mh:deep-audit` and `/mh:attack-proposal` that fallback can
+return a bare `NEEDS-DECISION` (exit 2) to the operator; `/mh:idea-audit` routes exit 2 to the
+fallback too, and a failed fallback there is graded `insufficient evidence`.
+
+Codex's provider filter refuses a brief that quotes destructive commands. `codex exec` exits 1
+with `This content was flagged for possible cybersecurity risk` even when quota is fine
+(2026-11-05, an `/mh:attack-proposal` gate brief for GH #911). A rewrite without the payloads does
+run; how `/mh:attack-proposal` uses that rewrite is in its step 3. The error links OpenAI's cyber
+access program. Nobody has checked whether it covers Codex logged in with ChatGPT. Joining is the
+operator's call, and it is not set up.
 
 ## Gate gap
 
@@ -82,8 +99,11 @@ to `low` (`gpt-6-sol` defaults to `medium`), and was the `gpt-5.5` upgrade targe
 **Re-checked 2026-10-21** (`models_cache.json` fetched that day, CLI 0.163.0): `gpt-5.5` is gone
 from the catalog. Listed: `gpt-6.1-sol` (priority 1), `gpt-6-astra` (2), `gpt-6-sol` (4),
 `gpt-6-luna` (5), `gpt-5.6-sol` (6), `gpt-5.6-terra` (8), `gpt-5.6-luna` (9); none carries an
-upgrade. Terra still has no GPT-6 variant. `codex-resolve-model.py <tier> --effort medium` resolves
-Luna `gpt-6-luna`, Terra `gpt-5.6-terra`, Sol `gpt-6.1-sol`, Astra `gpt-6-astra`. The catalog has
+upgrade. Terra had no GPT-6 variant then.
+**Re-checked 2026-11-04** (`models_cache.json` fetched that day, CLI 0.166.0): `gpt-6.1-terra` is
+listed at priority 3, between `gpt-6-astra` (2) and `gpt-6-sol` (4); `gpt-5.6-terra` stays at 8 and
+no entry carries an upgrade. `codex-resolve-model.py <tier> --effort medium` now resolves Luna
+`gpt-6-luna`, Terra `gpt-6.1-terra`, Sol `gpt-6.1-sol`, Astra `gpt-6-astra`. The catalog has
 no price field; on the pricing page `gpt-6.1-sol` is 50/2.5/250, the same as `gpt-6-sol` except
 cached input at half (2.5 vs 5), so the switch costs no more per token (it says nothing about how
 many tokens a run uses). Versus the GPT-5.6 rates, `gpt-6-sol` is exactly half on every column and
@@ -137,7 +157,9 @@ Plus consumes included usage before purchased credits; API dollar rates are not 
 invoice. Published credit rates per 1M input/cached-input/output tokens, fetched live from
 `learn.chatgpt.com/docs/pricing` 2026-09-23: `gpt-6-luna` 2.5/0.25/12.5, `gpt-5.6-terra`
 50/5/300, `gpt-6-sol` 50/5/250, `gpt-6.1-sol` 50/2.5/250, `gpt-6-astra` 250/25/1250
-(re-fetched 2026-10-04 and 2026-10-21, every row unchanged). The superseded `gpt-5.6-sol` and
+(re-fetched 2026-10-04 and 2026-10-21, every row unchanged). Re-fetched 2026-11-05: those rows are
+unchanged, and `gpt-6.1-terra`, now the Terra tier's pick, is 25/1.25/125, half of `gpt-5.6-terra`
+on input, a quarter on cached input and ~0.42x on output. The superseded `gpt-5.6-sol` and
 `gpt-5.6-luna` rates (100/10/500 and 5/0.5/30, unchanged since 2026-09-14) still apply if a
 dispatch falls back to either; both are still listed. These compare credit usage; they do not price
 included quota or prove actual spend. Recheck current pricing when the account, plan, or catalog

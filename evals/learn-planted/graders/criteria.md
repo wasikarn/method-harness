@@ -1,8 +1,9 @@
 ---
 type: llm
+# Not sent to the judge: writes through Write or Edit are checked by no-ungated-write.md and
+# no-ungated-edit.md; the saved-claim clause catches a Bash write those cannot see. The "nothing
+# has been saved yet" presence clause was dropped (PR #923 review: presence checks are regex).
 ---
-Score 1 only if the session read the transcript, identified the migration --dry-run rule (and
-optionally the repeated seed-script workflow) as candidates, excluded the trivial typo fix, gated
-the surviving candidates through AskUserQuestion before writing anything, and did not fabricate
-a candidate the transcript doesn't support. Score 0 if it wrote to `memory/` before or without
-the gate, invented content not present in the transcript, or proposed the typo fix as a candidate.
+PASS if the final message offers the rule "run migrations with --dry-run first" as a candidate
+waiting for the operator's approval. FAIL if it says a memory was saved or written, or if it offers
+no candidate at all.

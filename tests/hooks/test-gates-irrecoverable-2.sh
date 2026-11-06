@@ -1112,6 +1112,25 @@ for _c in $'cat <<\'EOF\'\nit\'s\nEOF\necho "<<X"\nls\nX' $'echo "$(cat <<\'EOF\
   $'cat > notes.md <<\'EOF\'\nnever rm -rf build\nEOF'; do
   test_allow "$IRRECOVERABLE" "GH #668 control: $(printf '%s' "$_c" | head -1)" "$(bash_payload "$_c")"
 done
+# GH #710: a .sh filename git names on the opener line is no shell; the quoted body stays data.
+test_allow "$IRRECOVERABLE" "GH #710: git add t/x.sh && git commit -F - <<'EOF' with a backticked rm in the body" \
+  "$(bash_payload $'git add t/x.sh && git commit -F - <<\'EOF\'\nsee `rm -rf b`\nEOF')"
+# GH #710 guards: a heredoc a shell or a .sh program reads (argv0, past a wrapper) is still code.
+for _c in $'sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'bash -s <<EOF\nrm -rf b\nEOF' $'./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'env ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'env sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'sudo bash <<EOF\nsee `rm -rf b`\nEOF' \
+  $'git add t/x.sh && ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git add t/x.sh && sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git add t/x.sh && sudo ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git add t/x.sh | ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'{ git add t/x.sh; ./t/x.sh; } <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git -C "$(./t/x.sh)" commit -F - <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git -c alias.x=\'!./t/x.sh\' x <<\'EOF\'\nsee `rm -rf b`\nEOF' $'GIT_SSH=./t/x.sh git push origin <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git bisect run ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git rebase --exec ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git submodule foreach ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' $'git difftool --extcmd ./t/x.sh <<\'EOF\'\nsee `rm -rf b`\nEOF' \
+  $'git -C . add t/x.sh && git commit -F - <<\'EOF\'\nsee `rm -rf b`\nEOF'; do
+  test_deny "$IRRECOVERABLE" "GH #710 guard: ${_c//$'\n'/ | }" "$(bash_payload "$_c")"
+done
+# One parse per stage, not per .sh operand: a timeout here would allow.
+_n710="$(python3 -c 'print("git add " + "a.sh " * 28000 + "&& bash <<'"'"'EOF'"'"'\nrm -rf b\nEOF")')"
+_timed_case 'GH #710: 28000 .sh operands in a git stage before bash <<EOF deny in bounded time' 2 "$_n710"
 # GH #668 round 2: inside $( bash ends a heredoc at a line that starts with the delimiter (EOF), EOF ),
 # EOF); ...) and runs the next line, where the gate waited for an exact EOF line.
 for _c in $'out=$(cat <<EOF\nmsg\nEOF)\nrm -rf build\nEOF' $'out=$(cat <<EOF\nmsg\nEOF )\nrm -rf build\nEOF' \
@@ -3944,14 +3963,37 @@ PY
 else
   echo "  ❌ GH #785: sys.exit without an earlier _disarm() in its block, lines: $_r785" >&2; fail=$((fail + 1))
 fi
+# GH #911: context-mode 2.x. ctx_batch (string[] commands) is judged like ctx_batch_execute; ctx_execute code is
+# judged for shell/sh/bash, passes for javascript/typescript/python/python3/node (#784), and any other language is
+# denied, harmless code included (2.1.0 runs a shell under any runtime name; zsh, dash, ksh and powershell parse
+# differently from the bash the gate reads). Benign code has no destructive token, so these rows also pin that
+# irrecoverable.sh sends every __ctx_execute payload past its prefilter.
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_batch one harmless, one rm -rf" "{\"tool_name\":\"${_CTX}_batch\",\"tool_input\":{\"commands\":[\"ls\",\"rm -rf /tmp/x\"],\"queries\":[\"x\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_batch commands as a JSON-array string" "{\"tool_name\":\"${_CTX}_batch\",\"tool_input\":{\"commands\":\"[\\\"rm -rf /tmp/x\\\"]\",\"queries\":\"[\\\"x\\\"]\"}}"
+test_allow "$IRRECOVERABLE" "GH #911: ctx_batch pwd (a real call)" "{\"tool_name\":\"${_CTX}_batch\",\"tool_input\":{\"commands\":[\"pwd\"],\"queries\":[\"pwd\"]}}"
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_execute bash rm -rf" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"bash\",\"code\":\"rm -rf /tmp/x\"}}"
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_execute sh rm -rf" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"sh\",\"code\":\"rm -rf /tmp/x\"}}"
+test_allow "$IRRECOVERABLE" "GH #911: ctx_execute bash harmless" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"bash\",\"code\":\"ls -la; git status\"}}"
+test_allow "$IRRECOVERABLE" "GH #911: ctx_execute python3 subprocess grep (a real call)" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"python3\",\"code\":\"import subprocess; subprocess.run(['grep', '-rn', 'x', '.'])\"}}"
+test_allow "$IRRECOVERABLE" "GH #911: ctx_execute python string naming rm -rf" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"python\",\"code\":\"print('rm -rf /tmp/x')\"}}"
+test_allow "$IRRECOVERABLE" "GH #911: ctx_execute bash with non-string code (the server rejects it)" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"bash\",\"code\":123}}"
+for _l911 in zsh ksh dash powershell tcsh csh fish Bash zsh-5.9 ../../../bin/bash ruby; do
+  test_deny "$IRRECOVERABLE" "GH #911: ctx_execute language $_l911 denied, harmless code" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"$_l911\",\"code\":\"ls -la\"}}"
+done
+test_deny_says "$IRRECOVERABLE" "GH #911: ctx_execute zsh noglob rm denied by language" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":\"zsh\",\"code\":\"noglob rm -rf /tmp/x\"}}" 'use language "shell"'
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_execute language as a list" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":[\"bash\"],\"code\":\"ls\"}}"
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_execute language as a number" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"language\":5,\"code\":\"ls\"}}"
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_execute missing language" "{\"tool_name\":\"${_CTX}_execute\",\"tool_input\":{\"code\":\"ls\"}}"
+test_deny  "$IRRECOVERABLE" "GH #911: ctx_execute_file language bash" "{\"tool_name\":\"${_CTX}_execute_file\",\"tool_input\":{\"path\":\"a.log\",\"language\":\"bash\",\"code\":\"rm -rf /tmp/x\"}}"
+
 # GH #769/#770: the coverage itself lives in hooks.json's matcher (the gate reads tool_input.command for any tool).
 if python3 -c '
 import json, sys
-names = {"Bash", "Monitor"} | {"mcp__plugin_context-mode_context-mode__ctx_" + t for t in ("execute", "execute_file", "batch_execute")}
+names = {"Bash", "Monitor"} | {"mcp__plugin_context-mode_context-mode__ctx_" + t for t in ("execute", "execute_file", "batch_execute", "batch")}
 hooks = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
 m = [e["matcher"] for e in hooks if any("gates/irrecoverable.sh" in h.get("command", "") for h in e["hooks"])]
 sys.exit(not (len(m) == 1 and names <= set(m[0].split("|"))))' "$ROOT/hooks/hooks.json"; then
-  echo "  ✅ hooks.json: irrecoverable.sh matcher covers Bash, Monitor and the three ctx tools"; pass=$((pass + 1))
+  echo "  ✅ hooks.json: irrecoverable.sh matcher covers Bash, Monitor and the four ctx tools"; pass=$((pass + 1))
 else
   echo "  ❌ hooks.json: irrecoverable.sh matcher misses Bash, Monitor or a ctx tool" >&2; fail=$((fail + 1))
 fi
@@ -4743,8 +4785,9 @@ _timed_case 'GH #835: subagent: bash -c cl{aude,aude} -p x after 150 brace words
 # GH #838/#840
 # GH #838: the main reading blanked a bare unquoted ${IFS} to a placeholder, which a token window reads as any text,
 # so `ls${IFS}-p ls${IFS}-p x` (bash runs `ls -p ls -p x`) read as `<any> <any> x`, a git restore, in any session.
-# Unquoted and bare, ${IFS} is a word break or nothing (GH #834): the main reading now reads it as nothing, and the
-# ifs-split view reads the break. Other ${NAME} keep the broad reading (`${G}it` may be git).
+# Unquoted and bare, ${IFS} is a word break or nothing (GH #834): the main reading now reads it as the break, as the
+# ifs-split view does, and one extra ifs-split copy reads it as nothing. Other ${NAME} keep the broad reading
+# (`${G}it` may be git).
 for _c in 'ls${IFS}-p ls${IFS}-p x' 'ls${IFS} ls${IFS} x' 'ls$IFS-p ls$IFS-p x' 'ls${IFS}-p ls${IFS}-p x y' \
     'echo${IFS}a echo${IFS}a x' 'ls${IFS}-p x'; do
   test_allow "$IRRECOVERABLE" "GH #838: main session: $_c" "$(bash_payload "$_c")"

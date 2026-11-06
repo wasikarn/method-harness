@@ -48,7 +48,8 @@ Two rules follow:
   the merge.
 
 This decision only stops new work. Every disguised shape the gates already deny keeps its deny and its
-test rows; nothing is removed.
+test rows; nothing is removed. (One exception, added by the amendment below: a deny that held only
+by accident and is lost by an allowed fix.)
 
 ## Amendment: gate freeze (2026-11-04)
 
@@ -62,6 +63,16 @@ command. So the gates are frozen. A change to `hooks/gates/` is allowed only for
 2. **A real miss:** an incident where a dangerous command an agent actually ran got through.
 3. **The replay speed-up plan** (#895): work on how gates are tested and replayed, not on what they
    decide.
+4. **Promoting a shadow rule:** a shadow rule only logs, it does not deny yet. Deleting its id from
+   `SHADOW_RULES` once its real journal hits show no false positive (`/mh:gate-report`) is allowed.
+   The decision rests on real hits, as in 1 and 2.
+
+A deny that held only by accident and is lost by an allowed fix is not "removed" in the sense of the
+Decision's "nothing is removed". By accident means no rule meant to catch that shape: the deny came
+from a match on something else, such as the `sh` of a file named `a.sh` read as an interpreter. A deny
+that has its own deny test row, or a rule or comment that names the shape as one to deny, is never
+accidental. The fix PR names each such shape, and it is filed `parked` like any other gap. PR #900 (GH #710) lost such
+denies on 5 heredoc shapes (`git add a.sh && source /dev/stdin <<'EOF'`); they are parked in #902.
 
 An agent-mistake shape without a real hit is filed `parked` and gets no fix session. PR #872 (GH
 #842 to #844) was approved before the freeze and is the last gate PR under the old criterion 2.
@@ -71,7 +82,8 @@ Work outside the gates (scripts, skills, docs, the gauntlet) is not frozen.
 dangerous command an agent writes by mistake, in a shape the gates miss, is fixed only after it has
 run (a real miss). That case can cost work: a lost stash, a hard reset, a deleted tree. Parked issues
 close to ordinary mistakes (for example #867) stay unfixed until then. What still limits the damage:
-the denies already shipped, the `permissions.deny` rules for `rm -rf` and force pushes, `trash` in
+the denies already shipped (less any accidental deny an allowed fix loses, named and parked as
+above), the `permissions.deny` rules for `rm -rf` and force pushes, `trash` in
 place of `rm`, and branch protection on `develop`. Uncommitted work in a subagent's checkout is the
 exposed part. If one such miss happens, reopen its `parked` class and fix it as in-scope.
 

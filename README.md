@@ -40,6 +40,14 @@ The plugin ships `defaultEnabled: false`; add `"mh@wasikarn": true` to `settings
 `enable` did not. Same-version edits never reach the cache — bump `plugin.json` before
 `claude plugin update`. Uninstall: `/plugin uninstall mh@wasikarn`.
 
+**Claude Code on the web:** paste `scripts/cloud-setup.sh` into the cloud environment's
+"Setup script" box. It installs and enables both plugins and trash-cli; the default "Limited"
+network reaches github.com. Its log is `/tmp/mh-cloud-setup.log`: check it if `mh:` skills
+are missing. Cloud sessions reuse a snapshot of the script's result for about 7 days, so
+mh there can lag develop; edit the script's marked line in the environment to force a fresh
+install. The repo still needs `/mattpocock-skills:setup-matt-pocock-skills` run once, as
+above. Evidence: `docs/research/mh-cloud-probe-2026-11-06/probe-results.md`.
+
 ## The gates (`hooks/hooks.json`)
 
 One clause per gate; full scope and exceptions: `docs/reference/operating-model.md` §1.
@@ -70,9 +78,9 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 
 ## What it ships
 
-- **Skills (14):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
+- **Skills (15):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
   `mh:gate-report`, `mh:learn`, `mh:model-bench`, `mh:compliance-audit`, `mh:deep-audit`,
-  `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:tech-humanize`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
+  `mh:attack-proposal`, `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:tech-humanize`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
   and is tested, but `.claude-plugin/plugin.json`'s skills list deliberately excludes it.
 - **Agents (8):** backend-architect, blind-spot-hunter, ideate-critic,
   plan-reviewer, requirement-analyst, silent-failure-hunter,
