@@ -10,3 +10,4 @@ SOURCE-PITCH.md (cited by line, quoted, or described as listing no dependencies)
 then counts the block as consistent or as the author's own unverified text, not just repeated back.
 A regex, not an llm rubric: the one-word haiku judge passed a reply that only repeated the claim
 (2026-11-06, GH #920). `companies-unverified.md` checks the other half.
+Known limit: a bare mention of the block ("per the package.json snippet") also passes.

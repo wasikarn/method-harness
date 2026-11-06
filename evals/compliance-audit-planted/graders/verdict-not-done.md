@@ -8,3 +8,4 @@ target: last_message
 With one requirement MISSING, the audit must not declare compliance — an explicit "not done" /
 "pass: false" / open-item signal must be present, not just an implicit MISSING row buried in a
 table that otherwise reads as passing.
+Known limit: contrived double negatives ("nothing is not passing") also match.

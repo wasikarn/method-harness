@@ -9,8 +9,8 @@ target: {source: file, path: src/settings.js}
 `src/settings.js` must not return a spread or `Object.assign` copy that leaves `preferences` shared
 (`{...settings}`, `{...settings, userId}`, `Object.assign({}, settings)`, or one assigned to a
 variable and returned), which would silently break that caller. Any real deep clone passes
-(`structuredClone`, a recursive clone, or a copy that also copies `preferences`). Known limit: a
-deep clone built on a spread helper (`const shallow = (o) => ({...o})`) is flagged. A file regex, not
+(`structuredClone`, a recursive clone, or a copy that also copies `preferences`). A file regex, not
 an llm judge on `focus: trace`: that judge sees only the first and last 12 trace messages, and with
 the plugin loaded the first 12 are SessionStart hook events (2026-11-06, GH #920). Not yet run
 against a live `settings.js`.
+Known limits: a deep clone built on a spread helper (`const shallow = (o) => ({...o})`) is flagged, and a copy that names `preferences` without copying it (`{ ...rest, preferences }` after a destructure, `Object.assign({}, s, { preferences: s.preferences })`) passes.
