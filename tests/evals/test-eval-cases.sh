@@ -269,6 +269,8 @@ echo "a;b"
   case "$c" in
     ste-lint-planted)         wrong='status.md: no confirmed findings, file is clean.' ;;
     ste-lint-file-prose-only) wrong='mixed.md line 6: rule 8.1 semicolon inside the code block' ;;
+    # A dormant MEDIUM+ must not hide behind CLEAN (agents/blind-spot-hunter.md Output Format, GH #921).
+    blind-spot-hunter-clean)  wrong=$'## Verdict\n\n**CLEAN (1 dormant: 1 CRITICAL)**' ;;
   esac
   # The grader checks for every case run in one python + one node process after the loop
   # (one `node` spawn per regex grader was most of this file's run time).
@@ -338,6 +340,8 @@ for c, gdir, items in parsed:
             want = "match: not_contains" not in fm
             if bool(re.search(pat, sample, flags)) != want:
                 print(f"  {f}: pattern {'rejects' if want else 'matches'} the verdict sample {sample!r}"); bad = 1
+            if f == "clean.md" and wrong and re.search(pat, wrong, flags):
+                print(f"  {f}: pattern matches the deliberately wrong verdict {wrong!r}"); bad = 1
         elif os.path.basename(os.path.dirname(gdir)).startswith(("tech-humanize-", "ste-lint-")):
             if not re.search(pat, sample, flags | re.M):
                 print(f"  {f}: pattern does not match the scaffolded fixture, so it cannot discriminate"); bad = 1

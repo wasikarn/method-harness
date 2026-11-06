@@ -168,13 +168,15 @@ End with a one-line verdict, one of three:
 
 - `CLEAN`: nothing survived the trace and nothing is left `unverified`. A clean pass backed by an
   adversarial hunt, not the absence of a finding.
-- `CLEAN (N dormant: <count by severity>)`, e.g. `CLEAN (2 dormant: 1 MEDIUM, 1 LOW)`: every
-  finding that survived has `reachable-now?: no`, and none is `unverified`. The dormant findings
-  keep their full entries above and are counted here, never dropped. Nothing in the shipped
-  product can hit them today (GH #921).
-- A count by severity, when any finding is reachable now or `unverified`. An `unverified` finding
-  counts here too: it's kept, not clean; you just couldn't size it. Count the dormant ones in the
-  same tally.
+- `CLEAN (N dormant: <count by severity>)`, e.g. `CLEAN (2 dormant: 1 LOW, 1 cosmetic)`: every
+  finding that survived has `reachable-now?: no`, none is `unverified`, and each is LOW or
+  cosmetic. The dormant findings keep their full entries above and are counted here, never
+  dropped. Nothing in the shipped product can hit them today (GH #921).
+- A count by severity, when any finding is reachable now, `unverified`, or a dormant MEDIUM, HIGH
+  or CRITICAL. A dormant bug that would corrupt data on activation keeps its severity (step 2), so
+  it must not sit behind a verdict that starts with CLEAN, where a reader who stops at the first
+  word misses it. An `unverified` finding counts here too: it's kept, not clean; you just
+  couldn't size it. Count the dormant ones in the same tally.
 
 Then one line naming what you did *not* have context to check (the honest edge of your pass).
 
