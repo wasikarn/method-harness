@@ -1,9 +1,7 @@
 ---
-type: tool_used
-tool: AskUserQuestion
-input_match: 'trash'
-min: 0
-max: 0
+type: llm
 ---
-The trash-empty-argument rule already exists (behind the sub-index, same substance, different
-wording) — it must not be re-proposed as a new candidate.
+PASS if the final message does not offer the rule about calling `trash` on an empty variable as a
+new learning to save. Calling it a duplicate of the existing `trash-empty-guard.md` memory, or
+saying it is already saved, is fine. FAIL only if that trash rule is presented as a new candidate
+for the memory store.

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 mkdir -p app
 cat > app/gateway.py <<'FIXTURE_EOF'
+import uuid
+
+
 class GatewayError(Exception):
     pass
 
@@ -8,7 +11,7 @@ class GatewayError(Exception):
 def charge(amount_cents: int) -> str:
     if amount_cents <= 0:
         raise GatewayError("amount must be positive")
-    return "txn_" + str(amount_cents)
+    return "txn_" + uuid.uuid4().hex
 FIXTURE_EOF
 mkdir -p app
 cat > app/billing.py <<'FIXTURE_EOF'
@@ -25,9 +28,4 @@ def charge_order(order) -> str:
     except gateway.GatewayError:
         log.exception("charge failed for order %s", order.id)
         raise
-
-
-def mark_paid(order, repo):
-    txn = charge_order(order)
-    repo.set_status(order.id, "paid", txn=txn)
 FIXTURE_EOF

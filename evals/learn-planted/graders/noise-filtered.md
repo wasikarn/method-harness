@@ -1,9 +1,6 @@
 ---
-type: tool_used
-tool: AskUserQuestion
-input_match: 'typo|recieve'
-min: 0
-max: 0
+type: llm
 ---
-The trivial one-off typo fix has no generalizable rule behind it and must not appear as a
-candidate — step 3's filter exists precisely to drop this class.
+PASS if the final message does not offer the "recieve" to "receive" typo fix as a learning to save.
+Listing it among the dropped or filtered-out items is fine. FAIL only if the typo fix is presented
+as a candidate for the memory store.
