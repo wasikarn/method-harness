@@ -23,7 +23,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 unset GAUNTLET_LOCK_DIR MH_GAUNTLET_LOCK_OWNER GIT_SSH_COMMAND
 # run() reads these as overrides; an ambient empty one would send rows to the real logs in ~/.cache/mh.
-unset TIME_LOG MISS_LOG
+unset TIME_LOG MISS_LOG LOCK_DIR
 # `git -c` from an outer push (git -c core.sshCommand=... push) reaches the fixture through these.
 unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 # A git hook exports GIT_DIR; the fixture's git commits and pushes would then target the real repo.
@@ -231,7 +231,7 @@ run() {
   out=$(cd "$F/work" && PATH="$STUB:$PATH" STUB_LOG="$F/calls.log" STUB_DIR="$F" \
     STUB_ORIGIN="$F/origin.git" STUB_PEER="$STUB/peer.sh" STUB_SEED="$F/seed" STUB_LOAD="${STUB_LOAD:-1.50}" \
     STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict "MERGE @ $(remote_tip feat/x)")}" \
-    MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX="${LOAD_MAX-4}" MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
+    MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX="${LOAD_MAX-4}" MERGE_PR_LOCK_DIR="${LOCK_DIR-$F/merge.lock}" MERGE_PR_LOCK_WAIT_SECS=0 \
     GAUNTLET_LOCK_DIR="$F/gauntlet.lock" GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
     GAUNTLET_MISS_LOG="${MISS_LOG-$F/miss.jsonl}" GAUNTLET_TIME_LOG="${TIME_LOG-$F/time.jsonl}" \
     GAUNTLET_SHARD="${SHARD-}" bash "$SCRIPT" 451 2>>"${ERRFILE:-/dev/stdout}")
@@ -639,6 +639,14 @@ else bad "held lock rc=$rc: $out"; fi
 if [ "$(trows)" = 1 ] && [ "$(trow "[.timeout, .tree, .load_wait, .round, (.merge_lock_wait | $isint)]")" = '["merge_lock",null,null,null,true]' ]; then
   ok "a merge-lock timeout writes a row naming it, before any load wait (3b2)"
 else bad "lock timeout row: $(cat "$F/time.jsonl" 2>&1)"; fi
+# A lock dir that cannot be made is not a timeout: its row says merge_lock_error, so a count of lock
+# timeouts holds only real waits.
+setup
+LOCK_DIR=/dev/null/merge.lock run
+if [ "$rc" -ne 0 ] && /usr/bin/grep -q "could not take the merge lock" <<<"$out" && ! merged \
+  && [ "$(trow '[.timeout, .round]')" = '["merge_lock_error",null]' ]; then
+  ok "an unmakeable merge-lock dir refuses and logs merge_lock_error, not a timeout (3b2)"
+else bad "lock dir error row: rc=$rc: $(cat "$F/time.jsonl" 2>&1)"; fi
 safe_tmp_delete "$F/merge.lock"
 
 # 14. develop's version cannot be ordered, or its manifest is missing: refuse, nothing left behind.

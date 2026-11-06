@@ -57,7 +57,8 @@ gauntlet_time_row() {
   # ${HOME:+...}: no HOME under the callers' set -u gives an empty path (the note below), not an abort.
   local log="${GAUNTLET_TIME_LOG:-${HOME:+$HOME/.cache/mh/gauntlet-time.jsonl}}" tree=null timeout=null
   # A relative path would land in the checkout the gauntlet ran on, and merge-pr.sh refuses a changed one.
-  # shortcut: an absolute path inside the checkout is not caught; keep the log outside any checkout.
+  # shortcut: an absolute path inside the checkout is not caught, upgrade if a caller ever sets the log
+  # under a checkout (refuse a path under `git rev-parse --show-toplevel`).
   case "$log" in
     /*) ;;
     *) echo "$1: GAUNTLET_TIME_LOG must be an absolute path (got $log); no timing row written." >&2; return 0 ;;

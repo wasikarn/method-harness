@@ -538,7 +538,9 @@ merge_lock_take
 # shellcheck disable=SC2034 # read by gauntlet_time_row
 GAUNTLET_TIME_MERGE_LOCK_WAIT=$((SECONDS - t))
 if [ "$GAUNTLET_LOCK_HELD" != 1 ]; then
-  gauntlet_time_row merge-pr "" null null null null merge_lock
+  # A lock dir still there is held by another run: the wait ran out. None means it could not be made.
+  if [ -d "$merge_lock_dir" ]; then lock_timeout=merge_lock; else lock_timeout=merge_lock_error; fi
+  gauntlet_time_row merge-pr "" null null null null "$lock_timeout"
   die "could not take the merge lock at $merge_lock_dir within ${MERGE_PR_LOCK_WAIT_SECS:-3600}s (another merge-pr.sh is running, or the dir cannot be made); not merging."
 fi
 # develop may have moved while this run waited for the lock.
