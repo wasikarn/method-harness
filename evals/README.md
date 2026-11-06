@@ -402,6 +402,11 @@ A break in these paths does not show up in an eval run.
   `percent(7, 100)` is `7.0`), and its commit and NOTES say exactly what changed (a bare
   `ZeroDivisionError` became a `ValueError`). So no case fails when the skill fixes something beyond
   the claims.
+- **Invented facts in `tech-humanize` rewrites.** The Grit Gate's fabrication boundary (no new
+  fact, number, cause, name or result) has no grader (GH #921). The one-word haiku judge cannot
+  check it in either phrasing: written "PASS unless", it passed every planted invention (a new
+  person and test count, a new cause and name, a new flag and region); written "Score 1 only if",
+  it failed correct replies 3/3. Presence of the source's specifics is checked by regex instead.
 
 ### Fold-vs-keep (one agent)
 

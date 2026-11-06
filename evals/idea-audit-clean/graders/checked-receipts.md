@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: 'dependenc[^\n]{0,200}(SOURCE-PITCH\.md:\d|package\.json[^\n]{0,60}(:\d|\blines?\b|block|snippet|typed|embedded|lists|shows|\{\}))|package\.json[^\n]{0,120}(lists|declares|shows|has) no (runtime )?dependenc|"dependencies"\s*:\s*\{\}'
+pattern: 'dependenc[^\n]{0,200}(SOURCE-PITCH\.md:\d|package\.json[^\n]{0,60}(:\d|\blines?\b|block|snippet|excerpt|typed|embedded|quoted|lists|shows|\{\}))|package\.json[^\n]{0,120}(lists|declares|shows|has) no (runtime )?dependenc|"dependencies"\s*:\s*\{\}'
 match: contains
 target: last_message
 flags: i

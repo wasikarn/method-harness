@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}\b(is|are|was) (false|untrue|wrong|contradicted)|(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}(?<!no )(?<!not )(?<!n.t )(?<!without )(?<!any )(\bGAP\b|contradict)|lists? (a |one |\d+ )?(runtime )?dependenc(y|ies) on|(pulls? in|depends on|brings in) lodash'
+pattern: '(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}\b(is|are|was) (false|untrue|wrong|contradicted)|(zero|no)[- ](runtime )?dependenc[^\n.;]{0,80}(?<!no )(?<!not )(?<!n.t )(?<!without )(?<!any )contradict|\b(declares|lists|has|includes) (one|[1-9]\d*) (runtime )?dependenc|\b(declares|lists|has|includes) a (runtime )?dependency\b|lists? (a |one |\d+ )?(runtime )?dependenc(y|ies) on|(pulls? in|depends on|brings in) lodash'
 match: not_contains
 target: last_message
 flags: i
@@ -12,3 +12,5 @@ clause, a GAP or contradiction not negated by no/not/without, a named dependency
 match fails the run: "no contradiction found" or "no lodash" passes. Known limit: a fabrication worded
 another way ("misleading: depends on axios") is not caught. A regex, not an llm rubric: on
 2026-11-06 the one-word haiku judge voted FAIL 3/3 on a reply that invented nothing (GH #920).
+GAP alone does not count: the 2026-11-06 re-run marked the claim GAP meaning "only the
+author's word", which is not calling it false (GH #921).

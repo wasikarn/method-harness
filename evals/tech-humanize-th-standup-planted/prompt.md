@@ -4,6 +4,7 @@ tags: [tech-humanize, planted]
 runs: 1
 max_turns: 12
 timeout_seconds: 600
+allowed_tools: [Bash, Read, Edit, Write, Glob, Grep, Skill]
 ---
 Use the `mh:tech-humanize` skill (Skill tool, `skill: "mh:tech-humanize"`) on `standup.md`. It is a daily standup for a Thai dev team (genre B, Thai with English tech terms). No writing sample is available.
 
