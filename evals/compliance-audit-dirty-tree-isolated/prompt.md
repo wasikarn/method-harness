@@ -2,7 +2,7 @@
 name: compliance-audit-dirty-tree-isolated
 tags: [compliance-audit, isolation]
 runs: 1
-max_turns: 25
+max_turns: 40
 timeout_seconds: 900
 allowed_tools: [Bash, Read, Edit, Write, Glob, Grep, Agent, AskUserQuestion]
 ---

@@ -20,7 +20,7 @@ FIXTURE_EOF
 git add calc.py test_calc.py && git commit -qm "feat: percent helper with test"
 cat > calc.py <<'FIXTURE_EOF'
 def percent(part, total):
-    """Share of total as a percentage; a zero total is rejected."""
+    """Share of total as a percentage: an unrounded float (callers round for display); a zero total is rejected."""
     if total == 0:
         raise ValueError("total must be non-zero")
     return part / total * 100
