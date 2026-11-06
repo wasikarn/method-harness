@@ -38,10 +38,14 @@ method-harness, whose own hooks would confuse the result), the first prompt from
   `[mh:gate] BLOCKED: rm -rf detected — no trash CLI on this machine — ask the user before a
   destructive delete, or install one`; `ls -d` showed the dir still there. **Gates enforce.**
 
-## v3: the shipped setup script (`scripts/cloud-setup.sh`)
+## v3: first version of `scripts/cloud-setup.sh`
 
-Same environment, the shipped script (that run also called `claude plugin enable` for
-mattpocock-skills; that line is removed since).
+Same environment. That version differs from the shipped one: it also called `claude plugin
+enable` for mattpocock-skills (removed since), used fixed 35 s caps, and ran a plain
+`apt-get update` then `install`. After review the shipped script gives each step up to 60 s
+inside a 270 s total budget (mh first, then trash-cli, then mattpocock-skills) and reuses
+`.claude/hooks/session-start.sh`'s apt pattern (root or `sudo -n`, noninteractive, install
+before update). Those changes were checked locally with stub commands, not re-run in the cloud.
 - Every step exit 0 except that extra enable: exit 1, "already enabled". mattpocock-skills
   installs enabled; only mh needs `enable`.
 - `apt-get update` and `apt-get install -y trash-cli` worked as root: `/usr/bin/trash-put`.
@@ -60,5 +64,11 @@ mattpocock-skills; that line is removed since).
 - A cloud machine has no trash CLI by default; `scripts/cloud-setup.sh` installs trash-cli, so
   the gate's own hint applies unchanged.
 - Decision (operator, 2026-11-06): ship the setup script, drop the vendored-bundle plan.
-- Not tested: whether a hook `ask` reaches a person in an interactive web session, and
-  unattended runs.
+- Version lag: cloud-environments docs say later sessions start from a snapshot of the setup
+  script's result and the script reruns only when it or the allowed hosts change, or after
+  about 7 days. So a gate fix merged to develop can take up to about 7 days to reach cloud
+  sessions unless the operator edits the setup script. `scripts/cloud-setup.sh` marks a line
+  for that.
+- Not tested: whether a hook `ask` reaches a person in an interactive web session, unattended
+  runs, and whether a cloud session started from the snapshot shows the old mh version in
+  `claude plugin list` after a merge (check on the next merge).

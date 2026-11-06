@@ -42,8 +42,11 @@ The plugin ships `defaultEnabled: false`; add `"mh@wasikarn": true` to `settings
 
 **Claude Code on the web:** paste `scripts/cloud-setup.sh` into the cloud environment's
 "Setup script" box. It installs and enables both plugins and trash-cli; the default "Limited"
-network reaches github.com. Its log is `/tmp/mh-cloud-setup.log`. Evidence:
-`docs/research/mh-cloud-probe-2026-11-06/probe-results.md`.
+network reaches github.com. Its log is `/tmp/mh-cloud-setup.log`: check it if `mh:` skills
+are missing. Cloud sessions reuse a snapshot of the script's result for about 7 days, so
+mh there can lag develop; edit the script's marked line in the environment to force a fresh
+install. The repo still needs `/mattpocock-skills:setup-matt-pocock-skills` run once, as
+above. Evidence: `docs/research/mh-cloud-probe-2026-11-06/probe-results.md`.
 
 ## The gates (`hooks/hooks.json`)
 
