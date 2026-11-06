@@ -43,16 +43,39 @@ gauntlet_pass_record() {
   return 0
 }
 
+# gauntlet_time_num <value>: the value when it is a whole number with no leading zero, else null (JSON).
+gauntlet_time_num() { if [[ "${1-}" =~ ^(0|[1-9][0-9]*)$ ]]; then printf '%s' "$1"; else printf null; fi; }
+
+# gauntlet_time_row <who> <tree> <cached> <gauntlet lock wait> <run secs> <rc> [<timeout>]: append one
+# JSON row to GAUNTLET_TIME_LOG (default $HOME/.cache/mh/gauntlet-time.jsonl), so a merge's time splits
+# into merge-lock wait, load wait, gauntlet-lock wait and the run. merge-pr.sh sets the plain shell vars
+# GAUNTLET_TIME_MERGE_LOCK_WAIT, GAUNTLET_TIME_LOAD_WAIT and GAUNTLET_TIME_ROUND (null when unset, as on a
+# sync-pr-head.sh run). An empty tree or timeout is null; <cached> is true, false or null; a field that is
+# not a whole number is null. The only writer of the log. A write that fails prints a note; returns 0.
+gauntlet_time_row() {
+  local log="${GAUNTLET_TIME_LOG:-$HOME/.cache/mh/gauntlet-time.jsonl}" tree=null timeout=null
+  [ -z "$2" ] || tree="\"$2\""
+  [ -z "${7-}" ] || timeout="\"$7\""
+  mkdir -p "$(dirname "$log")" && printf '{"time":"%s","who":"%s","tree":%s,"cached":%s,"gauntlet_lock_wait":%s,"run_secs":%s,"rc":%s,"merge_lock_wait":%s,"load_wait":%s,"round":%s,"timeout":%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$tree" "$3" "$(gauntlet_time_num "$4")" "$(gauntlet_time_num "$5")" \
+    "$(gauntlet_time_num "$6")" "$(gauntlet_time_num "${GAUNTLET_TIME_MERGE_LOCK_WAIT-}")" \
+    "$(gauntlet_time_num "${GAUNTLET_TIME_LOAD_WAIT-}")" "$(gauntlet_time_num "${GAUNTLET_TIME_ROUND-}")" "$timeout" >>"$log" ||
+    echo "$1: could not append the timing row to $log" >&2
+  return 0
+}
+
 # gauntlet_full <who>: from the root of a clean checkout, run its own scripts/run-gauntlet.sh under the
 # gauntlet lock (GH #158), unless this tree already passed. All output goes to stderr. Returns the
 # gauntlet's status. The lock is taken in a subshell: callers that hold another lock built on the same
 # library (merge-pr.sh's merge lock) share GAUNTLET_LOCK_HELD and MH_GAUNTLET_LOCK_OWNER with it.
+# Each call, cached or run, appends one gauntlet_time_row.
 gauntlet_full() {
   local who=$1 tree d
   tree=$(git rev-parse --verify 'HEAD^{tree}') || return 1
   d=$(gauntlet_pass_dir)
   if gauntlet_pass_has "$tree"; then
     echo "$who: the full gauntlet already passed on tree $tree ($d/$tree); skipping it (GAUNTLET_PASS_CACHE=0 runs it anyway)." >&2
+    gauntlet_time_row "$who" "$tree" true null null null
     return 0
   fi
   echo "$who: running the full gauntlet on $(git rev-parse HEAD)..." >&2
@@ -61,11 +84,16 @@ gauntlet_full() {
     unset MH_GAUNTLET_LOCK_OWNER GAUNTLET_SHARD
     # shellcheck disable=SC2034 # read by gauntlet_lock_release
     GAUNTLET_LOCK_HELD=0
+    t0=$SECONDS
     gauntlet_lock_acquire
+    t1=$SECONDS
     trap gauntlet_lock_release EXIT
     trap 'exit 130' INT TERM HUP
     # GH #814: these callers run in the background with no terminal, so progress is on unless the caller set it.
-    GAUNTLET_PROGRESS="${GAUNTLET_PROGRESS:-1}" bash "$(git rev-parse --show-toplevel)/scripts/run-gauntlet.sh" >&2
+    rc=0
+    GAUNTLET_PROGRESS="${GAUNTLET_PROGRESS:-1}" bash "$(git rev-parse --show-toplevel)/scripts/run-gauntlet.sh" >&2 || rc=$?
+    gauntlet_time_row "$who" "$tree" false "$((t1 - t0))" "$((SECONDS - t1))" "$rc"
+    exit "$rc"
   )
 }
 

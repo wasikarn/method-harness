@@ -230,7 +230,8 @@ run() {
     STUB_COMMENTS_JSON="${STUB_COMMENTS_JSON-$(verdict "MERGE @ $(remote_tip feat/x)")}" \
     MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX="${LOAD_MAX-4}" MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
     GAUNTLET_LOCK_DIR="$F/gauntlet.lock" GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
-    GAUNTLET_MISS_LOG="${MISS_LOG-$F/miss.jsonl}" GAUNTLET_SHARD="${SHARD-}" bash "$SCRIPT" 451 2>>"${ERRFILE:-/dev/stdout}")
+    GAUNTLET_MISS_LOG="${MISS_LOG-$F/miss.jsonl}" GAUNTLET_TIME_LOG="${TIME_LOG-$F/time.jsonl}" \
+    GAUNTLET_SHARD="${SHARD-}" bash "$SCRIPT" 451 2>>"${ERRFILE:-/dev/stdout}")
   rc=$?
 }
 merged() { /usr/bin/grep -q '^gh pr merge' "$F/calls.log"; }
@@ -390,6 +391,45 @@ MISS_LOG=/dev/null/miss.jsonl run
 merges "unwritable miss log"
 if /usr/bin/grep -q 'could not append the miss-log row' <<<"$out"; then ok "an unwritable miss log prints a note and the merge goes on"
 else bad "unwritable log: $out"; fi
+
+# 3b2. timing log: every gauntlet_full call appends one JSON row to GAUNTLET_TIME_LOG with the merge-lock
+#      wait, the round's load wait and the round, so a merge's time splits into lock, load and gauntlet.
+#      A cached pass writes a row with null run fields; a red run's row carries its rc and the run still
+#      refuses; a lock or load timeout (cases 12 and 13) writes a row naming it; an unwritable log never
+#      stops the merge.
+trows() { if [ -f "$F/time.jsonl" ]; then wc -l <"$F/time.jsonl" | tr -d ' '; else echo 0; fi; }
+trow() { jq -c "$1" "$F/time.jsonl"; }
+# isint: jq test for a whole number of seconds >= 0.
+isint='(type == "number" and . >= 0 and floor == .)'
+setup
+run
+merges "green run with a timing log"
+tree=$(git --git-dir="$F/origin.git" rev-parse "$(remote_tip feat/x)^{tree}")
+if [ "$(trows)" = 1 ] && [ "$(trow "[.who, .tree, .cached, .rc, .round, .timeout, (.time | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\$\")), (.merge_lock_wait | $isint), (.load_wait | $isint), (.gauntlet_lock_wait | $isint), (.run_secs | $isint)]")" = "[\"merge-pr\",\"$tree\",false,0,1,null,true,true,true,true,true]" ]; then
+  ok "a green run writes one timing row: its tree, rc 0, round 1, and whole-second waits"
+else bad "green timing row ($(trows) rows): $(cat "$F/time.jsonl" 2>&1)"; fi
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 run
+refuses "red gauntlet with a timing log" "the gauntlet failed on"
+if [ "$(trows)" = 1 ] && [ "$(trow '[.cached, .rc]')" = '[false,1]' ]; then ok "a red run's row carries the gauntlet's rc 1"
+else bad "red timing row: $(cat "$F/time.jsonl" 2>&1)"; fi
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$(remote_tip feat/x)^{tree}")"
+run
+merges "cached pass with a timing log"
+if [ "$(gauntlets)" = 0 ] && [ "$(trows)" = 1 ] && [ "$(trow "[.cached, .gauntlet_lock_wait, .run_secs, .rc, .round, (.merge_lock_wait | $isint), (.load_wait | $isint)]")" = '[true,null,null,null,1,true,true]' ]; then
+  ok "a cached pass writes a row with cached true, null run fields and the merge waits"
+else bad "cached timing row: $(gauntlets) gauntlets: $(cat "$F/time.jsonl" 2>&1)"; fi
+setup
+STUB_GAUNTLET_PEER=1 run
+merges "two rounds with a timing log"
+if [ "$(trow '.round' | tr '\n' ' ')" = "1 2 " ]; then ok "a second round writes its own row, round 2"
+else bad "round rows: $(cat "$F/time.jsonl" 2>&1)"; fi
+setup
+TIME_LOG=/dev/null/time.jsonl run
+merges "unwritable timing log"
+if [ "$(/usr/bin/grep -c 'could not append the timing row to /dev/null/time.jsonl' <<<"$out")" = 1 ]; then ok "an unwritable timing log prints one note and the merge goes on"
+else bad "unwritable timing log: $out"; fi
 
 # 3c. GH #742: the mh/gauntlet success status goes on the merged head, after the push and before the merge,
 #     for a green run and for a cached pass; a red gauntlet posts none; a failed post stops the merge.
@@ -564,6 +604,9 @@ setup; on develop "peer" set_ver 1.1.2
 STUB_LOAD=7.25 run
 refuses "high load" "7.25"
 untouched "high load"
+if [ "$(trows)" = 1 ] && [ "$(trow "[.who, .timeout, .tree, .cached, .rc, .round, (.load_wait | $isint), (.merge_lock_wait | $isint)]")" = '["merge-pr","load",null,null,null,1,true,true]' ]; then
+  ok "a load timeout writes a row naming it, with its waits (3b2)"
+else bad "load timeout row: $(cat "$F/time.jsonl" 2>&1)"; fi
 # 12b. no MERGE_PR_LOAD_MAX: the cap is the online core count. A load at it refuses and names it;
 #     a load just under it merges, even when that is above the old fixed cap of 4.
 cores=$(getconf _NPROCESSORS_ONLN)
@@ -578,6 +621,9 @@ run
 if [ "$rc" -ne 0 ] && /usr/bin/grep -q "could not take the merge lock" <<<"$out" && ! merged && [ "$(cat "$F/merge.lock/pid")" = "$$" ]; then
   ok "a held merge lock refuses and stays with its owner"
 else bad "held lock rc=$rc: $out"; fi
+if [ "$(trows)" = 1 ] && [ "$(trow "[.timeout, .tree, .load_wait, .round, (.merge_lock_wait | $isint)]")" = '["merge_lock",null,null,null,true]' ]; then
+  ok "a merge-lock timeout writes a row naming it, before any load wait (3b2)"
+else bad "lock timeout row: $(cat "$F/time.jsonl" 2>&1)"; fi
 safe_tmp_delete "$F/merge.lock"
 
 # 14. develop's version cannot be ordered, or its manifest is missing: refuse, nothing left behind.

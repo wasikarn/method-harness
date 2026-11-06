@@ -410,6 +410,9 @@ wait_for_load() {
       return 0
     fi
     if [ "$waited" -ge "$wait_secs" ]; then
+      # shellcheck disable=SC2034 # read by gauntlet_time_row
+      GAUNTLET_TIME_LOAD_WAIT=$waited
+      gauntlet_time_row merge-pr "" null null null null load
       die "load $load is still >= $load_max after ${waited}s; not merging."
     fi
     sleep 30
@@ -529,8 +532,13 @@ if [ "$verify" = 1 ]; then
   exit 0
 fi
 
+# GAUNTLET_TIME_*: plain shell vars (not exported) that gauntlet_full's timing row reads (gauntlet-pass.sh).
+t=$SECONDS
 merge_lock_take
+# shellcheck disable=SC2034 # read by gauntlet_time_row
+GAUNTLET_TIME_MERGE_LOCK_WAIT=$((SECONDS - t))
 if [ "$GAUNTLET_LOCK_HELD" != 1 ]; then
+  gauntlet_time_row merge-pr "" null null null null merge_lock
   die "could not take the merge lock at $merge_lock_dir within ${MERGE_PR_LOCK_WAIT_SECS:-3600}s (another merge-pr.sh is running, or the dir cannot be made); not merging."
 fi
 # develop may have moved while this run waited for the lock.
@@ -538,7 +546,11 @@ fetch_develop "git fetch failed after taking the merge lock; not merging."
 
 round=1
 while :; do
+  # shellcheck disable=SC2034 # read by gauntlet_time_row
+  t=$SECONDS GAUNTLET_TIME_ROUND=$round
   wait_for_load
+  # shellcheck disable=SC2034 # read by gauntlet_time_row
+  GAUNTLET_TIME_LOAD_WAIT=$((SECONDS - t))
   require_clean "after the lock and load waits"
   sync_and_bump
   head=$(git rev-parse HEAD)
