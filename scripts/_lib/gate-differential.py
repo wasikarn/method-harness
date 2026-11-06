@@ -205,9 +205,16 @@ class BashRunner:
                 os.killpg(p.pid, signal.SIGKILL)
             except OSError:
                 # ESRCH: the group is gone; EPERM on macOS: its only member is the unreaped bash. Kill bash
-                # itself, so communicate() cannot wait on a live one.
+                # itself.
                 p.kill()
-            p.communicate()
+            try:
+                p.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                # communicate() waits for the pipes to close, and a grandchild in its own session (out of
+                # the killed group) can hold them open: stop reading instead of waiting on it.
+                p.stdout.close()
+                p.stderr.close()
+                p.wait()
             code, out, err = "timeout", b"", b""
         return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0)
 
@@ -429,18 +436,28 @@ def main():
     def pair(runners, data):
         return runners[0].run(data), runners[1].run(data)
 
+    def on_fork(data):
+        # -> both results through fork mode, or None when this command must go through bash instead
+        nonlocal nogroup
+        try:
+            return pair(fork, data)
+        except NoGroup:
+            nogroup += 1
+            if a.runner == "fork":  # fork mode only: a command it cannot run stops the run (PR #899)
+                for r in fork:
+                    r.close()
+                refuse("a child could not lead its own process group")
+        except ServerDied as e:
+            fork_failed(e)
+        return None
+
     def measure(text, data):
         # -> (old result, new result, the runners that gave them)
-        nonlocal near, nogroup
+        nonlocal near
         if fork:
-            try:
-                o, n = pair(fork, data)
-            except NoGroup:
-                nogroup += 1
-                return pair(bash, data) + (bash,)
-            except ServerDied as e:
-                fork_failed(e)
-            else:
+            r = on_fork(data)
+            if r:
+                o, n = r
                 if deadline and max(o.secs, n.secs) > NEAR * deadline:
                     near += 1  # near the deadline, load decides: only the real path's result counts
                     return pair(bash, data) + (bash,)
@@ -460,13 +477,9 @@ def main():
         if name:
             classes.setdefault(name, []).append(text)
         if is_slower(o.secs, n.secs, deadline):
-            try:  # once more, both sides on one runner: a load spike must not count
-                o, n = pair(runners, data)
-            except NoGroup:
-                o, n = pair(bash, data)
-            except ServerDied as e:
-                fork_failed(e)
-                o, n = pair(bash, data)
+            # once more, both sides on one runner: a load spike must not count
+            r = on_fork(data) if runners is not bash and fork else None
+            o, n = r or pair(bash, data)
             if is_slower(o.secs, n.secs, deadline):
                 slower.append((text, o.secs, n.secs))
     for r in bash + (fork or ()):

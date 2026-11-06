@@ -364,11 +364,16 @@ if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" \
    && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 1, near-deadline re-runs: 0)$' <<<"$out"; then
   ok "EPERM in the child with the group already set: fork mode as usual"
 else bad "child EPERM (rc=$rc): $out"; fi
-out=$(SERVER="$T/eperm-all.py" fake "$T/s-allow" "$T/s-deny" "$T/two.txt" fork); rc=$?
+out=$(SERVER="$T/eperm-all.py" fake "$T/s-allow" "$T/s-deny" "$T/two.txt" auto); rc=$?
 if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" \
    && /usr/bin/grep -q '^  runner: fork (fork-only diffs dropped: 0, near-deadline re-runs: 0, no-own-group re-runs: 2)$' <<<"$out"; then
-  ok "no own process group: that command through bash, fork mode kept (even with --runner fork)"
-else bad "no own group (rc=$rc): $out"; fi
+  ok "no own process group (auto): that command through bash, fork mode kept and counted"
+else bad "no own group, auto (rc=$rc): $out"; fi
+# PR #899 round 4: --runner fork promises fork mode only, so a command fork cannot run stops the run.
+out=$(SERVER="$T/eperm-all.py" fake "$T/s-allow" "$T/s-deny" "$T/two.txt" fork); rc=$?
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q -- '--runner fork: fork mode cannot run (.*own process group' <<<"$out"; then
+  ok "no own process group (--runner fork): exits 2 instead of falling back"
+else bad "no own group, --runner fork (rc=$rc): $out"; fi
 
 echo "=== killpg EPERM on a timeout crashes neither runner (PR #899 round 3, macOS) ==="
 # macOS raises EPERM from killpg when the group's only member is an unreaped zombie. Both runners must
@@ -391,6 +396,17 @@ out=$(GD_TIMEOUT=1 KILLPG_EPERM=1 fake "$T/s-3s" "$T/s-3s" "$T/rm.txt" bash); rc
 if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && ! /usr/bin/grep -q 'Traceback' <<<"$out"; then
   ok "bash runner: killpg EPERM on a timeout, bash is killed and the run goes on"
 else bad "bash killpg EPERM (rc=$rc): $out"; fi
+# PR #899 round 4: a grandchild in its own session survives the group kill and holds stdout open, so
+# the read after the kill must be bounded too. The 15 s sleeper is killed by its unique argument.
+held="15.0$$"
+stub "$T/s-held" "import subprocess; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep($held)'], start_new_session=True); time.sleep(3)"
+t0=$SECONDS
+out=$(GD_TIMEOUT=1 fake "$T/s-held" "$T/s-held" "$T/rm.txt" bash); rc=$?
+took=$((SECONDS - t0))
+pkill -f "time.sleep($held)"
+if [ "$rc" -eq 0 ] && [ "$took" -lt 10 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "bash runner: a timeout does not wait on a grandchild that holds stdout (${took}s)"
+else bad "held stdout (rc=$rc, ${took}s): $out"; fi
 
 echo "=== a wrapper change falls back to the bash runner (GH #889) ==="
 cp -R "$GATES" "$T/wrapped"
