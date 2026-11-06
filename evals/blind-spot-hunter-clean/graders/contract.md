@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '(^|\n)[\s*_`#-]*(?:[Vv]erdict[\s*_:`]*)?(?:\d+\s+findings?[\s*_:,`]*)?(CLEAN|\d+\s+`?(CRITICAL|HIGH|MEDIUM|LOW|unverified|cosmetic))'
+pattern: '(^|\n)[\s*_`#-]*(?:[Vv]erdict[\s*_:`]*)?(?:\d+\s+findings?[\s*_:,`]*)?(CLEAN\b|\d+\s+`?(CRITICAL|HIGH|MEDIUM|LOW|unverified|cosmetic))'
 match: contains
 target: last_message
 ---

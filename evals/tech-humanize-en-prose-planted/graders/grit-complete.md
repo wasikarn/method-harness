@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '^(?=[\s\S]*PR #412)(?=[\s\S]*flags/rollout\.py)(?=[\s\S]*5%)(?=[\s\S]*2026-08-30)(?=[\s\S]*\b3%)(?=[\s\S]*0\.4%)'
+pattern: '^(?=[\s\S]*PR #412)(?=[\s\S]*flags/rollout\.py)(?=[\s\S]*\b5%)(?=[\s\S]*2026-08-30)(?=[\s\S]*\b3%)(?=[\s\S]*0\.4%)'
 match: contains
 target: last_message
 ---
