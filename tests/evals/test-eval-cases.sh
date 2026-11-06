@@ -33,7 +33,7 @@ trap 'tmp_delete "$TMP"' EXIT
 
 # Cases whose prompt deliberately does not name a subagent_type/skill: they prove
 # the agent/skill must NOT be dispatched for an out-of-scope or misrouted ask.
-NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute"
+NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute attack-proposal-built-diff-misroute"
 
 # A prompt states the task, never the verdict the graders expect (GH #389): scan the body
 # (frontmatter stripped, since names/tags like `planted` live there) for words that hand the
@@ -63,8 +63,9 @@ PY
 # baseline"; confirmed in the 2.1.318 binary), so an un-armed one inflates delta. Flags such graders
 # that set no `arm:`; any value counts as a deliberate choice (`both` for a must-not-dispatch check).
 # Shapes: an `agent-fired.md` / `dispatch-confirmed.md` not on `tool: Skill`, an Agent check naming one
-# of the plugin's agents, a regex on the missing-plugin errors, and a `trace` regex that matches the
-# plugin's own agent or skill text (an outcome grader hit by that last rule wants `arm: both`).
+# of the plugin's agents, a Bash check (min >= 1) naming a script under the plugin's skills/*/*/scripts/,
+# a regex on the missing-plugin errors, and a `trace` regex that matches the plugin's own agent or
+# skill text (an outcome grader hit by that last rule wants `arm: both`).
 # Not caught: an Agent count with no `input_match` (ideate-run's `fanout.md` and idea-audit's
 # `isolation-fan-out.md` are armed by hand).
 # Args: <evals dir> <plugin root>. Prints one path per hit, exits 1 on any.
@@ -75,6 +76,8 @@ evals, root = sys.argv[1], sys.argv[2]
 agents = [os.path.basename(f)[:-3] for f in glob.glob(os.path.join(root, "agents", "*.md"))]
 own_text = "".join(open(f).read() for f in glob.glob(os.path.join(root, "agents", "*.md"))
                    + glob.glob(os.path.join(root, "skills", "**", "*.md"), recursive=True))
+scripts = {os.path.basename(f) for f in glob.glob(os.path.join(root, "skills", "*", "*", "scripts", "*"))
+           if os.path.isfile(f) and not f.endswith(".pyc")}
 def val(fm, key):
     m = re.search(r"^%s: (.*)$" % key, fm, re.M)
     if not m: return None
@@ -92,13 +95,18 @@ for g in sorted(glob.glob(os.path.join(evals, "*", "graders", "*.md"))):
     kind, pat = val(fm, "type"), val(fm, "pattern") or ""
     if kind == "tool_used" and val(fm, "tool") == "Agent":
         hit = any(a in (val(fm, "input_match") or "") for a in agents)
+    elif kind == "tool_used" and val(fm, "tool") == "Bash" and (val(fm, "min") or "1") != "0":
+        im = (val(fm, "input_match") or "").replace("\\", "")
+        hit = any(s in im for s in scripts)
     elif kind == "regex":
         try:
             own = (val(fm, "target") == "trace" and (val(fm, "match") or "contains") == "contains"
                    and re.search(pat, own_text) is not None)
         except re.error:
             own = False  # the per-case check reports a bad pattern
-        hit = "Agent type '" in pat or "Unknown skill:" in pat or own
+        # an init-event `skills` list names mh: skills only when the plugin loaded (skill-loaded.md)
+        init_skill = val(fm, "target") == "trace" and '"skills"' in pat and "mh:" in pat
+        hit = "Agent type '" in pat or "Unknown skill:" in pat or own or init_skill
     else:
         hit = False
     if os.path.basename(g) in ("agent-fired.md", "dispatch-confirmed.md") and val(fm, "tool") != "Skill":
@@ -157,6 +165,9 @@ for d in "$EVALS"/*/; do
     ste-lint-*)      /usr/bin/grep -q 'skill: "mh:ste-lint"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     perf-*)          /usr/bin/grep -q 'skill: "mh:performance-optimizer"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     code-architect-*) /usr/bin/grep -q 'skill: "mh:code-architect"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
+    attack-proposal-*) /usr/bin/grep -q 'skill: "mh:attack-proposal"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
+    gate-report-*)   /usr/bin/grep -q '^/mh:gate-report' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
+    model-bench-*)   /usr/bin/grep -q '^/mh:model-bench' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
     *) /usr/bin/grep -q 'subagent_type: "mh:' "$d/prompt.md" || { bad "$c: prompt.md does not name a subagent_type"; continue; } ;;
     esac ;;
   esac
@@ -367,11 +378,15 @@ printf -- '---\ntype: tool_used\ntool: Skill\ninput_match: %s\n---\n' "'deep-aud
 printf -- '---\ntype: tool_used\ntool: Skill\ninput_match: %s\n---\n' "'code-architect'" >"$actl/dispatch-confirmed.md"
 printf -- '---\ntype: tool_used\ntool: Agent\ninput_match: %s\n---\n' "'general-purpose'" >"$actl/generic-agent.md"
 printf -- '---\ntype: regex\ntarget: last_message\npattern: %s\n---\n' "'not found'" >"$actl/outcome.md"
-if unarmed_mechanism_graders "$TMP/armctl" "$ROOT" >/dev/null; then ok "arm check passes Skill, built-in Agent and outcome graders"; else bad "arm check flags a Skill, built-in Agent or outcome grader"; fi
+printf -- '---\ntype: tool_used\ntool: Bash\ninput_match: %s\n---\n' "'-m unittest'" >"$actl/generic-bash.md"
+printf -- '---\ntype: tool_used\ntool: Bash\ninput_match: %s\nmin: 0\nmax: 0\n---\n' "'cost-report-dedup.js'" >"$actl/no-script.md"
+if unarmed_mechanism_graders "$TMP/armctl" "$ROOT" >/dev/null; then ok "arm check passes Skill, built-in Agent, generic Bash, must-not and outcome graders"; else bad "arm check flags a Skill, built-in Agent, generic Bash, must-not or outcome grader"; fi
 for shape in "mech.md|type: regex\ntarget: trace\nmatch: not_contains\npattern: \"Agent type '[^']*' not found\"" \
              "mech.md|type: regex\ntarget: trace\nmatch: not_contains\npattern: 'Unknown skill: code-architect'" \
              "mech.md|type: tool_used\ntool: Agent\ninput_match: 'plan-reviewer'" \
+             "mech.md|type: tool_used\ntool: Bash\ninput_match: 'cost-report-dedup\\.js'" \
              "mech.md|type: regex\ntarget: trace\npattern: 'Four inputs or no draft'" \
+             "mech.md|type: regex\ntarget: trace\npattern: '\"skills\".*\"mh:gate-report\"'" \
              "agent-fired.md|type: regex\ntarget: last_message\npattern: 'specialist report'"; do
   f="${shape%%|*}"; fm="${shape#*|}"
   printf -- '---\n%b\n---\n' "$fm" >"$actl/$f"

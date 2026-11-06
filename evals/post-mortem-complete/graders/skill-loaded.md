@@ -1,8 +1,10 @@
 ---
 type: regex
-pattern: 'Four inputs or no draft'
+pattern: '"skills":\s*\[[^\]]*"mh:post-mortem"'
 match: contains
 target: trace
 arm: with-only
 ---
-The skill body reached the session: user invocation by slash command is not a Skill tool call, so the proof is the skill's own text in the trace, not `tool_used: Skill`.
+Load check, not invocation proof: the trace's `system`/`init` event lists `mh:post-mortem` under
+`skills` whenever the plugin loaded. Why a slash-invoked skill can't be matched directly:
+`evals/README.md`, the post-mortem paragraph.
