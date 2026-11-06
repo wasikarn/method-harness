@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 mkdir -p shop
 cat > shop/models.py <<'FIXTURE_EOF'
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 
@@ -24,12 +23,15 @@ class Item:
 
 @dataclass(frozen=True)
 class Order:
+    # The order's own id from the order store: the same order always carries the same id, however
+    # many times it is loaded, so it is safe to use as the payment idempotency key.
+    id: str
     items: tuple[Item, ...]
     currency: Literal["USD"] = "USD"
-    # Generated, never passed in: every Order has its own id, and a retry of the same order reuses it.
-    id: str = field(default_factory=lambda: uuid.uuid4().hex, init=False)
 
     def __post_init__(self):
+        if not isinstance(self.id, str) or not self.id.strip():
+            raise ValueError("id must be a non-empty string")
         if not isinstance(self.items, tuple) or not self.items:
             raise ValueError("items must be a non-empty tuple")
         if not all(isinstance(i, Item) for i in self.items):
@@ -70,6 +72,12 @@ class Gateway:
         Idempotent per key: a retry with the same key records nothing new and returns the same id.
         A zero amount is a free order; it is recorded and gets an id like any other.
         """
+        if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents < 0:
+            raise ValueError("amount_cents must be an int >= 0")
+        if currency != "USD":
+            raise ValueError("only USD is supported")
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+            raise ValueError("idempotency_key must be a non-empty string")
         prior = self.ledger.setdefault(idempotency_key, (amount_cents, currency))
         if prior != (amount_cents, currency):
             raise ValueError(f"idempotency key {idempotency_key!r} reused for a different charge")
