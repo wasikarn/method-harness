@@ -68,7 +68,23 @@ before update). Those changes were checked locally with stub commands, not re-ru
   script's result and the script reruns only when it or the allowed hosts change, or after
   about 7 days. So a gate fix merged to develop can take up to about 7 days to reach cloud
   sessions unless the operator edits the setup script. `scripts/cloud-setup.sh` marks a line
-  for that.
+  for that. Confirmed below (v4).
+- Cloud trash is session-scoped: with trash-cli present the gate says "use trash instead" and
+  an agent deletes without asking, but the trash lives on the session VM. A trashed file is
+  recoverable for the rest of the session, then gone with the VM, the same as every other
+  uncommitted, unpushed file there. The gate is unchanged for the cloud: an "ask" there would
+  stop unattended runs without protecting more than pushing already does.
 - Not tested: whether a hook `ask` reaches a person in an interactive web session, unattended
-  runs, and whether a cloud session started from the snapshot shows the old mh version in
-  `claude plugin list` after a merge (check on the next merge).
+  runs, and whether a resumed cloud session keeps its trash.
+
+## v4: snapshot lag and the shipped script (after PR #932 merged as mh 1.1.559)
+
+- Snapshot lag, confirmed: a new session at 16:49 UTC, environment unchanged since the v3
+  run, still had mh 1.1.558 (PR #932 merged 1.1.559 at 16:34 UTC). Its
+  `/tmp/mh-cloud-setup.log` was from 16:11 UTC, the snapshot's own run.
+- Saving the final `scripts/cloud-setup.sh` into the environment rebuilt it; the next session
+  ran the shipped script exactly as committed:
+  - `done at t=11s`, every step exit 0;
+  - trash-cli installed as root (apt, exit 0): `/usr/bin/trash` and `/usr/bin/trash-put`;
+  - mattpocock-skills 1.3.2 and mh 1.1.559 enabled;
+  - gate check: `rm -rf` blocked with "use trash instead", and the directory survived.
