@@ -96,5 +96,14 @@ case "$body" in
   *) bad "run_hook_tests does not export GAUNTLET_PASS_CACHE=0" ;;
 esac
 
+# Timing row (gauntlet_time_row): with HOME and GAUNTLET_TIME_LOG unset, under the callers' set -euo
+# pipefail, the writer must print a note and return 0, never abort with "HOME: unbound variable" (which
+# would turn a green gauntlet into a failed one in gauntlet_full's subshell).
+out=$(env -u HOME -u GAUNTLET_TIME_LOG bash -c 'set -euo pipefail; . "$1"; ( rc=0; gauntlet_time_row merge-pr "" null null null 0; exit "$rc" ); echo "rc=$?"' _ "$ROOT/scripts/_lib/gauntlet-pass.sh" 2>&1)
+case "$out" in
+  *"must be an absolute path"*"rc=0") ok "no HOME and no GAUNTLET_TIME_LOG: the timing writer notes it and the status stays 0" ;;
+  *) bad "no HOME: $out" ;;
+esac
+
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
