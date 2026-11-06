@@ -394,6 +394,14 @@ MISS_LOG=/dev/null/miss.jsonl run
 merges "unwritable miss log"
 if /usr/bin/grep -q 'could not append the miss-log row' <<<"$out"; then ok "an unwritable miss log prints a note and the merge goes on"
 else bad "unwritable log: $out"; fi
+# GH #930: a relative path would land in the checkout the gauntlet just ran on, which then reads as
+# changed and refuses the merge; it writes no row and says so instead.
+setup; rules_on_develop
+MISS_LOG=miss.jsonl run
+merges "relative miss log path"
+if [ ! -e "$F/work/miss.jsonl" ] && /usr/bin/grep -q 'GAUNTLET_MISS_LOG must be an absolute path' <<<"$out"; then
+  ok "a relative miss log path writes nothing into the checkout, prints a note, and the merge goes on"
+else bad "relative miss log: $(ls "$F/work"): $out"; fi
 
 # 3b2. timing log: every gauntlet_full call appends one JSON row to GAUNTLET_TIME_LOG with the merge-lock
 #      wait, the round's load wait and the round, so a merge's time splits into lock, load and gauntlet.
