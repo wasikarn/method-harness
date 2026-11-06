@@ -84,16 +84,16 @@ byte-identical. Graders check the skill and a checker agent fired, git and the t
 (`tool_used: Bash` anchored on the command), the fix and its test landed in the named files, and
 the report opens with the Final Verdict line. Needs `--allow-tools Bash,Edit,Write`.
 
-The six `deep-audit-step6-*` cases (the step-6 whole-picture trigger) use the same shape: a
+The five `deep-audit-step6-*` cases (the step-6 whole-picture trigger) use the same shape: a
 `scaffold.sh` builds a two-commit history, the latest commit is the session, and the prompt only
 states the task. Until GH #389 the subject typed that history itself from the prompt, which also
 told it the answer ("no bugs", "nothing else imports this"). Rule for every case here: a case
 prompt states the task, never the expected verdict or the trigger fact. Fixture history goes in
 `scaffold.sh`, never in a narrative the subject types itself. `tests/evals/test-eval-cases.sh`
 fails on a narrow word list (`planted`, `rubric`, `grader`, `no bug(s)`, `accurate`, `correctly
-implemented`) in a prompt body; a paraphrased tell still gets past it. Tradeoff: without the tell,
-a subject that "fixes" a non-bug now fails `zero-fixes-skip`, so that case also measures false
-fixes and overlaps `deep-audit-clean`. The pilot numbers in `c182ffc6` were taken with the tells
+implemented`) in a prompt body; a paraphrased tell still gets past it. A sixth case, `zero-fixes-skip`,
+was dropped (GH #921): over three fixture rounds deep-audit always found and fixed a real gap, so
+the zero-fix path never ran, and SKILL.md step 4 states that rule in one line. The pilot numbers in `c182ffc6` were taken with the tells
 in place, so the two should-not-fire results there are not clean measurements.
 
 Two for `cost-report` (tag `cost-report`): a planted log with a session whose two rows must
@@ -319,7 +319,7 @@ skills you changed. Notes on single lines:
 
 - The first line also judges `perf-regression-routing` with haiku; its own sonnet run is further
   down.
-- `--tag deep-audit` includes the six `deep-audit-step6-*` cases.
+- `--tag deep-audit` includes the five `deep-audit-step6-*` cases.
 - The `ideate` run case spawns 6 agents (5 plus `mh:ideate-critic`).
 
 The block has no `#` comments: zsh, without `interactivecomments`, runs a pasted `#` line as a

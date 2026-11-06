@@ -218,7 +218,8 @@ PY
   # anchor rejects (deep-audit finding, v1.1.22).
   case "$c" in
     blind-spot-hunter-planted|silent-failure-hunter-planted) sample=$'## Verdict\n\n**1 MEDIUM, 2 LOW**' ;;
-    blind-spot-hunter-clean|silent-failure-hunter-clean)     sample=$'## Verdict\n\n**CLEAN**' ;;
+    blind-spot-hunter-clean)      sample=$'## Verdict\n\n**CLEAN (1 dormant: 1 LOW)**' ;;
+    silent-failure-hunter-clean)  sample=$'## Verdict\n\n**CLEAN**' ;;
     test-gap-analyzer-planted)    sample=$'**Verdict:** `4 GAPS, highest 6/10`' ;;
     test-gap-analyzer-clean)      sample=$'**Verdict:** `COVERED`' ;;
     type-design-analyzer-planted) sample=$'**6 CONCERNS across 4 types, lowest Encapsulation 4/10**' ;;
@@ -268,6 +269,9 @@ echo "a;b"
   case "$c" in
     ste-lint-planted)         wrong='status.md: no confirmed findings, file is clean.' ;;
     ste-lint-file-prose-only) wrong='mixed.md line 6: rule 8.1 semicolon inside the code block' ;;
+    # A dormant MEDIUM+ must not hide behind CLEAN (agents/blind-spot-hunter.md Output Format, GH #921).
+    # Several wrong verdicts are separated by a line holding only ===; each must be rejected on its own.
+    blind-spot-hunter-clean)  wrong=$'## Verdict\n\n**CLEAN (1 dormant: 1 CRITICAL)**\n===\n**Verdict:** CLEAN (1 dormant: 1 unverified)' ;;
   esac
   # The grader checks for every case run in one python + one node process after the loop
   # (one `node` spawn per regex grader was most of this file's run time).
@@ -337,6 +341,9 @@ for c, gdir, items in parsed:
             want = "match: not_contains" not in fm
             if bool(re.search(pat, sample, flags)) != want:
                 print(f"  {f}: pattern {'rejects' if want else 'matches'} the verdict sample {sample!r}"); bad = 1
+            for w in (wrong.split("\n===\n") if f == "clean.md" and wrong else []):
+                if re.search(pat, w, flags):
+                    print(f"  {f}: pattern matches the deliberately wrong verdict {w!r}"); bad = 1
         elif os.path.basename(os.path.dirname(gdir)).startswith(("tech-humanize-", "ste-lint-")):
             if not re.search(pat, sample, flags | re.M):
                 print(f"  {f}: pattern does not match the scaffolded fixture, so it cannot discriminate"); bad = 1
