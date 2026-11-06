@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '\blint(?:er|ing)?\b[^\n]{0,250}\b(kept|new|save|propos|candidate|approv)'
+pattern: '\blint(?:er|ing)?\b[^\n]{0,250}\b(kept|new|save|propos|candidate|approv)|\b(kept|save|propos|candidate|approv)[^\n]{0,250}\blint(?:er|ing)?\b'
 flags: i
 match: contains
 target: last_message
@@ -9,4 +9,5 @@ The linter-before-commit rule is genuinely new (not in the store) and durable, s
 reach the gate. A session that suppresses everything just because a sub-index exists has
 over-corrected, not deduped correctly. A regex on the reply, not `tool_used: AskUserQuestion`:
 `claude -p` has no `AskUserQuestion`, so the skill hands the gate payload back in its final message
-(GH #921). Known limit: "the lint rule is not new" also matches.
+(GH #921). Either word order counts: the 2026-11-06 re-run wrote "needs your approval:" before
+the rule. Known limit: "the lint rule is not new" also matches.
