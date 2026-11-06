@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Probe: can a cloud setup script install the mh plugin? Paste into the
+# Probe v2: can a cloud setup script install AND enable the mh plugin? Paste into the
 # environment's "Setup script" box. Read the result with the prompt in
-# mh-cloud-probe-prompt.md. It records facts only and changes nothing else.
+# mh-cloud-probe-prompt.md. Results: probe-results.md next to this file.
+# v1 (install only) left mh installed but disabled: no mh skills, no gates.
 # The setup script must exit 0 and finish in about 5 minutes (cloud-environments docs);
-# worst case here is about 4 minutes: 30 s + 15 s + 3 x 65 s.
+# worst case here is about 5 minutes: 30 s + 15 s + 4 x 65 s.
 set +e
 # fallback: a probe must never block the environment from starting; every error is in $LOG.
 trap 'exit 0' EXIT
@@ -23,6 +24,7 @@ run() {
 }
 timed_out() { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }
 {
+  echo "probe: v2 (install + enable)"
   echo "date: $(date -u +%FT%TZ)"
   echo "user: $(id -un)  HOME=$HOME  CLAUDE_CODE_REMOTE=${CLAUDE_CODE_REMOTE:-unset}"
   echo "claude: $(command -v claude || echo MISSING)"
@@ -42,8 +44,13 @@ timed_out() { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }
     echo "--- install"
     run 60 claude plugin install mh@wasikarn; rc=$?
     echo "exit=$rc (124 or 137 = timed out)"
+    echo "--- enable"
+    run 60 claude plugin enable mh@wasikarn; rc=$?
+    echo "exit=$rc (124 or 137 = timed out)"
     echo "--- list"
     run 60 claude plugin list
     echo "exit=$?"
+    echo "--- settings.json enabledPlugins"
+    grep -A3 enabledPlugins "$HOME/.claude/settings.json" 2>&1 || echo "no enabledPlugins key"
   fi
 } >"$LOG" 2>&1
