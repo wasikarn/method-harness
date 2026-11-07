@@ -7,8 +7,8 @@ Usage: gate_closure.py [--files] (--dir GATES_DIR | --rev REV) GATE
   --files  print the member file names, one per line, instead of the hash
 GATE: irrecoverable | subagent-git-guard | secret-scan. Exit 2 on a usage error, 1 when git fails.
 
-Members, all directly in hooks/gates: the gate's own .sh and .py, _run.py, and each shared _* or *.awk
-file the gate uses. A shared file is used when its name without the extension is a whole word in the
+Members, all directly in hooks/gates: the gate's own .sh and .py, _run.py, and each shared _*.py, _*.sh or
+*.awk file the gate uses. A shared file is used when its name without the extension is a whole word in the
 gate's .sh or .py, or in a member already counted (_run.py included) (`from _journal import`, `brace-route.awk`).
 A name that only a comment mentions counts too; a name built at run time would be missed.
 The hash is sha256 over "<name>\\0<sha256 of the bytes>\\n" per member, sorted by name, so the same
@@ -21,7 +21,9 @@ GATES = ("irrecoverable", "subagent-git-guard", "secret-scan")
 
 
 def _shared(name):
-    return name.startswith("_") or name.endswith(".awk")
+    # Real gate files only: an ignored backup (`_journal.py~`, `_run.py.orig`) in a folder would join the
+    # folder's closure but never a rev's, and the record could then never match the merge tree.
+    return (name.startswith("_") and name.endswith((".py", ".sh"))) or name.endswith(".awk")
 
 
 def members(files, gate):

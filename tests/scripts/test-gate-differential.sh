@@ -89,7 +89,7 @@ else bad "replay (rc=$rc): $out"; fi
 
 echo "=== GH #891: a gate's closure hash ==="
 CLOSURE="$ROOT/scripts/_lib/gate_closure.py"
-# The spec: the gate's own .sh and .py, _run.py, and every shared _* or *.awk file in hooks/gates that the
+# The spec: the gate's own .sh and .py, _run.py, and every shared _*.py, _*.sh or *.awk file in hooks/gates that the
 # gate uses (its name, without the extension, is a word in the gate's text or in a shared file it uses),
 # each as "<name>\0<sha256 of its bytes>\n", sorted by name. The sets below are today's, read by hand:
 # a gate that starts or stops using a shared file must change this table too.
@@ -179,6 +179,103 @@ out=$(GATE_REPLAY_RECORD_DIR="$T/rec-slug" bash "$SCRIPT" --cases "$T/empty.txt"
 if [ "$(records "$T/rec-slug")" = 0 ]; then ok "a --slug replay writes no record (one dir is not the pool)"; else bad "--slug replay wrote a record: $out"; fi
 out=$(bash "$SCRIPT" --replay many "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$rc" -eq 2 ]; then ok "--replay takes a number or all"; else bad "--replay many rc=$rc: $out"; fi
+# The runners start in a temp cwd: a relative gates dir once ran nothing (exit 127 on that side), so two
+# relative dirs read as 0 diffs and --replay all wrote a record for a run that never ran the gate.
+printf 'rm -rf build\n' > "$T/deny.txt"
+out=$(cd "$T" && bash "$SCRIPT" --cases "$T/deny.txt" old "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a relative OLD dir runs its gate (same copy as NEW: 0 diffs, no exit 127)"
+else bad "relative OLD dir (rc=$rc): $out"; fi
+out=$(cd "$T" && bash "$SCRIPT" --cases "$T/deny.txt" "$T/old" same irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a relative NEW dir runs its gate (0 diffs, no exit 127)"
+else bad "relative NEW dir (rc=$rc): $out"; fi
+# A NEW dir edited while the replay runs (here by the gate itself, on each run): the runs and the record
+# use a snapshot taken at the start, so the record names the closure the corpus ran on, not the edited one.
+cp -R "$GATES" "$T/mut"
+python3 - "$T/mut/irrecoverable.sh" "$T/mut/irrecoverable.py" <<'PY'
+import sys
+p, target = sys.argv[1], sys.argv[2]
+lines = open(p).read().split("\n", 1)
+open(p, "w").write(lines[0] + '\necho "# edited mid-run" >> "%s"\n' % target + lines[1])
+PY
+mut0=$(python3 "$CLOSURE" --dir "$T/mut" irrecoverable)
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-mut" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --runner bash "$T/old" "$T/mut" irrecoverable 2>&1); rc=$?
+if ! /usr/bin/grep -q 'edited mid-run' "$T/mut/irrecoverable.py"; then
+  bad "mid-run edit: the gate's edit never landed in $T/mut, so this row tests nothing: $out"
+elif [ "$(records "$T/rec-mut")" = 1 ] && [ -f "$T/rec-mut/irrecoverable-$mut0.json" ]; then
+  ok "a NEW dir edited during the replay: the record names the closure at the start (the snapshot the runs used)"
+else bad "mid-run edit (rc=$rc, records $(records "$T/rec-mut"), want irrecoverable-$mut0.json): $out"; fi
+# A gate that rewrites its own (snapshot) file on each run: the closure is hashed before any run.
+cp -R "$GATES" "$T/self"
+python3 - "$T/self/irrecoverable.sh" <<'PY'
+import sys
+p = sys.argv[1]
+lines = open(p).read().split("\n", 1)
+open(p, "w").write(lines[0] + '\necho "# edited mid-run" >> "$(dirname "$0")/irrecoverable.py"\n' + lines[1])
+PY
+self0=$(python3 "$CLOSURE" --dir "$T/self" irrecoverable)
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-self" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --runner bash "$T/old" "$T/self" irrecoverable 2>&1); rc=$?
+if [ "$(records "$T/rec-self")" = 1 ] && [ -f "$T/rec-self/irrecoverable-$self0.json" ]; then
+  ok "a gate that rewrites its snapshot file mid-run: the record names the closure before the first run"
+else bad "self-rewriting gate (rc=$rc, records $(records "$T/rec-self"), want irrecoverable-$self0.json): $out"; fi
+# A relative symlink in NEW still resolves in the snapshot (it is copied as its target).
+mkdir -p "$T/lnkroot/shared"
+cp -R "$GATES" "$T/lnkroot/gates"
+mv "$T/lnkroot/gates/irrecoverable.py" "$T/lnkroot/shared/irrecoverable.py"
+ln -s ../shared/irrecoverable.py "$T/lnkroot/gates/irrecoverable.py"
+out=$(bash "$SCRIPT" --cases "$T/deny.txt" "$T/same" "$T/lnkroot/gates" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a relative symlink in NEW runs the file it points to (0 diffs against a plain copy)"
+else bad "relative symlink in NEW (rc=$rc): $out"; fi
+# The runs use the snapshot, not only the record: NEW's first run turns the real dir's gate into allow-all.
+# Run from the real dir, every later deny command would be allowed (diffs > 0).
+cp -R "$GATES" "$T/flip"
+python3 - "$T/flip/irrecoverable.sh" "$T/flip/irrecoverable.py" <<'PY'
+import sys
+p, target = sys.argv[1], sys.argv[2]
+lines = open(p).read().split("\n", 1)
+open(p, "w").write(lines[0] + "\nprintf 'import sys\\nsys.exit(0)\\n' > \"%s\"\n" % target + lines[1])
+PY
+printf 'rm -rf build\nrm -rf dist\nrm -rf out\n' > "$T/deny3.txt"
+out=$(bash "$SCRIPT" --cases "$T/deny3.txt" --runner bash "$T/same" "$T/flip" irrecoverable 2>&1); rc=$?
+if ! /usr/bin/grep -q 'sys.exit(0)' "$T/flip/irrecoverable.py"; then
+  bad "snapshot runs: the real dir was never rewritten, so this row tests nothing: $out"
+elif [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "the runs use the NEW snapshot: rewriting the real dir mid-run changes no verdict"
+else bad "snapshot runs (rc=$rc): $out"; fi
+# A dangling symlink in NEW (an editor's lock file) is skipped, not a crash with exit 1 ("diffs").
+cp -R "$GATES" "$T/dangle"
+ln -s "nobody@host.123:456" "$T/dangle/.#irrecoverable.py"
+out=$(bash "$SCRIPT" --cases "$T/deny.txt" "$T/same" "$T/dangle" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a dangling symlink in NEW is skipped (0 diffs)"
+else bad "dangling symlink in NEW (rc=$rc): $out"; fi
+# An ignored editor or merge backup is not a member, so a folder and a rev hash the same files.
+cp -R "$GATES" "$T/bak"
+cp "$GATES/_journal.py" "$T/bak/_journal.py~"
+cp "$GATES/_run.py" "$T/bak/_run.py.orig"
+for g in irrecoverable subagent-git-guard secret-scan; do
+  if [ "$(python3 "$CLOSURE" --dir "$T/bak" "$g")" = "$(python3 "$CLOSURE" --dir "$T/same" "$g")" ]; then
+    ok "$g: backup files (_journal.py~, _run.py.orig) leave the closure unchanged"
+  else bad "$g: a backup file joined the closure: $(python3 "$CLOSURE" --files --dir "$T/bak" "$g" | tr '\n' ' ')"; fi
+done
+# The filter above must not drop a real shared file: every tracked _* file in hooks/gates passes _shared, or
+# a gate change that edits only that file would need no replay. The check bites on a planted `_policy`.
+not_shared() {  # names on stdin -> the _* names _shared rejects
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import gate_closure as g
+print(" ".join(n for n in sys.stdin.read().split() if n.startswith("_") and not g._shared(n)))' "$ROOT/scripts/_lib"
+}
+tracked=$(git -C "$ROOT" ls-files hooks/gates | sed -n 's|^hooks/gates/\([^/]*\)$|\1|p')
+miss=$(not_shared <<<"$tracked")
+if [ -z "$miss" ] && [ "$(not_shared <<<"$tracked _policy")" = _policy ]; then
+  ok "every tracked _* file in hooks/gates is a closure candidate (a planted _policy is caught)"
+else bad "tracked _* files the closure filter drops: '$miss' (planted check: '$(not_shared <<<"$tracked _policy")')"; fi
+# A numeric --replay that covers the whole pool is a whole-pool run too.
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-num" bash "$SCRIPT" --cases "$T/empty.txt" --replay 50 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$T/rec-num/irrecoverable-$closure.json" ]; then
+  ok "--replay 50 over a 2-command pool writes the record"
+else bad "--replay 50 full pool (rc=$rc, records $(records "$T/rec-num")): $out"; fi
 
 echo "=== slug traversal out of a worktree prefix ==="
 out=$(bash "$SCRIPT" --replay 3 --slug "$slug--claude-worktrees-probe/../foreign" "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
