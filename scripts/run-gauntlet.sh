@@ -157,6 +157,19 @@ hook_test_files() {
   fi
   return 0
 }
+# Start order for the test layer, paths on stdin: the slow list first (only those asked for), then the
+# rest by size (`ls -S`, longest job first). test-gate-differential.sh is small but ~225 s, mostly
+# fixture replays and 8 s timeouts; by size it started ~2 min in and ended last (343 s gauntlet vs
+# 279 s with it first, 2026-11-07). Checked by tests/scripts/test-run-gauntlet-wiring.sh.
+# shortcut: a hand list, not timings; add a file when a GAUNTLET_PROGRESS=1 run shows it ending last.
+start_order() {
+  local slow="tests/scripts/test-gate-differential.sh"
+  xargs ls -S | awk -v slow="$slow" '
+    BEGIN { n = split(slow, s, " "); for (i = 1; i <= n; i++) want[s[i]] = i }
+    $0 in want { first[want[$0]] = $0; next }
+    { rest[++r] = $0 }
+    END { for (i = 1; i <= n; i++) if (i in first) print first[i]; for (i = 1; i <= r; i++) print rest[i] }'
+}
 # --level medium runs only the plan's tests (GH #749).
 if [ "$level" = medium ]; then hook_test_files() { printf '%s\n' "$plan_tests"; }; fi
 
@@ -182,15 +195,15 @@ run_hook_tests() {
   export MH_GATE_JOURNAL_PATH="$JOURNAL_TMP/gate-decisions.jsonl"
   # Test files run in parallel (GAUNTLET_JOBS, default 4 locally, 1 when CI is
   # set), each with its own journal file and output file, then print in glob
-  # order so the log reads the same as a serial run. Biggest files start first
-  # (`ls -S`, longest job first): test-gates*.sh and test-subagent-git-guard.sh
+  # order so the log reads the same as a serial run. Longest jobs start first
+  # (start_order: a short slow list, then `ls -S`): test-gates*.sh and test-subagent-git-guard.sh
   # are ~half of all test time, so they must not queue behind the cheap files.
   # Kept at 4, not nproc: the box is shared and timing rows (GH #158) fail under
   # heavy load. CI stays serial: its runner is slower with fewer cores, and the
   # 8 s rows already have only ~1.1x margin there; 4 concurrent files timed one out.
   local TDIR="$JOURNAL_TMP/t" o
   mkdir -p "$TDIR"
-  hook_test_files | xargs ls -S |
+  hook_test_files | start_order |
     xargs -P "${GAUNTLET_JOBS:-$([ -n "${CI:-}" ] && echo 1 || echo 4)}" -I{} bash -c \
       'o="$1/${2//\//_}"; p=${3:-/dev/null}; s=$SECONDS; case "$2" in *.py) interp=python3;; *) interp=bash;; esac
        printf "S %s\n" "$2" >>"$p"

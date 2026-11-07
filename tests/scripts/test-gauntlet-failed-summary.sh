@@ -16,7 +16,8 @@ safe_tmp_delete() { [ -n "${1:-}" ] && tmp_delete "$1"; return 0; }
 
 echo "=== gauntlet names failing test files (GH #387) ==="
 
-BODY=$(sed -n '/^run_hook_tests()/,/^}/p' "$GAUNTLET")
+# run_hook_tests() calls start_order() for its start order, so both come out.
+BODY=$(sed -n '/^start_order()/,/^}/p; /^run_hook_tests()/,/^}/p' "$GAUNTLET")
 FIX=$(mktemp -d)
 if [ -z "$BODY" ]; then
   bad "could not extract run_hook_tests() from run-gauntlet.sh"
