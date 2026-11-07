@@ -64,7 +64,8 @@ it is the guard for edits to `docs/METHODOLOGY.md`. Neither case needs `mattpoco
 number-boundary lookahead came after it, so the same runs would now score about 1.0 vs 0.6 (a
 case score is the mean of its graders), not 0.5: compare `test-first.md` counts across reruns, not
 the case delta. Later still the file regexes were widened to accept an early `total < 100` return,
-swapped operands and a parameterized test, which they had scored 0; `tests/evals/test-rule4-graders.sh`
+swapped operands, `>= 100.0` and a parameterized test, which they had scored 0, and bounded to reject
+`1100 <= total`, `>= 100e1` and the old bound swapped (`100 < total`); `tests/evals/test-rule4-graders.sh`
 pins the accepted and rejected shapes. They are a coarse check, not proof of a correct fix; the
 known misses are listed in each grader's note, and `test-first.md` carries the Rule 4 signal.
 
