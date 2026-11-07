@@ -282,8 +282,9 @@ class ForkRunner:
         self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate, str(TIMEOUT)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd, bufsize=0)
         # The warm-up runs a few allowing commands in the server itself, with no deadline of its own.
-        if self.line(READY_SECS) != b"ready\n":
-            raise ServerDied(self.died())
+        first = self.line(READY_SECS)
+        if first != b"ready\n":
+            raise ServerDied(self.died("sent a garbled warm-up line" if first else None))
 
     def line(self, secs):
         # One reply line within secs, else b"" (the server sends each line in one write).
@@ -318,8 +319,8 @@ class ForkRunner:
         try:
             self.p.stdin.write((json.dumps(self.files) + "\n").encode())
             reply = self.line(TIMEOUT + 5)  # the server itself kills a child at TIMEOUT
-        except OSError:
-            reply = b""
+        except OSError:  # a pipe write or read failing (EPIPE: closed stdin) means the server is exiting, as EOF does
+            self.eof, reply = True, b""
         if not reply:
             raise ServerDied(self.died())
         try:
