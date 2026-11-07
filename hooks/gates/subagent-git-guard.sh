@@ -14,14 +14,18 @@
 # "git" is read (GH #344), but a second parse level (eval of an escaped quote)
 # or a substitution that builds the word "git" is a non-goal, and a
 # heredoc BODY line starting with "git stash" over-blocks (no heredoc parsing).
+# GH #913: Monitor and context-mode's ctx_execute(_file) shell code and ctx_batch(_execute) commands get
+# the Bash verdict (hooks.json gives this gate irrecoverable's matcher). The expansion non-goal is live
+# there on every machine: context-mode runs shell code with /bin/sh -c, which word-splits
+# X="git stash"; $X, while a zsh Bash tool does not (GH #936).
 #
 # Fast path (GH #326) skips python3 only on proof it would allow in silence. A bare "no agent_id
 # substring" check is a bypass (GH #154: the key can be written with a \u escape). JSON's other
 # escapes (\" \\ \/ \b \f \n \r \t) cannot make a letter or "_", so with neither agent_id nor \u
 # in the raw text, a payload that also matches the plain-object regex below (ASCII, depth 2, no
 # arrays) parses to a dict with no agent_id key: python exits 0, no output. Anything else runs
-# python3 (malformed JSON keeps its stderr line). Keep `_input=$(cat)` on line 33: bash's NUL-byte
-# warning names it. No "no git substring" shortcut: g\it serializes as g\\it (GH #317).
+# python3 (malformed JSON keeps its stderr line). Keep `_input=$(cat)` on a line of its own:
+# bash's NUL-byte warning names that line. No "no git substring" shortcut: g\it serializes as g\\it (GH #317).
 set -uo pipefail
 
 # Portability guard (#93): announced fail-open when python3 is missing.
