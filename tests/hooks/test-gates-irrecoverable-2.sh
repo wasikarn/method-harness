@@ -229,21 +229,24 @@ test_deny_failclosed "$IRRECOVERABLE" "non-string command payload triggers the f
 _len_pad=$(python3 -c "print('A' * 700000)")
 
 # A `timeout 2` miss is usually exit 124 at about 2 s, so a starved run and a regressed cap look the
-# same. On a miss, rerun the same input once with a 30 s ceiling and print how long it took. Times seen
-# on a 2026-11 macOS dev host (loaded, load about 5-10): about 0.3 s means the first run was starved (a
-# flake); about 4 s with exit 0 means the length cap regressed, because the uncapped tokenize then hits the
-# gate's own deadline, which asks and prints "ran out of time" (tagged below). A smaller, one-try cousin of
-# `_timed_case` in tests/_lib/gates-harness.sh, kept apart because these rows hold a 2 s limit, not the
-# hook ceiling.
+# same. On a miss, rerun the same input once with a 30 s ceiling and print how long it took, and whether
+# the gate hit its own deadline (hooks/gates/irrecoverable.py DEADLINE_SECS, which asks with exit 0). Read
+# the line together with the load printed beside it. Times seen on a 2026-11 macOS dev host at load 5-10:
+# a rerun of about 0.3 s means the first run was starved (a flake). A rerun that hits the gate deadline
+# means either the length cap regressed (the uncapped tokenize takes about the deadline) or the host is so
+# starved that even a working cap runs 13 times slower than that baseline: it is conclusive only at low
+# load. A smaller, one-try cousin of `_timed_case` in tests/_lib/gates-harness.sh, kept apart because these
+# rows hold a 2 s limit, not the hook ceiling; both use `_gate_ran_out_of_time` for the deadline test.
+# The gate's stderr stays visible, so a crash in the gate shows up here instead of reading as timing.
 _len_diag() {
   local _t0 _t1 _drc _out _secs _late=""
   _t0=$(_ratio_now)
-  _out=$(bash_payload "$1" | timeout 30 bash "$IRRECOVERABLE" 2>/dev/null)
+  _out=$(bash_payload "$1" | timeout 30 bash "$IRRECOVERABLE")
   _drc=$?
   _t1=$(_ratio_now)
-  _secs=$(python3 -c 'import sys; print("%.2f" % (float(sys.argv[2]) - float(sys.argv[1])))' "$_t0" "$_t1")
-  case "$_out" in *"ran out of time"*) _late=" (gate deadline)" ;; esac
-  echo "     rerun without the 2 s limit: exit $_drc in ${_secs}s${_late}, load $(uptime | sed 's/.*load averages*: *//')" >&2
+  _secs=$(python3 -c 'import sys; print("%.2f" % (float(sys.argv[2]) - float(sys.argv[1])))' "$_t0" "$_t1") || _secs="?"
+  if _gate_ran_out_of_time "$_out"; then _late=" (gate deadline)"; fi
+  echo "     rerun without the 2 s limit: exit $_drc in ${_secs:-?}s${_late}, load $(uptime | sed 's/.*load averages*: *//')" >&2
 }
 _rc=$(bash_payload "git push --force origin $_len_pad" | timeout 2 bash "$IRRECOVERABLE" 2>/dev/null; echo $?)
 if [[ "$_rc" == "2" ]]; then

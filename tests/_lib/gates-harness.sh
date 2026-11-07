@@ -296,6 +296,10 @@ test_ask_says() {
 
 _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 
+# True when a gate's output is its deadline ask (GH #771, GH #800): the one place that string is matched,
+# so a wording change in hooks/gates/irrecoverable.py is fixed here, not in each timing helper.
+_gate_ran_out_of_time() { case "$1" in *"ran out of time"*) return 0 ;; esac; return 1; }
+
 # The time a gate run has before it stops denying, into _HOOK_CEIL: the lower of irrecoverable.sh's hook
 # timeout in hooks/hooks.json (past it the hook blocks) and the gate's own deadline (GH #771: past it the
 # gate asks). On a failure it counts the row failed and returns 1, so it is called bare, never in $(...),
@@ -375,7 +379,7 @@ _timed_case() {  # <name> <expected rc> <command> [agent id]
 a, b, cap = map(float, sys.argv[1:])
 print("%.2f %d" % (b - a, b - a < cap))' "$t0" "$t1" "$ceil")
     secs=${secs:-?} ok=${ok:-0} late=""
-    case "$out" in *"ran out of time"*) ok=0 late=" (gate deadline)" ;; esac
+    if _gate_ran_out_of_time "$out"; then ok=0 late=" (gate deadline)"; fi
     seen="$seen${seen:+, then }rc=$rc in ${secs}s$late"
     [[ -n "$late" ]] && continue
     [[ "$rc" == "$want" ]] || break
@@ -409,7 +413,7 @@ _timed_ratio_case() {  # <name> <expected rc> <max ratio> <baseline command> <co
 a, b, c, m, cap = map(float, sys.argv[1:]); r = (c - b) / max(b - a, 0.01)
 print("%.2f %.2f %d" % (r, c - b, r <= m and c - b < cap))' "$t0" "$t1" "$t2" "$max" "$ceil")
     ratio=${ratio:-?} secs=${secs:-?} ok=${ok:-0} late=""
-    case "$bout$out" in *"ran out of time"*) ok=0 late=" (gate deadline)" ;; esac
+    if _gate_ran_out_of_time "$bout$out"; then ok=0 late=" (gate deadline)"; fi
     seen="$seen${seen:+, then }rc=$rc (baseline rc=$brc) in ${secs}s at ${ratio}x$late"
     [[ -n "$late" ]] && continue
     [[ "$rc" == "$want" && "$brc" == "$want" ]] || break
