@@ -366,7 +366,7 @@ print("%g" % cap)' "${IRRECOVERABLE%.sh}.py" "$ceil" 2>"$_ERRF")
 # Fix C's -exec floods, nested `find -exec find`, and the GH #789 floods sized so the fixed gate denies in
 # about half the limit and the regression takes about twice it or more on a 4-core host. A timing miss is
 # measured again, up to three tries; a wrong rc fails at once, as it does not depend on timing. A gate-deadline
-# ask (rc 0, "ran out of time") is a timing miss on every row (GH #800): on a row that wants rc 0 it is not an
+# ask (rc 0; `_gate_ran_out_of_time` holds the matched wording) is a timing miss on every row (GH #800): on a row that wants rc 0 it is not an
 # allow, since the gate never finished reading, and a real slowdown asks on every try. An agent id builds
 # the payload with bash_agent_payload (a subagent's call).
 _timed_case() {  # <name> <expected rc> <command> [agent id]

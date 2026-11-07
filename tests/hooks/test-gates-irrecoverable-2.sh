@@ -3751,7 +3751,9 @@ if [[ "$_dl" == *"(gate deadline)"* && "$_dl" == *"exit 0 in "* ]]; then
 else
   echo "  ❌ _len_diag did not tag a gate-deadline rerun: $_dl" >&2; fail=$((fail + 1))
 fi
-_dl=$(_len_diag 'git status' 2>&1 >/dev/null)
+# The untagged side runs a stub gate that allows at once, so host load cannot push it to the real deadline.
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' > "$_JOURNAL_TMP/allow-gate.sh"
+_dl=$(IRRECOVERABLE="$_JOURNAL_TMP/allow-gate.sh" _len_diag 'git status' 2>&1 >/dev/null)
 if [[ "$_dl" == *"rerun without the 2 s limit: exit 0 in "* && "$_dl" != *"(gate deadline)"* ]]; then
   echo "  ✅ _len_diag leaves an ordinary rerun untagged"; pass=$((pass + 1))
 else
