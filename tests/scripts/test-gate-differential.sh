@@ -256,6 +256,17 @@ for g in irrecoverable subagent-git-guard secret-scan; do
     ok "$g: backup files (_journal.py~, _run.py.orig) leave the closure unchanged"
   else bad "$g: a backup file joined the closure: $(python3 "$CLOSURE" --files --dir "$T/bak" "$g" | tr '\n' ' ')"; fi
 done
+# The filter above must not drop a real shared file: every tracked _* file in hooks/gates passes _shared, or
+# a gate change that edits only that file would need no replay. The check bites on a planted `_policy`.
+not_shared() {  # names on stdin -> the _* names _shared rejects
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import gate_closure as g
+print(" ".join(n for n in sys.stdin.read().split() if n.startswith("_") and not g._shared(n)))' "$ROOT/scripts/_lib"
+}
+tracked=$(git -C "$ROOT" ls-files hooks/gates | sed -n 's|^hooks/gates/\([^/]*\)$|\1|p')
+miss=$(not_shared <<<"$tracked")
+if [ -z "$miss" ] && [ "$(not_shared <<<"$tracked _policy")" = _policy ]; then
+  ok "every tracked _* file in hooks/gates is a closure candidate (a planted _policy is caught)"
+else bad "tracked _* files the closure filter drops: '$miss' (planted check: '$(not_shared <<<"$tracked _policy")')"; fi
 # A numeric --replay that covers the whole pool is a whole-pool run too.
 out=$(GATE_REPLAY_RECORD_DIR="$T/rec-num" bash "$SCRIPT" --cases "$T/empty.txt" --replay 50 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && [ -f "$T/rec-num/irrecoverable-$closure.json" ]; then
