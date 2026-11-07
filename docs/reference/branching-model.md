@@ -137,8 +137,11 @@ checkout with `bash scripts/gate-differential.sh origin/develop <gate> --replay 
 that changes the same gate's files needs a new replay; one that changes only another gate keeps the
 record. A record with diffs still merges: explain its counts on the PR. The emergency override,
 `merge-pr.sh <PR> --skip-replay "<reason>"`, posts the reason on the PR and opens a follow-up issue
-to run the replay on develop. A cloud session has no transcripts to replay, so a gate PR always merges
-from the operator's machine (`--verify` refuses it too).
+to run the replay on develop; on a PR that changes no gate it says the reason is unused and posts
+nothing. An accepted record's counts are printed. A cloud session has no transcripts to replay, so a gate
+PR always merges from the operator's machine: `--verify` refuses it, and `sync-pr-head.sh` pushes nothing
+and posts no `mh/gauntlet` status for it, so branch protection refuses an MCP merge too. The check lives
+in `scripts/_lib/replay-check.sh`, shared by both scripts.
 
 **Without `gh` (a Claude Code cloud session).** The script reads the PR and merges through `gh`, which a
 cloud session lacks; it has the GitHub MCP tools instead. Do not retype the checks by hand (that was
@@ -154,7 +157,9 @@ done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
    `origin/develop` or a version above it, it merges develop and bumps in a temporary worktree; either
    way it runs the full gauntlet on the tree that merges (a cached pass skips it), then pushes leased
    on the head when it made a commit. With `gh` on PATH it then posts `mh/gauntlet` = `success` on
-   the sha it prints (GH #742; a failed post exits non-zero); without `gh` it says it posted none. A PR from a fork
+   the sha it prints (GH #742; a failed post exits non-zero); without `gh` it says it posted none. A head
+   that changes a replay-supported gate with no replay record is refused before the gauntlet (GH #891,
+   above). A PR from a fork
    (its head repository is not this one) cannot be synced this way, since the sync pushes to a branch
    of `origin`: merge develop into it and bump on the fork by hand;
 3. run `scripts/merge-pr.sh --verify <PR> <head sha> <base branch> <comments file>`: the same base,
@@ -181,7 +186,7 @@ to be up to date before merging", so GitHub refuses every merge path without it 
 any token with repo scope can post it, so it is not a security boundary.
 
 The checks and the lock are local-only. A merge made outside the script is refused unless its head
-already carries the status (or someone posts one by hand), and one that lands moves develop, which
+already carries the status (or someone posts one by hand, which also skips the replay check), and one that lands moves develop, which
 costs the script a retry round. The script's own `gh pr merge` call runs inside the script, so
 `gate:bash:irrecoverable`'s ask on that command does not see it.
 
