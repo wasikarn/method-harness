@@ -180,6 +180,7 @@ def canonical_cwd(tmp, env):
 Result = collections.namedtuple("Result", "code out err rows secs sig skip")
 # The gates' time-limit texts: irrecoverable's batch ask ("time budget ran out", journaled with no rule),
 # its deadline ask ("ran out of time"), subagent-git-guard's deny ("time limit", journaled with no rule).
+BUCKET_FILE = re.compile(r"[a-z0-9-]+-[0-9a-f]{32}\.jsonl")  # Cache.wrap's file names
 TIME_LIMIT = re.compile(rb"time limit|time budget|ran out of time")
 
 
@@ -198,20 +199,20 @@ def finish(gates_dir, code, out, err, journal, secs, cwd):
     # GH #949: a gate message that echoes the per-run temp dir or HOME would differ between a cached row and a
     # fresh run; the temp root becomes <TMP> in stdout, stderr and the journal rows.
     forms = [t.encode() for t in tmp_forms(cwd)]
-    for t in forms:
-        out = out.replace(t, b"<TMP>")
+
+    def scrub(b):
+        for t in forms:
+            b = b.replace(t, b"<TMP>")
+        return b
+    out = scrub(out)
     rows = []
     with open(journal, "rb") as f:
         for line in f:
-            for t in forms:
-                line = line.replace(t, b"<TMP>")
-            row = json.loads(line)
+            row = json.loads(scrub(line))
             row.pop("ts", None)
             row.pop("mh_version", None)
             rows.append(row)
-    err = err.replace(gates_dir.encode(), b"<GATES>")
-    for t in forms:
-        err = err.replace(t, b"<TMP>")
+    err = scrub(err.replace(gates_dir.encode(), b"<GATES>"))
     killed = code.lstrip("-").isdigit() and (int(code) < 0 or int(code) >= 128)  # a signal: load, not a verdict
     skip = code == "timeout" or killed or any(r.get("rule") == "deadline" for r in rows) or bool(TIME_LIMIT.search(out + b"\n" + err))
     digests = tuple(sha(json.dumps(r, sort_keys=True).encode()) for r in rows)
@@ -425,14 +426,16 @@ class Cache:
         self.evict()
 
     def evict(self):
-        # GH #949: each develop merge that touches a _* or *.awk file starts a new bucket. Remove this user's
-        # bucket files (regular, not links) that no run has read for STALE_DAYS; a read refreshes the mtime.
+        # GH #949: a new bucket starts whenever the gate's files, the engine, the runner mode or a tool version
+        # changes, and none is ever reused after that. Remove this user's bucket files (named <gate>-<32 hex>.jsonl,
+        # regular, not links) that no run has read for STALE_DAYS; a read refreshes the mtime. Any other file in
+        # the dir is left alone, since GATE_REPLAY_CACHE_DIR can point at a dir with other files.
         cutoff = time.time() - self.STALE_DAYS * 86400
         for name in os.listdir(self.dir):
             p = os.path.join(self.dir, name)
             try:
                 st = os.lstat(p)
-                if name.endswith(".jsonl") and stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and st.st_mtime < cutoff:
+                if BUCKET_FILE.fullmatch(name) and stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and st.st_mtime < cutoff:
                     os.unlink(p)
                     self.evicted += 1
             except OSError as e:
@@ -755,8 +758,8 @@ def main():
         if name:
             classes.setdefault(name, []).append(text)
         if is_slower(o.secs, n.secs, deadline):
-            # once more, both sides on one runner: a load spike must not count. A cached old side has no
-            # time, so this run bypasses the cache (GH #893).
+            # once more, both sides on one runner: a load spike must not count. A cached old time was measured
+            # by an earlier run, so this run bypasses the cache (GH #893).
             with cache.bypassed() if cache else contextlib.nullcontext():
                 r = on_fork(data) if runners is not bash and fork else None
                 o, n = r or pair(bash, data)

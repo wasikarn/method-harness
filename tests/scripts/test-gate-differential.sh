@@ -986,19 +986,29 @@ PY
 if [ $? -eq 0 ]; then ok "a cache row stores the old time and a hit returns it (forged times are rejected)"; else bad "cache row secs"; fi
 # Temp paths: a gate that echoes its cwd and HOME must give the same result from a cached row and a fresh run.
 cp -R "$T/old" "$T/echo"
-{ printf 'echo "cwd=$PWD home=$HOME" >&2\n'; cat "$T/old/secret-scan.sh"; } > "$T/echo/secret-scan.sh.new" && mv "$T/echo/secret-scan.sh.new" "$T/echo/secret-scan.sh"
+{ printf 'echo "cwd=$PWD home=$HOME" >&2; echo "stdout cwd=$PWD"\n'; cat "$T/old/secret-scan.sh"; } > "$T/echo/secret-scan.sh.new" && mv "$T/echo/secret-scan.sh.new" "$T/echo/secret-scan.sh"
 EC="$T/c-echo"
-GATE_REPLAY_CACHE_DIR="$EC" bash "$SCRIPT" --cache --runner bash --cases "$T/cases3.txt" "$T/echo" "$T/echo" secret-scan >/dev/null 2>&1
+setup=$(GATE_REPLAY_CACHE_DIR="$EC" bash "$SCRIPT" --cache --runner bash --cases "$T/cases3.txt" "$T/echo" "$T/echo" secret-scan 2>&1) || bad "temp-path set-up run failed: $setup"
 r=$(GATE_REPLAY_CACHE_DIR="$EC" bash "$SCRIPT" --cache --runner bash --cases "$T/cases3.txt" "$T/echo" "$T/echo" secret-scan 2>&1)
 if [ "$(hits "$r")" -gt 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$r"; then ok "a gate message with the per-run cwd and HOME matches across a cached row and a fresh run"
 else bad "temp paths leak into the result: $r"; fi
-# Eviction: a bucket file nobody read for 30 days goes; a fresh one stays; the cache line says how many.
+# Eviction: a bucket file nobody read for 30 days goes; a fresh one and a file that is not a bucket stay;
+# a read keeps its bucket alive; the cache line says how many were removed.
 EV="$T/c-evict"; mkdir -p "$EV"; chmod 700 "$EV"
-printf '' > "$EV/secret-scan-stale.jsonl"; printf '' > "$EV/secret-scan-fresh.jsonl"
-python3 -c 'import os,sys,time; t=time.time()-40*86400; os.utime(sys.argv[1], (t, t))' "$EV/secret-scan-stale.jsonl"
+H32=$(printf '%032d' 0); F32=$(printf '%032d' 1)
+printf '' > "$EV/secret-scan-$H32.jsonl"; printf '' > "$EV/secret-scan-$F32.jsonl"; printf 'keep\n' > "$EV/notes.jsonl"
+age() { python3 -c 'import os,sys,time; t=time.time()-int(sys.argv[2])*86400; os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
+age "$EV/secret-scan-$H32.jsonl" 40; age "$EV/notes.jsonl" 40
 r=$(GATE_REPLAY_CACHE_DIR="$EV" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
-if [ ! -e "$EV/secret-scan-stale.jsonl" ] && [ -e "$EV/secret-scan-fresh.jsonl" ] && /usr/bin/grep -q '1 stale cache file' <<<"$(cache_line "$r")"; then ok "a cache file unused for 30 days is removed and reported; a fresh one stays"
-else bad "eviction: stale=$([ -e "$EV/secret-scan-stale.jsonl" ] && echo kept || echo gone) fresh=$([ -e "$EV/secret-scan-fresh.jsonl" ] && echo kept || echo gone): $(cache_line "$r")"; fi
+if [ ! -e "$EV/secret-scan-$H32.jsonl" ] && [ -e "$EV/secret-scan-$F32.jsonl" ] && [ -e "$EV/notes.jsonl" ] && /usr/bin/grep -q '1 stale cache file' <<<"$(cache_line "$r")"; then ok "a bucket file unused for 30 days is removed and reported; a fresh one and a non-bucket file stay"
+else bad "eviction: $(ls "$EV" | tr '\n' ' '): $(cache_line "$r")"; fi
+b=$(ls "$EV" | /usr/bin/grep -v -e notes -e "$F32" | head -1)
+if [ -n "$b" ]; then
+  age "$EV/$b" 20
+  GATE_REPLAY_CACHE_DIR="$EV" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+  if python3 -c 'import os,sys,time; sys.exit(0 if time.time()-os.stat(sys.argv[1]).st_mtime < 86400 else 1)' "$EV/$b"; then ok "a run that reads a bucket file refreshes its mtime"
+  else bad "a read did not refresh the mtime of $b"; fi
+else bad "no bucket file written by the eviction run"; fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"
