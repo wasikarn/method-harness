@@ -297,8 +297,14 @@ test_ask_says() {
 _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 
 # True when a gate's output is its deadline ask (GH #771, GH #800): the one place that string is matched,
-# so a wording change in hooks/gates/irrecoverable.py is fixed here, not in each timing helper.
-_gate_ran_out_of_time() { case "$1" in *"ran out of time"*) return 0 ;; esac; return 1; }
+# so a wording change in hooks/gates/irrecoverable.py is fixed here, not in each timing helper. It matches
+# the gate's own prefix ("irrecoverable: ran out of time"), not the bare phrase, so other output that merely
+# quotes the words is not read as a deadline. Readers: _timed_case, _timed_ratio_case, and _len_diag in
+# tests/hooks/test-gates-irrecoverable-2.sh (pinned there by the GH #771 rows).
+_gate_ran_out_of_time() { case "$1" in *"irrecoverable: ran out of time"*) return 0 ;; esac; return 1; }
+
+# Seconds between two _ratio_now readings, two decimals; "?" if either reading is not a number.
+_elapsed() { python3 -c 'import sys; print("%.2f" % (float(sys.argv[2]) - float(sys.argv[1])))' "$1" "$2" || echo "?"; }
 
 # The time a gate run has before it stops denying, into _HOOK_CEIL: the lower of irrecoverable.sh's hook
 # timeout in hooks/hooks.json (past it the hook blocks) and the gate's own deadline (GH #771: past it the
