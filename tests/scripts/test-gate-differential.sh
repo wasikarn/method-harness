@@ -145,6 +145,11 @@ else bad "a _quotemask.py edit: sgg $c3 -> $c3b, irrecoverable or secret-scan mo
 c3=$c3b
 c4=$(closure_after subagent-git-guard.py)
 if [ "$c4" != "$c3" ]; then ok "an edit to the gate itself changes the closure"; else bad "the gate's own edit kept the closure"; fi
+# A shared file that only _run.py names is a member too (_run.py runs every gate through bash's path).
+cp -R "$GATES" "$T/runscan"; printf 'X = 1\n' >"$T/runscan/_runonly.py"; printf '# loads _runonly\n' >>"$T/runscan/_run.py"
+if python3 "$CLOSURE" --files --dir "$T/runscan" secret-scan | /usr/bin/grep -qx _runonly.py; then
+  ok "a shared file named only in _run.py joins every gate's closure"
+else bad "_run.py's names are not scanned: $(python3 "$CLOSURE" --files --dir "$T/runscan" secret-scan | tr '\n' ' ')"; fi
 out=$(python3 "$CLOSURE" --dir "$T/same" no-such-gate 2>&1); rc=$?
 if [ "$rc" -eq 2 ]; then ok "closure of an unknown gate is a usage error"; else bad "unknown gate rc=$rc: $out"; fi
 

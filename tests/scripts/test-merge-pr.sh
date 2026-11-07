@@ -974,7 +974,7 @@ for spoil in '.full = false' '.cache = true' '.closure = "0000"' '.gate = "irrec
   setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
   record subagent-git-guard "$(closure_at feat/x subagent-git-guard)" "$spoil"
   run
-  refuses "a record file whose content says $spoil" "subagent-git-guard"
+  refuses "a record file whose content says $spoil" "no whole-pool replay record"
 done
 
 # develop changes only another gate after the replay: the sync keeps sgg's closure, so the record holds.
