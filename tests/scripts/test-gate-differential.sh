@@ -589,7 +589,7 @@ else bad "unreadable cache file: rc=$rc5 $r5"; fi
 C6="$T/c6"
 setup=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1) || bad "torn-line set-up run: $setup"
 printf '{"k": "torn' >> "$(ls "$C6"/*.jsonl | head -1)"
-printf 'one more MARKER946 case\n' > "$T/cases6.txt"; cat "$T/cases3.txt" >> "$T/cases6.txt"
+printf 'one more MARKERTORN case\n' > "$T/cases6.txt"; cat "$T/cases3.txt" >> "$T/cases6.txt"
 setup=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases6.txt" "$T/old" "$T/same" secret-scan 2>&1) || bad "torn-line second run: $setup"
 r6=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases6.txt" "$T/old" "$T/same" secret-scan 2>&1)
 if [ "$(stored "$r6")" = 0 ] && [ "$(hits "$r6")" = 4 ]; then ok "a row stored after a torn line is not lost"
@@ -605,7 +605,7 @@ else bad "cache dir mode"; fi
 
 # Key parts: the closure (every _* and *.awk file, used or not), the runner mode, and --no-cache.
 cp -R "$T/old" "$T/old-extra"; printf 'X = 1\n' > "$T/old-extra/_unused_sibling.py"
-r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
+r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1) || bad "key set-up run: $r"
 r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old-extra" "$T/same" secret-scan 2>&1)
 if [ "$(hits "$r")" = 0 ] && [ "$(stored "$r")" -gt 0 ]; then ok "an unused _* sibling in the old dir changes the key (closure = every _* file)"
 else bad "sibling _* file did not change the key: $r"; fi
@@ -616,10 +616,14 @@ mkdir -p "$T/old-pyc/__pycache__"; cp -R "$T/old/." "$T/old-pyc/"; printf 'junk'
 r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old-pyc" "$T/same" secret-scan 2>&1)
 if [ "$(hits "$r")" -gt 0 ] && [ "$(stored "$r")" = 0 ]; then ok "__pycache__ is ignored by the key"; else bad "__pycache__ changed the key: $r"; fi
 # secret-scan's wrapper never runs through _run.py, so it is always bash; irrecoverable has both modes.
-r=$(GATE_REPLAY_CACHE_DIR="$T/c3" bash "$SCRIPT" --cache --runner fork --cases "$T/rm.txt" "$T/old" "$T/same" irrecoverable 2>&1)
+r=$(GATE_REPLAY_CACHE_DIR="$T/c3" bash "$SCRIPT" --cache --runner fork --cases "$T/rm.txt" "$T/old" "$T/same" irrecoverable 2>&1) || bad "fork set-up run: $r"
 r=$(GATE_REPLAY_CACHE_DIR="$T/c3" bash "$SCRIPT" --cache --runner bash --cases "$T/rm.txt" "$T/old" "$T/same" irrecoverable 2>&1)
 if [ "$(hits "$r")" = 0 ] && [ "$(stored "$r")" -gt 0 ]; then ok "the runner mode is part of the key (fork rows are not read by a bash run)"
 else bad "runner mode not in the key: $r"; fi
+# The hint merge-pr.sh and sync-pr-head.sh print for the record run must carry --no-cache (operator rule 2026-11-04).
+hint=$(bash -c '. "$1/scripts/_lib/replay-check.sh" && replay_hint origin/develop irrecoverable' _ "$ROOT")
+if [ "$hint" = "bash scripts/gate-differential.sh origin/develop irrecoverable --replay all --no-cache" ]; then ok "the replay hint runs with --no-cache"
+else bad "replay hint: $hint"; fi
 r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --no-cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
 if [ -z "$(cache_line "$r")" ] && /usr/bin/grep -q 'diffs=0 ' <<<"$r"; then ok "--no-cache beats --cache: no cache line, a full run"; else bad "--cache --no-cache: $r"; fi
 mkdir -p "$T/h2"
