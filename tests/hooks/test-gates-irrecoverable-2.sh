@@ -228,16 +228,27 @@ test_deny_failclosed "$IRRECOVERABLE" "non-string command payload triggers the f
 # --- GH #140: unbounded shlex tokenize cost on an oversized raw command string.
 _len_pad=$(python3 -c "print('A' * 700000)")
 
-# A `timeout 2` miss always shows exit 124 at about 2 s, so a starved run and a regressed cap look the
-# same. On a miss, rerun the same input once with a 30 s ceiling and print how long it took: about 0.3 s
-# means the first run was starved (a flake), about 3.8 s means the length cap regressed (uncapped tokenize).
+# A `timeout 2` miss is usually exit 124 at about 2 s, so a starved run and a regressed cap look the
+# same. On a miss, rerun the same input once with a 30 s ceiling and print how long it took, and whether
+# the gate hit its own deadline (hooks/gates/irrecoverable.py DEADLINE_SECS, which asks with exit 0). Read
+# the line together with the load printed beside it. Times seen on a 2026-11 macOS dev host at load 5-10:
+# a rerun of about 0.3 s means the first run was starved (a flake). A rerun of several seconds means the
+# length cap regressed: the uncapped tokenize takes about 3.8 s alone and runs into the gate deadline once
+# the payload build is added (a measured rerun: exit 0 in 4.2 s, tagged). A faster host may end just short
+# of the deadline with the real verdict and no tag, so a long untagged rerun counts too. Either reading is
+# conclusive only at low load, since a working cap on a host about 13 times slower than baseline also
+# reaches the deadline. A smaller, one-try cousin of `_timed_case` in tests/_lib/gates-harness.sh, kept
+# apart because these rows hold a 2 s limit, not the hook ceiling; both use `_gate_ran_out_of_time`. The
+# gate's stderr stays visible, so a crash in the gate shows up here instead of reading as timing. The
+# GH #771 rows below pin the tag.
 _len_diag() {
-  local _t0 _t1 _drc
+  local _t0 _t1 _drc _out _late=""
   _t0=$(_ratio_now)
-  bash_payload "$1" | timeout 30 bash "$IRRECOVERABLE" >/dev/null 2>&1
+  _out=$(bash_payload "$1" | timeout 30 bash "$IRRECOVERABLE")
   _drc=$?
   _t1=$(_ratio_now)
-  echo "     rerun without the 2 s limit: exit $_drc in $(python3 -c "print('%.2f' % ($_t1 - $_t0))")s, load $(uptime | sed 's/.*load averages*: *//')" >&2
+  if _gate_ran_out_of_time "$_out"; then _late=" (gate deadline)"; fi
+  echo "     rerun without the 2 s limit: exit $_drc in $(_elapsed "$_t0" "$_t1")s${_late}, load $(uptime | sed 's/.*load averages*: *//')" >&2
 }
 _rc=$(bash_payload "git push --force origin $_len_pad" | timeout 2 bash "$IRRECOVERABLE" 2>/dev/null; echo $?)
 if [[ "$_rc" == "2" ]]; then
@@ -3727,9 +3738,27 @@ for _c in 'g push -f origin main' 'g reset --hard' 'g>/dev/null push -f origin m
 done
 echo ""
 echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
-# "ran out of time" in full: _timed_case and _timed_ratio_case find a deadline ask by it (GH #800)
+# "irrecoverable: ran out of time" in full, the needle of _gate_ran_out_of_time in tests/_lib/gates-harness.sh:
+# _timed_case, _timed_ratio_case and _len_diag find a deadline ask by it (GH #800). This row and the _len_diag
+# tag row below both fail if the gate's wording and that needle drift apart.
 MH_IRR_DEADLINE_SECS=0.001 test_ask_says "$IRRECOVERABLE" "forced deadline expiry on an allowed candidate command asks, reason says time" \
-  "$(bash_payload 'git status && git log -1')" "ran out of time"
+  "$(bash_payload 'git status && git log -1')" "irrecoverable: ran out of time"
+# _len_diag tags a deadline ask and leaves a normal run untagged (the diagnostic runs only on a failure, so
+# nothing else would notice it dropping the tag).
+_dl=$(MH_IRR_DEADLINE_SECS=0.001 _len_diag 'git status && git log -1' 2>&1 >/dev/null)
+if [[ "$_dl" == *"(gate deadline)"* && "$_dl" == *"exit 0 in "* ]]; then
+  echo "  ✅ _len_diag tags a gate-deadline rerun"; pass=$((pass + 1))
+else
+  echo "  ❌ _len_diag did not tag a gate-deadline rerun: $_dl" >&2; fail=$((fail + 1))
+fi
+# The untagged side runs a stub gate that allows at once, so host load cannot push it to the real deadline.
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' > "$_JOURNAL_TMP/allow-gate.sh"
+_dl=$(IRRECOVERABLE="$_JOURNAL_TMP/allow-gate.sh" _len_diag 'git status' 2>&1 >/dev/null)
+if [[ "$_dl" == *"rerun without the 2 s limit: exit 0 in "* && "$_dl" != *"(gate deadline)"* ]]; then
+  echo "  ✅ _len_diag leaves an ordinary rerun untagged"; pass=$((pass + 1))
+else
+  echo "  ❌ _len_diag tagged or garbled an ordinary rerun: $_dl" >&2; fail=$((fail + 1))
+fi
 MH_IRR_DEADLINE_SECS=0.001 test_ask "$IRRECOVERABLE" "forced deadline expiry emits exactly one ask JSON" "$(bash_payload 'git status')"
 if python3 - "$ROOT/hooks/gates/irrecoverable.py" "$ROOT/hooks/hooks.json" <<'PY'
 import json, re, sys
