@@ -404,6 +404,23 @@ if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && [ "$took" -lt 60 ] && /usr/bin/grep -
   ok "no child of a timed-out gate is left running (${took} s)"
 else bad "orphans after a timeout (rc=$rc, left=$left, ${took} s): $out"; pkill -f "sleep $sleep_arg"; fi
 
+echo "=== the engine's own limits, which the two rows above shorten ==="
+# TIMEOUT is hooks.json's timeout for each gate the engine replays; a real timeout still reads as near
+# each gate's deadline, so it re-runs through bash; the warm-up wait stays under those rows' 60 s bound.
+if python3 - "$ROOT/scripts/_lib/gate-differential.py" "$ROOT/hooks/hooks.json" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+hooks = json.load(open(sys.argv[2]))["hooks"]
+outs = {h.get("timeout") for groups in hooks.values() for g in groups for h in g["hooks"]
+        if any("/hooks/gates/%s.sh" % n in h.get("command", "") for n in ("irrecoverable", "subagent-git-guard", "secret-scan"))}
+assert outs == {gd.TIMEOUT}, ("hooks.json timeouts", outs, "TIMEOUT", gd.TIMEOUT)
+assert all(gd.TIMEOUT > gd.NEAR * d for d in gd.DEADLINES.values()), ("TIMEOUT not near a deadline", gd.TIMEOUT)
+assert gd.READY_SECS < 60, ("READY_SECS", gd.READY_SECS)
+PY
+then ok "TIMEOUT matches hooks.json and reads as near each deadline; READY_SECS under 60 s"
+else bad "the engine's TIMEOUT or READY_SECS drifted (see the assert above)"; fi
+
 echo "=== a child set-up failure is reported, never read as the gate's exit (GH #889) ==="
 mkdir -p "$T/srv"
 reply=$(printf '{"in": "%s", "out": "%s", "err": "%s"}\n' "$T/srv/missing" "$T/srv/out" "$T/srv/err" \
