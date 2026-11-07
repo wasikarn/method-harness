@@ -4,7 +4,8 @@
 # never prints the secret-shaped command it replayed; a --slug outside this project is refused;
 # --replay reads only this project's transcript dirs; the real gate journal is never written;
 # the caller's env and cwd never reach the gates (GH #888); fork mode matches bash mode and drops
-# fork-only diffs (GH #889); a slower new side lands in `slower` (GH #890).
+# fork-only diffs (GH #889); a slower new side lands in `slower` (GH #890); the opt-in cache of the old
+# side keys on the gate's closure, never stores load artifacts and never writes a replay record (GH #893).
 # Run standalone: bash tests/scripts/test-gate-differential.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -574,7 +575,7 @@ PY
 r3=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
 if /usr/bin/grep -q 'exit 9->0' <<<"$r3" && [ "$(stored "$r3")" = 0 ]; then ok "the old side is read from the cache (a forged exit code shows as a diff)"
 else bad "forged cache row not used: $r3"; fi
-# Review round 1 of #946: a damaged cache is a miss or a clean exit 2, never a traceback.
+# GH #893: a damaged cache is a miss or a clean exit 2, never a traceback.
 printf '\377\376 not utf-8\n' >> "$(ls "$C1"/*.jsonl | head -1)"
 r4=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
 if ! /usr/bin/grep -q Traceback <<<"$r4" && /usr/bin/grep -q 'unreadable rows ignored' <<<"$r4"; then ok "a non-UTF-8 cache row is counted and ignored"
@@ -584,18 +585,17 @@ r5=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" 
 chmod 600 "$C1"/*.jsonl
 if ! /usr/bin/grep -q Traceback <<<"$r5" && [ "$rc5" = 2 ]; then ok "an unreadable cache file exits 2 with a message, no traceback"
 else bad "unreadable cache file: rc=$rc5 $r5"; fi
-# Review round 2: a torn last line (killed run) must not swallow the next stored row.
+# GH #893: a torn last line (killed run) must not swallow the next stored row.
 C6="$T/c6"
-GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+setup=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1) || bad "torn-line set-up run: $setup"
 printf '{"k": "torn' >> "$(ls "$C6"/*.jsonl | head -1)"
 printf 'one more MARKER946 case\n' > "$T/cases6.txt"; cat "$T/cases3.txt" >> "$T/cases6.txt"
-GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases6.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+setup=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases6.txt" "$T/old" "$T/same" secret-scan 2>&1) || bad "torn-line second run: $setup"
 r6=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases6.txt" "$T/old" "$T/same" secret-scan 2>&1)
 if [ "$(stored "$r6")" = 0 ] && [ "$(hits "$r6")" = 4 ]; then ok "a row stored after a torn line is not lost"
 else bad "torn line swallowed a row: $r6"; fi
 # A cache file that is a symlink is refused, not followed.
-C7="$T/c7"; mkdir -m 700 "$C7"; printf '' > "$T/elsewhere.jsonl"
-GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+C7="$T/c7"; mkdir -m 700 "$C7"; setup=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1) || bad "symlink set-up run: $setup"
 cp -P "$C6"/*.jsonl "$T/elsewhere.jsonl"; f6=$(basename "$(ls "$C6"/*.jsonl | head -1)"); ln -s "$T/elsewhere.jsonl" "$C7/$f6"
 r7=$(GATE_REPLAY_CACHE_DIR="$C7" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1); rc7=$?
 if [ "$rc7" = 2 ] && ! /usr/bin/grep -q Traceback <<<"$r7"; then ok "a symlinked cache file is refused (exit 2)"
@@ -660,10 +660,24 @@ if [ "$(records "$RR2")" = 1 ] && [ ! -e "$T/c-none" ]; then ok "a plain --repla
 
 echo "=== GH #893: results the cache never stores ==="
 python3 - "$ROOT/scripts/_lib/gate-differential.py" <<'PY'
-import importlib.util, json, os, sys, tempfile
+import importlib.util, os, sys
 spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
 gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
-tmp = tempfile.mkdtemp()
+# A cached old-side row must not depend on the caller's shell or interpreter setup (GH #893, #888).
+for k, v in (("BASH_ENV", "/x"), ("ENV", "/x"), ("PYTHONPATH", "/x"), ("PYTHONHOME", "/x"), ("PYTHONSTARTUP", "/x"), ("LANG", "th_TH.UTF-8"), ("LC_ALL", "th_TH.UTF-8"), ("LC_CTYPE", "th_TH.UTF-8")):
+    os.environ[k] = v
+env = gd.canonical_env("/h")
+leaked = [k for k in ("BASH_ENV", "ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "LANG", "LC_CTYPE") if k in env]
+assert not leaked, "caller variables reach the gates: %s" % leaked
+assert env.get("LC_ALL") == "C", "the locale must be fixed: %r" % env.get("LC_ALL")
+assert env["HOME"] == "/h"
+PY
+if [ $? -eq 0 ]; then ok "canonical env drops BASH_ENV, PYTHON* and the caller's locale"; else bad "canonical env leaks caller setup"; fi
+python3 - "$ROOT/scripts/_lib/gate-differential.py" "$T" <<'PY'
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+tmp = sys.argv[2]  # inside the test's own temp dir, which the cleanup trap deletes
 def res(code="0", out=b"", err=b"", rows=()):
     p = os.path.join(tmp, "j.jsonl")
     with open(p, "w") as f:

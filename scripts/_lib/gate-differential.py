@@ -148,9 +148,13 @@ def canonical_env(home):
     # GH #888: the result must not depend on who runs the replay. Gate knobs (MH_IRR_DEADLINE_SECS,
     # MH_IRR_BUDGET_SCALE, MH_SGG_*, MH_GATE_BATCH_BUDGET_S, MH_GATE_NO_FASTPATH) and GIT_* (GIT_DIR can
     # point irrecoverable's mid-merge check at the caller's repo) never reach the gates.
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("MH_", "GIT_"))}
+    # GH #893: a cached old-side row must not depend on the caller's shell or interpreter either: BASH_ENV and
+    # ENV are sourced by bash, PYTHON* steers python, and the locale changes sort and match results.
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("MH_", "GIT_", "PYTHON", "LC_")) and k not in ("BASH_ENV", "ENV", "LANG", "LANGUAGE")}
     env.pop("CLAUDE_PLUGIN_ROOT", None)
     env["HOME"] = home
+    env["LC_ALL"] = "C"
     return env
 
 
