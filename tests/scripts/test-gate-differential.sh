@@ -743,7 +743,7 @@ if ! /usr/bin/grep -r -q -e MARKER893 -e "$tok" "$C1"; then ok "the cache holds 
 if python3 - "$C1" <<'PY'
 import glob, json, sys
 rows = [json.loads(l) for f in glob.glob(sys.argv[1] + "/*.jsonl") for l in open(f)]
-sys.exit(0 if rows and all(set(r) == {"k", "code", "out", "err", "rows", "sig"} and len(r["k"]) == 64 and len(r["out"]) == 64 and len(r["err"]) == 64 for r in rows) else 1)
+sys.exit(0 if rows and all(set(r) == {"k", "code", "out", "err", "rows", "sig", "secs"} and len(r["k"]) == 64 and len(r["out"]) == 64 and len(r["err"]) == 64 for r in rows) else 1)
 PY
 then ok "a cache row is the command's sha256, the exit code and digests"; else bad "cache row shape: $(cat "$C1"/*.jsonl | head -3)"; fi
 # A forged row must show up as a diff: proof the old side came from the cache, not from a re-run.
@@ -890,7 +890,7 @@ def res(code="0", out=b"", err=b"", rows=()):
     with open(p, "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
-    return gd.finish("/g", code, out, err, p, 0.1)
+    return gd.finish("/g", code, out, err, p, 0.1, "/g/run/cwd")
 assert not res().skip, "a plain allow is storable"
 assert not res("2", err=b"[mh:gate] BLOCKED: x", rows=[{"decision": "deny", "rule": "r1"}]).skip, "a plain deny is storable"
 assert res("timeout").skip, "a timeout must not be stored"
@@ -939,7 +939,8 @@ def inside(n, gate):
     return n.startswith("_") or n.endswith(".awk") or n in (gate + ".sh", gate + ".py")
 bad = []
 for g in sorted(gates):
-    for n in (g + ".sh", g + ".py"):
+    # The gate's own files and every _* module: a _* module that reaches a non-_ sibling breaks the key too.
+    for n in [g + ".sh", g + ".py"] + [f for f in files if f.startswith("_") and f.endswith((".py", ".sh"))]:
         if n not in files:
             continue
         text = open(os.path.join(d, n)).read()
@@ -962,7 +963,7 @@ for g in sorted(gates):
             for f in others:
                 if re.search(r"(?<![A-Za-z0-9_.-])" + re.escape(f) + r"(?![A-Za-z0-9_-])", code):
                     bad.append("%s: %s" % (n, f))
-print("\n".join(bad))
+print("\n".join(sorted(set(bad))))
 PY
 }
 res=$(outside "$GATES")
@@ -973,6 +974,63 @@ if [ "$res" = "secret-scan.py: helper.py" ]; then ok "the check names a planted 
 cp -R "$GATES" "$T/reach2"; printf 'X = 1\n' > "$T/reach2/helper.sh"; printf 'bash "$(dirname "$0")/helper.sh"\n' >> "$T/reach2/secret-scan.sh"
 res=$(outside "$T/reach2")
 if [ "$res" = "secret-scan.sh: helper.sh" ]; then ok "the check names a planted non-_ sibling run by a wrapper"; else bad "planted wrapper reach not caught: '$res'"; fi
+
+cp -R "$GATES" "$T/reach3"; printf 'X = 1\n' > "$T/reach3/helper.py"; printf 'import helper\n' > "$T/reach3/_shared_probe.py"
+res=$(outside "$T/reach3")
+if [ "$res" = "_shared_probe.py: helper.py" ]; then ok "the check also names a non-_ sibling imported by a _* module"; else bad "planted _* import not caught: '$res'"; fi
+
+echo "=== GH #949: cache follow-ups ==="
+# A hit carries the old side's real time, so a fast command is not re-run for timing.
+python3 - "$ROOT/scripts/_lib/gate-differential.py" "$T" <<'PY'
+import importlib.util, json, os, sys, types
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+path = os.path.join(sys.argv[2], "secs.jsonl")
+class Inner:
+    def run(self, data):
+        return gd.Result("0", "a" * 64, "b" * 64, (), 0.123, "none", False)
+    def close(self):
+        pass
+stub = types.SimpleNamespace(bypass=False, hits=0, stored=0, skipped=0)
+r1 = gd.CachingRunner(Inner(), stub, path, {})
+r1.run(b"cmd")
+rows = {}
+for line in open(path):
+    row = json.loads(line); rows[row["k"]] = row
+assert [row.get("secs") for row in rows.values()] == [0.123], "the stored row does not carry the old time: " + open(path).read()
+hit = gd.CachingRunner(Inner(), stub, path, rows).run(b"cmd")
+assert stub.hits == 1 and hit.secs == 0.123, "a hit does not carry the stored time: %r" % (hit,)
+# A forged time (negative, NaN, a string) must not be trusted: such a row is a miss.
+for bad in (-1, float("nan"), "0.1", True, 1e9):
+    forged = dict(next(iter(rows.values())), secs=bad)
+    assert not gd.Cache.row_ok(forged), "row_ok accepts secs=%r" % (bad,)
+PY
+if [ $? -eq 0 ]; then ok "a cache row stores the old time and a hit returns it (forged times are rejected)"; else bad "cache row secs"; fi
+# Temp paths: a gate that echoes its cwd and HOME must give the same result from a cached row and a fresh run.
+cp -R "$T/old" "$T/echo"
+{ printf 'echo "cwd=$PWD home=$HOME" >&2; echo "stdout cwd=$PWD"\n'; cat "$T/old/secret-scan.sh"; } > "$T/echo/secret-scan.sh.new" && mv "$T/echo/secret-scan.sh.new" "$T/echo/secret-scan.sh"
+EC="$T/c-echo"
+setup=$(GATE_REPLAY_CACHE_DIR="$EC" bash "$SCRIPT" --cache --runner bash --cases "$T/cases3.txt" "$T/echo" "$T/echo" secret-scan 2>&1) || bad "temp-path set-up run failed: $setup"
+r=$(GATE_REPLAY_CACHE_DIR="$EC" bash "$SCRIPT" --cache --runner bash --cases "$T/cases3.txt" "$T/echo" "$T/echo" secret-scan 2>&1)
+if [ "$(hits "$r")" -gt 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$r"; then ok "a gate message with the per-run cwd and HOME matches across a cached row and a fresh run"
+else bad "temp paths leak into the result: $r"; fi
+# Eviction: a bucket file nobody read for 30 days goes; a fresh one and a file that is not a bucket stay;
+# a read keeps its bucket alive; the cache line says how many were removed.
+EV="$T/c-evict"; mkdir -p "$EV"; chmod 700 "$EV"
+H32=$(printf '%032d' 0); F32=$(printf '%032d' 1)
+printf '' > "$EV/secret-scan-$H32.jsonl"; printf '' > "$EV/secret-scan-$F32.jsonl"; printf 'keep\n' > "$EV/notes.jsonl"
+age() { python3 -c 'import os,sys,time; t=time.time()-int(sys.argv[2])*86400; os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
+age "$EV/secret-scan-$H32.jsonl" 40; age "$EV/notes.jsonl" 40
+r=$(GATE_REPLAY_CACHE_DIR="$EV" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
+if [ ! -e "$EV/secret-scan-$H32.jsonl" ] && [ -e "$EV/secret-scan-$F32.jsonl" ] && [ -e "$EV/notes.jsonl" ] && /usr/bin/grep -q '1 stale cache file' <<<"$(cache_line "$r")"; then ok "a bucket file unused for 30 days is removed and reported; a fresh one and a non-bucket file stay"
+else bad "eviction: $(ls "$EV" | tr '\n' ' '): $(cache_line "$r")"; fi
+b=$(ls "$EV" | /usr/bin/grep -v -e notes -e "$F32" | head -1)
+if [ -n "$b" ]; then
+  age "$EV/$b" 20
+  GATE_REPLAY_CACHE_DIR="$EV" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+  if python3 -c 'import os,sys,time; sys.exit(0 if time.time()-os.stat(sys.argv[1]).st_mtime < 86400 else 1)' "$EV/$b"; then ok "a run that reads a bucket file refreshes its mtime"
+  else bad "a read did not refresh the mtime of $b"; fi
+else bad "no bucket file written by the eviction run"; fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"

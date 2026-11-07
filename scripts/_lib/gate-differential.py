@@ -4,7 +4,7 @@
 #
 # Prints only diff classes, counts and up to 3 redacted, truncated sample commands per class:
 # transcripts can hold secrets, so no other command text is ever printed.
-import argparse, collections, contextlib, glob, hashlib, io, json, os, random, re, select, shutil, signal, subprocess, sys, time
+import argparse, collections, contextlib, glob, hashlib, io, json, os, random, re, select, shutil, signal, stat, subprocess, sys, time
 from typing import NoReturn
 
 TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blocks irrecoverable (onFailure: block)
@@ -180,6 +180,7 @@ def canonical_cwd(tmp, env):
 Result = collections.namedtuple("Result", "code out err rows secs sig skip")
 # The gates' time-limit texts: irrecoverable's batch ask ("time budget ran out", journaled with no rule),
 # its deadline ask ("ran out of time"), subagent-git-guard's deny ("time limit", journaled with no rule).
+BUCKET_FILE = re.compile(r"[a-z0-9-]+-[0-9a-f]{32}\.jsonl")  # Cache.wrap's file names
 TIME_LIMIT = re.compile(rb"time limit|time budget|ran out of time")
 
 
@@ -187,15 +188,31 @@ def sha(b):
     return hashlib.sha256(b).hexdigest()
 
 
-def finish(gates_dir, code, out, err, journal, secs):
+def tmp_forms(cwd):
+    # The per-run temp root (the cwd's parent, which also holds HOME) as a gate sees it: as given, and resolved
+    # (a gate that prints $PWD or os.getcwd() shows the resolved form, /private/var on macOS).
+    root = os.path.dirname(cwd)
+    return sorted({root, os.path.realpath(root)}, key=len, reverse=True)
+
+
+def finish(gates_dir, code, out, err, journal, secs, cwd):
+    # GH #949: a gate message that echoes the per-run temp dir or HOME would differ between a cached row and a
+    # fresh run; the temp root becomes <TMP> in stdout, stderr and the journal rows.
+    forms = [t.encode() for t in tmp_forms(cwd)]
+
+    def scrub(b):
+        for t in forms:
+            b = b.replace(t, b"<TMP>")
+        return b
+    out = scrub(out)
     rows = []
-    with open(journal) as f:
+    with open(journal, "rb") as f:
         for line in f:
-            row = json.loads(line)
+            row = json.loads(scrub(line))
             row.pop("ts", None)
             row.pop("mh_version", None)
             rows.append(row)
-    err = err.replace(gates_dir.encode(), b"<GATES>")
+    err = scrub(err.replace(gates_dir.encode(), b"<GATES>"))
     killed = code.lstrip("-").isdigit() and (int(code) < 0 or int(code) >= 128)  # a signal: load, not a verdict
     skip = code == "timeout" or killed or any(r.get("rule") == "deadline" for r in rows) or bool(TIME_LIMIT.search(out + b"\n" + err))
     digests = tuple(sha(json.dumps(r, sort_keys=True).encode()) for r in rows)
@@ -234,7 +251,7 @@ class BashRunner:
                 p.stderr.close()
                 p.wait()
             code, out, err = "timeout", b"", b""
-        return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0)
+        return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0, self.cwd)
 
     def close(self):
         pass
@@ -254,7 +271,7 @@ class ForkRunner:
     # Every read from the server is bounded: a hung server falls back to bash, never hangs the replay.
 
     def __init__(self, gates_dir, gate, env, journal, cwd, work):
-        self.gates_dir, self.journal, self.work = gates_dir, journal, work
+        self.gates_dir, self.journal, self.work, self.cwd = gates_dir, journal, work, cwd
         os.makedirs(work, exist_ok=True)
         py = shutil.which("python3", path=env.get("PATH", os.defpath))
         if not py:
@@ -321,7 +338,7 @@ class ForkRunner:
             err = f.read()
         if code == "timeout":
             out, err = b"", b""
-        return finish(self.gates_dir, code, out, err, self.journal, secs)
+        return finish(self.gates_dir, code, out, err, self.journal, secs, self.cwd)
 
     def close(self):
         # EOF on stdin ends a healthy server; SIGTERM makes a hung one kill its child's group first.
@@ -375,7 +392,17 @@ class Cache:
     # GH #893: the old (develop) side's results, for review-round replays only. Opt-in (--cache); a cached
     # run never writes a replay record (replay_record); the replay before merge runs with --no-cache. Values:
     # exit code and digests, never command text. A row is a JSON line in <dir>/<gate>-<bucket>.jsonl.
-    KEYS = {"k", "code", "out", "err", "rows", "sig"}
+    KEYS = {"k", "code", "out", "err", "rows", "sig", "secs"}
+    STALE_DAYS = 30  # a bucket file nobody read for this long is removed (GH #949); every read refreshes its mtime
+
+    @classmethod
+    def row_ok(cls, r):
+        # secs is the old side's real time (GH #949): a finite, non-negative number, never a bool or a string.
+        return (isinstance(r, dict) and set(r) == cls.KEYS and isinstance(r["code"], str) and isinstance(r["sig"], str)
+                and all(isinstance(r[k], str) and len(r[k]) == 64 for k in ("k", "out", "err"))
+                and isinstance(r["rows"], list) and all(isinstance(x, str) for x in r["rows"])
+                and isinstance(r["secs"], (int, float)) and not isinstance(r["secs"], bool)
+                and 0 <= r["secs"] < 86400)  # NaN fails the comparison; a day is far past any deadline
 
     def __init__(self, d, gate, old_files, env):
         self.dir, self.gate, self.env = d, gate, env
@@ -387,7 +414,7 @@ class Cache:
                 src.append(f.read())
         self.tool = sha(b"".join(src))
         self.versions = tool_versions(env)
-        self.hits = self.stored = self.skipped = self.bad = 0
+        self.hits = self.stored = self.skipped = self.bad = self.evicted = 0
         self.bypass = False
         try:
             os.makedirs(os.path.dirname(d), exist_ok=True)  # parents keep the default mode; only the cache dir is private
@@ -397,6 +424,23 @@ class Cache:
             cache_fail("cannot open the cache dir %s: %s" % (d, e))
         if st.st_uid != os.getuid() or st.st_mode & 0o022:
             cache_fail("the cache dir %s must be yours and not group- or world-writable" % d)
+        self.evict()
+
+    def evict(self):
+        # GH #949: a new bucket starts whenever the gate's files, the engine, the runner mode or a tool version
+        # changes, and none is ever reused after that. Remove this user's bucket files (named <gate>-<32 hex>.jsonl,
+        # regular, not links) that no run has read for STALE_DAYS; a read refreshes the mtime. Any other file in
+        # the dir is left alone, since GATE_REPLAY_CACHE_DIR can point at a dir with other files.
+        cutoff = time.time() - self.STALE_DAYS * 86400
+        for name in os.listdir(self.dir):
+            p = os.path.join(self.dir, name)
+            try:
+                st = os.lstat(p)
+                if BUCKET_FILE.fullmatch(name) and stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and st.st_mtime < cutoff:
+                    os.unlink(p)
+                    self.evicted += 1
+            except OSError as e:
+                print("gate-differential: cannot remove the stale cache file %s: %s" % (p, e), file=sys.stderr)
 
     @contextlib.contextmanager
     def bypassed(self):
@@ -418,6 +462,7 @@ class Cache:
                 if st.st_uid != os.getuid() or st.st_mode & 0o022:
                     os.close(fd)
                     cache_fail("the cache file %s must be yours and not group- or world-writable" % path)
+                os.utime(fd)  # a read keeps the bucket from going stale
                 f = os.fdopen(fd, "rb")
             except OSError as e:
                 cache_fail("cannot read the cache file %s: %s" % (path, e))
@@ -427,9 +472,7 @@ class Cache:
                     r = None
                     try:
                         r = json.loads(line)
-                        ok = (isinstance(r, dict) and set(r) == self.KEYS and isinstance(r["code"], str) and isinstance(r["sig"], str)
-                              and all(isinstance(r[k], str) and len(r[k]) == 64 for k in ("k", "out", "err"))
-                              and isinstance(r["rows"], list) and all(isinstance(x, str) for x in r["rows"]))
+                        ok = self.row_ok(r)
                     except ValueError:
                         ok = False
                     if ok and r:
@@ -454,8 +497,9 @@ def gate_closure():
 
 
 class CachingRunner:
-    # Wraps the OLD side's runner. A hit has secs 0.0: no old time exists, so is_slower flags the command and
-    # the timing re-run (Cache.bypassed) measures both sides for real.
+    # Wraps the OLD side's runner. A hit returns the old time stored with the row (GH #949), so a fast command
+    # needs no timing re-run. That time was measured by whichever run stored it: on a loaded machine it can be
+    # too slow and hide a "slower" flag. Review rounds accept that; the replay before merge runs uncached.
     def __init__(self, inner, cache, path, rows, torn=False):
         self.inner, self.cache, self.path, self.rows = inner, cache, path, rows
         self.torn = torn  # the file ends mid-row (a killed run): the next append starts on a new line
@@ -468,12 +512,12 @@ class CachingRunner:
         hit = self.rows.get(k)
         if hit:
             c.hits += 1
-            return Result(hit["code"], hit["out"], hit["err"], tuple(hit["rows"]), 0.0, hit["sig"], False)
+            return Result(hit["code"], hit["out"], hit["err"], tuple(hit["rows"]), float(hit["secs"]), hit["sig"], False)
         r = self.inner.run(data)
         if r.skip:
             c.skipped += 1
             return r
-        row = {"k": k, "code": r.code, "out": r.out, "err": r.err, "rows": list(r.rows), "sig": r.sig}
+        row = {"k": k, "code": r.code, "out": r.out, "err": r.err, "rows": list(r.rows), "sig": r.sig, "secs": round(r.secs, 6)}
         # One write() of one line to an O_APPEND fd: two replays on one cache cannot interleave a row.
         line = (("\n" if self.torn else "") + json.dumps(row) + "\n").encode()
         try:
@@ -715,8 +759,8 @@ def main():
         if name:
             classes.setdefault(name, []).append(text)
         if is_slower(o.secs, n.secs, deadline):
-            # once more, both sides on one runner: a load spike must not count. A cached old side has no
-            # time, so this run bypasses the cache (GH #893).
+            # once more, both sides on one runner: a load spike must not count. A cached old time was measured
+            # by an earlier run, so this run bypasses the cache (GH #893).
             with cache.bypassed() if cache else contextlib.nullcontext():
                 r = on_fork(data) if runners is not bash and fork else None
                 o, n = r or pair(bash, data)
@@ -740,7 +784,8 @@ def main():
         print("      - " + redact(t, patterns, real_home))
     if cache:
         print("  cache: %d hits, %d stored, %d not storable (timeouts and time-limit verdicts)%s" % (
-            cache.hits, cache.stored, cache.skipped, ", %d unreadable rows ignored" % cache.bad if cache.bad else ""))
+            cache.hits, cache.stored, cache.skipped, ", %d unreadable rows ignored" % cache.bad if cache.bad else "") +
+              (", %d stale cache file(s) removed" % cache.evicted if cache.evicted else ""))
     if want:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
         print("  replay record: " + replay_record(a, pool, replay, corpus, total, len(slower), bool(cache)))
