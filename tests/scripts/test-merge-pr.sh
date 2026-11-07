@@ -829,7 +829,7 @@ vrun() {
     mkdir -p "$F/pass"; date >"$F/pass/$t"
   fi
   local p="$NOGH"; [ -z "${GH:-}" ] || p="$STUB:$PATH"
-  out=$(cd "$F/work" && PATH="$p" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
+  out=$(cd "$F/work${RUN_SUB:+/$RUN_SUB}" && PATH="$p" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
     STUB_LOAD=9.99 MERGE_PR_LOAD_MAX=4 MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
     GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" GATE_REPLAY_RECORD_DIR="$F/replay" \
     bash "$SCRIPT" --verify 451 "$1" "$2" "$3" 2>"$F/verify.err")
@@ -965,9 +965,12 @@ run
 refuses "a gate PR whose record is for another closure (develop's)" "subagent-git-guard"
 
 setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
-record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
+record subagent-git-guard "$(closure_at feat/x subagent-git-guard)" '.diffs = 3 | .slower = 1'
 run
 merges "a gate PR with a matching record"
+if /usr/bin/grep -q 'replay record for subagent-git-guard (closure .*3 diffs, 1 slower' <<<"$out"; then
+  ok "an accepted record's counts are printed for the PR"
+else bad "no counts for the accepted record: $out"; fi
 
 # A file with the right name but the wrong content is no record: a sampled run, a cached run, another closure.
 for spoil in '.full = false' '.cache = true' '.closure = "0000"' '.gate = "irrecoverable"'; do
@@ -1031,14 +1034,36 @@ SKIP_REASON="not needed" run
 merges "--skip-replay next to a matching record"
 if ! /usr/bin/grep -q -e "^gh pr comment" -e "^gh issue create" "$F/calls.log"; then ok "--skip-replay with a matching record posts nothing"; else bad "posted anyway: $(cat "$F/calls.log")"; fi
 
+# --skip-replay on a PR that changes no gate: nothing to skip, so it says so and posts nothing.
+setup_gates; on feat/x "touch b" append b.txt more
+SKIP_REASON="habit" run
+merges "--skip-replay on a PR that changes no gate"
+if ! /usr/bin/grep -q -e "^gh pr comment" -e "^gh issue create" "$F/calls.log" && /usr/bin/grep -q -- '--skip-replay: no gate change here needs a replay' <<<"$out"; then
+  ok "--skip-replay with no gate change says its reason is unused and posts nothing"
+else bad "no-gate --skip-replay: $out; calls: $(cat "$F/calls.log")"; fi
+
 # --verify (a cloud session has no transcripts, so no record): a gate-changing head is refused.
 setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'; on feat/x "bump" set_ver 1.1.2
 work; tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
 vrun "$tip" develop "$F/comments.json"
 vrefuses "--verify refuses a gate-changing head with no replay record" "subagent-git-guard --replay all"
+mkdir -p "$F/work/sub"
+RUN_SUB=sub vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify from a subdirectory refuses it too" "subagent-git-guard --replay all"
 record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
 vrun "$tip" develop "$F/comments.json"
 if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ]; then ok "--verify passes it once a matching record exists"; else bad "--verify with record rc=$rc out='$out' err=$err"; fi
+
+# 19b. The replay-supported gates are listed in three places: replay-check.sh's REPLAY_GATES, gate_closure.py's
+#      GATES and gate-differential.sh's gate case. A gate added to one and not the others would be checked
+#      at merge time with no way to write its record, or never checked.
+LIBDIR="$HERE/../../scripts/_lib"
+g1=$(bash -c '. "$1"; printf "%s\n" $REPLAY_GATES' _ "$LIBDIR/replay-check.sh" | sort)
+g2=$(cd "$LIBDIR" && python3 -c 'import gate_closure; print("\n".join(gate_closure.GATES))' | sort)
+g3=$(sed -n 's/^case "\$gate" in \([a-z|-]*\)).*/\1/p' "$HERE/../../scripts/gate-differential.sh" | tr '|' '\n' | sort)
+if [ -n "$g1" ] && [ "$g1" = "$g2" ] && [ "$g1" = "$g3" ]; then
+  ok "REPLAY_GATES, gate_closure.GATES and gate-differential.sh name the same gates"
+else bad "gate lists differ: replay-check=[$g1] gate_closure=[$g2] gate-differential=[$g3]"; fi
 
 # 17. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" bash "$SCRIPT" 2>&1); rc=$?

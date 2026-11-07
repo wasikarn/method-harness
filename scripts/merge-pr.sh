@@ -36,6 +36,8 @@ HERE="$(cd -P "$(dirname "$0")" && pwd)"
 . "$HERE/_lib/gauntlet-lock.sh"
 # shellcheck source=_lib/gauntlet-pass.sh
 . "$HERE/_lib/gauntlet-pass.sh"
+# shellcheck source=_lib/replay-check.sh
+. "$HERE/_lib/replay-check.sh"
 
 usage() {
   echo "usage: merge-pr.sh <PR number> [--skip-replay \"<reason>\"]" >&2
@@ -410,44 +412,31 @@ check_review() {
 }
 
 # GH #891: a PR whose merge tree changes a replay-supported gate merges only with a whole-pool replay record
-# for that gate's closure in the merge tree (scripts/_lib/gate_closure.py: the gate's .sh and .py, _run.py and
-# the shared _*/*.awk files it uses). scripts/gate-differential.sh --replay all writes the record. It is
-# checked on the tree that merges, after the sync: a develop merge that changed the same gate's closure was
-# never replayed, so it needs a new run; one that changed only another gate keeps the record. Diffs in the
-# record do not refuse: this proves the replay ran, and the operator explains its counts on the PR.
-REPLAY_GATES="irrecoverable subagent-git-guard secret-scan"
-replay_dir() { printf '%s' "${GATE_REPLAY_RECORD_DIR:-$HOME/.cache/mh/gate-replay}"; }
-closure_of() {
-  python3 "$HERE/_lib/gate_closure.py" --rev "$1" "$2" || { echo "merge-pr: cannot compute the $2 gate's closure at $1; not merging." >&2; return 1; }
-}
+# for that gate's closure in the merge tree (_lib/replay-check.sh). It is checked on the tree that merges,
+# after the sync: a develop merge that changed the same gate's closure was never replayed, so it needs a new
+# run; one that changed only another gate keeps the record.
 replay_skipped=""
 check_replay() {
-  local g c d rec missing="" m
+  local g c missing m
   replay_skipped=""
-  for g in $REPLAY_GATES; do
-    c=$(closure_of "$head" "$g") || exit 1
-    d=$(closure_of "$dev" "$g") || exit 1
-    [ "$c" != "$d" ] || continue
-    rec="$(replay_dir)/$g-$c.json"
-    # A record that jq cannot read prints jq's error and counts as no record.
-    if [ -f "$rec" ] && jq -e --arg g "$g" --arg c "$c" '.gate == $g and .closure == $c and .full == true and .cache == false' "$rec" >/dev/null; then
-      continue
-    fi
-    missing="$missing $g:$c"
-  done
-  [ -n "$missing" ] || return 0
+  missing=$(replay_missing merge-pr "$head" "$dev") || { echo "merge-pr: not merging." >&2; exit 1; }
+  missing=${missing//$'\n'/ }
+  if [ -z "$missing" ]; then
+    [ -z "$skip_reason" ] || echo "merge-pr: --skip-replay: no gate change here needs a replay, so the reason is not posted." >&2
+    return 0
+  fi
   if [ -n "$skip_reason" ]; then
     replay_skipped=$missing
-    echo "merge-pr: --skip-replay: merging with no replay record for$missing; the reason goes on PR $pr first." >&2
+    echo "merge-pr: --skip-replay: merging with no replay record for $missing; the reason goes on PR $pr first." >&2
     return 0
   fi
   for m in $missing; do
     g=${m%%:*} c=${m#*:}
     echo "merge-pr: PR $pr changes the $g gate (closure ${c:0:12} in the tree that merges, $head) and $(replay_dir) holds no whole-pool replay record for it (GH #891)." >&2
     if [ "$verify" = 1 ]; then
-      echo "  A cloud session has no transcripts to replay: merge a gate change from the operator's machine, after: bash scripts/gate-differential.sh origin/develop $g --replay all --no-cache" >&2
+      echo "  A cloud session has no transcripts to replay: merge a gate change from the operator's machine, after: $(replay_hint origin/develop "$g")" >&2
     else
-      echo "  From this checkout, on $head: bash scripts/gate-differential.sh origin/develop $g --replay all --no-cache ; then run merge-pr.sh $pr again. Emergency only: merge-pr.sh $pr --skip-replay \"<reason>\"." >&2
+      echo "  From this checkout, on $head: $(replay_hint origin/develop "$g") ; then run merge-pr.sh $pr again. Emergency only: merge-pr.sh $pr --skip-replay \"<reason>\"." >&2
     fi
   done
   exit 1
@@ -662,10 +651,10 @@ fi
 gh pr merge "$pr" --merge --match-head-commit "$head"
 if [ -n "$replay_skipped" ]; then
   runs=""
-  for m in $replay_skipped; do runs="$runs- \`bash scripts/gate-differential.sh $dev ${m%%:*} --replay all --no-cache\` from a checkout of the merged develop"$'\n'; done
+  for m in $replay_skipped; do runs="$runs- \`$(replay_hint "$dev" "${m%%:*}")\` from a checkout of the merged develop"$'\n'; done
   gh issue create --title "Run the whole-pool replay for PR #$pr (merged with --skip-replay)" --body "PR #$pr merged with \`merge-pr.sh --skip-replay\` (GH #891). **Reason:** $skip_reason
 
 Run each replay below, OLD being develop just before the merge, and post the record's counts here. Explain any diff or slower command, or open a fix.
-$runs" >&2 || die "PR $pr merged, but the follow-up issue could not be opened; open it by hand: run the whole-pool replay on develop for$replay_skipped."
+$runs" >&2 || die "PR $pr merged, but the follow-up issue could not be opened; open it by hand: run the whole-pool replay on develop for $replay_skipped."
 fi
 gh pr view "$pr" --json mergeCommit -q .mergeCommit.oid
