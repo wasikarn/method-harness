@@ -549,8 +549,7 @@ def replay_record(a, pool, replay, corpus, diffs, slower, cached):
     if a.slug or not pool or len(replay) < len(pool):
         return "none (a record needs the whole pool: --replay all, no --slug; this run replayed %d of %d)" % (
             len(replay), len(pool))
-    g = gate_closure()
-    c = g.closure(g.from_dir(a.new), a.gate)
+    c = a.new_closure  # hashed when main() took the snapshot, before any run
     d = os.environ.get("GATE_REPLAY_RECORD_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "mh", "gate-replay")
     path = os.path.join(d, "%s-%s.json" % (a.gate, c))
     rec = {"gate": a.gate, "closure": c, "full": True, "pool": len(pool), "replay": len(replay), "corpus": len(corpus),
@@ -579,6 +578,23 @@ def main():
     ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args()
     use_cache = a.cache and not a.no_cache
+    # The runners start in a temp cwd: a relative dir would run nothing (exit 127 on that side) and read as 0 diffs.
+    a.old = os.path.abspath(a.old)
+    # Run NEW from a snapshot: an edit to the real dir during a long replay must not reach the runs or the
+    # closure the replay record names (the gates import their siblings, so the whole dir is copied; a symlink
+    # is copied as its target, since a relative one would break in the new place). The closure is hashed
+    # here, before any run, so not even a gate that rewrites its own snapshot file changes what it names.
+    snap = os.path.join(os.path.abspath(a.tmp), "new-snapshot")
+    # A dangling link (an editor's lock file) is skipped, as from_dir skips links, instead of failing the copy.
+    # Not ignore_dangling_symlinks: it tests a relative link's text against the cwd, so it drops live ones too.
+    # __pycache__ is left out too: a stale .pyc whose mtime and size still match the source would run old code.
+    skip = lambda d, names: [n for n in names if n == "__pycache__" or (os.path.islink(os.path.join(d, n))
+                                                                       and not os.path.exists(os.path.join(d, n)))]
+    shutil.copytree(os.path.abspath(a.new), snap, ignore=skip)
+    a.new = snap
+    if a.replay != "0":  # only a replay run can write a record
+        g = gate_closure()
+        a.new_closure = g.closure(g.from_dir(a.new), a.gate)
 
     if a.cases:
         with open(a.cases) as f:
