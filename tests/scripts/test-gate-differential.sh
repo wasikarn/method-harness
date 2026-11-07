@@ -179,6 +179,56 @@ out=$(GATE_REPLAY_RECORD_DIR="$T/rec-slug" bash "$SCRIPT" --cases "$T/empty.txt"
 if [ "$(records "$T/rec-slug")" = 0 ]; then ok "a --slug replay writes no record (one dir is not the pool)"; else bad "--slug replay wrote a record: $out"; fi
 out=$(bash "$SCRIPT" --replay many "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$rc" -eq 2 ]; then ok "--replay takes a number or all"; else bad "--replay many rc=$rc: $out"; fi
+# The runners start in a temp cwd: a relative gates dir once ran nothing (exit 127 on that side), so two
+# relative dirs read as 0 diffs and --replay all wrote a record for a run that never ran the gate.
+printf 'rm -rf build\n' > "$T/deny.txt"
+out=$(cd "$T" && bash "$SCRIPT" --cases "$T/deny.txt" old "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a relative OLD dir runs its gate (same copy as NEW: 0 diffs, no exit 127)"
+else bad "relative OLD dir (rc=$rc): $out"; fi
+# A NEW dir edited while the replay runs (here by the gate itself, on each run): the runs and the record
+# use a snapshot taken at the start, so the record names the closure the corpus ran on, not the edited one.
+cp -R "$GATES" "$T/mut"
+python3 - "$T/mut/irrecoverable.sh" "$T/mut/irrecoverable.py" <<'PY'
+import sys
+p, target = sys.argv[1], sys.argv[2]
+lines = open(p).read().split("\n", 1)
+open(p, "w").write(lines[0] + '\necho "# edited mid-run" >> "%s"\n' % target + lines[1])
+PY
+mut0=$(python3 "$CLOSURE" --dir "$T/mut" irrecoverable)
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-mut" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --runner bash "$T/old" "$T/mut" irrecoverable 2>&1); rc=$?
+if ! /usr/bin/grep -q 'edited mid-run' "$T/mut/irrecoverable.py"; then
+  bad "mid-run edit: the gate's edit never landed in $T/mut, so this row tests nothing: $out"
+elif [ "$(records "$T/rec-mut")" = 1 ] && [ -f "$T/rec-mut/irrecoverable-$mut0.json" ]; then
+  ok "a NEW dir edited during the replay: the record names the closure at the start (the snapshot the runs used)"
+else bad "mid-run edit (rc=$rc, records $(records "$T/rec-mut"), want irrecoverable-$mut0.json): $out"; fi
+# A gate that rewrites its own (snapshot) file on each run: the closure is hashed before any run.
+cp -R "$GATES" "$T/self"
+python3 - "$T/self/irrecoverable.sh" <<'PY'
+import sys
+p = sys.argv[1]
+lines = open(p).read().split("\n", 1)
+open(p, "w").write(lines[0] + '\necho "# edited mid-run" >> "$(dirname "$0")/irrecoverable.py"\n' + lines[1])
+PY
+self0=$(python3 "$CLOSURE" --dir "$T/self" irrecoverable)
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-self" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --runner bash "$T/old" "$T/self" irrecoverable 2>&1); rc=$?
+if [ "$(records "$T/rec-self")" = 1 ] && [ -f "$T/rec-self/irrecoverable-$self0.json" ]; then
+  ok "a gate that rewrites its snapshot file mid-run: the record names the closure before the first run"
+else bad "self-rewriting gate (rc=$rc, records $(records "$T/rec-self"), want irrecoverable-$self0.json): $out"; fi
+# A relative symlink in NEW still resolves in the snapshot (it is copied as its target).
+mkdir -p "$T/lnkroot/shared"
+cp -R "$GATES" "$T/lnkroot/gates"
+mv "$T/lnkroot/gates/irrecoverable.py" "$T/lnkroot/shared/irrecoverable.py"
+ln -s ../shared/irrecoverable.py "$T/lnkroot/gates/irrecoverable.py"
+out=$(bash "$SCRIPT" --cases "$T/deny.txt" "$T/same" "$T/lnkroot/gates" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a relative symlink in NEW runs the file it points to (0 diffs against a plain copy)"
+else bad "relative symlink in NEW (rc=$rc): $out"; fi
+# A numeric --replay that covers the whole pool is a whole-pool run too.
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-num" bash "$SCRIPT" --cases "$T/empty.txt" --replay 50 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$T/rec-num/irrecoverable-$closure.json" ]; then
+  ok "--replay 50 over a 2-command pool writes the record"
+else bad "--replay 50 full pool (rc=$rc, records $(records "$T/rec-num")): $out"; fi
 
 echo "=== slug traversal out of a worktree prefix ==="
 out=$(bash "$SCRIPT" --replay 3 --slug "$slug--claude-worktrees-probe/../foreign" "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
