@@ -4,10 +4,16 @@
 #
 # Prints only diff classes, counts and up to 3 redacted, truncated sample commands per class:
 # transcripts can hold secrets, so no other command text is ever printed.
-import argparse, glob, io, json, os, random, re, subprocess, sys
+import argparse, collections, glob, io, json, os, random, re, select, shutil, signal, subprocess, sys, time
 
-TIMEOUT = 8  # hooks.json's timeout: a gate past it lets the call through, so a timeout is its own class
+TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blocks irrecoverable (onFailure: block)
+# and lets the others through, so a timeout is its own class
 SAMPLES, WIDTH = 3, 100
+DEADLINES = {"irrecoverable": 4.0, "subagent-git-guard": 5.0}  # each gate's own deadline (GH #771, #469)
+NEAR = 0.5  # a fork-mode time over half the deadline re-runs through bash (#889) and marks a slowdown (#890)
+SLOWER_RATIO, SLOWER_MIN_SECS = 3.0, 0.2  # GH #890: 3x the old time and at least 200 ms
+READY_SECS = 30  # python start-up plus the warm-up, once per run, under renice 19 and gauntlet load
+FORK_SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gate-fork-server.py")
 
 
 def secret_patterns(gates_dir):
@@ -137,14 +143,36 @@ def payload(gate, text):
     return d
 
 
-def run(gates_dir, gate, data, env, journal):
-    open(journal, "w").close()
+def canonical_env(home):
+    # GH #888: the result must not depend on who runs the replay. Gate knobs (MH_IRR_DEADLINE_SECS,
+    # MH_IRR_BUDGET_SCALE, MH_SGG_*, MH_GATE_BATCH_BUDGET_S, MH_GATE_NO_FASTPATH) and GIT_* (GIT_DIR can
+    # point irrecoverable's mid-merge check at the caller's repo) never reach the gates.
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("MH_", "GIT_"))}
+    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env["HOME"] = home
+    return env
+
+
+def canonical_cwd(tmp, env):
+    # GH #888: a fresh dir outside any git repo, so a caller checkout that is mid-merge cannot turn
+    # irrecoverable's `git add -A` deny into an allow (its _mid_merge asks git in the cwd).
+    cwd = os.path.join(tmp, "cwd")
+    os.makedirs(cwd, exist_ok=True)
     try:
-        p = subprocess.run(["bash", os.path.join(gates_dir, gate + ".sh")], input=data,
-                           capture_output=True, env=env, timeout=TIMEOUT)
-        code, out, err = str(p.returncode), p.stdout, p.stderr
-    except subprocess.TimeoutExpired:
-        code, out, err = "timeout", b"", b""
+        r = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=cwd, env=env, capture_output=True)
+        inside = r.returncode == 0
+    except OSError:
+        inside = False  # no git: _mid_merge's own check fails the same way
+    if inside:
+        print("gate-differential: the replay dir %s is inside a git repo; set TMPDIR outside one" % cwd, file=sys.stderr)
+        sys.exit(2)
+    return cwd
+
+
+Result = collections.namedtuple("Result", "code out err rows secs")
+
+
+def finish(gates_dir, code, out, err, journal, secs):
     rows = []
     with open(journal) as f:
         for line in f:
@@ -153,11 +181,191 @@ def run(gates_dir, gate, data, env, journal):
             row.pop("mh_version", None)
             rows.append(row)
     err = err.replace(gates_dir.encode(), b"<GATES>")
-    return code, out, err, rows
+    return Result(code, out, err, rows, secs)
+
+
+class BashRunner:
+    # The real path: `bash <gate>.sh`, as hooks.json runs it.
+
+    def __init__(self, gates_dir, gate, env, journal, cwd):
+        self.gates_dir, self.gate, self.env, self.journal, self.cwd = gates_dir, gate, env, journal, cwd
+
+    def run(self, data):
+        open(self.journal, "w").close()
+        t0 = time.monotonic()
+        # Its own process group, so a timeout kills the gate's own children (git) too, not just bash.
+        p = subprocess.Popen(["bash", os.path.join(self.gates_dir, self.gate + ".sh")], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, cwd=self.cwd,
+                             start_new_session=True)
+        try:
+            out, err = p.communicate(data, timeout=TIMEOUT)
+            code = str(p.returncode)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                # ESRCH: the group is gone; EPERM on macOS: its only member is the unreaped bash. Kill bash
+                # itself.
+                p.kill()
+            try:
+                p.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                # communicate() waits for the pipes to close, and a grandchild in its own session (out of
+                # the killed group) can hold them open: stop reading instead of waiting on it.
+                p.stdout.close()
+                p.stderr.close()
+                p.wait()
+            code, out, err = "timeout", b"", b""
+        return finish(self.gates_dir, code, out, err, self.journal, time.monotonic() - t0)
+
+    def close(self):
+        pass
+
+
+class ServerDied(Exception):
+    pass
+
+
+class NoGroup(Exception):
+    # The fork child could not lead its own process group: this one command goes through bash.
+    pass
+
+
+class ForkRunner:
+    # GH #889: one scripts/_lib/gate-fork-server.py per side, run by the wrapper's own `python3 -S`.
+    # Every read from the server is bounded: a hung server falls back to bash, never hangs the replay.
+
+    def __init__(self, gates_dir, gate, env, journal, cwd, work):
+        self.gates_dir, self.journal, self.work = gates_dir, journal, work
+        os.makedirs(work, exist_ok=True)
+        py = shutil.which("python3", path=env.get("PATH", os.defpath))
+        if not py:
+            raise ServerDied("no python3 on the gates' PATH")
+        self.files = {k: os.path.join(work, k) for k in ("in", "out", "err")}
+        self.server_err = open(os.path.join(work, "server.err"), "wb")
+        self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate, str(TIMEOUT)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd, bufsize=0)
+        # The warm-up runs a few allowing commands in the server itself, with no deadline of its own.
+        if self.line(READY_SECS) != b"ready\n":
+            raise ServerDied(self.died())
+
+    def line(self, secs):
+        # One reply line within secs, else b"" (the server sends each line in one write).
+        fd, buf, end = self.p.stdout.fileno(), b"", time.monotonic() + secs
+        while not buf.endswith(b"\n"):
+            left = end - time.monotonic()
+            if left <= 0 or not select.select([fd], [], [], left)[0]:
+                return b""
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                return b""
+            buf += chunk
+        return buf
+
+    def died(self, what=None):
+        what = what or ("exited (rc=%s)" % self.p.returncode if self.p.poll() is not None else "did not answer in time")
+        self.close()
+        with open(os.path.join(self.work, "server.err"), errors="replace") as f:
+            tail = f.read()[-300:].strip().replace("\n", " | ")
+        return "fork server %s%s" % (what, ": " + tail if tail else "")
+
+    def run(self, data):
+        open(self.journal, "w").close()
+        with open(self.files["in"], "wb") as f:
+            f.write(data)
+        try:
+            self.p.stdin.write((json.dumps(self.files) + "\n").encode())
+            reply = self.line(TIMEOUT + 5)  # the server itself kills a child at TIMEOUT
+        except OSError:
+            reply = b""
+        if not reply:
+            raise ServerDied(self.died())
+        try:
+            r = json.loads(reply)
+            code, secs = str(r["code"]), float(r["secs"])
+        except (ValueError, TypeError, KeyError):  # a garbled reply is a broken server, never a result
+            raise ServerDied(self.died("sent a garbled reply"))
+        if code == "setup-failed":  # alike on both sides it would read as no diff: never a result
+            raise ServerDied(self.died("could not set up a child"))
+        if code == "no-group":
+            raise NoGroup()
+        with open(self.files["out"], "rb") as f:
+            out = f.read()
+        with open(self.files["err"], "rb") as f:
+            err = f.read()
+        if code == "timeout":
+            out, err = b"", b""
+        return finish(self.gates_dir, code, out, err, self.journal, secs)
+
+    def close(self):
+        # EOF on stdin ends a healthy server; SIGTERM makes a hung one kill its child's group first.
+        if self.p.poll() is None:
+            try:
+                self.p.stdin.close()
+            except OSError:
+                pass
+            for stop in (None, self.p.terminate, self.p.kill):
+                if stop:
+                    stop()
+                try:
+                    self.p.wait(timeout=2)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        self.server_err.close()
+
+
+def fork_blocker(old, new, gate):
+    # GH #889: fork mode skips the wrapper, which is sound only while both sides run the same wrapper:
+    # it hands python the payload unchanged, so then fork mode can add diffs but never hide one. Every
+    # gates-dir file the wrapper text names (its awk, _run.py, ...) must be byte-identical, apart from
+    # the gate's own .py. Returns why fork mode cannot run, or None.
+    sh = gate + ".sh"
+    texts = []
+    for d in (old, new):
+        with open(os.path.join(d, sh), "rb") as f:
+            texts.append(f.read())
+    if not all(b"_run.py" in t for t in texts):
+        return "the wrapper does not run the gate through _run.py"
+    names = {sh}
+    for d in (old, new):
+        for f in os.listdir(d):
+            if f != gate + ".py" and os.path.isfile(os.path.join(d, f)) and any(f.encode() in t for t in texts):
+                names.add(f)
+
+    def content(d, f):
+        try:
+            with open(os.path.join(d, f), "rb") as h:
+                return h.read()
+        except OSError:
+            return None
+    differ = sorted(f for f in names if content(old, f) != content(new, f))
+    return "wrapper files differ: " + ", ".join(differ) if differ else None
 
 
 def journal_sig(rows):
     return ",".join(r.get("decision", "?") + (":" + r["rule"] if r.get("rule") else "") for r in rows) or "none"
+
+
+def diff_class(o, n):
+    parts = []
+    if o.code != n.code:
+        parts.append("exit %s->%s" % (o.code, n.code))
+    if o.out != n.out:
+        parts.append("stdout")
+    if o.err != n.err:
+        parts.append("stderr")
+    if o.rows != n.rows:
+        parts.append("journal %s->%s" % (journal_sig(o.rows), journal_sig(n.rows)))
+    return " | ".join(parts)
+
+
+def is_slower(old_secs, new_secs, deadline):
+    # GH #890, times from one run and one runner only. The work-count criterion of #890 waits for a gate
+    # that exposes its count; none does yet.
+    if deadline and new_secs > NEAR * deadline and not old_secs > NEAR * deadline:
+        return True
+    return new_secs >= SLOWER_RATIO * old_secs and new_secs >= SLOWER_MIN_SECS
 
 
 def main():
@@ -168,6 +376,7 @@ def main():
     ap.add_argument("--cases")
     ap.add_argument("--slug")
     ap.add_argument("--fuzz-seed")
+    ap.add_argument("--runner", choices=("auto", "fork", "bash"), default="auto")
     a = ap.parse_args()
 
     if a.cases:
@@ -186,40 +395,121 @@ def main():
 
     home = os.path.join(a.tmp, "home")
     os.makedirs(home, exist_ok=True)
-    env = dict(os.environ, HOME=home)
-    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env = canonical_env(home)
+    cwd = canonical_cwd(a.tmp, env)
     jo, jn = os.path.join(a.tmp, "old.jsonl"), os.path.join(a.tmp, "new.jsonl")
+    env_o, env_n = dict(env, MH_GATE_JOURNAL_PATH=jo), dict(env, MH_GATE_JOURNAL_PATH=jn)
     # Both sides: a change that drops a pattern must not unredact the commands it now misses.
     patterns = secret_patterns(a.old) + secret_patterns(a.new)
     real_home = os.environ.get("HOME", "")
+    deadline = DEADLINES.get(a.gate)
 
-    classes = {}
+    bash = (BashRunner(a.old, a.gate, env_o, jo, cwd), BashRunner(a.new, a.gate, env_n, jn, cwd))
+    fork, why = None, "forced by --runner bash" if a.runner == "bash" else fork_blocker(a.old, a.new, a.gate)
+    if not why:
+        started = []
+        try:
+            for side, d, e, j in (("old", a.old, env_o, jo), ("new", a.new, env_n, jn)):
+                started.append(ForkRunner(d, a.gate, e, j, cwd, os.path.join(a.tmp, "fork-" + side)))
+            fork = tuple(started)
+        except ServerDied as e:
+            why = str(e)
+            for r in started:
+                r.close()
+    def refuse(reason):
+        print("gate-differential: --runner fork: fork mode cannot run (%s)" % reason, file=sys.stderr)
+        sys.exit(2)
+
+    if why and a.runner == "fork":
+        refuse(why)
+    fork_started, dropped, near, nogroup = fork is not None, [], 0, 0
+
+    def fork_failed(e):
+        # The rest of the run goes through bash; --runner fork asked for fork mode only, so it stops.
+        nonlocal fork, why
+        for r in fork or ():
+            r.close()
+        fork, why = None, "%s; bash from that command on" % e
+        if a.runner == "fork":
+            refuse(e)
+
+    def pair(runners, data):
+        return runners[0].run(data), runners[1].run(data)
+
+    def on_fork(data):
+        # -> both results through fork mode, or None when this command must go through bash instead
+        nonlocal nogroup
+        try:
+            return pair(fork, data)
+        except NoGroup:
+            nogroup += 1
+            if a.runner == "fork":  # fork mode only: a command it cannot run stops the run (PR #899)
+                for r in fork:
+                    r.close()
+                refuse("a child could not lead its own process group")
+        except ServerDied as e:
+            fork_failed(e)
+        return None
+
+    def measure(text, data):
+        # -> (old result, new result, the runners that gave them)
+        nonlocal near
+        if fork:
+            r = on_fork(data)
+            if r:
+                o, n = r
+                if deadline and max(o.secs, n.secs) > NEAR * deadline:
+                    near += 1  # near the deadline, load decides: only the real path's result counts
+                    return pair(bash, data) + (bash,)
+                if diff_class(o, n):  # every fork diff is confirmed through the real path, or dropped
+                    o, n = pair(bash, data)
+                    if not diff_class(o, n):
+                        dropped.append(text)
+                    return o, n, bash
+                return o, n, fork
+        return pair(bash, data) + (bash,)
+
+    classes, slower = {}, []
     for text in corpus:
         data = json.dumps(payload(a.gate, text)).encode()
-        o = run(a.old, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jo), jo)
-        n = run(a.new, a.gate, data, dict(env, MH_GATE_JOURNAL_PATH=jn), jn)
-        parts = []
-        if o[0] != n[0]:
-            parts.append("exit %s->%s" % (o[0], n[0]))
-        if o[1] != n[1]:
-            parts.append("stdout")
-        if o[2] != n[2]:
-            parts.append("stderr")
-        if o[3] != n[3]:
-            parts.append("journal %s->%s" % (journal_sig(o[3]), journal_sig(n[3])))
-        if parts:
-            classes.setdefault(" | ".join(parts), []).append(text)
+        o, n, runners = measure(text, data)
+        name = diff_class(o, n)
+        if name:
+            classes.setdefault(name, []).append(text)
+        if is_slower(o.secs, n.secs, deadline):
+            # once more, both sides on one runner: a load spike must not count
+            r = on_fork(data) if runners is not bash and fork else None
+            o, n = r or pair(bash, data)
+            if is_slower(o.secs, n.secs, deadline):
+                slower.append((text, o.secs, n.secs))
+    for r in bash + (fork or ()):
+        r.close()
 
     total = sum(len(v) for v in classes.values())
-    print("gate-differential: %s corpus=%d (base=%d replay=%d fuzz=%d) diffs=%d classes=%d"
-          % (a.gate, len(corpus), len(base), len(replay), len(fz), total, len(classes)))
+    print("gate-differential: %s corpus=%d (base=%d replay=%d fuzz=%d) diffs=%d slower=%d classes=%d"
+          % (a.gate, len(corpus), len(base), len(replay), len(fz), total, len(slower), len(classes)))
+    counts = "fork-only diffs dropped: %d, near-deadline re-runs: %d" % (len(dropped), near)
+    if nogroup:
+        counts += ", no-own-group re-runs: %d" % nogroup
+    if fork:
+        print("  runner: fork (%s)" % counts)
+    else:
+        print("  runner: bash (%s%s)" % (why, "; before that, " + counts if fork_started else ""))
+    # A fork-only diff is how a gap in the wrapper's fast-path token list shows: name the first few.
+    for t in dropped[:SAMPLES]:
+        print("      - " + redact(t, patterns, real_home))
     if a.replay:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):
         print("  [%d] %s" % (len(texts), name))
         for t in texts[:SAMPLES]:
             print("      - " + redact(t, patterns, real_home))
-    return 1 if classes else 0
+    if slower:
+        print("  slower: %d (new time over %g%% of the %s s deadline, or %gx the old and %g s or more; re-run once)"
+              % (len(slower), NEAR * 100, format(deadline, "g") if deadline else "-", SLOWER_RATIO, SLOWER_MIN_SECS))
+        for t, os_, ns in sorted(slower, key=lambda x: -x[2])[:SAMPLES]:
+            print("      - %s (old %.3f s, new %.3f s)" % (redact(t, patterns, real_home), os_, ns))
+    return 1 if classes or slower else 0
 
 
 if __name__ == "__main__":

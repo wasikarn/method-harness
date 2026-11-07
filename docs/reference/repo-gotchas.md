@@ -278,12 +278,33 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   that did not isolate it left 268k session-less rows in the real journal. The fuzz is a few fixed
   rewrites; the real-shell oracle and a validator's own generator below still apply. It runs at
   the lowest CPU priority (`renice 19`) and never takes the gauntlet's queue: a 28-min
-  replay holding the queue kept every push waiting (2026-10-27).
+  replay holding the queue kept every push waiting (2026-10-27). Both sides run in a canonical env
+  (GH #888): the cwd is a fresh dir outside any git repo, and no `MH_*` or `GIT_*` variable reaches
+  the gates, so a caller's gate knob or a mid-merge checkout cannot change the result.
+  **Fork mode** (GH #889, the default when both sides' wrapper files are byte-identical; `--runner bash`
+  forces the old path): one `scripts/_lib/gate-fork-server.py` per side, under the wrapper's own
+  `python3 -S`, imports the stdlib and warms the regex cache once, then forks a child per command
+  that imports the gate afresh. It skips bash and python start-up (on the fixtures: irrecoverable
+  9.5 s against 47 s, subagent-git-guard 5.4 s against 34 s). Every diff it finds and every command
+  over half the gate's deadline (4 s, 5 s) is re-run through `bash <gate>.sh` on both sides, and only
+  that result counts; the summary names the fork-only diffs it dropped (a wrapper fast-path gap shows
+  up there). A server that hangs, dies or cannot set up a child sends the rest of the run through bash
+  (`--runner fork` exits 2 instead), and a timeout kills the gate's whole process group. A child that
+  cannot lead its own group (EPERM from `setpgid` on macOS, PR #899) runs that one command through bash
+  and adds to `no-own-group re-runs: N` on the summary line (`--runner fork` exits 2 instead). A replay
+  proves fork mode only when its summary line reads `runner: fork` with no no-own-group count. Never run the gates in
+  one process in a loop: they call `os._exit`. `test_deny`/`test_allow` in `tests/_lib/gates-harness.sh`
+  stay on real spawns, the only check of the wrapper's fast-path token list.
+  **`slower`** (GH #890) is a class of its own beside the diffs, and also exits 1: the new side's time
+  passes half the deadline and the old side's does not, or it is 3x the old and at least 200 ms. Both
+  times come from the same run and runner, and a command counts only if a re-run agrees.
 
 - **Acceptance:** 0 commands that `develop` denies and the branch allows, apart from a category
   the PR names as intended. Over-denies are the safe direction and are reported, not blocking.
-  A timeout counts as allow: a hook past its `hooks.json` timeout (8 s) lets the call through, so
-  a command `develop` denies in time and the branch does not finish in time is a regression. Time
+  A timeout is per gate (GH #888, `hooks/hooks.json`): irrecoverable has `onFailure: block`, so past
+  its 8 s timeout the call is blocked, and its own 4 s deadline asks first; subagent-git-guard and
+  secret-scan have no `onFailure`, so past 8 s the call goes through, and for those two a command
+  `develop` denies in time and the branch does not finish in time is a regression. Time
   padded shapes (thousands of statements, 20-150 KB) with the target early and late (GH #245: a
   new scan placed before the fast denies turned a 0.03 s deny into a timeout). Any exit other than
   0 or 2 from the `.py` is a finding too, even where the `.sh` wrapper fails it closed.
