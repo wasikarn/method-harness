@@ -129,6 +129,17 @@ still caught. Post the reviewer's result as that comment. It proves a verdict wa
 or that the reviewer had fresh context. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
+**A gate change needs a replay record (GH #891).** When the tree that merges changes the closure of
+`irrecoverable`, `subagent-git-guard` or `secret-scan` (the gate's `.sh` and `.py`, `_run.py`, and the
+shared `_*`/`*.awk` files it uses, per `scripts/_lib/gate_closure.py`), `merge-pr.sh` refuses unless
+`~/.cache/mh/gate-replay/` holds a whole-pool replay record for that exact closure. Write one from the PR's
+checkout with `bash scripts/gate-differential.sh origin/develop <gate> --replay all`. A develop merge
+that changes the same gate's files needs a new replay; one that changes only another gate keeps the
+record. A record with diffs still merges: explain its counts on the PR. The emergency override,
+`merge-pr.sh <PR> --skip-replay "<reason>"`, posts the reason on the PR and opens a follow-up issue
+to run the replay on develop. A cloud session has no transcripts to replay, so a gate PR always merges
+from the operator's machine (`--verify` refuses it too).
+
 **Without `gh` (a Claude Code cloud session).** The script reads the PR and merges through `gh`, which a
 cloud session lacks; it has the GitHub MCP tools instead. Do not retype the checks by hand (that was
 done for #633, #644 and #648, with nothing to say a check was skipped). Instead:

@@ -13,7 +13,12 @@
 # Run it from the PR's own checkout, on its branch, with a clean tree: it commits there and pushes.
 # One run can span a gauntlet plus lock waits (> 10 min), so start it in the background.
 # Bash 3.2. Env: GAUNTLET_PASS_DIR, GAUNTLET_PASS_CACHE, GAUNTLET_MISS_LOG (GH #749), MERGE_PR_LOAD_MAX (default: the online core count, 4 if getconf cannot tell), MERGE_PR_LOAD_WAIT_SECS (900),
-# MERGE_PR_LOCK_DIR ($HOME/.cache/mh/merge-pr.lock), MERGE_PR_LOCK_WAIT_SECS (3600).
+# MERGE_PR_LOCK_DIR ($HOME/.cache/mh/merge-pr.lock), MERGE_PR_LOCK_WAIT_SECS (3600), GATE_REPLAY_RECORD_DIR
+# ($HOME/.cache/mh/gate-replay, see check_replay).
+#
+# merge-pr.sh <PR> --skip-replay "<reason>" — GH #891's emergency override, for a gate fix that unblocks a
+# broken machine and cannot wait for a replay: it merges a gate change with no replay record, posts the
+# reason on the PR before the merge, and opens a follow-up issue to run the replay on develop.
 #
 # merge-pr.sh --verify <PR> <head sha> <base branch> <comments.json> — the same checks without gh, for a
 # session that has none (a Claude Code cloud session) and merges through the GitHub MCP tools. The caller
@@ -33,11 +38,11 @@ HERE="$(cd -P "$(dirname "$0")" && pwd)"
 . "$HERE/_lib/gauntlet-pass.sh"
 
 usage() {
-  echo "usage: merge-pr.sh <PR number>" >&2
+  echo "usage: merge-pr.sh <PR number> [--skip-replay \"<reason>\"]" >&2
   echo "       merge-pr.sh --verify <PR number> <head sha> <base branch> <comments.json>" >&2
   exit 2
 }
-verify=0
+verify=0 skip_reason=""
 if [ "${1:-}" = "--verify" ]; then
   verify=1
   pr="${2:-}" head="${3:-}" base="${4:-}" comments_file="${5:-}"
@@ -49,6 +54,13 @@ if [ "${1:-}" = "--verify" ]; then
 else
   pr="${1:-}"
   [ -n "$pr" ] || usage
+  if [ $# -gt 1 ]; then
+    if [ "${2:-}" != "--skip-replay" ] || [ $# -ne 3 ] || [ -z "${3//[[:space:]]/}" ]; then
+      echo "merge-pr: --skip-replay needs a non-empty reason, posted on the PR: merge-pr.sh $pr --skip-replay \"<why this gate fix cannot wait for a replay>\"." >&2
+      usage
+    fi
+    skip_reason=$3
+  fi
 fi
 
 PLUGIN=.claude-plugin/plugin.json
@@ -397,6 +409,50 @@ check_review() {
   done
 }
 
+# GH #891: a PR whose merge tree changes a replay-supported gate merges only with a whole-pool replay record
+# for that gate's closure in the merge tree (scripts/_lib/gate_closure.py: the gate's .sh and .py, _run.py and
+# the shared _*/*.awk files it uses). scripts/gate-differential.sh --replay all writes the record. It is
+# checked on the tree that merges, after the sync: a develop merge that changed the same gate's closure was
+# never replayed, so it needs a new run; one that changed only another gate keeps the record. Diffs in the
+# record do not refuse: this proves the replay ran, and the operator explains its counts on the PR.
+REPLAY_GATES="irrecoverable subagent-git-guard secret-scan"
+replay_dir() { printf '%s' "${GATE_REPLAY_RECORD_DIR:-$HOME/.cache/mh/gate-replay}"; }
+closure_of() {
+  python3 "$HERE/_lib/gate_closure.py" --rev "$1" "$2" || { echo "merge-pr: cannot compute the $2 gate's closure at $1; not merging." >&2; return 1; }
+}
+replay_skipped=""
+check_replay() {
+  local g c d rec missing="" m
+  replay_skipped=""
+  for g in $REPLAY_GATES; do
+    c=$(closure_of "$head" "$g") || exit 1
+    d=$(closure_of "$dev" "$g") || exit 1
+    [ "$c" != "$d" ] || continue
+    rec="$(replay_dir)/$g-$c.json"
+    # A record that jq cannot read prints jq's error and counts as no record.
+    if [ -f "$rec" ] && jq -e --arg g "$g" --arg c "$c" '.gate == $g and .closure == $c and .full == true and .cache == false' "$rec" >/dev/null; then
+      continue
+    fi
+    missing="$missing $g:$c"
+  done
+  [ -n "$missing" ] || return 0
+  if [ -n "$skip_reason" ]; then
+    replay_skipped=$missing
+    echo "merge-pr: --skip-replay: merging with no replay record for$missing; the reason goes on PR $pr first." >&2
+    return 0
+  fi
+  for m in $missing; do
+    g=${m%%:*} c=${m#*:}
+    echo "merge-pr: PR $pr changes the $g gate (closure ${c:0:12} in the tree that merges, $head) and $(replay_dir) holds no whole-pool replay record for it (GH #891)." >&2
+    if [ "$verify" = 1 ]; then
+      echo "  A cloud session has no transcripts to replay: merge a gate change from the operator's machine, after: bash scripts/gate-differential.sh origin/develop $g --replay all" >&2
+    else
+      echo "  From this checkout, on $head: bash scripts/gate-differential.sh origin/develop $g --replay all ; then run merge-pr.sh $pr again. Emergency only: merge-pr.sh $pr --skip-replay \"<reason>\"." >&2
+    fi
+  done
+  exit 1
+}
+
 wait_for_load() {
   # A fixed 4 on a 12-core machine blocked every merge while peer sessions ran (load 8-12, 2026-10-27).
   # Too high a cap only risks a timing row failing the gauntlet, which refuses the push: safe to retry.
@@ -523,6 +579,7 @@ if [ "$verify" = 1 ]; then
     die "PR $pr head $head does not contain origin/develop; $(resync_hint)."
   fi
   check_version
+  check_replay
   # A push only lints (GH #735), so the merged tree must have passed the full gauntlet here: a pass
   # cached for its tree, which sync-pr-head.sh or a clean run-gauntlet.sh writes. No cache, no merge.
   tree=$(git rev-parse --verify "$head^{tree}") || die "cannot read the tree of $head."
@@ -565,6 +622,7 @@ while :; do
   sync_and_bump
   head=$(git rev-parse HEAD)
   check_version
+  check_replay
   check_review
   remote=$(remote_head) || exit 1
   require_clean "before the gauntlet"
@@ -590,5 +648,24 @@ fi
 
 # origin has $head now, and run_gauntlet_here passed on it (GH #742).
 gauntlet_status_post merge-pr "$head" || exit 1
+skipped_list=""
+for m in $replay_skipped; do skipped_list="$skipped_list- \`${m%%:*}\` (closure \`${m#*:}\`)"$'\n'; done
+if [ -n "$replay_skipped" ]; then
+  gh pr comment "$pr" --body "Merging with \`merge-pr.sh --skip-replay\`, without the whole-pool replay (GH #891).
+
+**Reason:** $skip_reason
+
+Gates changed with no replay record:
+$skipped_list
+A follow-up issue to run the replay on develop opens after the merge." >&2 || die "could not post the --skip-replay reason on PR $pr; not merging."
+fi
 gh pr merge "$pr" --merge --match-head-commit "$head"
+if [ -n "$replay_skipped" ]; then
+  runs=""
+  for m in $replay_skipped; do runs="$runs- \`bash scripts/gate-differential.sh $dev ${m%%:*} --replay all\` from a checkout of the merged develop"$'\n'; done
+  gh issue create --title "Run the whole-pool replay for PR #$pr (merged with --skip-replay)" --body "PR #$pr merged with \`merge-pr.sh --skip-replay\` (GH #891). **Reason:** $skip_reason
+
+Run each replay below, OLD being develop just before the merge, and post the record's counts here. Explain any diff or slower command, or open a fix.
+$runs" >&2 || die "PR $pr merged, but the follow-up issue could not be opened; open it by hand: run the whole-pool replay on develop for$replay_skipped."
+fi
 gh pr view "$pr" --json mergeCommit -q .mergeCommit.oid

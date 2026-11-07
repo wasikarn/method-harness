@@ -368,11 +368,36 @@ def is_slower(old_secs, new_secs, deadline):
     return new_secs >= SLOWER_RATIO * old_secs and new_secs >= SLOWER_MIN_SECS
 
 
+def replay_record(a, pool, replay, corpus, diffs, slower):
+    # GH #891: scripts/merge-pr.sh merges a gate change only with this record for the gate's closure. Only a
+    # whole-pool run counts: every command of every transcript dir of this project, so no --slug. There is
+    # no replay cache yet; a cached run (GH #893) must never write one. Counts only, no command text.
+    if a.slug or not pool or len(replay) < len(pool):
+        return "none (a record needs the whole pool: --replay all, no --slug; this run replayed %d of %d)" % (
+            len(replay), len(pool))
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import gate_closure
+    c = gate_closure.closure(gate_closure.from_dir(a.new), a.gate)
+    d = os.environ.get("GATE_REPLAY_RECORD_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "mh", "gate-replay")
+    path = os.path.join(d, "%s-%s.json" % (a.gate, c))
+    rec = {"gate": a.gate, "closure": c, "full": True, "pool": len(pool), "replay": len(replay), "corpus": len(corpus),
+           "diffs": diffs, "slower": slower, "cache": False, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    try:
+        os.makedirs(d, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        return "NOT written (%s); merge-pr.sh will refuse this gate change" % e
+    return "written %s" % path
+
+
 def main():
     ap = argparse.ArgumentParser()
     for a in ("--old", "--new", "--gate", "--tmp", "--projects", "--own-slug", "--fixtures"):
         ap.add_argument(a, required=True)
-    ap.add_argument("--replay", type=int, default=0)
+    ap.add_argument("--replay", default="0")  # a count, or "all" (GH #891)
     ap.add_argument("--cases")
     ap.add_argument("--slug")
     ap.add_argument("--fuzz-seed")
@@ -386,10 +411,11 @@ def main():
         base = secret_seed(random.Random(0))
     else:
         base = fixture_cases(a.fixtures, a.gate)
-    replay, ndirs, bad = [], 0, 0
-    if a.replay:
+    replay, ndirs, bad, pool = [], 0, 0, []
+    want = a.replay if a.replay == "all" else int(a.replay)
+    if want:
         pool, ndirs, bad = replay_cases(a.projects, a.own_slug, a.slug, a.gate)
-        replay = random.Random(a.fuzz_seed or 0).sample(pool, min(a.replay, len(pool)))
+        replay = random.Random(a.fuzz_seed or 0).sample(pool, len(pool) if want == "all" else min(want, len(pool)))
     fz = fuzz(base + replay, a.fuzz_seed) if a.fuzz_seed is not None else []
     corpus = list(dict.fromkeys(base + replay + fz))
 
@@ -498,8 +524,9 @@ def main():
     # A fork-only diff is how a gap in the wrapper's fast-path token list shows: name the first few.
     for t in dropped[:SAMPLES]:
         print("      - " + redact(t, patterns, real_home))
-    if a.replay:
+    if want:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
+        print("  replay record: " + replay_record(a, pool, replay, corpus, total, len(slower)))
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):
         print("  [%d] %s" % (len(texts), name))
         for t in texts[:SAMPLES]:
