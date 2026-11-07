@@ -185,7 +185,7 @@ The validator judged a design, so the built code gets its own check before merge
   the same inputs and on real commands from this project's transcripts. Run it from the root of
   the checkout that holds the built change (the script's NEW side is its own checkout's gates):
   `bash scripts/gate-differential.sh origin/develop <gate> --cases <corpus file> --replay 2000`
-  (add `--cache` on review rounds to reuse the develop side; the replay before merge runs with `--no-cache`),
+  (add `--cache` on repeat runs while iterating, to reuse the develop side; the replay before merge uses `--no-cache`),
   `<gate>` being `irrecoverable`, `subagent-git-guard` or `secret-scan`. `<corpus file>` is one
   command per line, merging the closed-break inputs and the generator's output; a multi-line
   input stays in its own file and runs under the first bullet. A deny that turns into an allow
