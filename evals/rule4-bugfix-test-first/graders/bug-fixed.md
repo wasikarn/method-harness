@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '>=\s*100|100\s*<='
+pattern: '(>=\s*100|100\s*<=)(?![\d.])'
 match: contains
 target:
   source: file

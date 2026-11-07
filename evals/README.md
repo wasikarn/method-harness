@@ -53,10 +53,15 @@ says "100 or more") in a scaffolded node project with passing tests, asked as a 
 no skill: `rule4-bugfix-test-first` in English and mentioning `npm test`, `rule4-bugfix-terse-th` as
 a terse Thai "fix เลย" with no word about tests. `test-first.md` (llm, trace) scores the order: a test
 for the reported case added and seen failing before `src/discount.js` is edited, then passing;
-file regexes check the fix and the regression test. Baseline 2026-11-07, 5 runs per arm: English
-5/5 with and 5/5 without; Thai 5/5 with and 0/5 without (Δ +0.5). Rule 4 as written already does its
-job here, so these are a guard for edits to `docs/METHODOLOGY.md`, not evidence for a rewrite.
-Neither case needs `mattpocock-skills:tdd` (that plugin is not loaded in the eval sandbox).
+file regexes check the fix (inclusive bound present, `> 100` gone) and the regression test.
+Baseline 2026-11-07 (`--runs 5` override; the cases default to 3), `test-first.md` passes: English
+5/5 with mh and 5/5 without; Thai 5/5 with and 0/5 without (case score 1.0 vs 0.5, since
+`tests-ran-twice.md` also flips). That is one easy bug at n=5, and the without arm drops the whole
+plugin, not Rule 4 alone, so it shows mh loaded produces a test-first fix here, not that Rule 4's
+wording does. Only the Thai case can catch a weaker Rule 4 (the English one passes without mh), so
+it is the guard for edits to `docs/METHODOLOGY.md`. Neither case needs `mattpocock-skills:tdd`
+(that plugin is not loaded in the eval sandbox). The `old-bound-gone.md` grader and the
+`(?![\d.])` lookahead were added after the baseline run.
 
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run
