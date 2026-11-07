@@ -48,6 +48,16 @@ names `mh:<skill>` only when the plugin loaded it. That is a load check, not pro
 list names every plugin skill, invoked or not. Proof is the case's outcome graders (`script-ran` for
 gate-report and model-bench, `contract` and the section checks for post-mortem).
 
+Two for METHODOLOGY Rule 4 (tag `rule4`): a one-line boundary bug (`total > 100` where the promotion
+says "100 or more") in a scaffolded node project with passing tests, asked as a plain fix that names
+no skill: `rule4-bugfix-test-first` in English and mentioning `npm test`, `rule4-bugfix-terse-th` as
+a terse Thai "fix เลย" with no word about tests. `test-first.md` (llm, trace) scores the order: a test
+for the reported case added and seen failing before `src/discount.js` is edited, then passing;
+file regexes check the fix and the regression test. Baseline 2026-11-07, 5 runs per arm: English
+5/5 with and 5/5 without; Thai 5/5 with and 0/5 without (Δ +0.5). Rule 4 as written already does its
+job here, so these are a guard for edits to `docs/METHODOLOGY.md`, not evidence for a rewrite.
+Neither case needs `mattpocock-skills:tdd` (that plugin is not loaded in the eval sandbox).
+
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run
 (`audit-reran.md` is `tool_used: Bash`, min 2; file graders check the fix landed in the named

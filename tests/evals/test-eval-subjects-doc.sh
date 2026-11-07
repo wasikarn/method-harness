@@ -52,7 +52,9 @@ for b in re.split(r"\n(?=- )", doc):
 if bullet is None:
     print("FAIL: operating-model.md has no bullet on `claude plugin eval`'s native layout")
     sys.exit(1)
-doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces}
+# A doctrine subject (e.g. `rule4`, a METHODOLOGY rule graded on a plain task) is no agent or
+# skill, so it counts once the bullet names it and a case carries it as its first tag.
+doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or t in case_subjects}
 
 have = set(case_subjects)
 for s in sorted(have - doc_subjects):
