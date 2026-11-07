@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # replay-check.sh (GH #891): which replay-supported gates a tree changes against a base with no whole-pool
 # replay record for the new closure (scripts/_lib/gate_closure.py: the gate's .sh and .py, _run.py and the
-# shared _*/*.awk files it uses). scripts/gate-differential.sh --replay all writes the record. Sourced by
+# shared _*.py, _*.sh and *.awk files it uses). scripts/gate-differential.sh --replay all writes the record. Sourced by
 # merge-pr.sh, which refuses before the gauntlet and the merge, and by sync-pr-head.sh, which refuses before
 # it posts mh/gauntlet: branch protection lets an MCP merge through on that status, so without this check a
 # cloud session could merge a gate change with no replay. Diffs in a record do not refuse: the record proves

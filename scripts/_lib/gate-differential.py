@@ -580,7 +580,10 @@ def main():
     # is copied as its target, since a relative one would break in the new place). The closure is hashed
     # here, before any run, so not even a gate that rewrites its own snapshot file changes what it names.
     snap = os.path.join(a.tmp, "new-snapshot")
-    shutil.copytree(os.path.abspath(a.new), snap)
+    # A dangling link (an editor's lock file) is skipped, as from_dir skips links, instead of failing the copy.
+    # Not ignore_dangling_symlinks: it tests a relative link's text against the cwd, so it drops live ones too.
+    dangling = lambda d, names: [n for n in names if os.path.islink(os.path.join(d, n)) and not os.path.exists(os.path.join(d, n))]
+    shutil.copytree(os.path.abspath(a.new), snap, ignore=dangling)
     a.new = snap
     if a.replay != "0":  # only a replay run can write a record
         g = gate_closure()

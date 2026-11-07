@@ -89,7 +89,7 @@ else bad "replay (rc=$rc): $out"; fi
 
 echo "=== GH #891: a gate's closure hash ==="
 CLOSURE="$ROOT/scripts/_lib/gate_closure.py"
-# The spec: the gate's own .sh and .py, _run.py, and every shared _* or *.awk file in hooks/gates that the
+# The spec: the gate's own .sh and .py, _run.py, and every shared _*.py, _*.sh or *.awk file in hooks/gates that the
 # gate uses (its name, without the extension, is a word in the gate's text or in a shared file it uses),
 # each as "<name>\0<sha256 of its bytes>\n", sorted by name. The sets below are today's, read by hand:
 # a gate that starts or stops using a shared file must change this table too.
@@ -224,6 +224,38 @@ out=$(bash "$SCRIPT" --cases "$T/deny.txt" "$T/same" "$T/lnkroot/gates" irrecove
 if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
   ok "a relative symlink in NEW runs the file it points to (0 diffs against a plain copy)"
 else bad "relative symlink in NEW (rc=$rc): $out"; fi
+# The runs use the snapshot, not only the record: NEW's first run turns the real dir's gate into allow-all.
+# Run from the real dir, every later deny command would be allowed (diffs > 0).
+cp -R "$GATES" "$T/flip"
+python3 - "$T/flip/irrecoverable.sh" "$T/flip/irrecoverable.py" <<'PY'
+import sys
+p, target = sys.argv[1], sys.argv[2]
+lines = open(p).read().split("\n", 1)
+open(p, "w").write(lines[0] + "\nprintf 'import sys\\nsys.exit(0)\\n' > \"%s\"\n" % target + lines[1])
+PY
+printf 'rm -rf build\nrm -rf dist\nrm -rf out\n' > "$T/deny3.txt"
+out=$(bash "$SCRIPT" --cases "$T/deny3.txt" --runner bash "$T/same" "$T/flip" irrecoverable 2>&1); rc=$?
+if ! /usr/bin/grep -q 'sys.exit(0)' "$T/flip/irrecoverable.py"; then
+  bad "snapshot runs: the real dir was never rewritten, so this row tests nothing: $out"
+elif [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "the runs use the NEW snapshot: rewriting the real dir mid-run changes no verdict"
+else bad "snapshot runs (rc=$rc): $out"; fi
+# A dangling symlink in NEW (an editor's lock file) is skipped, not a crash with exit 1 ("diffs").
+cp -R "$GATES" "$T/dangle"
+ln -s "nobody@host.123:456" "$T/dangle/.#irrecoverable.py"
+out=$(bash "$SCRIPT" --cases "$T/deny.txt" "$T/same" "$T/dangle" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a dangling symlink in NEW is skipped (0 diffs)"
+else bad "dangling symlink in NEW (rc=$rc): $out"; fi
+# An ignored editor or merge backup is not a member, so a folder and a rev hash the same files.
+cp -R "$GATES" "$T/bak"
+cp "$GATES/_journal.py" "$T/bak/_journal.py~"
+cp "$GATES/_run.py" "$T/bak/_run.py.orig"
+for g in irrecoverable subagent-git-guard secret-scan; do
+  if [ "$(python3 "$CLOSURE" --dir "$T/bak" "$g")" = "$(python3 "$CLOSURE" --dir "$T/same" "$g")" ]; then
+    ok "$g: backup files (_journal.py~, _run.py.orig) leave the closure unchanged"
+  else bad "$g: a backup file joined the closure: $(python3 "$CLOSURE" --files --dir "$T/bak" "$g" | tr '\n' ' ')"; fi
+done
 # A numeric --replay that covers the whole pool is a whole-pool run too.
 out=$(GATE_REPLAY_RECORD_DIR="$T/rec-num" bash "$SCRIPT" --cases "$T/empty.txt" --replay 50 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && [ -f "$T/rec-num/irrecoverable-$closure.json" ]; then
