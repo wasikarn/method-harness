@@ -412,9 +412,10 @@ import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
 gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
 hooks = json.load(open(sys.argv[2]))["hooks"]
-outs = {h.get("timeout") for groups in hooks.values() for g in groups for h in g["hooks"]
-        if any("/hooks/gates/%s.sh" % n in h.get("command", "") for n in ("irrecoverable", "subagent-git-guard", "secret-scan"))}
-assert outs == {gd.TIMEOUT}, ("hooks.json timeouts", outs, "TIMEOUT", gd.TIMEOUT)
+outs = {n: {h.get("timeout") for groups in hooks.values() for g in groups for h in g["hooks"]
+            if "/hooks/gates/%s.sh" % n in h.get("command", "")}
+        for n in ("irrecoverable", "subagent-git-guard", "secret-scan")}
+assert all(t == {gd.TIMEOUT} for t in outs.values()), ("hooks.json timeouts", outs, "TIMEOUT", gd.TIMEOUT)
 assert all(gd.TIMEOUT > gd.NEAR * d for d in gd.DEADLINES.values()), ("TIMEOUT not near a deadline", gd.TIMEOUT)
 assert gd.READY_SECS < 60, ("READY_SECS", gd.READY_SECS)
 PY
