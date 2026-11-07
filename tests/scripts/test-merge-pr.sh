@@ -49,6 +49,13 @@ cat >"$STUB/gh" <<'EOF'
 echo "gh $*" >>"$STUB_LOG"
 tip() { git --git-dir="$STUB_ORIGIN" rev-parse refs/heads/feat/x; }
 case "$*" in
+  *"pr comment"*)  # GH #891: the --skip-replay reason, posted before the merge
+    [ -z "${STUB_COMMENT_FAIL:-}" ] || { echo "HTTP 502" >&2; exit 1; }
+    prev=""; for a in "$@"; do [ "$prev" = "--body" ] && printf '%s\n' "$a" >>"$STUB_DIR/comment.posted"; prev="$a"; done ;;
+  *"issue create"*)  # GH #891: the follow-up issue to run the replay on develop
+    [ -z "${STUB_ISSUE_FAIL:-}" ] || { echo "HTTP 502" >&2; exit 1; }
+    prev=""; for a in "$@"; do [ "$prev" = "--body" ] && printf '%s\n' "$a" >>"$STUB_DIR/issue.posted"; prev="$a"; done
+    echo "https://github.com/o/r/issues/999" ;;
   *"pr merge"*)
     want=""; prev=""
     for a in "$@"; do [ "$prev" = "--match-head-commit" ] && want="$a"; prev="$a"; done
@@ -234,7 +241,8 @@ run() {
     MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOAD_MAX="${LOAD_MAX-4}" MERGE_PR_LOCK_DIR="${LOCK_DIR-$F/merge.lock}" MERGE_PR_LOCK_WAIT_SECS=0 \
     GAUNTLET_LOCK_DIR="$F/gauntlet.lock" GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
     GAUNTLET_MISS_LOG="${MISS_LOG-$F/miss.jsonl}" GAUNTLET_TIME_LOG="${TIME_LOG-$F/time.jsonl}" \
-    GAUNTLET_SHARD="${SHARD-}" bash "$SCRIPT" 451 2>>"${ERRFILE:-/dev/stdout}")
+    GAUNTLET_SHARD="${SHARD-}" GATE_REPLAY_RECORD_DIR="$F/replay" \
+    bash "$SCRIPT" 451 ${SKIP_REASON+--skip-replay "$SKIP_REASON"} 2>>"${ERRFILE:-/dev/stdout}")
   rc=$?
 }
 merged() { /usr/bin/grep -q '^gh pr merge' "$F/calls.log"; }
@@ -823,7 +831,7 @@ vrun() {
   local p="$NOGH"; [ -z "${GH:-}" ] || p="$STUB:$PATH"
   out=$(cd "$F/work" && PATH="$p" STUB_LOG="$F/calls.log" STUB_DIR="$F" STUB_ORIGIN="$F/origin.git" \
     STUB_LOAD=9.99 MERGE_PR_LOAD_MAX=4 MERGE_PR_LOAD_WAIT_SECS=0 MERGE_PR_LOCK_DIR="$F/merge.lock" MERGE_PR_LOCK_WAIT_SECS=0 \
-    GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" \
+    GAUNTLET_PASS_DIR="$F/pass" GAUNTLET_PASS_CACHE="${PASS_CACHE-1}" GATE_REPLAY_RECORD_DIR="$F/replay" \
     bash "$SCRIPT" --verify 451 "$1" "$2" "$3" 2>"$F/verify.err")
   rc=$?
   err=$(cat "$F/verify.err")
@@ -917,6 +925,99 @@ vrun "${tip:0:12}" develop "$F/comments.json"
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && /usr/bin/grep -q "full 40-character head sha" <<<"$err"; then ok "--verify needs the full sha (exit 2)"; else bad "--verify short sha rc=$rc out='$out' err=$err"; fi
 out=$(PATH="$STUB:$PATH" bash "$SCRIPT" --verify 451 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q -- "--verify <PR number>" <<<"$out"; then ok "--verify without its arguments prints usage (exit 2)"; else bad "--verify usage rc=$rc: $out"; fi
+
+# 19. GH #891: a PR whose merge tree changes a replay-supported gate's closure (its .sh/.py, the shared _*
+#     and *.awk files in hooks/gates) needs a full-pool replay record for that closure, after the sync.
+#     A record is $GATE_REPLAY_RECORD_DIR/<gate>-<closure>.json; the closure helper is checked on its own
+#     in tests/scripts/test-gate-differential.sh, so it names the closure here.
+CLOSURE="$HERE/../../scripts/_lib/gate_closure.py"
+add_gates() {
+  mkdir -p hooks/gates
+  printf 'echo sgg\n' >hooks/gates/subagent-git-guard.sh; printf 'from _journal import J\n' >hooks/gates/subagent-git-guard.py
+  printf 'echo irr\n' >hooks/gates/irrecoverable.sh; printf 'print(2)\n' >hooks/gates/irrecoverable.py
+  printf 'J = 1\n' >hooks/gates/_journal.py
+  git add hooks/gates
+}
+# setup_gates: setup, with the gates on develop and merged into feat/x (the PR does not touch them yet).
+setup_gates() {
+  setup
+  on develop "gates" add_gates
+  git -C "$F/seed" checkout -q feat/x
+  git -C "$F/seed" merge -q --no-edit develop
+  git -C "$F/seed" push -q origin feat/x
+  git -C "$F/seed" checkout -q develop
+}
+closure_at() { (cd "$F/origin.git" && python3 "$CLOSURE" --rev "$1" "$2"); }
+record() { mkdir -p "$F/replay"; jq -nc --arg g "$1" --arg c "$2" '{gate: $g, closure: $c, full: true, pool: 9, replay: 9, corpus: 9, diffs: 0, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}' >"$F/replay/$1-$2.json"; }
+
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+run
+refuses "a gate PR with no replay record" "subagent-git-guard"
+if /usr/bin/grep -q "gate-differential.sh origin/develop subagent-git-guard --replay all" <<<"$out"; then
+  ok "the refusal names the replay to run"
+else bad "refusal does not name the replay: $out"; fi
+if [ "$(gauntlets)" = 0 ] && [ "$(pushes)" = 0 ]; then ok "the replay check refuses before the gauntlet and the push"; else bad "gauntlets=$(gauntlets) pushes=$(pushes)"; fi
+
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+record subagent-git-guard "$(closure_at develop subagent-git-guard)"
+run
+refuses "a gate PR whose record is for another closure (develop's)" "subagent-git-guard"
+
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
+run
+merges "a gate PR with a matching record"
+
+# develop changes only another gate after the replay: the sync keeps sgg's closure, so the record holds.
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
+on develop "peer irr" append hooks/gates/irrecoverable.py 'print(4)'
+run
+merges "a record still valid after develop changed only another gate"
+if w merge-base --is-ancestor "$(remote_tip develop)" HEAD; then ok "that merge synced the peer's gate edit first"; else bad "no sync of develop"; fi
+
+# develop changes a shared module after the replay: the merged combination was never replayed.
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
+on develop "peer journal" append hooks/gates/_journal.py 'J = 2'
+run
+refuses "a record made stale by develop's edit to a shared module" "subagent-git-guard"
+
+# A PR that leaves every gate as develop has it needs no record, even when develop holds gates.
+setup_gates; on feat/x "touch b" append b.txt more
+run
+merges "a non-gate PR next to gates"
+
+# --skip-replay: an empty reason is a usage error before any write; a reason merges, posts the reason on
+# the PR before the merge, and opens a follow-up issue to run the replay on develop.
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+SKIP_REASON="" run
+if [ "$rc" -eq 2 ] && ! merged && /usr/bin/grep -q "skip-replay" <<<"$out"; then ok "--skip-replay with an empty reason is refused (exit 2)"; else bad "empty --skip-replay rc=$rc: $out"; fi
+untouched "--skip-replay with an empty reason"
+SKIP_REASON="unblocks every Bash call on a broken machine" run
+merges "--skip-replay with a reason"
+if /usr/bin/grep -q "unblocks every Bash call on a broken machine" "$F/comment.posted" 2>/dev/null \
+  && awk '/pr comment/ { c = NR } /pr merge/ { m = NR } END { exit !(c && m && c < m) }' "$F/calls.log"; then
+  ok "--skip-replay posts its reason on the PR before the merge"
+else bad "--skip-replay comment: $(cat "$F/comment.posted" 2>&1); calls: $(cat "$F/calls.log")"; fi
+if /usr/bin/grep -q "^gh issue create" "$F/calls.log" && /usr/bin/grep -q "subagent-git-guard --replay all" "$F/issue.posted" 2>/dev/null; then
+  ok "--skip-replay opens a follow-up issue naming the replay to run on develop"
+else bad "--skip-replay follow-up: $(cat "$F/issue.posted" 2>&1); calls: $(cat "$F/calls.log")"; fi
+# A matching record makes --skip-replay a no-op: no comment, no issue.
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
+SKIP_REASON="not needed" run
+merges "--skip-replay next to a matching record"
+if ! /usr/bin/grep -q -e "^gh pr comment" -e "^gh issue create" "$F/calls.log"; then ok "--skip-replay with a matching record posts nothing"; else bad "posted anyway: $(cat "$F/calls.log")"; fi
+
+# --verify (a cloud session has no transcripts, so no record): a gate-changing head is refused.
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'; on feat/x "bump" set_ver 1.1.2
+work; tip=$(remote_tip feat/x); verdict "MERGE @ $tip" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify refuses a gate-changing head with no replay record" "subagent-git-guard --replay all"
+record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
+vrun "$tip" develop "$F/comments.json"
+if [ "$rc" -eq 0 ] && [ "$out" = "$tip" ]; then ok "--verify passes it once a matching record exists"; else bad "--verify with record rc=$rc out='$out' err=$err"; fi
 
 # 17. no PR argument: usage error.
 out=$(PATH="$STUB:$PATH" bash "$SCRIPT" 2>&1); rc=$?

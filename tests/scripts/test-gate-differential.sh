@@ -86,6 +86,94 @@ if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'replay=2 ' <<<"$out"; then
   ok "replay sampled the 2 commands of this project, none from a sibling-named project"
 else bad "replay (rc=$rc): $out"; fi
 
+echo "=== GH #891: a gate's closure hash ==="
+CLOSURE="$ROOT/scripts/_lib/gate_closure.py"
+# The spec: the gate's own .sh and .py, _run.py, and every shared _* or *.awk file in hooks/gates that the
+# gate uses (its name, without the extension, is a word in the gate's text or in a shared file it uses),
+# each as "<name>\0<sha256 of its bytes>\n", sorted by name. The sets below are today's, read by hand:
+# a gate that starts or stops using a shared file must change this table too.
+want_files() {
+  case "$1" in
+    irrecoverable) echo "_bracex.py _journal.py _run.py brace-route.awk irrecoverable.py irrecoverable.sh" ;;
+    subagent-git-guard) echo "_bracex.py _journal.py _quotemask.py _run.py subagent-git-guard.py subagent-git-guard.sh" ;;
+    secret-scan) echo "_journal.py _run.py _silent_fastpath.sh secret-scan.py secret-scan.sh" ;;
+  esac
+}
+spec_closure() { # <dir> <file...>
+  python3 - "$@" <<'PY2'
+import hashlib, os, sys
+d, names = sys.argv[1], sorted(sys.argv[2:])
+h = hashlib.sha256()
+for n in names:
+    h.update(n.encode() + b"\0" + hashlib.sha256(open(os.path.join(d, n), "rb").read()).hexdigest().encode() + b"\n")
+print(h.hexdigest())
+PY2
+}
+for g in irrecoverable subagent-git-guard secret-scan; do
+  files=$(python3 "$CLOSURE" --files --dir "$T/same" "$g" | tr '\n' ' ' | sed 's/ $//')
+  if [ "$files" = "$(want_files "$g")" ]; then ok "closure of $g covers exactly the files it uses"; else bad "closure files of $g: '$files' want '$(want_files "$g")'"; fi
+  got=$(python3 "$CLOSURE" --dir "$T/same" "$g")
+  # shellcheck disable=SC2046 # one file name per word
+  want=$(spec_closure "$T/same" $(want_files "$g"))
+  if [ -n "$got" ] && [ "$got" = "$want" ]; then ok "closure --dir of $g matches the spec hash"; else bad "closure --dir $g: got '$got' want '$want'"; fi
+done
+# The same tree read from git gives the same hash; another gate's edit leaves it alone; a shared module's
+# edit, an .awk edit and the gate's own edit change it.
+R="$T/closure-repo"; mkdir -p "$R/hooks"; cp -R "$GATES" "$R/hooks/gates"
+git -C "$R" init -q && git -C "$R" add hooks && git -C "$R" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.com commit -qm base
+c0=$(cd "$R" && python3 "$CLOSURE" --rev HEAD subagent-git-guard)
+if [ "$c0" = "$(python3 "$CLOSURE" --dir "$R/hooks/gates" subagent-git-guard)" ]; then ok "closure --rev equals --dir on the same tree"; else bad "closure --rev $c0 differs from --dir"; fi
+closure_after() { # <file> <label>: append a line to hooks/gates/<file>, commit, print sgg's closure at HEAD
+  printf '# edit\n' >>"$R/hooks/gates/$1"
+  git -C "$R" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.com commit -qam "$1" && (cd "$R" && python3 "$CLOSURE" --rev HEAD subagent-git-guard)
+}
+c1=$(closure_after irrecoverable.py)
+if [ "$c1" = "$c0" ]; then ok "an edit to another gate keeps subagent-git-guard's closure"; else bad "another gate's edit changed the closure"; fi
+c2=$(closure_after _journal.py)
+if [ "$c2" != "$c1" ]; then ok "an edit to a shared _* module changes the closure"; else bad "a _journal.py edit kept the closure"; fi
+irr_awk=$(cd "$R" && python3 "$CLOSURE" --rev HEAD irrecoverable)
+c3=$(closure_after brace-route.awk)
+if [ "$c3" = "$c2" ] && [ "$(cd "$R" && python3 "$CLOSURE" --rev HEAD irrecoverable)" != "$irr_awk" ]; then
+  ok "an edit to brace-route.awk changes irrecoverable's closure (it uses it), not subagent-git-guard's"
+else bad "a brace-route.awk edit: sgg $c2 -> $c3, irrecoverable did not move"; fi
+irr_before=$(cd "$R" && python3 "$CLOSURE" --rev HEAD irrecoverable); ss_before=$(cd "$R" && python3 "$CLOSURE" --rev HEAD secret-scan)
+c3b=$(closure_after _quotemask.py)
+if [ "$c3b" != "$c3" ] && [ "$(cd "$R" && python3 "$CLOSURE" --rev HEAD irrecoverable)" = "$irr_before" ] \
+  && [ "$(cd "$R" && python3 "$CLOSURE" --rev HEAD secret-scan)" = "$ss_before" ]; then
+  ok "an edit to _quotemask.py changes only the closure of the gate that uses it"
+else bad "a _quotemask.py edit: sgg $c3 -> $c3b, irrecoverable or secret-scan moved too"; fi
+c3=$c3b
+c4=$(closure_after subagent-git-guard.py)
+if [ "$c4" != "$c3" ]; then ok "an edit to the gate itself changes the closure"; else bad "the gate's own edit kept the closure"; fi
+out=$(python3 "$CLOSURE" --dir "$T/same" no-such-gate 2>&1); rc=$?
+if [ "$rc" -eq 2 ]; then ok "closure of an unknown gate is a usage error"; else bad "unknown gate rc=$rc: $out"; fi
+
+echo "=== GH #891: only a full-pool replay writes a record ==="
+# This project's pool is the 2 commands above. Each run gets its own record dir.
+records() { python3 -c 'import os, sys; d = sys.argv[1]; print(len(os.listdir(d)) if os.path.isdir(d) else 0)' "$1"; }
+closure=$(python3 "$CLOSURE" --dir "$T/same" irrecoverable)
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-all" bash "$SCRIPT" --cases "$T/empty.txt" --replay all "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+f="$T/rec-all/irrecoverable-$closure.json"
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'replay=2 ' <<<"$out" && [ -f "$f" ] && /usr/bin/grep -q 'replay record: written' <<<"$out"; then
+  ok "--replay all replays the whole pool and writes the record named for the new side's closure"
+else bad "--replay all (rc=$rc, record $(records "$T/rec-all")): $out"; fi
+if python3 - "$f" "$closure" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+want = {"gate": "irrecoverable", "closure": sys.argv[2], "full": True, "pool": 2, "replay": 2, "diffs": 0, "slower": 0, "cache": False}
+sys.exit(0 if all(r.get(k) == v for k, v in want.items()) and isinstance(r.get("time"), str) and isinstance(r.get("corpus"), int) else 1)
+PY
+then ok "the record holds the gate, closure, counts and time"; else bad "record fields: $(cat "$f" 2>&1)"; fi
+if ! /usr/bin/grep -q -e 'rm -rf' -e 'ls -la' "$f" 2>/dev/null; then ok "the record holds no command text"; else bad "the record leaked a command: $(cat "$f")"; fi
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-some" bash "$SCRIPT" --cases "$T/empty.txt" --replay 1 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$(records "$T/rec-some")" = 0 ] && /usr/bin/grep -q 'replay record: none' <<<"$out"; then
+  ok "a sampled replay (1 of 2) writes no record and says so"
+else bad "sampled replay (rc=$rc, records $(records "$T/rec-some")): $out"; fi
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-slug" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --slug "$slug" "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$(records "$T/rec-slug")" = 0 ]; then ok "a --slug replay writes no record (one dir is not the pool)"; else bad "--slug replay wrote a record: $out"; fi
+out=$(bash "$SCRIPT" --replay many "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 2 ]; then ok "--replay takes a number or all"; else bad "--replay many rc=$rc: $out"; fi
+
 echo "=== slug traversal out of a worktree prefix ==="
 out=$(bash "$SCRIPT" --replay 3 --slug "$slug--claude-worktrees-probe/../foreign" "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'refusing' <<<"$out"; then
