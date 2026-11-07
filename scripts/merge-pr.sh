@@ -651,7 +651,7 @@ gauntlet_status_post merge-pr "$head" || exit 1
 skipped_list=""
 for m in $replay_skipped; do skipped_list="$skipped_list- \`${m%%:*}\` (closure \`${m#*:}\`)"$'\n'; done
 if [ -n "$replay_skipped" ]; then
-  gh pr comment "$pr" --body "Merged with \`merge-pr.sh --skip-replay\`, without the whole-pool replay (GH #891).
+  gh pr comment "$pr" --body "Merging with \`merge-pr.sh --skip-replay\`, without the whole-pool replay (GH #891).
 
 **Reason:** $skip_reason
 

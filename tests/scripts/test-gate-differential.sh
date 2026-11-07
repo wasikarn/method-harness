@@ -164,7 +164,7 @@ want = {"gate": "irrecoverable", "closure": sys.argv[2], "full": True, "pool": 2
 sys.exit(0 if all(r.get(k) == v for k, v in want.items()) and isinstance(r.get("time"), str) and isinstance(r.get("corpus"), int) else 1)
 PY
 then ok "the record holds the gate, closure, counts and time"; else bad "record fields: $(cat "$f" 2>&1)"; fi
-if ! /usr/bin/grep -q -e 'rm -rf' -e 'ls -la' "$f" 2>/dev/null; then ok "the record holds no command text"; else bad "the record leaked a command: $(cat "$f")"; fi
+if [ -f "$f" ] && ! /usr/bin/grep -q -e 'rm -rf' -e 'ls -la' "$f"; then ok "the record holds no command text"; else bad "the record leaked a command: $(cat "$f")"; fi
 out=$(GATE_REPLAY_RECORD_DIR="$T/rec-some" bash "$SCRIPT" --cases "$T/empty.txt" --replay 1 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$(records "$T/rec-some")" = 0 ] && /usr/bin/grep -q 'replay record: none' <<<"$out"; then
   ok "a sampled replay (1 of 2) writes no record and says so"

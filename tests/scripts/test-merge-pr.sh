@@ -948,7 +948,8 @@ setup_gates() {
   git -C "$F/seed" checkout -q develop
 }
 closure_at() { (cd "$F/origin.git" && python3 "$CLOSURE" --rev "$1" "$2"); }
-record() { mkdir -p "$F/replay"; jq -nc --arg g "$1" --arg c "$2" '{gate: $g, closure: $c, full: true, pool: 9, replay: 9, corpus: 9, diffs: 0, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}' >"$F/replay/$1-$2.json"; }
+# record <gate> <closure> [jq edit]: a record file named for <closure>; the edit spoils its content.
+record() { mkdir -p "$F/replay"; jq -nc --arg g "$1" --arg c "$2" '{gate: $g, closure: $c, full: true, pool: 9, replay: 9, corpus: 9, diffs: 0, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}'" | ${3:-.}" >"$F/replay/$1-$2.json"; }
 
 setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
 run
@@ -967,6 +968,14 @@ setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'pri
 record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
 run
 merges "a gate PR with a matching record"
+
+# A file with the right name but the wrong content is no record: a sampled run, a cached run, another closure.
+for spoil in '.full = false' '.cache = true' '.closure = "0000"' '.gate = "irrecoverable"'; do
+  setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+  record subagent-git-guard "$(closure_at feat/x subagent-git-guard)" "$spoil"
+  run
+  refuses "a record file whose content says $spoil" "subagent-git-guard"
+done
 
 # develop changes only another gate after the replay: the sync keeps sgg's closure, so the record holds.
 setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
@@ -994,15 +1003,27 @@ setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'pri
 SKIP_REASON="" run
 if [ "$rc" -eq 2 ] && ! merged && /usr/bin/grep -q "skip-replay" <<<"$out"; then ok "--skip-replay with an empty reason is refused (exit 2)"; else bad "empty --skip-replay rc=$rc: $out"; fi
 untouched "--skip-replay with an empty reason"
-SKIP_REASON="unblocks every Bash call on a broken machine" run
+reason='unblocks "every" `Bash` call on $HOME'\''s machine'
+SKIP_REASON="$reason" run
 merges "--skip-replay with a reason"
-if /usr/bin/grep -q "unblocks every Bash call on a broken machine" "$F/comment.posted" 2>/dev/null \
+if [ -f "$F/comment.posted" ] && /usr/bin/grep -qF -- "$reason" "$F/comment.posted" \
   && awk '/pr comment/ { c = NR } /pr merge/ { m = NR } END { exit !(c && m && c < m) }' "$F/calls.log"; then
   ok "--skip-replay posts its reason on the PR before the merge"
 else bad "--skip-replay comment: $(cat "$F/comment.posted" 2>&1); calls: $(cat "$F/calls.log")"; fi
+if [ -f "$F/issue.posted" ] && /usr/bin/grep -qF -- "$reason" "$F/issue.posted"; then ok "the reason reaches the issue as written (quotes, a backtick, \$HOME)"; else bad "issue body: $(cat "$F/issue.posted" 2>&1)"; fi
 if /usr/bin/grep -q "^gh issue create" "$F/calls.log" && /usr/bin/grep -q "subagent-git-guard --replay all" "$F/issue.posted" 2>/dev/null; then
   ok "--skip-replay opens a follow-up issue naming the replay to run on develop"
 else bad "--skip-replay follow-up: $(cat "$F/issue.posted" 2>&1); calls: $(cat "$F/calls.log")"; fi
+# A comment that cannot be posted stops the merge; an issue that cannot be opened after it fails the run
+# with the merge named, so the operator opens it by hand.
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+STUB_COMMENT_FAIL=1 SKIP_REASON="broken machine" run
+refuses "--skip-replay whose reason cannot be posted" "could not post the --skip-replay reason"
+setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
+STUB_ISSUE_FAIL=1 SKIP_REASON="broken machine" run
+if [ "$rc" -ne 0 ] && merged && /usr/bin/grep -q "merged, but the follow-up issue could not be opened" <<<"$out"; then
+  ok "--skip-replay whose follow-up issue fails: merged, exits non-zero, says to open it by hand"
+else bad "issue failure rc=$rc merged=$(merged && echo yes): $out"; fi
 # A matching record makes --skip-replay a no-op: no comment, no issue.
 setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
 record subagent-git-guard "$(closure_at feat/x subagent-git-guard)"
