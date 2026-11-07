@@ -297,8 +297,8 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   stay on real spawns, the only check of the wrapper's fast-path token list.
   **The record** (GH #891): a run of `--replay all` with no `--slug` (the whole pool) writes
   `~/.cache/mh/gate-replay/<gate>-<closure>.json` (`GATE_REPLAY_RECORD_DIR`), counts only, for the NEW
-  side's closure. `scripts/merge-pr.sh` refuses a gate change without the record that matches the tree it
-  merges (`docs/reference/branching-model.md`), so the replay rule here is now enforced at merge time.
+  side's closure. `scripts/merge-pr.sh`, and `scripts/sync-pr-head.sh` before it posts `mh/gauntlet` (PR #947),
+  refuse a gate change without the record that matches the tree it merges (both via `scripts/_lib/replay-check.sh`) (`docs/reference/branching-model.md`), so the replay rule here is now enforced at merge time.
   **The cache** (GH #893, opt-in `--cache`, off by default; `--no-cache` wins): keeps the OLD side's results
   in `~/.cache/mh/gate-replay-cache` (`GATE_REPLAY_CACHE_DIR`) for review-round replays. A cached run never
   writes a record, and the replay before merge runs with `--no-cache` (operator rule, 2026-11-04: the dir is
