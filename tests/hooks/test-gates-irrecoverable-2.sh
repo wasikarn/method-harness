@@ -228,16 +228,22 @@ test_deny_failclosed "$IRRECOVERABLE" "non-string command payload triggers the f
 # --- GH #140: unbounded shlex tokenize cost on an oversized raw command string.
 _len_pad=$(python3 -c "print('A' * 700000)")
 
-# A `timeout 2` miss always shows exit 124 at about 2 s, so a starved run and a regressed cap look the
-# same. On a miss, rerun the same input once with a 30 s ceiling and print how long it took: about 0.3 s
-# means the first run was starved (a flake), about 3.8 s means the length cap regressed (uncapped tokenize).
+# A `timeout 2` miss is usually exit 124 at about 2 s, so a starved run and a regressed cap look the
+# same. On a miss, rerun the same input once with a 30 s ceiling and print how long it took. Times seen
+# on a 2026-11 macOS dev host (loaded, load about 5-10): about 0.3 s means the first run was starved (a
+# flake); about 4 s with exit 0 means the length cap regressed, because the uncapped tokenize then hits the
+# gate's own deadline, which asks and prints "ran out of time" (tagged below). A smaller, one-try cousin of
+# `_timed_case` in tests/_lib/gates-harness.sh, kept apart because these rows hold a 2 s limit, not the
+# hook ceiling.
 _len_diag() {
-  local _t0 _t1 _drc
+  local _t0 _t1 _drc _out _secs _late=""
   _t0=$(_ratio_now)
-  bash_payload "$1" | timeout 30 bash "$IRRECOVERABLE" >/dev/null 2>&1
+  _out=$(bash_payload "$1" | timeout 30 bash "$IRRECOVERABLE" 2>/dev/null)
   _drc=$?
   _t1=$(_ratio_now)
-  echo "     rerun without the 2 s limit: exit $_drc in $(python3 -c "print('%.2f' % ($_t1 - $_t0))")s, load $(uptime | sed 's/.*load averages*: *//')" >&2
+  _secs=$(python3 -c 'import sys; print("%.2f" % (float(sys.argv[2]) - float(sys.argv[1])))' "$_t0" "$_t1")
+  case "$_out" in *"ran out of time"*) _late=" (gate deadline)" ;; esac
+  echo "     rerun without the 2 s limit: exit $_drc in ${_secs}s${_late}, load $(uptime | sed 's/.*load averages*: *//')" >&2
 }
 _rc=$(bash_payload "git push --force origin $_len_pad" | timeout 2 bash "$IRRECOVERABLE" 2>/dev/null; echo $?)
 if [[ "$_rc" == "2" ]]; then
