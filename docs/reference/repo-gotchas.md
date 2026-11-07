@@ -295,6 +295,10 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   proves fork mode only when its summary line reads `runner: fork` with no no-own-group count. Never run the gates in
   one process in a loop: they call `os._exit`. `test_deny`/`test_allow` in `tests/_lib/gates-harness.sh`
   stay on real spawns, the only check of the wrapper's fast-path token list.
+  **The record** (GH #891): a run of `--replay all` with no `--slug` (the whole pool) writes
+  `~/.cache/mh/gate-replay/<gate>-<closure>.json` (`GATE_REPLAY_RECORD_DIR`), counts only, for the NEW
+  side's closure. `scripts/merge-pr.sh` refuses a gate change without the record that matches the tree it
+  merges (`docs/reference/branching-model.md`), so the replay rule here is now enforced at merge time.
   **`slower`** (GH #890) is a class of its own beside the diffs, and also exits 1: the new side's time
   passes half the deadline and the old side's does not, or it is 3x the old and at least 200 ms. Both
   times come from the same run and runner, and a command counts only if a re-run agrees.

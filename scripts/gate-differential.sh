@@ -10,7 +10,9 @@
 # Options:
 #   --cases FILE    one command per line, replacing the committed fixtures
 #   --replay N      add N commands sampled from THIS project's transcripts (Bash commands; for
-#                   secret-scan, Write/Edit text) under ${CLAUDE_CONFIG_DIR:-~/.claude}/projects
+#                   secret-scan, Write/Edit text) under ${CLAUDE_CONFIG_DIR:-~/.claude}/projects;
+#                   `--replay all` takes the whole pool. A whole-pool run with no --slug writes a
+#                   replay record (GH #891) that scripts/merge-pr.sh needs to merge a gate change
 #   --slug S        read only that transcript dir; refused unless it is this project's slug
 #                   or one of its worktrees' (<slug>--claude-worktrees-*)
 #   --fuzz-seed S   add seeded mutations of the corpus
@@ -18,6 +20,9 @@
 #                   fork: fork mode or exit 2;
 #                   bash: every command through `bash <gate>.sh` (GH #889)
 # Exit: 0 no diffs, 1 diffs or slower commands (GH #890), 2 usage error or refusal.
+# Replay record (GH #891): $GATE_REPLAY_RECORD_DIR (default ~/.cache/mh/gate-replay)/<gate>-<closure>.json,
+# <closure> being scripts/_lib/gate_closure.py's hash of the NEW side. Counts only, never command text;
+# written with diffs too (the operator explains them on the PR). Local state, never committed.
 # Fork mode (GH #889) loads python once per side and forks per command; every diff it finds, and
 # every command over half the gate's deadline, is re-run through bash, and only bash's result counts.
 # Both sides write their journal rows to a temp file (MH_GATE_JOURNAL_PATH) under a temp HOME, so
@@ -27,7 +32,7 @@
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
-usage() { sed -n '5,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '5,21p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 cases="" replay=0 slug="" seed="" runner=auto
 pos=()
@@ -50,7 +55,7 @@ case ${#pos[@]} in
 esac
 case "$gate" in irrecoverable|subagent-git-guard|secret-scan) : ;; *) echo "gate-differential: unknown gate $gate" >&2; usage ;; esac
 case "$runner" in auto|fork|bash) : ;; *) echo "gate-differential: --runner takes auto, fork or bash" >&2; exit 2 ;; esac
-case "$replay" in ''|*[!0-9]*) echo "gate-differential: --replay takes a number" >&2; exit 2 ;; esac
+case "$replay" in all) : ;; ''|*[!0-9]*) echo "gate-differential: --replay takes a number or all" >&2; exit 2 ;; esac
 
 # Transcript slug: Claude Code names a project dir after the session cwd with every
 # non-alphanumeric character as "-". A worktree's dir is the main checkout's slug + "--claude-worktrees-...".
