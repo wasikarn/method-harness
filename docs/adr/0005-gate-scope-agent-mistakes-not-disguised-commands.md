@@ -87,6 +87,23 @@ above), the `permissions.deny` rules for `rm -rf` and force pushes, `trash` in
 place of `rm`, and branch protection on `develop`. Uncommitted work in a subagent's checkout is the
 exposed part. If one such miss happens, reopen its `parked` class and fix it as in-scope.
 
+## Amendment: a tool surface the gate did not read (2026-11-07)
+
+PR #937 (GH #913) changed `subagent-git-guard` during the freeze. None of the four reasons above
+applied, because no real command or incident was behind it; the change was made without checking
+this ADR. The operator kept the change as an exception, with this limit:
+
+- **In scope:** giving a gate's existing reading to a tool that runs the same shell text but that
+  the gate's matcher did not cover. #913 was this case:
+  - context-mode's `ctx_execute` and `ctx_batch` run a plain, undisguised `git stash`;
+  - `irrecoverable` already read those tools (GH #769, #770, #911).
+- **Conditions:**
+  - The change only adds denies.
+  - The new tool gets the same reading the gate applies to Bash, not a new rule.
+  - A replay shows no real command changing its decision (#937: 2005 cases, 0 changes).
+- **Out of scope:** a new reading of the command text, on any tool. GH #936 (a git command held in a
+  variable) was parked the same day for that reason, as were #912 and #917.
+
 ## Risk accepted: prompt injection
 
 The realistic author of a disguised command is not a person at the keyboard. It is an agent that read
