@@ -61,7 +61,9 @@ plugin, not Rule 4 alone, so it shows mh loaded produces a test-first fix here, 
 wording does. Only the Thai case can catch a weaker Rule 4 (the English one passes without mh), so
 it is the guard for edits to `docs/METHODOLOGY.md`. Neither case needs `mattpocock-skills:tdd`
 (that plugin is not loaded in the eval sandbox). The `old-bound-gone.md` grader and the
-`(?![\d.])` lookahead were added after the baseline run.
+`(?![\d.])` lookahead were added after the baseline run, and later the file regexes were widened to
+accept an early `total < 100` return, swapped operands and a parameterized test, which they had
+scored 0; `tests/evals/test-rule4-graders.sh` pins the accepted and rejected shapes.
 
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run
