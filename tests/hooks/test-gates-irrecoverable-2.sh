@@ -3738,10 +3738,11 @@ for _c in 'g push -f origin main' 'g reset --hard' 'g>/dev/null push -f origin m
 done
 echo ""
 echo "=== GH #771: the python gate's own deadline asks, never times out silently ==="
-# "ran out of time" in full: _timed_case, _timed_ratio_case and _len_diag find a deadline ask by it, through
-# _gate_ran_out_of_time in tests/_lib/gates-harness.sh (GH #800)
+# "irrecoverable: ran out of time" in full, the needle of _gate_ran_out_of_time in tests/_lib/gates-harness.sh:
+# _timed_case, _timed_ratio_case and _len_diag find a deadline ask by it (GH #800). This row and the _len_diag
+# tag row below both fail if the gate's wording and that needle drift apart.
 MH_IRR_DEADLINE_SECS=0.001 test_ask_says "$IRRECOVERABLE" "forced deadline expiry on an allowed candidate command asks, reason says time" \
-  "$(bash_payload 'git status && git log -1')" "ran out of time"
+  "$(bash_payload 'git status && git log -1')" "irrecoverable: ran out of time"
 # _len_diag tags a deadline ask and leaves a normal run untagged (the diagnostic runs only on a failure, so
 # nothing else would notice it dropping the tag).
 _dl=$(MH_IRR_DEADLINE_SECS=0.001 _len_diag 'git status && git log -1' 2>&1 >/dev/null)
@@ -3751,7 +3752,7 @@ else
   echo "  ❌ _len_diag did not tag a gate-deadline rerun: $_dl" >&2; fail=$((fail + 1))
 fi
 _dl=$(_len_diag 'git status' 2>&1 >/dev/null)
-if [[ "$_dl" == *"rerun without the 2 s limit: exit "* && "$_dl" != *"(gate deadline)"* ]]; then
+if [[ "$_dl" == *"rerun without the 2 s limit: exit 0 in "* && "$_dl" != *"(gate deadline)"* ]]; then
   echo "  ✅ _len_diag leaves an ordinary rerun untagged"; pass=$((pass + 1))
 else
   echo "  ❌ _len_diag tagged or garbled an ordinary rerun: $_dl" >&2; fail=$((fail + 1))
