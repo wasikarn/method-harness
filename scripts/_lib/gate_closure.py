@@ -2,8 +2,8 @@
 """gate_closure.py (GH #891): the content hash of the files one replay-supported gate runs.
 
 Usage: gate_closure.py [--files] (--dir GATES_DIR | --rev REV) GATE
-  --dir  read hooks/gates files from a folder (gate-differential.sh's NEW side)
-  --rev  read hooks/gates/ at a git rev, in the cwd's repo (merge-pr.sh's merge tree)
+  --dir  read hooks/gates files from a folder (gate-differential.py's NEW snapshot)
+  --rev  read hooks/gates/ at a git rev, in the cwd's repo, from its top (merge-pr.sh's merge tree)
   --files  print the member file names, one per line, instead of the hash
 GATE: irrecoverable | subagent-git-guard | secret-scan. Exit 2 on a usage error, 1 when git fails.
 
@@ -31,7 +31,7 @@ def members(files, gate):
     own = [n for n in (gate + ".sh", gate + ".py") if n in files]
     run = ["_run.py"] if "_run.py" in files else []
     picked, todo = set(own + run), own + run
-    shared = {n: re.compile(rb"(?<![A-Za-z0-9_-])" + re.escape(os.path.splitext(n)[0].encode()) + rb"(?![A-Za-z0-9_-])")
+    shared = {n: re.compile(rb"(?<![A-Za-z0-9_-])" + re.escape(os.fsencode(os.path.splitext(n)[0])) + rb"(?![A-Za-z0-9_-])")
               for n in files if _shared(n)}
     while todo:
         text = files[todo.pop()]
@@ -45,7 +45,7 @@ def members(files, gate):
 def digest(files, names):
     h = hashlib.sha256()
     for n in names:
-        h.update(n.encode() + b"\0" + hashlib.sha256(files[n]).hexdigest().encode() + b"\n")
+        h.update(os.fsencode(n) + b"\0" + hashlib.sha256(files[n]).hexdigest().encode() + b"\n")
     return h.hexdigest()
 
 
@@ -61,8 +61,8 @@ def from_dir(d):
 
 def from_rev(rev):
     # ls-tree of "hooks/gates/" lists that dir's entries; a symlink (mode 120000) or a dir is skipped,
-    # as from_dir skips them.
-    ls = subprocess.run(["git", "ls-tree", "-z", rev, "hooks/gates/"], capture_output=True)
+    # as from_dir skips them. --full-tree: the path is from the repo top, not the cwd.
+    ls = subprocess.run(["git", "ls-tree", "-z", "--full-tree", rev, "hooks/gates/"], capture_output=True)
     if ls.returncode != 0:
         sys.stderr.write("gate_closure: git ls-tree %s failed: %s" % (rev, ls.stderr.decode(errors="replace")))
         sys.exit(1)
@@ -76,7 +76,7 @@ def from_rev(rev):
         if blob.returncode != 0:
             sys.stderr.write("gate_closure: git cat-file %s failed\n" % sha.decode())
             sys.exit(1)
-        out[os.path.basename(path.decode())] = blob.stdout
+        out[os.fsdecode(os.path.basename(path))] = blob.stdout  # surrogate-escaped, as os.listdir gives
     return out
 
 
@@ -85,7 +85,8 @@ def closure(files, gate):
 
 
 def wide(files, gate):
-    """The replay cache's key part (GH #893): the gate's .sh and .py plus EVERY _* and *.awk file, used or not.
+    """The replay cache's key part (GH #893): the gate's .sh and .py plus EVERY _*.py, _*.sh and *.awk file
+    (_shared()), used or not.
     Wider than closure() on purpose: a stale cache row is a wrong verdict, so a name match that misses a file
     (a name built at run time) must not leave a changed file out of the key. __pycache__ is a dir: not read."""
     own = [n for n in (gate + ".sh", gate + ".py") if n in files]
