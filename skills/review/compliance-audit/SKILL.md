@@ -12,8 +12,8 @@ effort: xhigh
 
 Prove a finished implementation matches the plan that was approved for it — every planned
 requirement landed, no unexplained deviation, no regression. This is a conformance check against
-a specific prior plan, not a general code review: quality/security/style lenses belong to
-`mattpocock-skills:code-review`. Pre-code mirror image: `mh:plan-reviewer` reviews the plan before code
+a specific prior plan, not a general code review: standards and spec lenses belong to
+`mattpocock-skills:code-review`, security to `/security-review`. Pre-code mirror image: `mh:plan-reviewer` reviews the plan before code
 exists; this audits the diff after.
 
 **When to use / not:** use after a plan-driven change. Don't use for an unplanned diff

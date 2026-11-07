@@ -152,7 +152,10 @@ order this feature actually needs and say why; don't apply a fixed template.
 
 Once the blueprint is approved, hand it to `/mattpocock-skills:implement` — the user types
 that literal string themselves; it's `disable-model-invocation: true`, so the model cannot
-invoke it directly — to build against this blueprint's build sequence.
+invoke it directly — to build against this blueprint's build sequence. `implement` expects a
+spec or tickets, and the `code-review` it runs at the end looks for the spec by issue reference,
+a given path or `docs/`, so save the blueprint to a file first and give that path with the
+command.
 
 ## Related
 

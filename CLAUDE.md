@@ -24,8 +24,8 @@ native surface only when none fit.
 
 ## Authoring
 
-Skills follow `mattpocock-skills:writing-for-agents`; descriptions are at most 25 words, third
-person (`docs/reference/skill-authoring-conventions.md`, `docs/reference/agent-authoring-conventions.md`).
+Skills follow `mattpocock-skills:writing-for-agents`; mh's own rule adds descriptions of at most 25
+words, third person (`docs/reference/skill-authoring-conventions.md`, `docs/reference/agent-authoring-conventions.md`).
 Routing questions: `/mattpocock-skills:ask-matt`. Issues: GitHub Issues on `wasikarn/method-harness`
 via `gh`. Domain docs: root `GLOSSARY.md` plus `docs/adr/` (`mattpocock-skills:domain-modeling`);
 mh requires upstream's optional ADR `status:` frontmatter (`proposed`/`accepted`/`deprecated`/
