@@ -308,9 +308,13 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   A row is the payload's sha256, the exit code and digests of stdout, stderr and journal rows, never text.
   Never stored: a timeout, a `rule=deadline` ask, irrecoverable's batch-budget ask and subagent-git-guard's
   time-limit deny (both journal no rule, so `finish()` matches "time limit"/"time budget"/"ran out of time" in
-  the output). A hit has no old time, so each command of 200 ms or more gets a bypassed re-run of both sides
-  for the `slower` check. A gate that imports a sibling outside the `_*`/`*.awk` pattern would change a verdict
-  without changing the key: `tests/scripts/test-gate-differential.sh` fails on that.
+  the output). A row also stores the old side's real time, and a hit returns it, so a fast command needs no
+  bypassed re-run for the `slower` check; a time measured on a loaded machine can hide a `slower` flag, which
+  review rounds accept. `finish()` turns the per-run temp root (the cwd's parent, which holds HOME) into
+  `<TMP>` in stdout, stderr and journal rows, so a gate message that echoes it matches across runs. A bucket file
+  unread for 30 days is removed at the next `--cache` run (reads refresh the mtime) and the cache line counts
+  them. A gate or `_*` module that imports or runs a sibling outside the `_*`/`*.awk` pattern would change a
+  verdict without changing the key: `tests/scripts/test-gate-differential.sh` fails on that.
   **`slower`** (GH #890) is a class of its own beside the diffs, and also exits 1: the new side's time
   passes half the deadline and the old side's does not, or it is 3x the old and at least 200 ms. Both
   times come from the same run and runner, and a command counts only if a re-run agrees.
