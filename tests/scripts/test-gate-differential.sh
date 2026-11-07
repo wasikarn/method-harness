@@ -584,6 +584,22 @@ r5=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" 
 chmod 600 "$C1"/*.jsonl
 if ! /usr/bin/grep -q Traceback <<<"$r5" && [ "$rc5" = 2 ]; then ok "an unreadable cache file exits 2 with a message, no traceback"
 else bad "unreadable cache file: rc=$rc5 $r5"; fi
+# Review round 2: a torn last line (killed run) must not swallow the next stored row.
+C6="$T/c6"
+GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+printf '{"k": "torn' >> "$(ls "$C6"/*.jsonl | head -1)"
+printf 'one more MARKER946 case\n' > "$T/cases6.txt"; cat "$T/cases3.txt" >> "$T/cases6.txt"
+GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases6.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+r6=$(GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases6.txt" "$T/old" "$T/same" secret-scan 2>&1)
+if [ "$(stored "$r6")" = 0 ] && [ "$(hits "$r6")" = 4 ]; then ok "a row stored after a torn line is not lost"
+else bad "torn line swallowed a row: $r6"; fi
+# A cache file that is a symlink is refused, not followed.
+C7="$T/c7"; mkdir -m 700 "$C7"; printf '' > "$T/elsewhere.jsonl"
+GATE_REPLAY_CACHE_DIR="$C6" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan >/dev/null 2>&1
+cp -P "$C6"/*.jsonl "$T/elsewhere.jsonl"; f6=$(basename "$(ls "$C6"/*.jsonl | head -1)"); ln -s "$T/elsewhere.jsonl" "$C7/$f6"
+r7=$(GATE_REPLAY_CACHE_DIR="$C7" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1); rc7=$?
+if [ "$rc7" = 2 ] && ! /usr/bin/grep -q Traceback <<<"$r7"; then ok "a symlinked cache file is refused (exit 2)"
+else bad "symlinked cache file: rc=$rc7 $r7"; fi
 if [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$C1")" = 0o700 ]; then ok "a new cache dir is private (0700)"
 else bad "cache dir mode"; fi
 

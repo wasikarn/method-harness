@@ -373,6 +373,7 @@ class Cache:
         self.hits = self.stored = self.skipped = self.bad = 0
         self.bypass = False
         try:
+            os.makedirs(os.path.dirname(d), exist_ok=True)  # parents keep the default mode; only the cache dir is private
             os.makedirs(d, mode=0o700, exist_ok=True)
             st = os.stat(d)
         except OSError as e:
@@ -392,13 +393,20 @@ class Cache:
     def wrap(self, runner, mode):
         path = os.path.join(self.dir, "%s-%s.jsonl" % (self.gate, bucket_id(self.gate, self.closure, self.tool, mode, self.versions)))
         rows = {}
-        if os.path.exists(path):
+        torn = False
+        if os.path.lexists(path):
             try:
-                f = open(path, "rb")
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                st = os.fstat(fd)
+                if st.st_uid != os.getuid() or st.st_mode & 0o022:
+                    os.close(fd)
+                    cache_fail("the cache file %s must be yours and not group- or world-writable" % path)
+                f = os.fdopen(fd, "rb")
             except OSError as e:
                 cache_fail("cannot read the cache file %s: %s" % (path, e))
             with f:
                 for line in f:
+                    torn = not line.endswith(b"\n")
                     r = None
                     try:
                         r = json.loads(line)
@@ -411,7 +419,7 @@ class Cache:
                         rows[r["k"]] = r
                     else:
                         self.bad += 1  # a torn last line from a killed run, or a hand edit: a miss, counted
-        return CachingRunner(runner, self, path, rows)
+        return CachingRunner(runner, self, path, rows, torn)
 
 
 def cache_fail(msg) -> NoReturn:
@@ -421,7 +429,9 @@ def cache_fail(msg) -> NoReturn:
 
 
 def gate_closure():
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
     import gate_closure as g
     return g
 
@@ -429,8 +439,9 @@ def gate_closure():
 class CachingRunner:
     # Wraps the OLD side's runner. A hit has secs 0.0: no old time exists, so is_slower flags the command and
     # the timing re-run (Cache.bypassed) measures both sides for real.
-    def __init__(self, inner, cache, path, rows):
+    def __init__(self, inner, cache, path, rows, torn=False):
         self.inner, self.cache, self.path, self.rows = inner, cache, path, rows
+        self.torn = torn  # the file ends mid-row (a killed run): the next append starts on a new line
 
     def run(self, data):
         c = self.cache
@@ -447,9 +458,9 @@ class CachingRunner:
             return r
         row = {"k": k, "code": r.code, "out": r.out, "err": r.err, "rows": list(r.rows), "sig": r.sig}
         # One write() of one line to an O_APPEND fd: two replays on one cache cannot interleave a row.
-        line = (json.dumps(row) + "\n").encode()
+        line = (("\n" if self.torn else "") + json.dumps(row) + "\n").encode()
         try:
-            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
             try:
                 if os.write(fd, line) != len(line):
                     cache_fail("short write to the cache file %s" % self.path)
@@ -457,6 +468,7 @@ class CachingRunner:
                 os.close(fd)
         except OSError as e:
             cache_fail("cannot write the cache file %s: %s" % (self.path, e))
+        self.torn = False
         self.rows[k] = row
         c.stored += 1
         return r
