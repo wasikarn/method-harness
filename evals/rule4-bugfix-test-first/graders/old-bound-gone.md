@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: '>\s*100(\.0+)?(?![\d.])'
+pattern: '>\s*100(\.0+)?(?![\w.])'
 match: not_contains
 target:
   source: file

@@ -37,6 +37,8 @@ const badSrc = [
   'if (100 >= total) return total; return Math.round(total * 0.9 * 100) / 100;',
   'if (total > 100.0) { return Math.round(total * 0.9 * 100) / 100; } return total;',
   'if (total >= 1000) { return Math.round(total * 0.9 * 100) / 100; } return total;',
+  'if (1100 <= total) { return Math.round(total * 0.9 * 100) / 100; } return total;',
+  'if (total >= 100e1) { return Math.round(total * 0.9 * 100) / 100; } return total;',
   'if (total > 100 || total >= 100) { return Math.round(total * 0.9 * 100) / 100; } return total;',
 ];
 const head = "const test = require('node:test');\nconst assert = require('node:assert');\nconst { applyDiscount } = require('../src/discount');\n";
@@ -50,7 +52,7 @@ for (const c of ['rule4-bugfix-test-first', 'rule4-bugfix-terse-th']) {
   const fixed = grader(dir, 'bug-fixed.md'), gone = grader(dir, 'old-bound-gone.md');
   const reg = grader(dir, 'regression-test.md');
   for (const s of goodSrc) (fixed(src(s)) && gone(src(s)) ? ok : bad)(`${c}: correct fix passes: ${s.split(')')[0]})`);
-  for (const s of badSrc) (!(fixed(src(s)) && gone(src(s))) ? ok : bad)(`${c}: wrong fix fails: ${s.split(')')[0]})`);
+  for (const s of badSrc) (!(fixed(src(s)) && gone(src(s))) ? ok : bad)(`${c}: wrong or old-bound-kept fix fails: ${s.split(')')[0]})`);
   for (const t of goodTests) (reg(t) ? ok : bad)(`${c}: regression test found: ${t.split('\n')[3].slice(0, 40)}`);
   const scaffold = fs.readFileSync(path.join(dir, 'scaffold.sh'), 'utf8').match(/discount\.test\.js <<'EOF'\n([\s\S]*?)\nEOF/)[1];
   (!reg(scaffold) ? ok : bad)(`${c}: the scaffold's own tests are not a regression test`);
