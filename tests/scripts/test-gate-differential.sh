@@ -186,6 +186,10 @@ out=$(cd "$T" && bash "$SCRIPT" --cases "$T/deny.txt" old "$T/same" irrecoverabl
 if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
   ok "a relative OLD dir runs its gate (same copy as NEW: 0 diffs, no exit 127)"
 else bad "relative OLD dir (rc=$rc): $out"; fi
+out=$(cd "$T" && bash "$SCRIPT" --cases "$T/deny.txt" "$T/old" same irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out"; then
+  ok "a relative NEW dir runs its gate (0 diffs, no exit 127)"
+else bad "relative NEW dir (rc=$rc): $out"; fi
 # A NEW dir edited while the replay runs (here by the gate itself, on each run): the runs and the record
 # use a snapshot taken at the start, so the record names the closure the corpus ran on, not the edited one.
 cp -R "$GATES" "$T/mut"

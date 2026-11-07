@@ -131,7 +131,7 @@ is no opt-out variable; an operator who must merge without a verdict does it on 
 
 **A gate change needs a replay record (GH #891).** When the tree that merges changes the closure of
 `irrecoverable`, `subagent-git-guard` or `secret-scan` (the gate's `.sh` and `.py`, `_run.py`, and the
-shared `_*`/`*.awk` files it uses, per `scripts/_lib/gate_closure.py`), `merge-pr.sh` refuses unless
+shared `_*.py`, `_*.sh` and `*.awk` files it uses, per `scripts/_lib/gate_closure.py`), `merge-pr.sh` refuses unless
 `~/.cache/mh/gate-replay/` holds a whole-pool replay record for that exact closure. Write one from the PR's
 checkout with `bash scripts/gate-differential.sh origin/develop <gate> --replay all --no-cache` (a cached
 run writes no record; review rounds may use `--cache`, GH #893). A develop merge

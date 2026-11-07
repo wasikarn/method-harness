@@ -579,7 +579,7 @@ def main():
     # closure the replay record names (the gates import their siblings, so the whole dir is copied; a symlink
     # is copied as its target, since a relative one would break in the new place). The closure is hashed
     # here, before any run, so not even a gate that rewrites its own snapshot file changes what it names.
-    snap = os.path.join(a.tmp, "new-snapshot")
+    snap = os.path.join(os.path.abspath(a.tmp), "new-snapshot")
     # A dangling link (an editor's lock file) is skipped, as from_dir skips links, instead of failing the copy.
     # Not ignore_dangling_symlinks: it tests a relative link's text against the cwd, so it drops live ones too.
     # __pycache__ is left out too: a stale .pyc whose mtime and size still match the source would run old code.
