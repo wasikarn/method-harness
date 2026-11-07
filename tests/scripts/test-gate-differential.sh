@@ -538,8 +538,8 @@ stub "$T/s-orphan" "if c == 'rm -rf build':
 GD_TIMEOUT=3 SERVER="$ROOT/scripts/_lib/gate-fork-server.py" \
   bounded 150 "$T/s-orphan" fake "$T/s-orphan" "$T/s-orphan" "$T/rm.txt" auto
 left=$(pgrep -f "sleep $sleep_arg" | wc -l | tr -d ' ')
-started=$(wc -l < "$T/orphan.pids" | tr -d ' ')  # one child per runner: fork, then the bash re-run
-if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && [ "$started" -ge 2 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
+started=$(wc -l < "$T/orphan.pids" | tr -d ' ')  # old and new, on fork and then on the bash re-run
+if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && [ "$started" -eq 4 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
   ok "no child of a timed-out gate is left running (${took} s)"
 else bad "orphans after a timeout (rc=$rc, left=$left, started=$started, ${took} s): $out"; pkill -f "sleep $sleep_arg"; fi
 
@@ -551,9 +551,11 @@ import importlib.util, json, re, sys
 spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
 gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
 hooks = json.load(open(sys.argv[2]))["hooks"]
+m = re.search(r'case "\$gate" in ([a-z|-]+)\)', open(sys.argv[3]).read())
+assert m, ("no gate list found in the wrapper's case line", sys.argv[3])
 outs = {n: {h.get("timeout") for groups in hooks.values() for g in groups for h in g["hooks"]
             if "/hooks/gates/%s.sh" % n in h.get("command", "")}
-        for n in re.search(r'case "\$gate" in ([a-z|-]+)\)', open(sys.argv[3]).read()).group(1).split("|")}
+        for n in (m.group(1).split("|") if m else ())}
 assert len(outs) >= 3, ("gates from the wrapper's case line", outs)
 assert gd.DEADLINES and set(gd.DEADLINES) <= set(outs), ("DEADLINES", gd.DEADLINES)
 assert all(t == {gd.TIMEOUT} for t in outs.values()), ("hooks.json timeouts", outs, "TIMEOUT", gd.TIMEOUT)

@@ -302,7 +302,7 @@ class ForkRunner:
         try:
             self.p.stdin.write((json.dumps(self.files) + "\n").encode())
             reply = self.line(TIMEOUT + 5)  # the server itself kills a child at TIMEOUT
-        except OSError:  # a closed stdin (EPIPE) means the server is exiting, as EOF on stdout does
+        except OSError:  # a pipe write or read failing (EPIPE: closed stdin) means the server is exiting, as EOF does
             self.eof, reply = True, b""
         if not reply:
             raise ServerDied(self.died())
