@@ -134,13 +134,40 @@ test('load marker: failed CLI-version and manifest reads still write the marker,
 })
 
 // GH #442: on session.start in an mh checkout, the cached copy's version beside the repo's.
-test('session.start: cached and repo versions differ -> a status line naming both', async ($, on) => {
+test('session.start: cache below the repo -> a status line naming both', async ($, on) => {
   const { h, start } = setup($, on)
   h.cache['.claude-plugin/plugin.json'] = manifest('1.1.173')
   expect(await start()).toEqual({ cwd: '/core' })
   expect(h.statuses.length).toBe(1)
   expect(h.statuses[0]).toContain('1.1.173')
   expect(h.statuses[0]).toContain('1.1.174')
+  expect(h.statuses[0]).toContain('stale')
+})
+
+// GH #934: an older branch checked out (repo below the cache) is not a stale cache: no status line.
+test('session.start: cache newer than the repo -> no status line', async ($, on) => {
+  const { h, start } = setup($, on)
+  h.cache['.claude-plugin/plugin.json'] = manifest('1.1.175')
+  await start()
+  expect(h.statuses).toEqual([undefined])
+})
+
+// GH #934: versions compare numerically per part, not as strings (1.1.99 is below 1.1.174).
+test('session.start: numeric compare -> 1.1.99 cache below a 1.1.174 repo is stale', async ($, on) => {
+  const { h, start } = setup($, on)
+  h.cache['.claude-plugin/plugin.json'] = manifest('1.1.99')
+  await start()
+  expect(h.statuses.length).toBe(1)
+  expect(h.statuses[0]).toContain('stale')
+})
+
+// PR #935 review: a part that is not a number (a prerelease suffix) cannot be ordered, so any difference
+// warns as before GH #934, rather than hiding a cache that really is stale.
+test('session.start: a non-numeric version part -> any difference still warns', async ($, on) => {
+  const { h, start } = setup($, on)
+  h.cache['.claude-plugin/plugin.json'] = manifest('1.1.174-beta')
+  await start()
+  expect(h.statuses.length).toBe(1)
   expect(h.statuses[0]).toContain('stale')
 })
 
