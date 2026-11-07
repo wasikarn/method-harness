@@ -153,6 +153,34 @@ if /usr/bin/grep -qx _runonly.py <<<"$(python3 "$CLOSURE" --files --dir "$T/runs
 else bad "_run.py's names are not scanned: $(python3 "$CLOSURE" --files --dir "$T/runscan" secret-scan | tr '\n' ' ')"; fi
 out=$(python3 "$CLOSURE" --dir "$T/same" no-such-gate 2>&1); rc=$?
 if [ "$rc" -eq 2 ]; then ok "closure of an unknown gate is a usage error"; else bad "unknown gate rc=$rc: $out"; fi
+# --rev reads hooks/gates/ from the repo top, whatever the cwd: from a subdir it once listed nothing.
+empty_set=$(python3 -c 'import hashlib; print(hashlib.sha256().hexdigest())')
+top=$(cd "$R" && python3 "$CLOSURE" --rev HEAD irrecoverable); sub=$(cd "$R/hooks" && python3 "$CLOSURE" --rev HEAD irrecoverable)
+if [ -n "$top" ] && [ "$top" = "$sub" ] && [ "$top" != "$empty_set" ]; then ok "closure --rev from a subdir equals the one from the repo top"
+else bad "closure --rev from a subdir: top '$top' sub '$sub' (empty set $empty_set)"; fi
+# A gate file name that is not UTF-8 (git keeps raw bytes): --rev hashes it as from_dir's surrogate-escaped
+# name would. APFS refuses such a name on disk, so the folder side is checked through the module instead.
+R2="$T/nonutf8-repo"; mkdir -p "$R2/hooks"; cp -R "$GATES" "$R2/hooks/gates"
+git -C "$R2" init -q && git -C "$R2" add hooks
+blob=$(printf 'X = 1\n' | git -C "$R2" hash-object -w --stdin)
+irr_blob=$( (cat "$R2/hooks/gates/irrecoverable.py"; printf '# _x\377\n') | git -C "$R2" hash-object -w --stdin)
+git -C "$R2" update-index --add --cacheinfo "100644,$blob,$(printf 'hooks/gates/_x\377.py')"
+git -C "$R2" update-index --cacheinfo "100644,$irr_blob,hooks/gates/irrecoverable.py"
+git -C "$R2" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.com commit -qm nonutf8
+got=$(cd "$R2" && python3 "$CLOSURE" --rev HEAD irrecoverable 2>&1); rc=$?
+want=$(python3 - "$ROOT/scripts/_lib" "$R2/hooks/gates" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import gate_closure as g
+files = g.from_dir(sys.argv[2])
+files["irrecoverable.py"] += b"# _x\xff\n"
+files[os.fsdecode(b"_x\xff.py")] = b"X = 1\n"
+assert os.fsdecode(b"_x\xff.py") in g.members(files, "irrecoverable"), "the non-UTF-8 file is not a member"
+print(g.closure(files, "irrecoverable"))
+PY
+)
+if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then ok "a non-UTF-8 gate file name hashes the same from --rev and from a folder"
+else bad "non-UTF-8 name (rc=$rc): rev '$got' folder '$want'"; fi
 
 echo "=== GH #891: only a full-pool replay writes a record ==="
 # This project's pool is the 2 commands above. Each run gets its own record dir.
@@ -171,6 +199,11 @@ sys.exit(0 if all(r.get(k) == v for k, v in want.items()) and isinstance(r.get("
 PY
 then ok "the record holds the gate, closure, counts and time"; else bad "record fields: $(cat "$f" 2>&1)"; fi
 if [ -f "$f" ] && ! /usr/bin/grep -q -e 'rm -rf' -e 'ls -la' "$f"; then ok "the record holds no command text"; else bad "the record leaked a command: $(cat "$f")"; fi
+out=$(env -u GATE_REPLAY_RECORD_DIR bash "$SCRIPT" --cases "$T/empty.txt" --replay all "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+f="$HOME/.cache/mh/gate-replay/irrecoverable-$closure.json"
+if [ "$rc" -eq 0 ] && [ -f "$f" ] && /usr/bin/grep -q 'replay record: written' <<<"$out"; then
+  ok "with GATE_REPLAY_RECORD_DIR unset the record lands in ~/.cache/mh/gate-replay"
+else bad "default record dir (rc=$rc, records $(records "$HOME/.cache/mh/gate-replay")): $out"; fi
 out=$(GATE_REPLAY_RECORD_DIR="$T/rec-some" bash "$SCRIPT" --cases "$T/empty.txt" --replay 1 "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
 if [ "$(records "$T/rec-some")" = 0 ] && /usr/bin/grep -q 'replay record: none' <<<"$out"; then
   ok "a sampled replay (1 of 2) writes no record and says so"
