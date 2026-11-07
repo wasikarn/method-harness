@@ -645,6 +645,15 @@ for name, args in variants:
     assert gd.bucket_id(*args) != b, "the key ignores the " + name
 PY
 if [ $? -eq 0 ]; then ok "the key covers the gate, closure, tool hash, runner mode and the python3/bash/awk/sed versions"; else bad "bucket_id key parts"; fi
+python3 - "$ROOT/scripts/_lib/gate-differential.py" <<'PY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+v = gd.tool_versions({"PATH": os.environ["PATH"]})
+missing = [t for t in ("python3", "bash", "awk", "sed", "git", "tr") if t not in v]
+assert not missing, "tool_versions does not key " + ", ".join(missing)
+PY
+if [ $? -eq 0 ]; then ok "the key also covers the git and tr versions (irrecoverable and _silent_fastpath run them)"; else bad "tool_versions misses git or tr"; fi
 
 echo "=== GH #893: never read the cache before merge, never write a record from it ==="
 CR="$T/c-rec"; RR="$T/r-rec"

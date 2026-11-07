@@ -341,10 +341,11 @@ def bucket_id(gate, closure, tool, mode, versions):
 
 
 def tool_versions(env):
-    # The gates run with the canonical env's PATH: that PATH's python3, bash, awk and sed decide the verdicts.
+    # The gates run with the canonical env's PATH: that PATH's python3, bash, awk, sed, git and tr decide the verdicts.
     # A BSD sed has no --version; its usage error is as stable a string as a version line.
     out = {}
-    for tool in ("python3", "bash", "awk", "sed"):
+    # git: irrecoverable's _mid_merge; tr: _silent_fastpath.sh. Both can change a verdict.
+    for tool in ("python3", "bash", "awk", "sed", "git", "tr"):
         exe = shutil.which(tool, path=env.get("PATH", os.defpath))
         if not exe:
             out[tool] = "none"
