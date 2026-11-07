@@ -5,6 +5,7 @@
 # Prints only diff classes, counts and up to 3 redacted, truncated sample commands per class:
 # transcripts can hold secrets, so no other command text is ever printed.
 import argparse, collections, contextlib, glob, hashlib, io, json, os, random, re, select, shutil, signal, subprocess, sys, time
+from typing import NoReturn
 
 TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blocks irrecoverable (onFailure: block)
 # and lets the others through, so a timeout is its own class
@@ -191,7 +192,8 @@ def finish(gates_dir, code, out, err, journal, secs):
             row.pop("mh_version", None)
             rows.append(row)
     err = err.replace(gates_dir.encode(), b"<GATES>")
-    skip = code == "timeout" or any(r.get("rule") == "deadline" for r in rows) or bool(TIME_LIMIT.search(out + b"\n" + err))
+    killed = code.lstrip("-").isdigit() and (int(code) < 0 or int(code) >= 128)  # a signal: load, not a verdict
+    skip = code == "timeout" or killed or any(r.get("rule") == "deadline" for r in rows) or bool(TIME_LIMIT.search(out + b"\n" + err))
     digests = tuple(sha(json.dumps(r, sort_keys=True).encode()) for r in rows)
     return Result(code, sha(out), sha(err), digests, secs, journal_sig(rows), skip)
 
@@ -370,7 +372,13 @@ class Cache:
         self.versions = tool_versions(env)
         self.hits = self.stored = self.skipped = self.bad = 0
         self.bypass = False
-        os.makedirs(d, exist_ok=True)
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            st = os.stat(d)
+        except OSError as e:
+            cache_fail("cannot open the cache dir %s: %s" % (d, e))
+        if st.st_uid != os.getuid() or st.st_mode & 0o022:
+            cache_fail("the cache dir %s must be yours and not group- or world-writable" % d)
 
     @contextlib.contextmanager
     def bypassed(self):
@@ -385,7 +393,11 @@ class Cache:
         path = os.path.join(self.dir, "%s-%s.jsonl" % (self.gate, bucket_id(self.gate, self.closure, self.tool, mode, self.versions)))
         rows = {}
         if os.path.exists(path):
-            with open(path) as f:
+            try:
+                f = open(path, "rb")
+            except OSError as e:
+                cache_fail("cannot read the cache file %s: %s" % (path, e))
+            with f:
                 for line in f:
                     r = None
                     try:
@@ -400,6 +412,12 @@ class Cache:
                     else:
                         self.bad += 1  # a torn last line from a killed run, or a hand edit: a miss, counted
         return CachingRunner(runner, self, path, rows)
+
+
+def cache_fail(msg) -> NoReturn:
+    # Exit 1 means "diffs found", so a broken cache is a usage-class error: exit 2.
+    print("gate-differential: " + msg, file=sys.stderr)
+    sys.exit(2)
 
 
 def gate_closure():
@@ -429,11 +447,16 @@ class CachingRunner:
             return r
         row = {"k": k, "code": r.code, "out": r.out, "err": r.err, "rows": list(r.rows), "sig": r.sig}
         # One write() of one line to an O_APPEND fd: two replays on one cache cannot interleave a row.
-        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        line = (json.dumps(row) + "\n").encode()
         try:
-            os.write(fd, (json.dumps(row) + "\n").encode())
-        finally:
-            os.close(fd)
+            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            try:
+                if os.write(fd, line) != len(line):
+                    cache_fail("short write to the cache file %s" % self.path)
+            finally:
+                os.close(fd)
+        except OSError as e:
+            cache_fail("cannot write the cache file %s: %s" % (self.path, e))
         self.rows[k] = row
         c.stored += 1
         return r
@@ -505,9 +528,8 @@ def replay_record(a, pool, replay, corpus, diffs, slower, cached):
     if a.slug or not pool or len(replay) < len(pool):
         return "none (a record needs the whole pool: --replay all, no --slug; this run replayed %d of %d)" % (
             len(replay), len(pool))
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import gate_closure
-    c = gate_closure.closure(gate_closure.from_dir(a.new), a.gate)
+    g = gate_closure()
+    c = g.closure(g.from_dir(a.new), a.gate)
     d = os.environ.get("GATE_REPLAY_RECORD_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "mh", "gate-replay")
     path = os.path.join(d, "%s-%s.json" % (a.gate, c))
     rec = {"gate": a.gate, "closure": c, "full": True, "pool": len(pool), "replay": len(replay), "corpus": len(corpus),

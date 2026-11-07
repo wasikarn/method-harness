@@ -574,6 +574,18 @@ PY
 r3=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
 if /usr/bin/grep -q 'exit 9->0' <<<"$r3" && [ "$(stored "$r3")" = 0 ]; then ok "the old side is read from the cache (a forged exit code shows as a diff)"
 else bad "forged cache row not used: $r3"; fi
+# Review round 1 of #946: a damaged cache is a miss or a clean exit 2, never a traceback.
+printf '\377\376 not utf-8\n' >> "$(ls "$C1"/*.jsonl | head -1)"
+r4=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
+if ! /usr/bin/grep -q Traceback <<<"$r4" && /usr/bin/grep -q 'unreadable rows ignored' <<<"$r4"; then ok "a non-UTF-8 cache row is counted and ignored"
+else bad "non-UTF-8 cache row: $r4"; fi
+chmod 000 "$(ls "$C1"/*.jsonl | head -1)"
+r5=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1); rc5=$?
+chmod 600 "$C1"/*.jsonl
+if ! /usr/bin/grep -q Traceback <<<"$r5" && [ "$rc5" = 2 ]; then ok "an unreadable cache file exits 2 with a message, no traceback"
+else bad "unreadable cache file: rc=$rc5 $r5"; fi
+if [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$C1")" = 0o700 ]; then ok "a new cache dir is private (0700)"
+else bad "cache dir mode"; fi
 
 # Key parts: the closure (every _* and *.awk file, used or not), the runner mode, and --no-cache.
 cp -R "$T/old" "$T/old-extra"; printf 'X = 1\n' > "$T/old-extra/_unused_sibling.py"
@@ -650,6 +662,7 @@ assert res(out=b'{"permissionDecision": "ask", "permissionDecisionReason": "[mh:
            rows=[{"decision": "ask"}]).skip, "a batch-budget ask must not be stored"
 assert res("2", err=b"[mh:gate] BLOCKED: subagent (g) command took longer than the gate's 5 s time limit to check (9 characters); write it", rows=[{"decision": "deny"}]).skip, "sgg's time-limit deny (no rule) must not be stored"
 assert res("2", err=b"[mh:gate] BLOCKED: subagent (g) context-mode batch: not every command could be checked in the gate's 5 s time limit; split", rows=[{"decision": "deny"}]).skip
+assert res("137").skip and res("-9").skip, "a gate killed by a signal must not be stored"
 r = res("0", out=b"hello-cmd-text", err=b"err-cmd-text", rows=[{"decision": "allow", "cmd": "row-cmd-text"}])
 assert "cmd-text" not in repr(r), "a Result keeps digests, not text: " + repr(r)
 PY
