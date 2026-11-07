@@ -131,7 +131,8 @@ Reporting rules:
 
 A reported slowdown or performance *regression* ("this got slow") is
 `mattpocock-skills:diagnosing-bugs`' literal trigger — its loop owns root-causing a specific
-slowdown end to end: baseline, bisect, then fix with a regression test (its Phase 5). This skill
+slowdown end to end: baseline, bisect, then the fix, with a regression test where a correct seam
+exists (its Phase 5). This skill
 owns the proactive half —
 bundle/Lighthouse/Web-Vitals audits, bottleneck hunting with no regression reported — and
 applies the fixes. "Audit performance" / "optimize this" → here.

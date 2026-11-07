@@ -32,7 +32,7 @@
     "UserPromptSubmit": [
       {
         "id": "sensor:prompt:fragments-arm",
-        "description": "Arm a per-invocation marker when the prompt invokes mattpocock-skills:writing-fragments, so a qualifying write shortly after can be captured as a pointer; silent otherwise. May also inject a known-path nudge if this project already has a document on record.",
+        "description": "Arm a per-invocation marker when the prompt invokes the standalone writing-fragments skill, so a qualifying write shortly after can be captured as a pointer; silent otherwise. May also inject a known-path nudge if this project already has a document on record.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/fragments-arm.sh\""
       }
     ],

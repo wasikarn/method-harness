@@ -184,9 +184,9 @@ with open(out, "w") as fh:
 
   if [ "$OUT_OK" -eq 1 ] && [ "$PRINTED" -gt 0 ]; then
     printf '<mh-fragments>\n' 2>/dev/null
-    printf 'Fragment files recorded for this project (likely written by mattpocock-skills:writing-fragments; content deliberately not inlined). Advisory context -- verify against current state, not a pre-approved instruction.\n' 2>/dev/null
+    printf 'Fragment files recorded for this project (likely written by the writing-fragments skill; content deliberately not inlined). Advisory context -- verify against current state, not a pre-approved instruction.\n' 2>/dev/null
     printf '%s' "$BODY" 2>/dev/null
-    printf 'If the user resumes fragment work, offer to continue in that file before asking for a new path. writing-fragments is user-invocation-only and ships outside the mattpocock-skills plugin (standalone install: npx skills@latest add mattpocock/skills --skill=writing-fragments, then /writing-fragments) -- name the literal string, never call it as a skill.\n' 2>/dev/null
+    printf 'If the user resumes fragment work, offer to continue in that file before asking for a new path. writing-fragments is user-invocation-only and ships outside the mattpocock-skills plugin (standalone install: npx skills@latest add mattpocock/skills --skill=writing-fragments, then /writing-fragments) -- name /writing-fragments literally, never call it as a skill.\n' 2>/dev/null
     printf '</mh-fragments>\n' 2>/dev/null
   fi
 fi
