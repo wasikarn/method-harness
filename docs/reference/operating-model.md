@@ -91,7 +91,8 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   and `ideate-critic`; the skills are `code-architect`, `performance-optimizer`, `tech-humanize`, `ste-lint`,
   `harness-audit`, `memory-lint`, `deep-audit`, `compliance-audit`, `idea-audit`, `learn`,
   `post-mortem`, `cost-report`, `ideate`, `attack-proposal`, `gate-report`, and `model-bench`, so every
-  skill and agent has cases. `tests/evals/test-eval-subjects-doc.sh` fails when
+  skill and agent has cases. One doctrine subject, `rule4`, grades METHODOLOGY Rule 4 on a plain
+  bug-fix prompt that names no skill. `tests/evals/test-eval-subjects-doc.sh` fails when
   this list and the subjects under `evals/` disagree. Count drifts as suites are added; recompute with
   `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l` rather than trust a
   literal number here (`evals/README.md`). The runner is early-access gated;

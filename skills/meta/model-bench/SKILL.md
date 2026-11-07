@@ -1,6 +1,6 @@
 ---
 name: model-bench
-description: "Compares two models' scored eval performance on the same case set via claude plugin eval --model, reusing existing graders. Use when choosing between models."
+description: "Compares two models' scored eval performance on the same case set via claude plugin eval --model, reusing existing graders."
 argument-hint: "<model-a>[@effort] <model-b>[@effort] [-- <claude plugin eval args>]"
 disable-model-invocation: true
 disable-model-invocation-reason: launches paid claude plugin eval runs — the user decides when to spend judge-token cost, not the model

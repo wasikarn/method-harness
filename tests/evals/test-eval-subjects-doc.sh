@@ -4,10 +4,11 @@
 # a case under evals/ (GH #415). Pins only the documented set; it does not require an eval
 # for every agent or skill.
 #
-# A subject is an agent (agents/<name>.md) or skill (skills/*/<name>/SKILL.md). A case's
-# subject is the first entry of `tags:` in its prompt.md frontmatter, falling back to the
-# longest agent/skill name its directory name starts with (some cases carry no tags).
-# Doc side: every backticked token in that bullet that is an agent or skill name.
+# A subject is an agent (agents/<name>.md), a skill (skills/*/<name>/SKILL.md) or a doctrine
+# subject `rule<N>` (a METHODOLOGY rule). A case's subject is the first entry of `tags:` in its
+# prompt.md frontmatter, falling back to the longest agent/skill name its directory name starts
+# with (some cases carry no tags).
+# Doc side: every backticked token in that bullet that is an agent or skill name, or `rule<N>`.
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "$0")/../.." && pwd)"
 
@@ -52,7 +53,9 @@ for b in re.split(r"\n(?=- )", doc):
 if bullet is None:
     print("FAIL: operating-model.md has no bullet on `claude plugin eval`'s native layout")
     sys.exit(1)
-doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces}
+# A doctrine subject (`rule<N>`, a METHODOLOGY rule graded on a plain task) is no agent or
+# skill; it is checked both ways like one.
+doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or re.fullmatch(r"rule\d+", t)}
 
 have = set(case_subjects)
 for s in sorted(have - doc_subjects):

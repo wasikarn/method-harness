@@ -1,6 +1,6 @@
 ---
 name: post-mortem
-description: "Writes the canonical record of a fixed bug. Use when the user says 'write a post-mortem' after a diagnosis. Don't use for an in-progress incident."
+description: "Writes the canonical record of a fixed bug, after its diagnosis; not for an in-progress incident."
 argument-hint: "[bug-id|jira-key|summary]"
 disable-model-invocation: true
 disable-model-invocation-reason: writes a canonical doc (and optional tracker post) — user decides to record

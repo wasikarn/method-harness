@@ -19,7 +19,10 @@ descriptions ride in every session's context), not matt's. Check 20 WARNs past 1
 tracks the cumulative listing budget; check 05 WARNs when a routing-length description has no
 "Use when" clause; check 77 WARNs past 25 words or on a first/second-person pronoun. "Third
 person" here means no `I`/`we`/`you`-class pronoun (check 77's actual test) — a bare imperative
-clause like "Use when …" is not a violation and is what check 05 requires.
+clause like "Use when …" is not a violation and is what check 05 requires. A
+`disable-model-invocation: true` skill is the exception: the model never sees its description, so
+check 05 skips it and the description is a one-line human summary with no trigger clause
+(writing-for-agents' `SKILL-MECHANICS.md`).
 
 **No-op test, the backstop for every size-driven trim:** delete the line; does agent behaviour
 change on a real branch of the skill's own worked examples? If not, prunable regardless of char

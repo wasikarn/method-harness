@@ -41,8 +41,7 @@ adversarial check, run `mh:idea-audit <source>`."*
 **Not this skill's job:**
 - **A research file already in the repo** (e.g. `docs/research/*.md`, or wherever
   `mattpocock-skills:research` saved it: the repo's existing notes folder, else somewhere
-  sensible) is
-  a **local file**: use check 3's Local-file branch, skip Phase 0. Treat it as a *synthesis*, not
+  sensible) is a **local file**: use check 3's Local-file branch, skip Phase 0. Treat it as a *synthesis*, not
   the primary source: Agent A and the attacker chase its citations back to primary evidence, and
   anything not independently traced is `Author-asserted`, never `Yes — observed directly` on the
   research doc alone.

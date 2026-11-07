@@ -1,5 +1,5 @@
 ---
-description: "Gate-report: ask/deny counts per gate from the gate-decisions journal, and mh skills unused in the last N sessions. Use for gate friction or stale skills."
+description: "Gate-report: ask/deny counts per gate from the gate-decisions journal, and mh skills unused in the last N sessions."
 name: gate-report
 disable-model-invocation: true
 model: inherit
