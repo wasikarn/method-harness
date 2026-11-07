@@ -302,6 +302,9 @@ gate_refused() {
 setup gate
 run_sync feat/x "$HEAD_SHA"
 gate_refused "behind, a gate change with no replay record" "$HEAD_SHA"
+# A cloud session has no gh: the check does not depend on it (NOGH from 5g).
+PATH="$NOGH" run_sync feat/x "$HEAD_SHA"
+gate_refused "the same with no gh on PATH (a cloud session)" "$HEAD_SHA"
 mkdir -p "$L/sub"
 RUN_SUB=sub run_sync feat/x "$HEAD_SHA"
 gate_refused "the same, run from a subdirectory" "$HEAD_SHA"
