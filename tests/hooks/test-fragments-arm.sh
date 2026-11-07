@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Unit tests for hooks/sensors/fragments-arm.sh — the UserPromptSubmit hook
 # that arms a per-invocation marker when the user's prompt invokes
-# mattpocock-skills:writing-fragments. Every non-obvious case here traces
-# back to a specific Codex round-N finding from the plan review; see
+# writing-fragments (standalone /writing-fragments; the mattpocock-skills
+# plugin does not load it). Every non-obvious case here traces back to a
+# specific Codex round-N finding from the plan review; see
 # docs/adr/0003-writing-fragments-pointer-capture.md for the full history.
 # Run standalone: bash tests/hooks/test-fragments-arm.sh
 set -uo pipefail

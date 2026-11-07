@@ -155,7 +155,8 @@ that literal string themselves; it's `disable-model-invocation: true`, so the mo
 invoke it directly — to build against this blueprint's build sequence. Save the blueprint first
 as a file under `docs/` named after the branch: `implement` expects a spec or tickets, and the
 `mattpocock-skills:code-review` it runs at the end finds a spec by issue reference, a path passed
-to it, or a file under `docs/`, `specs/` or `.scratch/` matching the branch.
+to it, or a file under `docs/`, `specs/` or `.scratch/` matching the branch. Tell the user to
+pass that path when they run `implement`.
 
 ## Related
 
