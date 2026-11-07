@@ -304,7 +304,7 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   writes a record, and the replay before merge runs with `--no-cache` (operator rule, 2026-11-04: the dir is
   writable locally, and a 1% canary catches one bad row 1% of the time). One file per key: the old dir's gate
   `.sh`/`.py` plus every `_*` and `*.awk` file (`gate_closure.wide`, used or not), the hash of
-  `gate-differential.py` and `gate-fork-server.py`, the runner mode, and the python3/bash/awk/sed versions.
+  `gate-differential.py` and `gate-fork-server.py`, the runner mode, and the python3/bash/awk/sed/git/tr versions.
   A row is the payload's sha256, the exit code and digests of stdout, stderr and journal rows, never text.
   Never stored: a timeout, a `rule=deadline` ask, irrecoverable's batch-budget ask and subagent-git-guard's
   time-limit deny (both journal no rule, so `finish()` matches "time limit"/"time budget"/"ran out of time" in

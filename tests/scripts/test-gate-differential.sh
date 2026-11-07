@@ -771,6 +771,28 @@ for name, args in variants:
     assert gd.bucket_id(*args) != b, "the key ignores the " + name
 PY
 if [ $? -eq 0 ]; then ok "the key covers the gate, closure, tool hash, runner mode and the python3/bash/awk/sed versions"; else bad "bucket_id key parts"; fi
+mkdir -p "$T/tv"
+python3 - "$ROOT/scripts/_lib/gate-differential.py" "$T/tv" <<'PY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+v = gd.tool_versions({"PATH": os.environ["PATH"]})
+missing = [t for t in ("python3", "bash", "awk", "sed", "git", "tr") if v.get(t, "none") == "none"]
+assert not missing, "tool_versions does not key " + ", ".join(missing)
+# A tool with no --version (BSD tr, sed) prints the same usage error before and after an in-place update:
+# the key must still change when the binary's content changes.
+d = sys.argv[2]
+fake = os.path.join(d, "tr")
+def run(body):
+    with open(fake, "w") as f:
+        f.write("#!/bin/sh\n" + body + "\n")
+    os.chmod(fake, 0o755)
+    return gd.tool_versions({"PATH": d + ":" + os.environ["PATH"]})["tr"]
+a = run("echo 'tr: illegal option -- -' >&2; exit 1")
+b = run("echo 'tr: illegal option -- -' >&2; exit 1 # rebuilt")
+assert a != b, "a tr without --version keys the same after its content changed"
+PY
+if [ $? -eq 0 ]; then ok "the key covers git and tr, and changes when a tool without --version changes in place"; else bad "tool_versions git/tr or in-place change"; fi
 
 echo "=== GH #893: never read the cache before merge, never write a record from it ==="
 CR="$T/c-rec"; RR="$T/r-rec"
