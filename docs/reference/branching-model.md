@@ -134,7 +134,8 @@ is no opt-out variable; an operator who must merge without a verdict does it on 
 shared `_*.py`, `_*.sh` and `*.awk` files it uses, per `scripts/_lib/gate_closure.py`), `merge-pr.sh` refuses unless
 `~/.cache/mh/gate-replay/` holds a whole-pool replay record for that exact closure. Write one from the PR's
 checkout with `bash scripts/gate-differential.sh origin/develop <gate> --replay all --no-cache` (a cached
-run writes no record; review rounds may use `--cache`, GH #893). A develop merge
+run writes no record; review rounds may use `--cache`, GH #893). The replay feeds only Bash tool_use
+commands from transcripts (Write/Edit text for `secret-scan`), never context-mode `ctx_*` payloads. A develop merge
 that changes the same gate's files needs a new replay; one that changes only another gate keeps the
 record. A record with diffs still merges: explain its counts on the PR. The emergency override,
 `merge-pr.sh <PR> --skip-replay "<reason>"`, posts the reason on the PR and opens a follow-up issue
