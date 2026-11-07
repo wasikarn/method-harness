@@ -261,6 +261,7 @@ class ForkRunner:
             raise ServerDied("no python3 on the gates' PATH")
         self.files = {k: os.path.join(work, k) for k in ("in", "out", "err")}
         self.server_err = open(os.path.join(work, "server.err"), "wb")
+        self.eof = False
         self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate, str(TIMEOUT)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd, bufsize=0)
         # The warm-up runs a few allowing commands in the server itself, with no deadline of its own.
@@ -276,11 +277,17 @@ class ForkRunner:
                 return b""
             chunk = os.read(fd, 4096)
             if not chunk:
+                self.eof = True
                 return b""
             buf += chunk
         return buf
 
     def died(self, what=None):
+        if self.eof:  # a closed stdout means the server is exiting; under load it is not reaped yet
+            try:
+                self.p.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
         what = what or ("exited (rc=%s)" % self.p.returncode if self.p.poll() is not None else "did not answer in time")
         self.close()
         with open(os.path.join(self.work, "server.err"), errors="replace") as f:
@@ -341,10 +348,12 @@ def bucket_id(gate, closure, tool, mode, versions):
 
 
 def tool_versions(env):
-    # The gates run with the canonical env's PATH: that PATH's python3, bash, awk and sed decide the verdicts.
-    # A BSD sed has no --version; its usage error is as stable a string as a version line.
+    # The gates run with the canonical env's PATH: that PATH's python3, bash, awk, sed, git and tr decide the verdicts.
+    # A BSD sed or tr has no --version and prints the same usage error after an in-place update, so a failed
+    # --version adds the binary's content hash to the value.
     out = {}
-    for tool in ("python3", "bash", "awk", "sed"):
+    # git: irrecoverable's _mid_merge; tr: the fast path in irrecoverable.sh and _silent_fastpath.sh.
+    for tool in ("python3", "bash", "awk", "sed", "git", "tr"):
         exe = shutil.which(tool, path=env.get("PATH", os.defpath))
         if not exe:
             out[tool] = "none"
@@ -353,6 +362,9 @@ def tool_versions(env):
             r = subprocess.run([exe, "--version"], env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
             first = (r.stdout + r.stderr).decode(errors="replace").splitlines()[:1]
             out[tool] = os.path.realpath(exe) + " " + (first[0] if first else "")
+            if r.returncode != 0:
+                with open(exe, "rb") as f:
+                    out[tool] += " sha256:" + hashlib.sha256(f.read()).hexdigest()
         except (OSError, subprocess.TimeoutExpired) as e:
             out[tool] = "%s unknown (%s)" % (exe, type(e).__name__)
     return out
