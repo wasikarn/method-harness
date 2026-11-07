@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # fragments-arm.sh — UserPromptSubmit: arm a per-invocation marker when the
-# user's prompt invokes mattpocock-skills:writing-fragments, so a qualifying
+# user's prompt invokes writing-fragments (standalone /writing-fragments; the
+# mattpocock-skills plugin does not load it), so a qualifying
 # write shortly after can be captured as a pointer
 # (hooks/sensors/fragments-capture.sh). Advisory only, silent on any doubt.
 # Full design and every round-N finding this script encodes:

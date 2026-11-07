@@ -167,7 +167,8 @@ waits on the operator.
   reader the fix cannot see).
 - Independence: the Codex slug per lane, or "independence reduced".
 - The build's first tests: each closed break becomes a failing test row before its fix (Rule 4),
-  and a row counts only if reverting its fix turns it red.
+  and a row counts only if reverting its fix turns it red. Build them one row per red-green cycle,
+  as `tdd` does; writing every row first is the horizontal slicing it warns against.
 - The scratch dir you gave the validator in `FILES YOU OWN`, with its full absolute path: keep it,
   since step 7 reruns its corpus and generator. If the build happens in a later session, first move
   the proposal file and the validator's corpus, generator and multi-line input files (never its
