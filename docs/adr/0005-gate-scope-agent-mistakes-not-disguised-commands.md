@@ -67,6 +67,9 @@ command. So the gates are frozen. A change to `hooks/gates/` is allowed only for
    `SHADOW_RULES` once its real journal hits show no false positive (`/mh:gate-report`) is allowed.
    The decision rests on real hits, as in 1 and 2.
 
+One change outside these four was kept: PR #937, recorded in the 2026-11-07 amendment below. It adds
+no fifth reason.
+
 A deny that held only by accident and is lost by an allowed fix is not "removed" in the sense of the
 Decision's "nothing is removed". By accident means no rule meant to catch that shape: the deny came
 from a match on something else, such as the `sh` of a file named `a.sh` read as an interpreter. A deny
@@ -86,6 +89,28 @@ the denies already shipped (less any accidental deny an allowed fix loses, named
 above), the `permissions.deny` rules for `rm -rf` and force pushes, `trash` in
 place of `rm`, and branch protection on `develop`. Uncommitted work in a subagent's checkout is the
 exposed part. If one such miss happens, reopen its `parked` class and fix it as in-scope.
+
+## Amendment: a tool surface the gate did not read (2026-11-07)
+
+PR #937 (GH #913) changed `subagent-git-guard` during the freeze. None of the four reasons above
+applied, because no real command or incident was behind it; the change was made without checking
+this ADR. The operator kept that one change as an exception. This records #937 only; a later change
+of the same kind still needs the operator's decision first.
+
+- **What #937 did:** it gave the gate's existing Bash reading to the tools that run the same shell
+  text but that the gate's matcher did not cover. `irrecoverable` already read those tools: Monitor
+  (GH #769) and context-mode's shell tools (GH #770, #911).
+  - **Monitor:** its `command` gets the Bash verdict. Which shell Monitor runs it with was not
+    measured, and that residual is accepted.
+  - **context-mode:** `ctx_execute` and `ctx_execute_file` (shell languages) and `ctx_batch_execute`
+    and `ctx_batch` (each command) can run a plain, undisguised `git stash` (or `reset`, `clean`).
+- **Why it was kept:**
+  - It only adds denies.
+  - The new tools get the same reading as Bash, not a new rule.
+  - The replay (2000 real Bash commands plus 5 corpus cases) showed 0 changes. It fed Bash payloads
+    only, so no real Monitor or context-mode call was replayed.
+- **Still frozen:** a new reading of the command text, on any tool. GH #936 (a git command held in a
+  variable) was parked the same day for that reason, as were #912 and #917.
 
 ## Risk accepted: prompt injection
 
