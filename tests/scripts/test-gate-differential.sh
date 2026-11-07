@@ -418,7 +418,7 @@ else bad "dead fork server (rc=$rc): $out"; fi
 cat > "$T/fake-server.py" <<'PY'
 import json, os, sys
 mode = open(os.path.join(sys.argv[1], "fake-mode")).read().split()
-sys.stdout.write("ready\n"); sys.stdout.flush()
+sys.stdout.write("bogus\n" if mode[0] == "noready" else "ready\n"); sys.stdout.flush()
 n = 0
 for line in sys.stdin:
     n += 1
@@ -437,6 +437,11 @@ for line in sys.stdin:
         for k in ("out", "err"):
             open(req[k], "w").close()
         rep = json.dumps({"code": int(mode[1]), "secs": 0.001 if n == 1 else 2.5})
+        if n == 2 and mode[2:] == ["stdin"]:  # close stdin first, so the engine's next write fails (EPIPE)
+            os.close(0)
+            sys.stdout.write(rep + "\n"); sys.stdout.flush()
+            import time; time.sleep(0.5)
+            sys.exit(3)
     sys.stdout.write(rep + "\n"); sys.stdout.flush()
 PY
 fake() {  # fake OLD NEW CASES RUNNER: the engine with $SERVER (default the fake server), through a fresh temp dir
@@ -496,25 +501,28 @@ echo "=== a timed-out gate's own children are killed with it (GH #889) ==="
 # for the stub's own 100 s: the row checks the time too, and is itself bounded so it fails, never hangs.
 sleep_arg="120.$$$RANDOM"
 stub "$T/s-orphan" "if c == 'rm -rf build':
-    import subprocess; subprocess.Popen(['sleep', '$sleep_arg']); time.sleep(100)"
+    import subprocess; k = subprocess.Popen(['sleep', '$sleep_arg']); open('$T/orphan.pids', 'a').write('%d\\n' % k.pid); time.sleep(100)"
 GD_TIMEOUT=3 SERVER="$ROOT/scripts/_lib/gate-fork-server.py" \
   bounded 150 "$T/s-orphan" fake "$T/s-orphan" "$T/s-orphan" "$T/rm.txt" auto
 left=$(pgrep -f "sleep $sleep_arg" | wc -l | tr -d ' ')
-if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
+started=$(wc -l < "$T/orphan.pids" | tr -d ' ')  # one child per runner: fork, then the bash re-run
+if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ] && [ "$started" -ge 2 ] && [ "$took" -lt 60 ] && /usr/bin/grep -q 'near-deadline re-runs: 1)' <<<"$out"; then
   ok "no child of a timed-out gate is left running (${took} s)"
-else bad "orphans after a timeout (rc=$rc, left=$left, ${took} s): $out"; pkill -f "sleep $sleep_arg"; fi
+else bad "orphans after a timeout (rc=$rc, left=$left, started=$started, ${took} s): $out"; pkill -f "sleep $sleep_arg"; fi
 
 echo "=== the engine's own limits, which the two rows above shorten ==="
 # TIMEOUT is hooks.json's timeout for each gate the engine replays; a real timeout still reads as near
 # each gate's deadline, so it re-runs through bash; the warm-up wait stays under those rows' 60 s bound.
-if python3 - "$ROOT/scripts/_lib/gate-differential.py" "$ROOT/hooks/hooks.json" <<'PY'
-import importlib.util, json, sys
+if python3 - "$ROOT/scripts/_lib/gate-differential.py" "$ROOT/hooks/hooks.json" "$ROOT/scripts/gate-differential.sh" <<'PY'
+import importlib.util, json, re, sys
 spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
 gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
 hooks = json.load(open(sys.argv[2]))["hooks"]
 outs = {n: {h.get("timeout") for groups in hooks.values() for g in groups for h in g["hooks"]
             if "/hooks/gates/%s.sh" % n in h.get("command", "")}
-        for n in ("irrecoverable", "subagent-git-guard", "secret-scan")}
+        for n in re.search(r'case "\$gate" in ([a-z|-]+)\)', open(sys.argv[3]).read()).group(1).split("|")}
+assert len(outs) >= 3, ("gates from the wrapper's case line", outs)
+assert gd.DEADLINES and set(gd.DEADLINES) <= set(outs), ("DEADLINES", gd.DEADLINES)
 assert all(t == {gd.TIMEOUT} for t in outs.values()), ("hooks.json timeouts", outs, "TIMEOUT", gd.TIMEOUT)
 assert all(gd.TIMEOUT > gd.NEAR * d for d in gd.DEADLINES.values()), ("TIMEOUT not near a deadline", gd.TIMEOUT)
 assert gd.READY_SECS < 60, ("READY_SECS", gd.READY_SECS)
@@ -555,6 +563,18 @@ out=$(fake "$T/f-die-a" "$T/f-die-b" "$T/three.txt" fork); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'fork mode cannot run (fork server exited (rc=3)' <<<"$out"; then
   ok "--runner fork exits 2 when a server dies mid-run"
 else bad "--runner fork mid-run death (rc=$rc): $out"; fi
+cp -R "$T/s-allow" "$T/f-pipe-a"; echo "die-after-2 0 stdin" > "$T/f-pipe-a/fake-mode"
+cp -R "$T/s-allow" "$T/f-pipe-b"; echo "die-after-2 2 stdin" > "$T/f-pipe-b/fake-mode"
+out=$(fake "$T/f-pipe-a" "$T/f-pipe-b" "$T/three.txt" auto); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" \
+   && /usr/bin/grep -q '^  runner: bash (fork server exited (rc=3); bash from that command on' <<<"$out"; then
+  ok "a server that closed stdin and is exiting: the failed write still reads as exited"
+else bad "engine mid-run death on the stdin write (rc=$rc): $out"; fi
+cp -R "$T/s-allow" "$T/f-noready"; echo "noready" > "$T/f-noready/fake-mode"
+out=$(fake "$T/f-noready" "$T/f-noready" "$T/rm.txt" auto); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q '^  runner: bash (fork server sent a garbled warm-up line' <<<"$out"; then
+  ok "a warm-up line other than ready reads as garbled, not as a timeout"
+else bad "engine bogus warm-up line (rc=$rc): $out"; fi
 
 echo "=== an EPERM from the child's setpgid keeps fork mode (PR #899, full-pool replay on macOS) ==="
 # The real server with os.setpgid patched to raise EPERM: for the child's own call only (the parent's
