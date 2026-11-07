@@ -84,9 +84,11 @@ const markLoaded = async ($: EngineInterface) => {
   }
 }
 
-// Dotted versions compared part by part as numbers: '1.1.99' is older than '1.1.174'.
+// Dotted versions compared part by part as numbers: '1.1.99' is older than '1.1.174'. A part that is not a
+// number ('0-beta', 'v1') cannot be ordered, so any difference counts as older: warn, never hide a stale cache.
 const olderThan = (a: string, b: string) => {
   const x = a.split('.').map(Number), y = b.split('.').map(Number)
+  if ([...x, ...y].some(Number.isNaN)) return a !== b
   for (let i = 0; i < Math.max(x.length, y.length); i++)
     if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0)
   return false
