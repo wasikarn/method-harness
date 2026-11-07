@@ -11,7 +11,7 @@ REPLAY_GATES="irrecoverable subagent-git-guard secret-scan"
 REPLAY_CHECK_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 replay_dir() { printf '%s' "${GATE_REPLAY_RECORD_DIR:-$HOME/.cache/mh/gate-replay}"; }
 # replay_hint <base> <gate>: the command that writes the gate's record.
-replay_hint() { printf 'bash scripts/gate-differential.sh %s %s --replay all' "$1" "$2"; }
+replay_hint() { printf 'bash scripts/gate-differential.sh %s %s --replay all --no-cache' "$1" "$2"; }
 
 # closure_of <rev> <gate>: gate_closure.py lists hooks/gates/ relative to its cwd, so it runs at the
 # checkout's top (from a subdir it would hash nothing, and every closure would match).

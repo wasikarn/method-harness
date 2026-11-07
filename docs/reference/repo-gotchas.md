@@ -299,6 +299,18 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   `~/.cache/mh/gate-replay/<gate>-<closure>.json` (`GATE_REPLAY_RECORD_DIR`), counts only, for the NEW
   side's closure. `scripts/merge-pr.sh` refuses a gate change without the record that matches the tree it
   merges (`docs/reference/branching-model.md`), so the replay rule here is now enforced at merge time.
+  **The cache** (GH #893, opt-in `--cache`, off by default; `--no-cache` wins): keeps the OLD side's results
+  in `~/.cache/mh/gate-replay-cache` (`GATE_REPLAY_CACHE_DIR`) for review-round replays. A cached run never
+  writes a record, and the replay before merge runs with `--no-cache` (operator rule, 2026-11-04: the dir is
+  writable locally, and a 1% canary catches one bad row 1% of the time). One file per key: the old dir's gate
+  `.sh`/`.py` plus every `_*` and `*.awk` file (`gate_closure.wide`, used or not), the hash of
+  `gate-differential.py` and `gate-fork-server.py`, the runner mode, and the python3/bash/awk/sed versions.
+  A row is the payload's sha256, the exit code and digests of stdout, stderr and journal rows, never text.
+  Never stored: a timeout, a `rule=deadline` ask, irrecoverable's batch-budget ask and subagent-git-guard's
+  time-limit deny (both journal no rule, so `finish()` matches "time limit"/"time budget"/"ran out of time" in
+  the output). A hit has no old time, so each command of 200 ms or more gets a bypassed re-run of both sides
+  for the `slower` check. A gate that imports a sibling outside the `_*`/`*.awk` pattern would change a verdict
+  without changing the key: `tests/scripts/test-gate-differential.sh` fails on that.
   **`slower`** (GH #890) is a class of its own beside the diffs, and also exits 1: the new side's time
   passes half the deadline and the old side's does not, or it is 3x the old and at least 200 ms. Both
   times come from the same run and runner, and a command counts only if a re-run agrees.

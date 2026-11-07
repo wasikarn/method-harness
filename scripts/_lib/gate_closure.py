@@ -82,6 +82,14 @@ def closure(files, gate):
     return digest(files, members(files, gate))
 
 
+def wide(files, gate):
+    """The replay cache's key part (GH #893): the gate's .sh and .py plus EVERY _* and *.awk file, used or not.
+    Wider than closure() on purpose: a stale cache row is a wrong verdict, so a name match that misses a file
+    (a name built at run time) must not leave a changed file out of the key. __pycache__ is a dir: not read."""
+    own = [n for n in (gate + ".sh", gate + ".py") if n in files]
+    return digest(files, sorted(set(own) | {n for n in files if _shared(n)}))
+
+
 def main(argv):
     show_files = "--files" in argv
     args = [a for a in argv if a != "--files"]
