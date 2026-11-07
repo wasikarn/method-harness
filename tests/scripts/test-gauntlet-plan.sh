@@ -68,6 +68,20 @@ for f in scripts/gauntlet-plan.sh scripts/gauntlet-rules.txt; do
   if has_test "$out" tests/scripts/test-merge-pr.sh; then ok "$f selects test-merge-pr.sh"; else bad "$f: $out"; fi
 done
 
+# A gate change selects every test-gates part file holding that gate's rows: a file split into parts must not
+# drop rows from the push-time plan (GH #839 put subagent-git-guard rows in the irrecoverable file).
+gaps=""
+while IFS= read -r line; do
+  var=${line%%=*}; gate=${line#*'$ROOT/'}; gate=${gate%'"'}
+  out=$(plan "$gate")
+  for f in "$ROOT"/tests/hooks/test-gates*.sh; do
+    /usr/bin/grep -q "\$$var\b" "$f" || continue
+    has_test "$out" "tests/hooks/${f##*/}" || gaps="$gaps $gate->${f##*/}"
+  done
+done < <(/usr/bin/grep -E '^[A-Z_]+="\$ROOT/hooks/gates/[^"]+"$' "$ROOT/tests/_lib/gates-harness.sh")
+if [ -z "$gaps" ]; then ok "each gate change selects every test-gates file that tests it"
+else bad "gate change misses its test-gates file:$gaps"; fi
+
 # The <base> form diffs <base>...HEAD in a git repo, with its own rules file at the top.
 source "$ROOT/tests/_lib/harness.sh"
 trap _cleanup_trash EXIT

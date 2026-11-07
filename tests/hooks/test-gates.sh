@@ -4,7 +4,7 @@
 # Each test_deny call expects exit 2; test_allow expects exit 0 + empty stdout;
 # test_ask expects exit 0 + a permissionDecision: ask JSON on stdout.
 # Run standalone: bash tests/hooks/test-gates.sh
-# Part 1 of 3 (with test-gates-irrecoverable-2.sh, test-gates-other.sh); helpers in tests/_lib/gates-harness.sh.
+# Part 1 of 5 (with test-gates-irrecoverable-2.sh, -3.sh, -4.sh and test-gates-other.sh); helpers in tests/_lib/gates-harness.sh.
 set -uo pipefail
 # A git hook exports GIT_DIR; the sandbox git init/config would then target the real repo
 # (GH #234, tests/scripts/test-git-env-unset-lint.sh). run-gauntlet.sh does the same unset.
