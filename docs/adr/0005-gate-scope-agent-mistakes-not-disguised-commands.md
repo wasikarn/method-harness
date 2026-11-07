@@ -103,7 +103,7 @@ of the same kind still needs the operator's decision first.
   - **Monitor:** its `command` gets the Bash verdict. Which shell Monitor runs it with was not
     measured, and that residual is accepted.
   - **context-mode:** `ctx_execute` and `ctx_execute_file` (shell languages) and `ctx_batch_execute`
-    and `ctx_batch` (each command) run a plain, undisguised `git stash`.
+    and `ctx_batch` (each command) can run a plain, undisguised `git stash` (or `reset`, `clean`).
 - **Why it was kept:**
   - It only adds denies.
   - The new tools get the same reading as Bash, not a new rule.
