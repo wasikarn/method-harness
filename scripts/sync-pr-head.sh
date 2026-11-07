@@ -24,6 +24,9 @@
 #      landed (ls-remote) still counts.
 #   5. post the mh/gauntlet success status on the pushed head (GH #742); a failed post exits non-zero
 #      and prints no sha. Without gh it says no status was posted and goes on.
+# On either path, before the gauntlet: a head that changes a replay-supported gate's closure needs that
+# closure's whole-pool replay record (GH #891, _lib/replay-check.sh), or nothing is pushed and no status
+# is posted, since the status is what lets an MCP merge through branch protection.
 # Prints the new head sha on stdout; everything else goes to stderr. The caller fetches origin first.
 # Both commits keep a PR's review verdict (merge-pr.sh check_review): the version commit changes only the
 # manifests' version value, and since GH #629 a merge keeps it only as a plain two-parent merge whose
@@ -37,6 +40,8 @@ HERE="$(cd -P "$(dirname "$0")" && pwd)"
 . "$HERE/_lib/gauntlet-lock.sh"
 # shellcheck source=_lib/gauntlet-pass.sh
 . "$HERE/_lib/gauntlet-pass.sh"
+# shellcheck source=_lib/replay-check.sh
+. "$HERE/_lib/replay-check.sh"
 
 branch="${1:-}" head="${2:-}"
 if [ -z "$branch" ] || [ -z "$head" ]; then
@@ -98,6 +103,21 @@ post_status() {
   fi
 }
 
+# require_replay <sha>: GH #891. Branch protection lets an MCP merge through on the mh/gauntlet status this
+# script posts, so a head that changes a replay-supported gate gets no status (and no push) without that
+# closure's whole-pool replay record. Checked before the gauntlet. A cloud session has no transcripts, so
+# no record: a gate change merges from the operator's machine (merge-pr.sh, or this script there).
+require_replay() {
+  local missing m
+  missing=$(replay_missing sync-pr-head "$1" origin/develop) || exit 1
+  [ -n "$missing" ] || return 0
+  for m in $missing; do
+    echo "sync-pr-head: $1 changes the ${m%%:*} gate and $(replay_dir) holds no whole-pool replay record for its closure ${m#*:} (GH #891), so nothing is pushed and no mh/gauntlet status is posted." >&2
+    echo "  Merge a gate change from the operator's machine, after: $(replay_hint origin/develop "${m%%:*}")" >&2
+  done
+  exit 1
+}
+
 wt=$(mktemp -d "${TMPDIR:-/tmp}/sync-pr-head.XXXXXX") || { echo "sync-pr-head: mktemp -d failed." >&2; exit 1; }
 cleanup() {
   git worktree remove --force "$wt" >/dev/null 2>&1 || true
@@ -117,6 +137,7 @@ if [ "$synced" -eq 1 ]; then
     echo "sync-pr-head: origin/$branch is not $head (origin has ${have:-no such branch}): the head was not pushed, or the branch moved. Push it (or fetch the new head) and run sync-pr-head.sh again." >&2
     exit 1
   fi
+  require_replay "$head"
   (cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $head; fix it, commit, push, and get a new review." >&2; exit 1; }
   post_status "$head"
   echo "$head"
@@ -166,6 +187,7 @@ if ! git -C "$wt" diff --quiet -- "$PJ" "$MJ"; then
 fi
 
 new=$(git -C "$wt" rev-parse HEAD)
+require_replay "$new"
 (cd "$wt" && gauntlet_full sync-pr-head) || { echo "sync-pr-head: the gauntlet failed on $new (the merge of origin/develop and the version bump), so nothing was pushed; fix it on the branch, push, and get a new review." >&2; exit 1; }
 # The keepalive dates from the pre-push hook running the whole gauntlet while the SSH connection idled
 # (exit 141); the same as merge-pr.sh's push_head, cheap, for a hook run with MH_PREPUSH_FULL=1.

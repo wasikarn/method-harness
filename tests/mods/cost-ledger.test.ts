@@ -34,6 +34,7 @@ const setup = (...[$, on]: Parameters<TestBody>) => {
     noVersion: false,
     id: 's1',
     completes: 0,
+    argv: [] as string[][],
   }
   on('session.id', () => ({ value: h.id }))
   on('session.version', () => {
@@ -56,6 +57,7 @@ const setup = (...[$, on]: Parameters<TestBody>) => {
     return { value: { startedAt: 0, context: { window: 200000 }, rateLimits: [], ...h.usage } }
   })
   on('process.run', (_$, e) => {
+    h.argv.push(e.argv.slice(0, 4).map(String))
     const mode = h.fail
     h.fail = undefined
     if (mode === 'throw') throw new Error('timed out')
@@ -88,6 +90,20 @@ test('load marker: written once, by the first hook call, with the CLI and mh ver
   expect(h.markers.map(r => [r.session_id, r.loaded, r.cli, r.mh])).toEqual([['s1', true, '2.1.289', '1.1.173']])
   expect(typeof h.markers[0].t).toBe('string')
   expect(h.rows.map(r => r.turn_id)).toEqual(['t1', 't2'])
+})
+
+// SOLID audit 2026-11-07: the stub reads rows from argv[4] on, so pin what comes before them: an sh
+// script that refuses an unset HOME (never a write under /) and appends to the ledger file.
+test('append: sh -c with the HOME guard, appending to the ledger file', async ($, on) => {
+  const { h, turn } = setup($, on)
+  await turn('t1')
+  expect(h.argv.length).toBeGreaterThan(0)
+  for (const [sh, c, script, name] of h.argv) {
+    expect([sh, c, name]).toEqual(['sh', '-c', 'sh'])
+    expect(script.startsWith(': "${HOME:?')).toBe(true)
+    expect(script).toContain('d="$HOME/.local/share/kbg/metrics"')
+    expect(script).toContain('>> "$d/cost-ledger.jsonl"')
+  }
 })
 
 // Deep-audit: a failed first marker append must not mark the session as done, or the report calls a
@@ -170,6 +186,17 @@ test('session.start: a non-numeric version part -> any difference still warns', 
   expect(h.statuses.length).toBe(1)
   expect(h.statuses[0]).toContain('stale')
 })
+
+// SOLID audit 2026-11-07: Number() reads '5e2' as 500, '0x200' as 512 and '' as 0, so those parts ordered
+// as numbers and a stale cache could read as newer or equal. A part must be all digits to be ordered.
+for (const v of ['1.1.5e2', '1.1.0x200', '1.1.174.'])
+  test(`session.start: cache ${v}, a part Number() misreads -> the difference still warns`, async ($, on) => {
+    const { h, start } = setup($, on)
+    h.cache['.claude-plugin/plugin.json'] = manifest(v)
+    await start()
+    expect(h.statuses.length).toBe(1)
+    expect(h.statuses[0]).toContain('stale')
+  })
 
 // GH #458: the engine draws every plugin status line warning-styled, so a healthy session says
 // nothing (the load-proof row in the ledger covers "it loaded"); a leftover stale line is cleared.

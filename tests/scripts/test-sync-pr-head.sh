@@ -25,6 +25,8 @@ ROOT_DIR="$(mktemp -d)"
 export TMPDIR="$ROOT_DIR"
 # The gauntlet lock and pass cache stay in the sandbox (the gauntlet's own test layer exports
 # GAUNTLET_PASS_CACHE=0; these cases want the cache on), and so does the timing log.
+# Case 8c calls the script without run_sync: its replay records must not come from ~/.cache either.
+export GATE_REPLAY_RECORD_DIR="$ROOT_DIR/replay"
 export GAUNTLET_LOCK_DIR="$ROOT_DIR/gauntlet.lock" GAUNTLET_PASS_DIR="$ROOT_DIR/pass" GAUNTLET_PASS_CACHE=1 \
   GAUNTLET_TIME_LOG="$ROOT_DIR/time.jsonl"
 unset MH_GAUNTLET_LOCK_OWNER STUB_GAUNTLET_FAIL STUB_STATUS_FAIL \
@@ -84,6 +86,7 @@ setup() {
     conflict) echo a-feature >"$w/a.txt" ;;
     desc) sed 's/"description": "d"/"description": "d2"/' "$w/.claude-plugin/plugin.json" >"$w/p.tmp" && mv "$w/p.tmp" "$w/.claude-plugin/plugin.json" ;;
     hooks) sed 's|"version": "1.0.5",|"version": "1.0.5", "hooks": "./evil.json",|' "$w/.claude-plugin/plugin.json" >"$w/p.tmp" && mv "$w/p.tmp" "$w/.claude-plugin/plugin.json" ;;
+    gate) mkdir -p "$w/hooks/gates"; printf 'print(1)\n' >"$w/hooks/gates/subagent-git-guard.py" ;;
   esac
   commit "$w" feature; git -C "$w" push -q origin feat/x
   git -C "$w" checkout -q develop
@@ -96,9 +99,10 @@ setup() {
   git clone -q "$O" "$L"
   HEAD_SHA=$(git -C "$L" rev-parse origin/feat/x)
 }
-# run_sync <branch> <head>: run the script in L; sets rc, out (stdout), err.
+# run_sync <branch> <head>: run the script in L (in $L/$RUN_SUB when set); sets rc, out (stdout), err.
+# Replay records (GH #891) live in the case dir.
 run_sync() {
-  out=$(cd "$L" && bash "$SCRIPT" "$1" "$2" 2>"$ROOT_DIR/err"); rc=$?
+  out=$(cd "$L${RUN_SUB:+/$RUN_SUB}" && GATE_REPLAY_RECORD_DIR="$STUB_DIR/replay" bash "$SCRIPT" "$1" "$2" 2>"$ROOT_DIR/err"); rc=$?
   err=$(cat "$ROOT_DIR/err")
 }
 remote_head() { git -C "$L" ls-remote origin refs/heads/feat/x | awk '{ print $1 }'; }
@@ -278,6 +282,46 @@ PATH="$NOGH" run_sync feat/x "$HEAD_SHA"
 if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(remote_head)" = "$out" ] && /usr/bin/grep -q 'no gh, so no mh/gauntlet status was posted' <<<"$err" && [ ! -s "$STUB_DIR/gh.log" ]; then
   ok "no gh: pushed and printed the head, said no status was posted"
 else bad "no gh: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
+
+# 5h. SOLID audit 2026-11-07, GH #891 on the no-gh path: branch protection lets an MCP merge through on the
+#     mh/gauntlet status, so a head that changes a replay-supported gate's closure gets no status and no
+#     push without that closure's whole-pool replay record. Refused before the gauntlet, from a subdir too.
+CLOSURE="$HERE/../../scripts/_lib/gate_closure.py"
+replay_record() {
+  mkdir -p "$STUB_DIR/replay"
+  jq -nc --arg c "$1" '{gate: "subagent-git-guard", closure: $c, full: true, pool: 9, replay: 8, corpus: 7, diffs: 1, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}' \
+    >"$STUB_DIR/replay/subagent-git-guard-$1.json"
+}
+gate_refused() {
+  if [ "$rc" -ne 0 ] && [ -z "$out" ] && [ "$(remote_head)" = "$2" ] && [ "$(gauntlets)" = 0 ] && [ ! -s "$STUB_DIR/gh.log" ] \
+    && /usr/bin/grep -q 'no whole-pool replay record' <<<"$err" \
+    && /usr/bin/grep -qF 'gate-differential.sh origin/develop subagent-git-guard --replay all' <<<"$err" && worktrees_clean; then
+    ok "$1: refused before the gauntlet, no push, no status, names the replay"
+  else bad "$1: rc=$rc out='$out' remote=$(remote_head) runs=$(gauntlets) log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
+}
+setup gate
+run_sync feat/x "$HEAD_SHA"
+gate_refused "behind, a gate change with no replay record" "$HEAD_SHA"
+# A cloud session has no gh: the check does not depend on it (NOGH from 5g).
+PATH="$NOGH" run_sync feat/x "$HEAD_SHA"
+gate_refused "the same with no gh on PATH (a cloud session)" "$HEAD_SHA"
+mkdir -p "$L/sub"
+RUN_SUB=sub run_sync feat/x "$HEAD_SHA"
+gate_refused "the same, run from a subdirectory" "$HEAD_SHA"
+replay_record "$(cd "$L" && python3 "$CLOSURE" --rev "$HEAD_SHA" subagent-git-guard)"
+run_sync feat/x "$HEAD_SHA"
+if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(remote_head)" = "$out" ] && [ "$(statuses "$out")" = 1 ] \
+  && /usr/bin/grep -q 'replay record for subagent-git-guard.*1 diffs' <<<"$err"; then
+  ok "with the matching record: pushed, status posted, the record's counts printed"
+else bad "gate with record: rc=$rc out='$out' remote=$(remote_head) log=$(cat "$STUB_DIR/gh.log" 2>&1) err=$err"; fi
+# Already synced (the early path), a gate change with no record: no gauntlet, no status.
+setup gate
+w=$(mktemp -d "$ROOT_DIR/w.XXXXXX"); git clone -q -b develop "$O" "$w/c"; git -C "$w/c" checkout -q -b feat/x
+mkdir -p "$w/c/hooks/gates"; printf 'print(1)\n' >"$w/c/hooks/gates/subagent-git-guard.py"
+manifests "$w/c" 1.0.7; commit "$w/c" "synced gate"; git -C "$w/c" push -q -f origin feat/x
+git -C "$L" fetch -q origin; HEAD_SHA=$(git -C "$L" rev-parse origin/feat/x)
+run_sync feat/x "$HEAD_SHA"
+gate_refused "already synced, a gate change with no replay record" "$HEAD_SHA"
 
 # 5d. behind develop, red gauntlet on the merged tree: nothing is pushed, nothing printed.
 setup none
