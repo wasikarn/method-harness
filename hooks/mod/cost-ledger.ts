@@ -84,6 +84,14 @@ const markLoaded = async ($: EngineInterface) => {
   }
 }
 
+// Dotted versions compared part by part as numbers: '1.1.99' is older than '1.1.174'.
+const olderThan = (a: string, b: string) => {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number)
+  for (let i = 0; i < Math.max(x.length, y.length); i++)
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0)
+  return false
+}
+
 // GH #442: skills whose repo SKILL.md differs from the cached copy that runs, toasted once each.
 const toasted = new Set<string>()
 
@@ -96,10 +104,11 @@ export const register: Register = on => {
       if (cache?.version && repo?.version)
         // GH #458: the engine styles every plugin status line as a warning, so only a stale cache
         // speaks; a match clears any earlier line (the ledger's load row proves the load).
+        // GH #934: only a repo ahead of the cache is stale; an older branch checked out is not.
         $.ui.status(
-          cache.version === repo.version
-            ? undefined
-            : `${$.plugin.name}: cache ${cache.version} is stale, repo ${repo.version} (bump + claude plugin update)`,
+          olderThan(cache.version, repo.version)
+            ? `${$.plugin.name}: cache ${cache.version} is stale, repo ${repo.version} (bump + claude plugin update)`
+            : undefined,
         )
     } catch (err) {
       $.ui.log(`cost-ledger version status failed: ${String(err).slice(0, 200)}`)

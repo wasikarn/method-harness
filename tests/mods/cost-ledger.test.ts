@@ -144,6 +144,23 @@ test('session.start: cached and repo versions differ -> a status line naming bot
   expect(h.statuses[0]).toContain('stale')
 })
 
+// GH #934: an older branch checked out (repo below the cache) is not a stale cache: no status line.
+test('session.start: cache newer than the repo -> no status line', async ($, on) => {
+  const { h, start } = setup($, on)
+  h.cache['.claude-plugin/plugin.json'] = manifest('1.1.175')
+  await start()
+  expect(h.statuses).toEqual([undefined])
+})
+
+// GH #934: versions compare numerically per part, not as strings (1.1.99 is below 1.1.174).
+test('session.start: numeric compare -> 1.1.99 cache below a 1.1.174 repo is stale', async ($, on) => {
+  const { h, start } = setup($, on)
+  h.cache['.claude-plugin/plugin.json'] = manifest('1.1.99')
+  await start()
+  expect(h.statuses.length).toBe(1)
+  expect(h.statuses[0]).toContain('stale')
+})
+
 // GH #458: the engine draws every plugin status line warning-styled, so a healthy session says
 // nothing (the load-proof row in the ledger covers "it loaded"); a leftover stale line is cleared.
 test('session.start: same version -> no status line, any earlier one cleared', async ($, on) => {

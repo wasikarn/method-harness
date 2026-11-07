@@ -60,8 +60,9 @@ whose `name` matches `$.plugin.name`, i.e. an mh checkout or worktree. Anywhere 
 nothing.
 
 - **`session.start`:** compares the cached version (`$.plugin.root`) with the repo manifest's. A
-  stale cache pins one `$.ui.status` line: `mh: cache 1.1.173 is stale, repo 1.1.174 (...)`. Equal
-  versions say nothing and clear any earlier line (GH #458: the engine draws every plugin status
+  stale cache (the repo's version above the cache's, compared numerically per part) pins one
+  `$.ui.status` line: `mh: cache 1.1.173 is stale, repo 1.1.174 (...)`. Equal versions, or a repo
+  below the cache (an older branch checked out, GH #934), say nothing and clear any earlier line (GH #458: the engine draws every plugin status
   line warning-styled, and the ledger's load row proves the load). Equal versions do not prove
   equal content (same-version edits are no-ops), which is what the skill check is for.
 - **`skill.prompt`:** finds the skill's `SKILL.md` through the cached manifest's `skills` entries
