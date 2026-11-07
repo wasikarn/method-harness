@@ -445,9 +445,9 @@ check_replay() {
     g=${m%%:*} c=${m#*:}
     echo "merge-pr: PR $pr changes the $g gate (closure ${c:0:12} in the tree that merges, $head) and $(replay_dir) holds no whole-pool replay record for it (GH #891)." >&2
     if [ "$verify" = 1 ]; then
-      echo "  A cloud session has no transcripts to replay: merge a gate change from the operator's machine, after: bash scripts/gate-differential.sh origin/develop $g --replay all" >&2
+      echo "  A cloud session has no transcripts to replay: merge a gate change from the operator's machine, after: bash scripts/gate-differential.sh origin/develop $g --replay all --no-cache" >&2
     else
-      echo "  From this checkout, on $head: bash scripts/gate-differential.sh origin/develop $g --replay all ; then run merge-pr.sh $pr again. Emergency only: merge-pr.sh $pr --skip-replay \"<reason>\"." >&2
+      echo "  From this checkout, on $head: bash scripts/gate-differential.sh origin/develop $g --replay all --no-cache ; then run merge-pr.sh $pr again. Emergency only: merge-pr.sh $pr --skip-replay \"<reason>\"." >&2
     fi
   done
   exit 1
@@ -662,7 +662,7 @@ fi
 gh pr merge "$pr" --merge --match-head-commit "$head"
 if [ -n "$replay_skipped" ]; then
   runs=""
-  for m in $replay_skipped; do runs="$runs- \`bash scripts/gate-differential.sh $dev ${m%%:*} --replay all\` from a checkout of the merged develop"$'\n'; done
+  for m in $replay_skipped; do runs="$runs- \`bash scripts/gate-differential.sh $dev ${m%%:*} --replay all --no-cache\` from a checkout of the merged develop"$'\n'; done
   gh issue create --title "Run the whole-pool replay for PR #$pr (merged with --skip-replay)" --body "PR #$pr merged with \`merge-pr.sh --skip-replay\` (GH #891). **Reason:** $skip_reason
 
 Run each replay below, OLD being develop just before the merge, and post the record's counts here. Explain any diff or slower command, or open a fix.

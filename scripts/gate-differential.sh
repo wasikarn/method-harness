@@ -19,6 +19,10 @@
 #   --runner R      auto (default): fork mode when both wrappers are byte-identical, else bash;
 #                   fork: fork mode or exit 2;
 #                   bash: every command through `bash <gate>.sh` (GH #889)
+#   --cache         keep the OLD side's results in $GATE_REPLAY_CACHE_DIR (default
+#                   ~/.cache/mh/gate-replay-cache) and reuse them (GH #893). For review-round replays
+#                   only: a cached run never writes a replay record. Off by default.
+#   --no-cache      the default, and it beats --cache. The replay before merge runs with it.
 # Exit: 0 no diffs, 1 diffs or slower commands (GH #890), 2 usage error or refusal.
 # Replay record (GH #891): $GATE_REPLAY_RECORD_DIR (default ~/.cache/mh/gate-replay)/<gate>-<closure>.json,
 # <closure> being scripts/_lib/gate_closure.py's hash of the NEW side. Counts only, never command text;
@@ -32,9 +36,9 @@
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
-usage() { sed -n '5,21p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '5,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-cases="" replay=0 slug="" seed="" runner=auto
+cases="" replay=0 slug="" seed="" runner=auto cache_flags=()
 pos=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +47,7 @@ while [ $# -gt 0 ]; do
     --slug) [ $# -ge 2 ] || usage; slug="$2"; shift 2 ;;
     --fuzz-seed) [ $# -ge 2 ] || usage; seed="$2"; shift 2 ;;
     --runner) [ $# -ge 2 ] || usage; runner="$2"; shift 2 ;;
+    --cache|--no-cache) cache_flags+=("$1"); shift ;;
     -h|--help) usage ;;
     -*) echo "gate-differential: unknown option $1" >&2; usage ;;
     *) pos+=("$1"); shift ;;
@@ -95,4 +100,5 @@ set -- --old "$old" --new "$new" --gate "$gate" --tmp "$tmp" --replay "$replay" 
 [ -n "$cases" ] && set -- "$@" --cases "$cases"
 [ -n "$slug" ] && set -- "$@" "--slug=$slug"
 [ -n "$seed" ] && set -- "$@" --fuzz-seed "$seed"
+[ ${#cache_flags[@]} -gt 0 ] && set -- "$@" "${cache_flags[@]}"
 python3 "$ROOT/scripts/_lib/gate-differential.py" "$@"

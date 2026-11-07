@@ -537,6 +537,193 @@ if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=0 slower=1 ' <<<"$out" \
   ok "a near-deadline command is re-run through bash and counted slower"
 else bad "near-deadline (rc=$rc): $out"; fi
 
+echo "=== GH #893: the develop-side cache ==="
+# Opt-in (--cache), old side only. A cached run never writes a replay record, and --no-cache beats --cache.
+cache_line() { /usr/bin/grep '^  cache:' <<<"$1"; }
+hits() { cache_line "$1" | sed -n 's/^  cache: \([0-9]*\) hits.*/\1/p'; }
+stored() { cache_line "$1" | sed -n 's/^  cache: [0-9]* hits, \([0-9]*\) stored.*/\1/p'; }
+printf 'plain text, no token\nkey=%s\nnote MARKER893 text\n' "$tok" > "$T/cases3.txt"
+strip_run() { /usr/bin/grep -v -e '^  runner:' -e '^  cache:' <<<"$1"; }
+
+out=$(GATE_REPLAY_CACHE_DIR="$T/c-off" bash "$SCRIPT" --cases "$T/cases3.txt" "$T/old" "$T/planted" secret-scan 2>&1)
+if [ ! -e "$T/c-off" ] && [ -z "$(cache_line "$out")" ]; then ok "no flag: no cache dir, no cache line (opt-in)"; else bad "cache without --cache: $out"; fi
+
+C1="$T/c1"
+r1=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/planted" secret-scan 2>&1); rc1=$?
+r2=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/planted" secret-scan 2>&1); rc2=$?
+s1=$(stored "$r1"); h2=$(hits "$r2")
+if [ "$rc1" -eq 1 ] && [ "$rc2" -eq 1 ] && [ "$(hits "$r1")" = 0 ] && [ -n "$s1" ] && [ "$s1" -gt 0 ] && [ "$h2" = "$s1" ] && [ "$(stored "$r2")" = 0 ]; then
+  ok "--cache: run 1 stores $s1 old-side results, run 2 hits all $h2 and stores none"
+else bad "cache hit/miss (rc $rc1/$rc2): --- 1: $r1 --- 2: $r2"; fi
+if [ "$(strip_run "$r1")" = "$(strip_run "$r2")" ]; then ok "a cached run prints the same diffs, counts and samples as the uncached one"
+else bad "cached output differs: --- 1: $r1 --- 2: $r2"; fi
+if ! /usr/bin/grep -r -q -e MARKER893 -e "$tok" "$C1"; then ok "the cache holds no command text"; else bad "command text in the cache: $(/usr/bin/grep -r -l MARKER893 "$C1")"; fi
+if python3 - "$C1" <<'PY'
+import glob, json, sys
+rows = [json.loads(l) for f in glob.glob(sys.argv[1] + "/*.jsonl") for l in open(f)]
+sys.exit(0 if rows and all(set(r) == {"k", "code", "out", "err", "rows", "sig"} and len(r["k"]) == 64 and len(r["out"]) == 64 and len(r["err"]) == 64 for r in rows) else 1)
+PY
+then ok "a cache row is the command's sha256, the exit code and digests"; else bad "cache row shape: $(cat "$C1"/*.jsonl | head -3)"; fi
+# A forged row must show up as a diff: proof the old side came from the cache, not from a re-run.
+python3 - "$C1" <<'PY'
+import glob, sys
+for f in glob.glob(sys.argv[1] + "/*.jsonl"):
+    s = open(f).read()
+    open(f, "w").write(s.replace('"code": "0"', '"code": "9"'))
+PY
+r3=$(GATE_REPLAY_CACHE_DIR="$C1" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
+if /usr/bin/grep -q 'exit 9->0' <<<"$r3" && [ "$(stored "$r3")" = 0 ]; then ok "the old side is read from the cache (a forged exit code shows as a diff)"
+else bad "forged cache row not used: $r3"; fi
+
+# Key parts: the closure (every _* and *.awk file, used or not), the runner mode, and --no-cache.
+cp -R "$T/old" "$T/old-extra"; printf 'X = 1\n' > "$T/old-extra/_unused_sibling.py"
+r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
+r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old-extra" "$T/same" secret-scan 2>&1)
+if [ "$(hits "$r")" = 0 ] && [ "$(stored "$r")" -gt 0 ]; then ok "an unused _* sibling in the old dir changes the key (closure = every _* file)"
+else bad "sibling _* file did not change the key: $r"; fi
+cp -R "$T/old" "$T/old-awk"; printf '# edit\n' >> "$T/old-awk/brace-route.awk"
+r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old-awk" "$T/same" secret-scan 2>&1)
+if [ "$(hits "$r")" = 0 ]; then ok "an edit to an *.awk file the gate does not name changes the key"; else bad "awk edit kept the key: $r"; fi
+mkdir -p "$T/old-pyc/__pycache__"; cp -R "$T/old/." "$T/old-pyc/"; printf 'junk' > "$T/old-pyc/__pycache__/_x.cpython-39.pyc"
+r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old-pyc" "$T/same" secret-scan 2>&1)
+if [ "$(hits "$r")" -gt 0 ] && [ "$(stored "$r")" = 0 ]; then ok "__pycache__ is ignored by the key"; else bad "__pycache__ changed the key: $r"; fi
+# secret-scan's wrapper never runs through _run.py, so it is always bash; irrecoverable has both modes.
+r=$(GATE_REPLAY_CACHE_DIR="$T/c3" bash "$SCRIPT" --cache --runner fork --cases "$T/rm.txt" "$T/old" "$T/same" irrecoverable 2>&1)
+r=$(GATE_REPLAY_CACHE_DIR="$T/c3" bash "$SCRIPT" --cache --runner bash --cases "$T/rm.txt" "$T/old" "$T/same" irrecoverable 2>&1)
+if [ "$(hits "$r")" = 0 ] && [ "$(stored "$r")" -gt 0 ]; then ok "the runner mode is part of the key (fork rows are not read by a bash run)"
+else bad "runner mode not in the key: $r"; fi
+r=$(GATE_REPLAY_CACHE_DIR="$T/c2" bash "$SCRIPT" --cache --no-cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
+if [ -z "$(cache_line "$r")" ] && /usr/bin/grep -q 'diffs=0 ' <<<"$r"; then ok "--no-cache beats --cache: no cache line, a full run"; else bad "--cache --no-cache: $r"; fi
+mkdir -p "$T/h2"
+out=$(HOME="$T/h2" env -u GATE_REPLAY_CACHE_DIR bash "$SCRIPT" --cache --cases "$T/cases3.txt" "$T/old" "$T/same" secret-scan 2>&1)
+if compgen -G "$T/h2/.cache/mh/gate-replay-cache/*.jsonl" >/dev/null; then ok "the default cache dir is ~/.cache/mh/gate-replay-cache"; else bad "default cache dir: $out"; fi
+
+python3 - "$ROOT/scripts/_lib/gate-differential.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+base = ("irrecoverable", "c" * 64, "t" * 64, "fork", {"python3": "3.9", "bash": "5", "awk": "a", "sed": "s"})
+b = gd.bucket_id(*base)
+assert b == gd.bucket_id(*base), "bucket_id is not deterministic"
+variants = [("gate", ("subagent-git-guard",) + base[1:]), ("closure", base[:1] + ("d" * 64,) + base[2:]),
+            ("tool hash", base[:2] + ("u" * 64,) + base[3:]), ("mode", base[:3] + ("bash",) + base[4:])]
+for k in base[4]:
+    variants.append(("version of " + k, base[:4] + (dict(base[4], **{k: "other"}),)))
+for name, args in variants:
+    assert gd.bucket_id(*args) != b, "the key ignores the " + name
+PY
+if [ $? -eq 0 ]; then ok "the key covers the gate, closure, tool hash, runner mode and the python3/bash/awk/sed versions"; else bad "bucket_id key parts"; fi
+
+echo "=== GH #893: never read the cache before merge, never write a record from it ==="
+CR="$T/c-rec"; RR="$T/r-rec"
+out=$(GATE_REPLAY_CACHE_DIR="$CR" GATE_REPLAY_RECORD_DIR="$RR" bash "$SCRIPT" --cache --cases "$T/empty.txt" --replay all "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(records "$RR")" = 0 ] && /usr/bin/grep -q 'replay record: none (a cached run' <<<"$out"; then ok "--cache --replay all writes no record and says why"
+else bad "a cached full replay wrote a record (rc=$rc, records $(records "$RR")): $out"; fi
+out=$(GATE_REPLAY_CACHE_DIR="$CR" GATE_REPLAY_RECORD_DIR="$RR" bash "$SCRIPT" --cache --cases "$T/empty.txt" --replay all "$T/old" "$T/same" irrecoverable 2>&1)
+if [ "$(hits "$out")" -gt 0 ] && [ "$(records "$RR")" = 0 ]; then ok "a second cached full replay, all hits, still writes no record"; else bad "cached rerun: $out"; fi
+out=$(GATE_REPLAY_CACHE_DIR="$CR" GATE_REPLAY_RECORD_DIR="$RR" bash "$SCRIPT" --cache --no-cache --cases "$T/empty.txt" --replay all "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(records "$RR")" = 1 ] && [ -z "$(cache_line "$out")" ]; then ok "--no-cache --replay all runs uncached and writes the record"
+else bad "--no-cache full replay (rc=$rc, records $(records "$RR")): $out"; fi
+if python3 -c 'import glob, json, sys; sys.exit(0 if all(json.load(open(f))["cache"] is False for f in glob.glob(sys.argv[1] + "/*.json")) else 1)' "$RR"; then
+  ok "that record says cache: false"; else bad "record cache field: $(cat "$RR"/*.json)"; fi
+RR2="$T/r-rec2"
+out=$(GATE_REPLAY_CACHE_DIR="$T/c-none" GATE_REPLAY_RECORD_DIR="$RR2" bash "$SCRIPT" --cases "$T/empty.txt" --replay all "$T/old" "$T/same" irrecoverable 2>&1)
+if [ "$(records "$RR2")" = 1 ] && [ ! -e "$T/c-none" ]; then ok "a plain --replay all (no flag) is uncached and writes the record"; else bad "plain full replay: $out"; fi
+
+echo "=== GH #893: results the cache never stores ==="
+python3 - "$ROOT/scripts/_lib/gate-differential.py" <<'PY'
+import importlib.util, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("gd", sys.argv[1])
+gd = importlib.util.module_from_spec(spec); spec.loader.exec_module(gd)
+tmp = tempfile.mkdtemp()
+def res(code="0", out=b"", err=b"", rows=()):
+    p = os.path.join(tmp, "j.jsonl")
+    with open(p, "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    return gd.finish("/g", code, out, err, p, 0.1)
+assert not res().skip, "a plain allow is storable"
+assert not res("2", err=b"[mh:gate] BLOCKED: x", rows=[{"decision": "deny", "rule": "r1"}]).skip, "a plain deny is storable"
+assert res("timeout").skip, "a timeout must not be stored"
+assert res(rows=[{"decision": "ask", "rule": "deadline"}]).skip, "an irrecoverable deadline ask must not be stored"
+assert res(out=b'{"permissionDecision": "ask", "permissionDecisionReason": "[mh:gate] x: the gate\'s 4s time budget ran out before every command was checked; confirm the batch"}',
+           rows=[{"decision": "ask"}]).skip, "a batch-budget ask must not be stored"
+assert res("2", err=b"[mh:gate] BLOCKED: subagent (g) command took longer than the gate's 5 s time limit to check (9 characters); write it", rows=[{"decision": "deny"}]).skip, "sgg's time-limit deny (no rule) must not be stored"
+assert res("2", err=b"[mh:gate] BLOCKED: subagent (g) context-mode batch: not every command could be checked in the gate's 5 s time limit; split", rows=[{"decision": "deny"}]).skip
+r = res("0", out=b"hello-cmd-text", err=b"err-cmd-text", rows=[{"decision": "allow", "cmd": "row-cmd-text"}])
+assert "cmd-text" not in repr(r), "a Result keeps digests, not text: " + repr(r)
+PY
+if [ $? -eq 0 ]; then ok "finish() flags timeouts, deadline asks, batch-budget asks and sgg time-limit denies; keeps digests only"; else bad "unstorable results"; fi
+stub "$T/s-tl" 'sys.stderr.write("[mh:gate] BLOCKED: subagent (x) command took longer than the gate'"'"'s 5 s time limit to check\n"); sys.exit(2)'
+stub "$T/s-dn" 'sys.stderr.write("[mh:gate] BLOCKED: plain\n"); sys.exit(2)'
+out=$(GATE_REPLAY_CACHE_DIR="$T/c-tl" bash "$SCRIPT" --cache --cases "$T/rm.txt" "$T/s-tl" "$T/s-tl" irrecoverable 2>&1)
+out2=$(GATE_REPLAY_CACHE_DIR="$T/c-tl" bash "$SCRIPT" --cache --cases "$T/rm.txt" "$T/s-tl" "$T/s-tl" irrecoverable 2>&1)
+if [ "$(stored "$out2")" = 0 ] && [ "$(hits "$out2")" = 0 ] && /usr/bin/grep -q ' 1 not storable' <<<"$out2"; then ok "an old side that denies on a time limit is never cached"; else bad "time-limit deny cached: $out2"; fi
+out=$(GATE_REPLAY_CACHE_DIR="$T/c-dn" bash "$SCRIPT" --cache --cases "$T/rm.txt" "$T/s-dn" "$T/s-dn" irrecoverable 2>&1)
+out2=$(GATE_REPLAY_CACHE_DIR="$T/c-dn" bash "$SCRIPT" --cache --cases "$T/rm.txt" "$T/s-dn" "$T/s-dn" irrecoverable 2>&1)
+if [ "$(hits "$out2")" -gt 0 ] && [ "$(stored "$out2")" = 0 ]; then ok "an ordinary deny is cached and hit"; else bad "ordinary deny not cached: $out2"; fi
+
+echo "=== GH #893: a cached old side does not hide a slower new side ==="
+# A hit has no old time, so every command at 200 ms or more is re-run on both sides, uncached.
+for n in 1 2; do
+  out=$(GATE_REPLAY_CACHE_DIR="$T/c-slow" bash "$SCRIPT" --cache --cases "$T/rm.txt" "$T/s-allow" "$T/s-slow" irrecoverable 2>&1); rc=$?
+  if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=0 slower=1 ' <<<"$out"; then ok "run $n of a cached slow new side: slower=1"; else bad "cached slower run $n (rc=$rc): $out"; fi
+done
+for n in 1 2; do
+  out=$(GATE_REPLAY_CACHE_DIR="$T/c-slow2" bash "$SCRIPT" --cache --cases "$T/rm.txt" "$T/s-slow" "$T/s-slow2" irrecoverable 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 slower=0 ' <<<"$out"; then ok "run $n of equal sleeps with a cached old side: not slower"; else bad "cached equal sleeps run $n (rc=$rc): $out"; fi
+done
+
+echo "=== GH #893: a gate's imports stay inside the closure pattern ==="
+# The cache key hashes the gate's .sh and .py, every _* file and every *.awk file. A gate that imports or
+# runs another sibling would change behaviour without changing the key. Imports are read from the AST
+# (import, from-import, __import__ with a literal); the wrapper is scanned for sibling file names outside
+# comment lines.
+outside() { # <gates dir>: print "<gate file>: <sibling>" for each reach outside the pattern
+  python3 - "$1" <<'PY'
+import ast, os, re, sys
+d = sys.argv[1]
+files = sorted(n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n)))
+gates = {n[:-3] for n in files if n.endswith(".sh") and not n.startswith("_")}
+def inside(n, gate):
+    return n.startswith("_") or n.endswith(".awk") or n in (gate + ".sh", gate + ".py")
+bad = []
+for g in sorted(gates):
+    for n in (g + ".sh", g + ".py"):
+        if n not in files:
+            continue
+        text = open(os.path.join(d, n)).read()
+        others = [f for f in files if not inside(f, g)]
+        if n.endswith(".py"):
+            mods = set()
+            for node in ast.walk(ast.parse(text)):
+                if isinstance(node, ast.Import):
+                    mods |= {a.name.split(".")[0] for a in node.names}
+                elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                    mods.add(node.module.split(".")[0])
+                elif isinstance(node, ast.Call) and getattr(node.func, "id", "") == "__import__" and node.args \
+                        and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    mods.add(node.args[0].value.split(".")[0])
+            for f in others:
+                if f.endswith(".py") and f[:-3] in mods:
+                    bad.append("%s: %s" % (n, f))
+        else:
+            code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+            for f in others:
+                if re.search(r"(?<![A-Za-z0-9_.-])" + re.escape(f) + r"(?![A-Za-z0-9_-])", code):
+                    bad.append("%s: %s" % (n, f))
+print("\n".join(bad))
+PY
+}
+res=$(outside "$GATES")
+if [ -z "$res" ]; then ok "no gate in hooks/gates reaches a sibling outside the closure pattern"; else bad "a gate reaches outside the closure pattern: $res"; fi
+cp -R "$GATES" "$T/reach"; printf 'X = 1\n' > "$T/reach/helper.py"; printf 'import helper\n' >> "$T/reach/secret-scan.py"
+res=$(outside "$T/reach")
+if [ "$res" = "secret-scan.py: helper.py" ]; then ok "the check names a planted non-_ sibling import"; else bad "planted import not caught: '$res'"; fi
+cp -R "$GATES" "$T/reach2"; printf 'X = 1\n' > "$T/reach2/helper.sh"; printf 'bash "$(dirname "$0")/helper.sh"\n' >> "$T/reach2/secret-scan.sh"
+res=$(outside "$T/reach2")
+if [ "$res" = "secret-scan.sh: helper.sh" ]; then ok "the check names a planted non-_ sibling run by a wrapper"; else bad "planted wrapper reach not caught: '$res'"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"
 exit "$fail"

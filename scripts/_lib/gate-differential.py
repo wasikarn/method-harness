@@ -4,7 +4,7 @@
 #
 # Prints only diff classes, counts and up to 3 redacted, truncated sample commands per class:
 # transcripts can hold secrets, so no other command text is ever printed.
-import argparse, collections, glob, io, json, os, random, re, select, shutil, signal, subprocess, sys, time
+import argparse, collections, contextlib, glob, hashlib, io, json, os, random, re, select, shutil, signal, subprocess, sys, time
 
 TIMEOUT = 8  # hooks.json's timeout for every gate here; past it Claude Code blocks irrecoverable (onFailure: block)
 # and lets the others through, so a timeout is its own class
@@ -169,7 +169,17 @@ def canonical_cwd(tmp, env):
     return cwd
 
 
-Result = collections.namedtuple("Result", "code out err rows secs")
+# out, err and rows hold sha256 hex digests (GH #893), never the text: journal rows carry the command, so the
+# cache can keep a Result as it is. sig is journal_sig of the rows, for the diff class name. skip: the cache
+# must not store this result (a timeout or a time-limit verdict says how loaded the machine was, not what the gate decides).
+Result = collections.namedtuple("Result", "code out err rows secs sig skip")
+# The gates' time-limit texts: irrecoverable's batch ask ("time budget ran out", journaled with no rule),
+# its deadline ask ("ran out of time"), subagent-git-guard's deny ("time limit", journaled with no rule).
+TIME_LIMIT = re.compile(rb"time limit|time budget|ran out of time")
+
+
+def sha(b):
+    return hashlib.sha256(b).hexdigest()
 
 
 def finish(gates_dir, code, out, err, journal, secs):
@@ -181,7 +191,9 @@ def finish(gates_dir, code, out, err, journal, secs):
             row.pop("mh_version", None)
             rows.append(row)
     err = err.replace(gates_dir.encode(), b"<GATES>")
-    return Result(code, out, err, rows, secs)
+    skip = code == "timeout" or any(r.get("rule") == "deadline" for r in rows) or bool(TIME_LIMIT.search(out + b"\n" + err))
+    digests = tuple(sha(json.dumps(r, sort_keys=True).encode()) for r in rows)
+    return Result(code, sha(out), sha(err), digests, secs, journal_sig(rows), skip)
 
 
 class BashRunner:
@@ -315,6 +327,121 @@ class ForkRunner:
         self.server_err.close()
 
 
+def bucket_id(gate, closure, tool, mode, versions):
+    # GH #893: one cache file per (gate, old side's wide closure, this engine's hash, runner mode, tool versions).
+    # Inside it a row is keyed by the sha256 of the payload sent to the gate.
+    spec = json.dumps([gate, closure, tool, mode, sorted(versions.items())])
+    return sha(spec.encode())[:32]
+
+
+def tool_versions(env):
+    # The gates run with the canonical env's PATH: that PATH's python3, bash, awk and sed decide the verdicts.
+    # A BSD sed has no --version; its usage error is as stable a string as a version line.
+    out = {}
+    for tool in ("python3", "bash", "awk", "sed"):
+        exe = shutil.which(tool, path=env.get("PATH", os.defpath))
+        if not exe:
+            out[tool] = "none"
+            continue
+        try:
+            r = subprocess.run([exe, "--version"], env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+            first = (r.stdout + r.stderr).decode(errors="replace").splitlines()[:1]
+            out[tool] = os.path.realpath(exe) + " " + (first[0] if first else "")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            out[tool] = "%s unknown (%s)" % (exe, type(e).__name__)
+    return out
+
+
+class Cache:
+    # GH #893: the old (develop) side's results, for review-round replays only. Opt-in (--cache); a cached
+    # run never writes a replay record (replay_record); the replay before merge runs with --no-cache. Values:
+    # exit code and digests, never command text. A row is a JSON line in <dir>/<gate>-<bucket>.jsonl.
+    KEYS = {"k", "code", "out", "err", "rows", "sig"}
+
+    def __init__(self, d, gate, old_files, env):
+        self.dir, self.gate, self.env = d, gate, env
+        self.closure = gate_closure().wide(old_files, gate)
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = []
+        for n in ("gate-differential.py", "gate-fork-server.py"):  # the engine and the fork server both shape a result
+            with open(os.path.join(here, n), "rb") as f:
+                src.append(f.read())
+        self.tool = sha(b"".join(src))
+        self.versions = tool_versions(env)
+        self.hits = self.stored = self.skipped = self.bad = 0
+        self.bypass = False
+        os.makedirs(d, exist_ok=True)
+
+    @contextlib.contextmanager
+    def bypassed(self):
+        # A timing re-run needs a real old-side time: no lookups, no stores.
+        self.bypass = True
+        try:
+            yield
+        finally:
+            self.bypass = False
+
+    def wrap(self, runner, mode):
+        path = os.path.join(self.dir, "%s-%s.jsonl" % (self.gate, bucket_id(self.gate, self.closure, self.tool, mode, self.versions)))
+        rows = {}
+        if os.path.exists(path):
+            with open(path) as f:
+                for line in f:
+                    r = None
+                    try:
+                        r = json.loads(line)
+                        ok = (isinstance(r, dict) and set(r) == self.KEYS and isinstance(r["code"], str) and isinstance(r["sig"], str)
+                              and all(isinstance(r[k], str) and len(r[k]) == 64 for k in ("k", "out", "err"))
+                              and isinstance(r["rows"], list) and all(isinstance(x, str) for x in r["rows"]))
+                    except ValueError:
+                        ok = False
+                    if ok and r:
+                        rows[r["k"]] = r
+                    else:
+                        self.bad += 1  # a torn last line from a killed run, or a hand edit: a miss, counted
+        return CachingRunner(runner, self, path, rows)
+
+
+def gate_closure():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import gate_closure as g
+    return g
+
+
+class CachingRunner:
+    # Wraps the OLD side's runner. A hit has secs 0.0: no old time exists, so is_slower flags the command and
+    # the timing re-run (Cache.bypassed) measures both sides for real.
+    def __init__(self, inner, cache, path, rows):
+        self.inner, self.cache, self.path, self.rows = inner, cache, path, rows
+
+    def run(self, data):
+        c = self.cache
+        if c.bypass:
+            return self.inner.run(data)
+        k = sha(data)
+        hit = self.rows.get(k)
+        if hit:
+            c.hits += 1
+            return Result(hit["code"], hit["out"], hit["err"], tuple(hit["rows"]), 0.0, hit["sig"], False)
+        r = self.inner.run(data)
+        if r.skip:
+            c.skipped += 1
+            return r
+        row = {"k": k, "code": r.code, "out": r.out, "err": r.err, "rows": list(r.rows), "sig": r.sig}
+        # One write() of one line to an O_APPEND fd: two replays on one cache cannot interleave a row.
+        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, (json.dumps(row) + "\n").encode())
+        finally:
+            os.close(fd)
+        self.rows[k] = row
+        c.stored += 1
+        return r
+
+    def close(self):
+        self.inner.close()
+
+
 def fork_blocker(old, new, gate):
     # GH #889: fork mode skips the wrapper, which is sound only while both sides run the same wrapper:
     # it hands python the payload unchanged, so then fork mode can add diffs but never hide one. Every
@@ -356,7 +483,7 @@ def diff_class(o, n):
     if o.err != n.err:
         parts.append("stderr")
     if o.rows != n.rows:
-        parts.append("journal %s->%s" % (journal_sig(o.rows), journal_sig(n.rows)))
+        parts.append("journal %s->%s" % (o.sig, n.sig))
     return " | ".join(parts)
 
 
@@ -368,10 +495,13 @@ def is_slower(old_secs, new_secs, deadline):
     return new_secs >= SLOWER_RATIO * old_secs and new_secs >= SLOWER_MIN_SECS
 
 
-def replay_record(a, pool, replay, corpus, diffs, slower):
+def replay_record(a, pool, replay, corpus, diffs, slower, cached):
     # GH #891: scripts/merge-pr.sh merges a gate change only with this record for the gate's closure. Only a
-    # whole-pool run counts: every command of every transcript dir of this project, so no --slug. There is
-    # no replay cache yet; a cached run (GH #893) must never write one. Counts only, no command text.
+    # whole-pool run counts: every command of every transcript dir of this project, so no --slug. A cached
+    # run (GH #893, operator rule 2026-11-04) never writes one: the cache dir is writable locally, so only a
+    # run that executed the old side proves the replay. Counts only, no command text.
+    if cached:
+        return "none (a cached run never writes a record; run with --no-cache, which is the default)"
     if a.slug or not pool or len(replay) < len(pool):
         return "none (a record needs the whole pool: --replay all, no --slug; this run replayed %d of %d)" % (
             len(replay), len(pool))
@@ -402,7 +532,10 @@ def main():
     ap.add_argument("--slug")
     ap.add_argument("--fuzz-seed")
     ap.add_argument("--runner", choices=("auto", "fork", "bash"), default="auto")
+    ap.add_argument("--cache", action="store_true")  # GH #893: opt-in; --no-cache wins
+    ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args()
+    use_cache = a.cache and not a.no_cache
 
     if a.cases:
         with open(a.cases) as f:
@@ -430,14 +563,26 @@ def main():
     real_home = os.environ.get("HOME", "")
     deadline = DEADLINES.get(a.gate)
 
-    bash = (BashRunner(a.old, a.gate, env_o, jo, cwd), BashRunner(a.new, a.gate, env_n, jn, cwd))
+    cache = None
+    if use_cache:
+        d = os.environ.get("GATE_REPLAY_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "mh", "gate-replay-cache")
+        try:
+            cache = Cache(d, a.gate, gate_closure().from_dir(a.old), env)
+        except OSError as e:
+            print("gate-differential: --cache: cannot use the cache dir %s (%s); run without --cache" % (d, e), file=sys.stderr)
+            sys.exit(2)
+
+    def cached_old(runner, mode):
+        return cache.wrap(runner, mode) if cache else runner
+
+    bash = (cached_old(BashRunner(a.old, a.gate, env_o, jo, cwd), "bash"), BashRunner(a.new, a.gate, env_n, jn, cwd))
     fork, why = None, "forced by --runner bash" if a.runner == "bash" else fork_blocker(a.old, a.new, a.gate)
     if not why:
         started = []
         try:
             for side, d, e, j in (("old", a.old, env_o, jo), ("new", a.new, env_n, jn)):
                 started.append(ForkRunner(d, a.gate, e, j, cwd, os.path.join(a.tmp, "fork-" + side)))
-            fork = tuple(started)
+            fork = (cached_old(started[0], "fork"), started[1])
         except ServerDied as e:
             why = str(e)
             for r in started:
@@ -503,9 +648,11 @@ def main():
         if name:
             classes.setdefault(name, []).append(text)
         if is_slower(o.secs, n.secs, deadline):
-            # once more, both sides on one runner: a load spike must not count
-            r = on_fork(data) if runners is not bash and fork else None
-            o, n = r or pair(bash, data)
+            # once more, both sides on one runner: a load spike must not count. A cached old side has no
+            # time, so this run bypasses the cache (GH #893).
+            with cache.bypassed() if cache else contextlib.nullcontext():
+                r = on_fork(data) if runners is not bash and fork else None
+                o, n = r or pair(bash, data)
             if is_slower(o.secs, n.secs, deadline):
                 slower.append((text, o.secs, n.secs))
     for r in bash + (fork or ()):
@@ -524,9 +671,12 @@ def main():
     # A fork-only diff is how a gap in the wrapper's fast-path token list shows: name the first few.
     for t in dropped[:SAMPLES]:
         print("      - " + redact(t, patterns, real_home))
+    if cache:
+        print("  cache: %d hits, %d stored, %d not storable (timeouts and time-limit verdicts)%s" % (
+            cache.hits, cache.stored, cache.skipped, ", %d unreadable rows ignored" % cache.bad if cache.bad else ""))
     if want:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
-        print("  replay record: " + replay_record(a, pool, replay, corpus, total, len(slower)))
+        print("  replay record: " + replay_record(a, pool, replay, corpus, total, len(slower), bool(cache)))
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):
         print("  [%d] %s" % (len(texts), name))
         for t in texts[:SAMPLES]:
