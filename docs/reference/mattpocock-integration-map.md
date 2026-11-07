@@ -21,7 +21,7 @@ changes; last verified row by row against 1.3.2 (2026-11-07). No check parses th
 | implement-spec | user | deferred: parallel whole-spec alternative to `implement` (worktree implementers, one integration branch); mh names no step of it. Main session only (it dispatches implementers, a merger and `code-review`). Its frontier fan-out is uncapped upstream, so wave it at 10 (Rule 13); it has no Rule 13 fresh-context validator (only a merger subagent and a closing `code-review`), so add one for every builder (each builds with `tdd`, so it always touches a test). Its other subagents (an optional explorer, a fix implementer) are not validators either; the closing `code-review` reviews the whole branch, not each builder |
 | pr | model | PR-body shape (smallest visual, before/after evidence, merge-danger call); used when writing a PR body; no mh pointer. |
 | retro | user | deferred: session retrospective on the agent's environment; overlaps `mh:learn` (cross-turn memory patterns), no mh wrapper. |
-| setup-matt-pocock-skills | user | `README.md` Install section. Re-running writes `docs/agents/*.md` again (seed templates as a starting point; its own wording: "restart from scratch") but updates the `## Agent skills` block in place, keeping edits to the sections around it |
+| setup-matt-pocock-skills | user | `README.md` Install section. Re-running writes `docs/agents/*.md` again (seed templates as a starting point) but updates the `## Agent skills` block in place, keeping edits to the sections around it |
 | implement, to-spec, to-tickets | user | the spec-to-ship chain; mh names no step of it |
 | prototype | model | deferred: no mh surface produces throwaway spikes |
 | triage | user | deferred: mh no longer ships a triage-labels doc |
