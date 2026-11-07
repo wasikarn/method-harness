@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# test-rule4-graders.sh: the rule4-* cases' file graders accept every correct fix shape and
-# reject wrong ones. A correct fix must not score 0 because of how it is written (an early
+# test-rule4-graders.sh: the rule4-* cases' file graders accept the common correct fix shapes
+# and reject wrong ones. A correct fix must not score 0 because of how it is written (an early
 # return, `100 <= total`, a parameterized test), and an unfixed or still-exclusive bound must not
-# pass. Patterns are run through `new RegExp`, the call the eval runtime makes (see
-# test-eval-cases.sh header), against the scaffold's own files with one line swapped in.
+# pass. Known misses are listed in each grader's note, not here. Patterns are run through
+# `new RegExp`, the call the eval runtime makes (see test-eval-cases.sh header), against the
+# scaffold's own files with one line swapped in. The two cases' graders must stay byte-identical.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
@@ -56,6 +57,10 @@ for (const c of ['rule4-bugfix-test-first', 'rule4-bugfix-terse-th']) {
   for (const t of goodTests) (reg(t) ? ok : bad)(`${c}: regression test found: ${t.split('\n')[3].slice(0, 40)}`);
   const scaffold = fs.readFileSync(path.join(dir, 'scaffold.sh'), 'utf8').match(/discount\.test\.js <<'EOF'\n([\s\S]*?)\nEOF/)[1];
   (!reg(scaffold) ? ok : bad)(`${c}: the scaffold's own tests are not a regression test`);
+}
+for (const f of fs.readdirSync(path.join(evals, 'rule4-bugfix-test-first', 'graders'))) {
+  const [a, b] = ['rule4-bugfix-test-first', 'rule4-bugfix-terse-th'].map(c => fs.readFileSync(path.join(evals, c, 'graders', f), 'utf8'));
+  (a === b ? ok : bad)(`graders/${f} is identical in both rule4 cases`);
 }
 console.log(`test-rule4-graders: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
