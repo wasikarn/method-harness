@@ -2058,6 +2058,91 @@ for cmd in "noglob git status" "repeat 3 echo hi" "echo =git stash" "X=git stash
   check "GH #912 control: subagent allowed: $cmd" "$ok"
 done
 
+echo "=== GH #913: Monitor and context-mode shell tools get the same verdict as Bash ==="
+_CTX=mcp__plugin_context-mode_context-mode_
+# ctx_payload <tool suffix or Monitor> <tool_input JSON> [agent_id]: the outer payload around a raw tool_input.
+ctx_payload() {
+  python3 -c '
+import json, sys
+tn = sys.argv[1] if sys.argv[1] == "Monitor" else sys.argv[4] + "_" + sys.argv[1]
+d = {"tool_name": tn, "tool_input": json.loads(sys.argv[2])}
+if sys.argv[3]:
+    d["agent_id"] = sys.argv[3]
+    d["agent_type"] = "general-purpose"
+print(json.dumps(d))
+' "$1" "$2" "${3:-}" "$_CTX"
+}
+run_ctx() { ctx_payload "$@" | bash "$GATE" 2>/dev/null; }
+
+while IFS='|' read -r tool input; do
+  run_ctx "$tool" "$input" agent1; rc=$?
+  ok=1; [ "$rc" -eq 2 ] && ok=0
+  check "GH #913: subagent denied: $tool $input" "$ok"
+done <<'ROWS'
+ctx_execute|{"language":"shell","code":"git stash"}
+ctx_execute|{"language":"bash","code":"cd sub && git reset HEAD~1"}
+ctx_execute_file|{"path":"x.log","language":"sh","code":"git clean -n; git stash"}
+ctx_batch|{"commands":["ls","git stash"],"queries":["x"]}
+ctx_batch_execute|{"commands":[{"label":"a","command":"ls"},{"label":"b","command":"git stash"}],"queries":["x"]}
+ctx_batch_execute|{"commands":"[\"git reset --soft HEAD~1\"]","queries":["x"]}
+ctx_batch|{"commands":["cat <<EOF","git stash"],"queries":["x"]}
+ctx_batch|{"commands":["echo '","git stash"],"queries":["x"]}
+Monitor|{"command":"git stash && tail -f build.log","description":"d"}
+ROWS
+while IFS='|' read -r tool input; do
+  run_ctx "$tool" "$input" agent1; rc=$?
+  ok=1; [ "$rc" -eq 0 ] && ok=0
+  check "GH #913 control: subagent allowed: $tool $input" "$ok"
+done <<'ROWS'
+ctx_execute|{"language":"shell","code":"git stash list"}
+ctx_execute|{"language":"sh","code":"git status && git log --oneline -5"}
+ctx_batch|{"commands":["ls","git diff"],"queries":["git stash"]}
+ctx_execute|{"language":"python","code":"print('git stash')"}
+ctx_execute|{"language":"zsh","code":"git stash"}
+ctx_execute|{"language":"shell"}
+Monitor|{"description":"a ws monitor has no command"}
+Read|{"file_path":"/tmp/x"}
+ROWS
+run_ctx ctx_execute '{"language":"shell","code":"git stash"}' ""; rc=$?
+ok=1; [ "$rc" -eq 0 ] && ok=0
+check "GH #913: main session ctx_execute shell git stash allowed (no agent_id)" "$ok"
+# Parity: the ctx shell path judges code exactly as Bash judges the same text.
+for cmd in "git stash" "git -C sub stash" "git status" "echo 'git stash'" "X=git stash" "noglob git stash" "eval git stash"; do
+  run_gate "$cmd" agent1; want=$?
+  run_ctx ctx_execute "$(python3 -c 'import json,sys; print(json.dumps({"language":"shell","code":sys.argv[1]}))' "$cmd")" agent1; got=$?
+  ok=1; [ "$got" -eq "$want" ] && ok=0
+  check "GH #913 parity: ctx_execute shell '$cmd' -> $got, Bash -> $want" "$ok"
+done
+_twenty=$(python3 -c 'import json; print(json.dumps({"commands": ["ls"] * 20, "queries": ["x"]}))')
+_t0=$SECONDS; run_ctx ctx_batch "$_twenty" agent1; rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ $((SECONDS - _t0)) -lt 5 ] && ok=0
+check "GH #913: a 20-command ordinary batch is allowed, quickly ($((SECONDS - _t0)) s)" "$ok"
+# A batch too long to judge in the gate's own deadline denies with "split", never allows (no onFailure block here).
+_long=$(python3 -c 'import json; print(json.dumps({"commands": ["ls"] * 300 + ["git stash"], "queries": ["x"]}))')
+_err=$(mktemp "$_JOURNAL_TMP/err.XXXXXX")
+_t0=$SECONDS; ctx_payload ctx_batch "$_long" agent1 | MH_SGG_DEADLINE_SECS=1 bash "$GATE" 2>"$_err"; rc=$?
+ok=1; [ "$rc" -eq 2 ] && [ $((SECONDS - _t0)) -lt 4 ] && /usr/bin/grep -q 'split' "$_err" && ok=0
+check "GH #913: a batch longer than the deadline denies with 'split' ($((SECONDS - _t0)) s)" "$ok"
+# Drift: sgg must read the same tools and shell languages irrecoverable reads (irrecoverable owns the unknown-language deny).
+python3 - "$ROOT" <<'PY'; rc=$?
+import json, re, sys
+root = sys.argv[1]
+h = json.load(open(root + "/hooks/hooks.json"))
+m = {}
+for e in h["hooks"]["PreToolUse"]:
+    for hk in e["hooks"]:
+        for g in ("irrecoverable.sh", "subagent-git-guard.sh"):
+            if g in hk.get("command", ""):
+                m[g] = e.get("matcher")
+t = {g: re.findall(r"^_CTX_SHELL = (\(.*\))$", open(root + "/hooks/gates/" + g + ".py").read(), re.M)
+     for g in ("irrecoverable", "subagent-git-guard")}
+ok = m.get("irrecoverable.sh") and m["irrecoverable.sh"] == m.get("subagent-git-guard.sh") \
+    and len(t["irrecoverable"]) == 1 and t["irrecoverable"] == t["subagent-git-guard"]
+print("matchers:", m, "shell tuples:", t, file=sys.stderr)
+sys.exit(0 if ok else 1)
+PY
+check "GH #913 drift: sgg and irrecoverable share one matcher and one _CTX_SHELL tuple" "$rc"
+
 echo ""
 echo "=== $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]

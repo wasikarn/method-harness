@@ -47,9 +47,6 @@ if not isinstance(d, dict):
     print("[mh:gate] subagent-git-guard: non-object payload, allowing", file=sys.stderr)
     sys.exit(0)
 
-if d.get("tool_name") != "Bash":
-    sys.exit(0)
-
 # agent_id is present ONLY inside a subagent call. Presence, not truthiness --
 # an empty-string or null agent_id is still the signal (same fix already
 # applied to subagent-spawn-guard.py:38 (GH #154) and
@@ -58,8 +55,24 @@ if d.get("tool_name") != "Bash":
 if "agent_id" not in d:
     sys.exit(0)
 
+# GH #913: the tools irrecoverable reads (hooks.json gives both gates one matcher; a test pins it). Monitor
+# carries tool_input.command like Bash. context-mode's ctx_execute(_file) code is judged as Bash for the shell
+# languages; every other language allows here, since irrecoverable denies an unknown one for every session and
+# non-shell languages are out of scope (#784). A ctx_batch(_execute) command list is judged one command per
+# child run of this gate (_judge_batch below), so one command cannot hide the next.
+_CTX_SHELL = ("shell", "sh", "bash")
+_tn = str(d.get("tool_name") or "")
 ti = d.get("tool_input")
-cmd = ti.get("command") if isinstance(ti, dict) else None
+ti = ti if isinstance(ti, dict) else {}
+_batch = None
+if _tn in ("Bash", "Monitor"):
+    cmd = ti.get("command")
+elif _tn.endswith(("__ctx_execute", "__ctx_execute_file")):
+    cmd = ti.get("code") if ti.get("language") in _CTX_SHELL else None  # tuple membership: a list can't raise
+elif _tn.endswith(("__ctx_batch_execute", "__ctx_batch")) and "commands" in ti:
+    cmd, _batch = "", ti["commands"]
+else:
+    sys.exit(0)
 if not isinstance(cmd, str):
     sys.exit(0)
 
@@ -132,6 +145,50 @@ try:
     signal.setitimer(signal.ITIMER_REAL, _DEADLINE_SECS)
 except (AttributeError, ValueError, OSError):
     pass
+
+def _split_deny(why):
+    _err(f"[mh:gate] BLOCKED: subagent ({agent_type}) context-mode batch: {why}; split the batch into smaller ones.")
+    journal(GATE_ID, _tn, "deny", d.get("session_id"))
+    os._exit(2)
+
+def _judge_batch(cmds):
+    # GH #913: each command is judged alone by a child run of this gate, fed the outer payload as Bash. The
+    # whole batch stays inside this gate's own deadline (the timer above denies; no onFailure block here, so a
+    # hook timeout would allow): a child gets what is left of it, and under 0.5 s left the batch is denied.
+    # Coercion mirrors irrecoverable.py's (context-mode 1.x string/JSON/dict forms; 2.x takes only a string
+    # list, so the rest only over-reads). Any failure denies: exit 1 would allow in this gate.
+    import subprocess, time
+    try:
+        if isinstance(cmds, str) and cmds.strip():
+            try:
+                p = json.loads(cmds)
+            except Exception:
+                p = None
+            cmds = p if isinstance(p, list) else [cmds]
+        t0 = time.monotonic()
+        run = [sys.executable, "-S", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run.py"),
+               "subagent-git-guard"]
+        for c in (cmds if isinstance(cmds, list) else []):
+            c = c if isinstance(c, str) else c.get("command") if isinstance(c, dict) else None
+            if not isinstance(c, str):
+                continue
+            left = _DEADLINE_SECS - (time.monotonic() - t0)
+            if left < 0.5:
+                _split_deny(f"not every command could be checked in the gate's {_DEADLINE_SECS:g} s time limit")
+            r = subprocess.run(run, input=json.dumps(dict(d, tool_name="Bash", tool_input={"command": c})),
+                               capture_output=True, text=True, timeout=left,
+                               env=dict(os.environ, MH_SGG_DEADLINE_SECS="%.3f" % left))
+            if r.returncode != 0:
+                _err(r.stderr.rstrip("\n"))
+                os._exit(2)
+    except subprocess.TimeoutExpired:
+        _split_deny(f"a command took longer than the gate's {_DEADLINE_SECS:g} s time limit to check")
+    except Exception as e:
+        _split_deny(f"the batch could not be checked ({clip(e)})")
+    sys.exit(0)
+
+if _batch is not None:
+    _judge_batch(_batch)
 
 # 2026-09-20: extracted to a shared hooks/gates/_quotemask.py after this
 # function and test-integrity.py's identical _mask_quotes_bash drifted into
