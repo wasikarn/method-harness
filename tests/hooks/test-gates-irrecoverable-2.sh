@@ -228,23 +228,31 @@ test_deny_failclosed "$IRRECOVERABLE" "non-string command payload triggers the f
 # --- GH #140: unbounded shlex tokenize cost on an oversized raw command string.
 _len_pad=$(python3 -c "print('A' * 700000)")
 
+# A failure prints elapsed seconds and load: exit 124 at a small elapsed value under high load means a
+# starved process (a flake), 124 near 2.0 s while idle means the length cap regressed (uncapped tokenize ~3.8 s).
+_now() { python3 -c 'import time; print(time.time())'; }
+_load() { uptime | sed 's/.*load averages*: *//'; }
+_t0=$(_now)
 _rc=$(bash_payload "git push --force origin $_len_pad" | timeout 2 bash "$IRRECOVERABLE" 2>/dev/null; echo $?)
+_el=$(python3 -c "print('%.2f' % ($(_now) - $_t0))")
 if [[ "$_rc" == "2" ]]; then
   echo "  ✅ DENY (<2s): oversized single-token dangerous command still denies (GH #140 length cap)"
   pass=$((pass + 1))
 else
-  echo "  ❌ DENY EXPECTED (<2s) but got exit $_rc: oversized dangerous command (GH #140 length cap)" >&2
+  echo "  ❌ DENY EXPECTED (<2s) but got exit $_rc after ${_el}s, load $(_load): oversized dangerous command (GH #140 length cap)" >&2
   fail=$((fail + 1))
 fi
 
 # Direction-pinning: the SAME oversized padding on a BENIGN tail (git status matches no deny
 # pattern at all) must ALSO deny fast.
+_t0=$(_now)
 _rc=$(bash_payload "git status $_len_pad" | timeout 2 bash "$IRRECOVERABLE" 2>/dev/null; echo $?)
+_el=$(python3 -c "print('%.2f' % ($(_now) - $_t0))")
 if [[ "$_rc" == "2" ]]; then
   echo "  ✅ DENY (<2s): oversized BENIGN-tail command still denies -- pins the cap, not a pattern match (GH #140)"
   pass=$((pass + 1))
 else
-  echo "  ❌ DENY EXPECTED (<2s) but got exit $_rc: oversized benign-tail command (GH #140 length cap)" >&2
+  echo "  ❌ DENY EXPECTED (<2s) but got exit $_rc after ${_el}s, load $(_load): oversized benign-tail command (GH #140 length cap)" >&2
   fail=$((fail + 1))
 fi
 
