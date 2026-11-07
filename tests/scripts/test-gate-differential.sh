@@ -428,8 +428,11 @@ for line in sys.stdin:
     elif mode[0] == "garble":
         rep = "not json"
     else:  # die-after-2 CODE: answer two commands with CODE and empty output (the second one near the
-        # deadline: over half of 4 s), then exit 3
+        # deadline: over half of 4 s), then exit 3, with a slow exit after stdout closes (a loaded machine:
+        # the engine sees EOF before the process is gone)
         if n > 2:
+            os.close(1)  # sys.stdout.close() would leave fd 1 open
+            import time; time.sleep(0.5)
             sys.exit(3)
         for k in ("out", "err"):
             open(req[k], "w").close()
