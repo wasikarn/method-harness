@@ -277,6 +277,7 @@ class ForkRunner:
             raise ServerDied("no python3 on the gates' PATH")
         self.files = {k: os.path.join(work, k) for k in ("in", "out", "err")}
         self.server_err = open(os.path.join(work, "server.err"), "wb")
+        self.eof = False
         self.p = subprocess.Popen([py, "-S", FORK_SERVER, gates_dir, gate, str(TIMEOUT)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=self.server_err, env=env, cwd=cwd, bufsize=0)
         # The warm-up runs a few allowing commands in the server itself, with no deadline of its own.
@@ -292,11 +293,17 @@ class ForkRunner:
                 return b""
             chunk = os.read(fd, 4096)
             if not chunk:
+                self.eof = True
                 return b""
             buf += chunk
         return buf
 
     def died(self, what=None):
+        if self.eof:  # a closed stdout means the server is exiting; under load it is not reaped yet
+            try:
+                self.p.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
         what = what or ("exited (rc=%s)" % self.p.returncode if self.p.poll() is not None else "did not answer in time")
         self.close()
         with open(os.path.join(self.work, "server.err"), errors="replace") as f:
