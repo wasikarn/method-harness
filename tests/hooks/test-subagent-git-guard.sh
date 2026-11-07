@@ -2121,8 +2121,19 @@ check "GH #913: a 20-command ordinary batch is allowed, quickly ($((SECONDS - _t
 _long=$(python3 -c 'import json; print(json.dumps({"commands": ["ls"] * 300 + ["git stash"], "queries": ["x"]}))')
 _err=$(mktemp "$_JOURNAL_TMP/err.XXXXXX")
 _t0=$SECONDS; ctx_payload ctx_batch "$_long" agent1 | MH_SGG_DEADLINE_SECS=1 bash "$GATE" 2>"$_err"; rc=$?
-ok=1; [ "$rc" -eq 2 ] && [ $((SECONDS - _t0)) -lt 4 ] && /usr/bin/grep -q 'split' "$_err" && ok=0
-check "GH #913: a batch longer than the deadline denies with 'split' ($((SECONDS - _t0)) s)" "$ok"
+ok=1; [ "$rc" -eq 2 ] && [ $((SECONDS - _t0)) -lt 4 ] && /usr/bin/grep -q 'context-mode batch.*split the batch' "$_err" && ok=0
+check "GH #913: a batch longer than the deadline denies with the batch message ($((SECONDS - _t0)) s)" "$ok"
+# One command in a batch that is slow to check (the padded shape from the GH #469 row above): the deny
+# must name the batch, not "0 characters" of a Bash command, and write exactly one journal row, under the
+# batch's own tool name (an orphaned child would add a second "Bash" row after the parent exits).
+_jr="$_JOURNAL_TMP/j913.jsonl"
+_slow=$(python3 -c 'import json; print(json.dumps({"commands": ["ls", ("eval sudo " + "s " * 24 + ";") * 270 + "git stash $\"show\""], "queries": ["x"]}))')
+_t0=$SECONDS; ctx_payload ctx_batch "$_slow" agent1 | MH_GATE_JOURNAL_PATH="$_jr" MH_SGG_DEADLINE_SECS=1 bash "$GATE" 2>"$_err"; rc=$?
+_secs=$((SECONDS - _t0)); sleep 2
+_rows=$(python3 -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1])] if __import__("os").path.exists(sys.argv[1]) else []; print(len(r), ",".join(x.get("tool_name") or "" for x in r))' "$_jr")
+ok=1; [ "$rc" -eq 2 ] && [ "$_secs" -lt 4 ] && /usr/bin/grep -q 'context-mode batch' "$_err" \
+  && ! /usr/bin/grep -q '(0 characters)' "$_err" && [ "$_rows" = "1 ${_CTX}_ctx_batch" ] && ok=0
+check "GH #913: a slow command in a batch denies once, as the batch (rc $rc, $_secs s, journal: $_rows)" "$ok"
 # Drift: sgg must read the same tools and shell languages irrecoverable reads (irrecoverable owns the unknown-language deny).
 python3 - "$ROOT" <<'PY'; rc=$?
 import json, re, sys

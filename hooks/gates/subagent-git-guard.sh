@@ -24,8 +24,8 @@
 # escapes (\" \\ \/ \b \f \n \r \t) cannot make a letter or "_", so with neither agent_id nor \u
 # in the raw text, a payload that also matches the plain-object regex below (ASCII, depth 2, no
 # arrays) parses to a dict with no agent_id key: python exits 0, no output. Anything else runs
-# python3 (malformed JSON keeps its stderr line). Keep `_input=$(cat)` on line 33: bash's NUL-byte
-# warning names it. No "no git substring" shortcut: g\it serializes as g\\it (GH #317).
+# python3 (malformed JSON keeps its stderr line). Keep `_input=$(cat)` on a line of its own:
+# bash's NUL-byte warning names that line. No "no git substring" shortcut: g\it serializes as g\\it (GH #317).
 set -uo pipefail
 
 # Portability guard (#93): announced fail-open when python3 is missing.
