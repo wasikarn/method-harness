@@ -60,8 +60,14 @@ Baseline 2026-11-07 (`--runs 5` override; the cases default to 3), `test-first.m
 plugin, not Rule 4 alone, so it shows mh loaded produces a test-first fix here, not that Rule 4's
 wording does. Only the Thai case can catch a weaker Rule 4 (the English one passes without mh), so
 it is the guard for edits to `docs/METHODOLOGY.md`. Neither case needs `mattpocock-skills:tdd`
-(that plugin is not loaded in the eval sandbox). The `old-bound-gone.md` grader and the
-`(?![\d.])` lookahead were added after the baseline run.
+(that plugin is not loaded in the eval sandbox). The baseline ran 4 graders. `old-bound-gone.md` and a
+number-boundary lookahead came after it, so the same runs would now score about 1.0 vs 0.6 (a
+case score is the mean of its graders), not 0.5: compare `test-first.md` counts across reruns, not
+the case delta. Later still the file regexes were widened to accept an early `total < 100` return,
+swapped operands, `>= 100.0` and a parameterized test, which they had scored 0, and bounded to reject
+`1100 <= total`, `>= 100e1` and the old bound swapped (`100 < total`); `tests/evals/test-rule4-graders.sh`
+pins the accepted and rejected shapes. They are a coarse check, not proof of a correct fix; the
+known misses are listed in each grader's note, and `test-first.md` carries the Rule 4 signal.
 
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run
