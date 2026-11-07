@@ -2,8 +2,8 @@
 # test-run-gauntlet-wiring.sh — a test file on disk with no runner ships
 # silently broken. hook_test_files() lists the layer's files by glob, so this
 # asserts every test-*.sh / test_*.py under tests/ matches one of those globs.
-# It runs only that listing function, never a test (running the runner from
-# here recurses: a test that runs the gauntlet re-runs itself).
+# It runs only that listing function and start_order(), never a test (running the
+# runner from here recurses: a test that runs the gauntlet re-runs itself).
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
@@ -55,6 +55,32 @@ if [ "${#unrun[@]}" -eq 0 ]; then
   ok "every tests/<dir> is run by a gauntlet layer (mod tests via ${plugin_test_runner:-none})"
 else
   bad "no gauntlet layer runs: ${unrun[*]}"
+fi
+
+# start_order() puts the files that run far longer than their size says first, then the rest by size
+# (`ls -S`), so the slowest file does not start ~2 min in and set the gauntlet's end. Run on real files,
+# since ls -S reads their sizes.
+order_body=$(sed -n '/^start_order()/,/^}/p' "$GAUNTLET")
+if [ -z "$order_body" ]; then
+  bad "start_order() not found in run-gauntlet.sh"
+else
+  slow=$(sed -n 's/^  local slow="\(.*\)"$/\1/p' <<<"$order_body")
+  read -ra slow_list <<<"$slow"
+  small=tests/scripts/test-run-gauntlet-wiring.sh big=tests/hooks/test-gates.sh
+  got=$(cd "$ROOT" && printf '%s\n' "$small" "${slow_list[@]}" "$big" | bash -c "$order_body
+    start_order")
+  want=$(printf '%s\n' "${slow_list[@]}" "$big" "$small")
+  if [ -n "$slow" ] && [ "$got" = "$want" ]; then ok "start_order() starts the slow list first, then the rest by size"
+  else bad "start_order(): slow='$slow' got: $(tr '\n' ' ' <<<"$got") want: $(tr '\n' ' ' <<<"$want")"; fi
+  got=$(cd "$ROOT" && printf '%s\n' "$big" "$small" | bash -c "$order_body
+    start_order")
+  if [ "$got" = "$(printf '%s\n' "$big" "$small")" ]; then ok "start_order() adds no slow-list file the run did not ask for"
+  else bad "start_order() without the slow files: $(tr '\n' ' ' <<<"$got")"; fi
+  # A renamed or deleted slow file would drop out of the list silently.
+  gone=""
+  for f in "${slow_list[@]}"; do case "$NL$ran$NL" in *"$NL$f$NL"*) ;; *) gone="$gone $f" ;; esac; done
+  if [ -n "$slow" ] && [ -z "$gone" ]; then ok "every start_order() slow-list file is a listed test file"
+  else bad "start_order() slow list names files hook_test_files() does not list:${gone:- (empty list)}"; fi
 fi
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
