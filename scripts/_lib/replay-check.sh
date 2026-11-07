@@ -13,8 +13,8 @@ replay_dir() { printf '%s' "${GATE_REPLAY_RECORD_DIR:-$HOME/.cache/mh/gate-repla
 # replay_hint <base> <gate>: the command that writes the gate's record.
 replay_hint() { printf 'bash scripts/gate-differential.sh %s %s --replay all --no-cache' "$1" "$2"; }
 
-# closure_of <rev> <gate>: gate_closure.py lists hooks/gates/ relative to its cwd, so it runs at the
-# checkout's top (from a subdir it would hash nothing, and every closure would match).
+# closure_of <rev> <gate>: runs at the checkout's top. gate_closure.py --rev reads from the repo top itself
+# (--full-tree); the cd is a second guard, since from a subdir an older copy hashed nothing.
 closure_of() {
   local top
   top=$(git rev-parse --show-toplevel) || return 1
