@@ -8,7 +8,7 @@ Keep `MEMORY.md` as an index only (a book's table of contents). Move the full me
 
 ## Claims
 
-C1. Claude Code docs (`code.claude.com/docs/en/memory`): `autoMemoryDirectory` relocates auto memory; needs v2.1.234+; readable from user, project, local, policy or `--settings` scope; value must be an absolute path or start with `~/`. (Extracted with a Firecrawl query, lossy.)
+C1. Claude Code docs (`code.claude.com/docs/en/memory`): `autoMemoryDirectory` relocates auto memory; needs v2.1.234+ [corrected 2026-11-08: added in 2.1.74; 2.1.234 is the version for `CLAUDE_CODE_PROJECT_DIR_NAME`]; readable from user, project, local, policy or `--settings` scope; value must be an absolute path or start with `~/`. (Extracted with a Firecrawl query, lossy.)
 C2. Docs: MEMORY.md loads each session as "first 200 lines or 25KB"; topic files are read on demand; memory files are excluded from the `cleanupPeriodDays` sweep.
 C3. Probe 1 (`claude -p --model haiku --settings '{"autoMemoryDirectory": <scratch dir>}'`): with a scratch folder holding `MEMORY.md` (pointer line with token ZEBRA-7741) and a topic file (token OTTER-9902), the model quoted both. Result: index and topic file load from a vault-style folder.
 C4. Probe 2: `MEMORY.md` in one folder with an absolute-path pointer to a body file in a different folder; the model quoted the far token HERON-3318. Result: bodies can live outside the memory directory.

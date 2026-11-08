@@ -1,4 +1,6 @@
-# Proposal: one "Memory" vault, book-style index, three layers (revision 0)
+# Proposal: one "Memory" vault, book-style index, three layers (revision 3)
+
+**Status: NO-GO for the migration** (2026-11-08, after 3 validator rounds). The migration step never closed. The lint and nudge defects found along the way shipped on their own in PR #959; leftovers are GH #960. See `## Correction note` at the end, which wins over the text above where they disagree.
 
 ## The problem
 
@@ -98,3 +100,27 @@ Validator round 2 returned OPEN on B1 and NEW-2 and five NEW items; the host che
 - NEW-6 (archived stubs stay in the hot index): accepted as a known residual. Each stub is about 100 B; lint already reports NEAR-BUDGET and the 60% target applies. No Class E is added (YAGNI).
 - Depth contract as a ratchet: the real store has 200 topics deeper than 2 hops (the mh store), so the check starts as a count plus the 5 deepest, never one line per file, never failing; it fails only when a change adds more deep topics than the stored baseline. It skips files that are already unreachable, so UNINDEXED and TOO DEEP do not repeat each other. Ship it with or after the relink, not before, because the nudge prints the whole lint output every session.
 - Presence-only `.vault-id` (a link aimed at another project's vault folder passes): accepted as residual, since it needs a script bug, not a session; the script writes the project slug into `.vault-id` and the nudge compares it with the slug it derives from the resolver.
+
+## Correction note (2026-11-08, after PR #959 merged)
+
+This record was written before its outcome was known. Where it disagrees with this note, this note wins.
+
+**Verdict.** The attack-proposal ended NO-GO for the vault migration. Validator round 3 failed (`pass: false`), so the fault is in the plan, not the patch.
+
+**Still open (these block any migration):**
+- B1(a)/(b): the live-directory swap while sessions may be running. `rsync -a --update` overwrites a vault file written in the same second, and the pointer-line union of `MEMORY.md` drops headings and edited lines. Claude Code processes show as `2.1.319` in `lsof`, so a process check for `claude` never matches. Untested alternative: rename the directory itself into the vault on the same filesystem (atomic, no copy phase), then install the link with a temp link plus `os.rename`.
+- The depth-contract ratchet's baseline spec (see Revision 3). It should ship with or after a relink, because the nudge prints the whole lint output every session.
+- B3's `.vault-id` warning and NEW-5 (qmd and fswatch repointing) need a vault and were not built.
+
+**Closed by PR #959 (merged into develop, mh 1.1.582), no vault needed:**
+- B6/NEW-4: Class A, B and D scan the comment-stripped index and edit only outside HTML comments; a pointer that exists only inside a comment no longer counts as indexed.
+- NEW-2: lint accepts a Class A `_archive/<date>/<file>` stub while that file exists.
+- NEW-1, NEW-3, B8: Class A, B and D skip any change that strands a topic or pushes one past 2 hops, judged on the index the earlier classes leave (`build_plan`); `index-*.md` is never archived or deindexed.
+- B5: the nudge's cache `find` follows a symlinked `memory/`. It shipped as a trailing slash on `"$MEMDIR/"` (`hooks/session/memory-health-nudge.sh`), not as the `realpath` this document says.
+- Left for GH #960: Class C plans on the raw state, so it can point a link at a file Class A archives in the same run; `_pick_ledger_target`'s ledger fallback never matches.
+
+**Numbers.**
+- `autoMemoryDirectory` was added in Claude Code 2.1.74. 2.1.234 is the version for `CLAUDE_CODE_PROJECT_DIR_NAME`, not for this setting.
+- The file counts in this record (508, 509, 510) are snapshots of the same store taken while memories were being written; memory-lint counted 510 memory files (excluding `MEMORY.md`) at the time. Of 509 topics, 308 are within 2 hops, so 201 are not (the "200" in Revision 3 is rounded). Those 201 include the 14 with no link path at all, so 187 are reachable but deeper than 2 hops.
+
+**Identifiers.** `B1`-`B8` are the breaks the Codex attacker lanes found (bypass, over-block, damage). `NEW-1`-`NEW-6` are breaks the validator found in its own rounds. Here `R1`-`R4` are the four research streams of the redesign. The sibling audit document `agent-memory-proposals-audit-2026-11-08.md` uses `R1`-`R4` for repo claims instead. Fixture names (`fxAD`, `fxBM`, `fxD6`, `ba-fixture`, `b4-corpus.txt`) are scratch files from the validator rounds that were not committed.
