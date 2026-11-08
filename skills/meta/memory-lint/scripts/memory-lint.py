@@ -25,7 +25,8 @@ Detector checks (default mode):
   - load budget           — 200-line / 25KB cap on MEMORY.md
   - depth ratchet         — TOO DEEP when more reachable topics sit past MAX_HOPS than the
                             baseline in $HOME/.claude/state/memory-lint-depth-baseline-<key>.
-                            Only a plain run writes it (first run, or N fell); --json only
+                            Only a plain run on a store with no other findings writes it (first run,
+                            or N fell; deliberately broad, an ORPHAN-only store also waits); --json only
                             reads it. --auto-archive plans no depth fix and writes no baseline;
                             it only stops calling the store clean while N is over it.
                             Delete the file to accept an increase.
