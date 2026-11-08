@@ -87,14 +87,14 @@ print(d["resolved"], d["total"], c["resolved"], c["missing"], c["ambiguous-or-ou
 
 # Text report: header, never the word "verified".
 txt=$(python3 "$SCRIPT" --root "$T/root" --root "$T/repo" --diff-paths "$T/diff-paths" < "$T/input.md")
-case "$txt" in "citations exist: 5 of 12 resolved"*) ok "text header" ;; *) bad "text header: $(echo "$txt" | head -1)" ;; esac
-echo "$txt" | /usr/bin/grep -qi verified && bad "text output says 'verified'" || ok "text output never says 'verified'"
-echo "$txt" | /usr/bin/grep -q "missing.*line 2" && ok "text lists a missing item with its line" || bad "text lacks 'missing ... line 2'"
+case "$txt" in "citations exist: 5 of 12 resolved"*) ok "text header" ;; *) bad "text header: ${txt%%$'\n'*}" ;; esac
+/usr/bin/grep -qi verified <<<"$txt" && bad "text output says 'verified'" || ok "text output never says 'verified'"
+/usr/bin/grep -q "missing.*line 2" <<<"$txt" && ok "text lists a missing item with its line" || bad "text lacks 'missing ... line 2'"
 
 # Empty input.
 empty=$(printf '' | python3 "$SCRIPT" --root "$T/root")
 rc=$?
-[ "$rc" -eq 0 ] && [ "$(echo "$empty" | head -1)" = "citations exist: 0 of 0 resolved" ] && ok "empty input -> 0 of 0, exit 0" || bad "empty input rc=$rc: $empty"
+[ "$rc" -eq 0 ] && [ "${empty%%$'\n'*}" = "citations exist: 0 of 0 resolved" ] && ok "empty input -> 0 of 0, exit 0" || bad "empty input rc=$rc: $empty"
 
 # Usage errors exit 2.
 python3 "$SCRIPT" "$T/input.md" > /dev/null 2>&1; rc=$?
@@ -113,9 +113,13 @@ label_of() { # $1 = input text, extra args = more script flags; prints the label
 [ "$(label_of 'src/app.py:0-2')" = "missing" ] && ok "range starting at 0 -> missing" || bad "range starting at 0"
 [ "$(label_of 'src/app.py:2-3')" = "resolved" ] && ok "in-range range -> resolved" || bad "in-range range"
 printf 'x\n' > "$T/root/src/locked.py"; chmod 000 "$T/root/src/locked.py"
-lk=$(label_of 'src/locked.py:1'); rc=$?
+if [ -r "$T/root/src/locked.py" ]; then
+  echo "  SKIP: unreadable cited file (running as root, chmod 000 does not hide it)"
+else
+  lk=$(label_of 'src/locked.py:1')
+  [ "$lk" = "ambiguous-or-outside" ] && ok "unreadable cited file -> ambiguous-or-outside, no traceback" || bad "unreadable file -> '$lk'"
+fi
 chmod 644 "$T/root/src/locked.py"
-[ "$lk" = "ambiguous-or-outside" ] && ok "unreadable cited file -> ambiguous-or-outside, no traceback" || bad "unreadable file -> '$lk'"
 printf '\377\376\n' > "$T/diff.bin"
 printf 'src/app.py:1\n' | python3 "$SCRIPT" --root "$T/root" --diff-paths "$T/diff.bin" > /dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "non-UTF-8 --diff-paths -> exit 2" || bad "non-UTF-8 --diff-paths -> exit $rc"
@@ -125,6 +129,15 @@ printf '../../etc/passwd\n' > "$T/diff-trav"
 python3 -c "print('a.'*20000)" > "$T/long.md"
 s=$(date +%s); timeout 20 python3 "$SCRIPT" --root "$T/root" "$T/long.md" > /dev/null; rc=$?; e=$(date +%s)
 [ "$rc" -eq 0 ] && [ $((e - s)) -lt 5 ] && ok "20000-char token finishes under 5 s" || bad "long token rc=$rc, $((e - s)) s"
+
+# Round-2 review findings (spec and standards): red on the round-1 script.
+printf 'src/app.py\nsrc/removed.py\n' > "$T/diff-names"
+[ "$(label_of 'src/app.py:999' --diff-paths "$T/diff-names")" = "missing" ] && ok "diff list does not skip the line check of a file still on disk" || bad "diff-listed existing file past EOF -> '$(label_of 'src/app.py:999' --diff-paths "$T/diff-names")'"
+[ "$(label_of 'src/removed.py:7' --diff-paths "$T/diff-names")" = "resolved" ] && ok "diff-listed file gone from the tree -> resolved" || bad "diff-listed deleted file"
+printf 'src/app.py:1\n' | python3 "$SCRIPT" --root "$T/root" --root "$T/nope" > "$T/stale.out" 2> "$T/stale.err"; rc=$?
+[ "$rc" -eq 0 ] && /usr/bin/grep -q "citations exist: 1 of 1" "$T/stale.out" && /usr/bin/grep -q "nope" "$T/stale.err" && ok "a stale --root warns and is skipped" || bad "stale --root rc=$rc"
+printf 'src/app.py:1\n' | python3 "$SCRIPT" --root "$T/nope" > /dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "no usable --root -> exit 2" || bad "no usable --root -> exit $rc"
 
 python3 "$SCRIPT" --selftest > /dev/null; rc=$?
 [ "$rc" -eq 0 ] && ok "--selftest passes" || bad "--selftest exit $rc"

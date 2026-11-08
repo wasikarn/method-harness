@@ -21,6 +21,12 @@ whose first directory matches one under a root, so it is not proof of fabricatio
 Never writes anything. Exit 0 whenever it ran,
 2 on a usage error (unreadable input, no --root).
 
+--diff-paths FILE lists one path per line, as `git diff --name-only` prints them (use
+--diff-filter=D to list only deleted files). A listed path is read as present only when no file
+is found on disk, so the line check still runs for a file that exists. A raw unified diff is
+not parsed. A --root that is not a directory is skipped with a warning on stderr; the run
+exits 2 only when no usable root is left.
+
 Usage: citation_exists.py --root PATH [--root PATH ...] [--diff-paths FILE] [--json] [FILE]
        citation_exists.py --selftest
 Tests: tests/scripts/test-citation-exists.sh
@@ -32,7 +38,8 @@ import re
 import subprocess
 import sys
 
-LABELS = ("resolved", "missing", "ambiguous-or-outside")
+RESOLVED, MISSING, OUTSIDE = "resolved", "missing", "ambiguous-or-outside"
+LABELS = (RESOLVED, MISSING, OUTSIDE)
 # The path:line idea of verdict_json.CITATION_RE (a letter, and a "." or "/"), with an
 # optional -line range and a tighter path character set so "(src/a.py:3" drops the "(".
 # Linear: one greedy run of path characters, then ":N"; the letter and "./" rules run in extract().
@@ -105,46 +112,46 @@ class Resolver:
         first, last = span
         count = _line_count(real)
         if count is None:
-            return "ambiguous-or-outside"
-        return "resolved" if 1 <= first <= last <= count else "missing"
+            return OUTSIDE
+        return RESOLVED if 1 <= first <= last <= count else MISSING
 
-    def path(self, path, last):
-        norm = path[2:] if path.startswith("./") else path
+    def resolve_path(self, cited, span):
+        norm = cited[2:] if cited.startswith("./") else cited
         if ".." in norm.split("/"):
-            return "ambiguous-or-outside"
+            return OUTSIDE
         if os.path.isabs(norm):
             real = os.path.realpath(norm)
             hit = [r for r in self.roots if _inside(real, r)]
             if not hit or not os.path.isfile(real):
-                return "ambiguous-or-outside" if not hit else "missing"
-            return self._check_lines(real, last)
-        if norm in self.diff:
-            return "resolved"
+                return OUTSIDE if not hit else MISSING
+            return self._check_lines(real, span)
         if "/" not in norm.strip("/"):
             found = self._real_files((r, p) for r in self.roots
                                      for p in self._basename_index().get(norm, ())
                                      if p.startswith(r + os.sep))
             if not found or len(found) != 1:
-                return "ambiguous-or-outside"
-            return self._check_lines(found.pop(), last)
+                return OUTSIDE
+            return self._check_lines(found.pop(), span)
         found = self._real_files((r, os.path.join(r, norm)) for r in self.roots)
         if found is None or len(found) > 1:
-            return "ambiguous-or-outside"
+            return OUTSIDE
         if found:
-            return self._check_lines(found.pop(), last)
+            return self._check_lines(found.pop(), span)
+        if norm in self.diff:  # deleted by the reviewed diff: gone from the tree, still a real cite
+            return RESOLVED
         first = norm.split("/", 1)[0]
         if any(os.path.isdir(os.path.join(r, first)) for r in self.roots):
-            return "missing"
-        return "ambiguous-or-outside"
+            return MISSING
+        return OUTSIDE
 
-    def sha(self, sha):
+    def resolve_sha(self, sha):
         if sha not in self._shas:
-            self._shas[sha] = "ambiguous-or-outside"
+            self._shas[sha] = OUTSIDE
             for r in self.roots:
                 p = subprocess.run(["git", "-C", r, "cat-file", "-e", sha + "^{commit}"],
                                    env=GIT_ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if p.returncode == 0:
-                    self._shas[sha] = "resolved"
+                    self._shas[sha] = RESOLVED
                     break
         return self._shas[sha]
 
@@ -152,8 +159,8 @@ class Resolver:
 def check(text, roots, diff_paths=()):
     res = Resolver(roots, set(diff_paths))
     items = []
-    for n, kind, cite, path, last in extract(text):
-        label = res.path(path, last) if kind == "path" else res.sha(path)
+    for n, kind, cite, target, span in extract(text):
+        label = res.resolve_path(target, span) if kind == "path" else res.resolve_sha(target)
         items.append({"line": n, "kind": kind, "citation": cite, "label": label})
     counts = {k: sum(1 for i in items if i["label"] == k) for k in LABELS}
     return {"resolved": counts["resolved"], "total": len(items), "counts": counts, "items": items}
@@ -163,7 +170,7 @@ def render(report):
     out = ["citations exist: %d of %d resolved" % (report["resolved"], report["total"])]
     out += ["  %s: %d" % (k, report["counts"][k]) for k in LABELS]
     out += ["%s  %s  (line %d)" % (i["label"], i["citation"], i["line"])
-            for i in report["items"] if i["label"] != "resolved"]
+            for i in report["items"] if i["label"] != RESOLVED]
     return "\n".join(out)
 
 
@@ -186,9 +193,12 @@ def main(argv):
     if a.selftest:
         _selftest()
         return 0
-    roots = a.root
-    if not roots or not all(os.path.isdir(r) for r in roots):
-        print("citation_exists: give at least one --root, each an existing directory", file=sys.stderr)
+    roots = [r for r in a.root if os.path.isdir(r)]
+    for r in a.root:
+        if r not in roots:
+            print("citation_exists: skipping --root %s (not a directory)" % r, file=sys.stderr)
+    if not roots:
+        print("citation_exists: give at least one --root that is an existing directory", file=sys.stderr)
         return 2
     try:
         text = open(a.file, encoding="utf-8", errors="replace").read() if a.file else sys.stdin.read()

@@ -85,6 +85,7 @@ tests/hooks/fixtures/irrecoverable-*      medium tests/hooks/test-gates-other.sh
 tests/hooks/fixtures/subagent-git-guard-* medium tests/hooks/test-subagent-git-guard.sh
 tests/scripts/fixtures/model-bench/*        medium tests/scripts/test-model-bench.sh
 tests/scripts/fixtures/observer-contract/*  medium tests/scripts/test-observer-contract.sh
+tests/scripts/fixtures/citation-exists/*     medium tests/scripts/test-citation-exists.sh
 tests/mods/*                      medium tests/hooks/test-cost-ledger-module.sh
 
 # The manifests: every merge bumps them, so they stay below full; validate and the audit check them.
