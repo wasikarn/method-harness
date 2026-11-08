@@ -924,6 +924,61 @@ def test_apply_action_plan_moves_superseded_files_and_stubs_pointers():
         assert saved == exp, (saved, exp)   # L1255
 
 
+def test_apply_rolls_back_class_a_moves_when_the_index_write_fails():
+    # GH #964 item 1: a failed MEMORY.md write must not leave an archived file behind a live pointer.
+    with tempfile.TemporaryDirectory() as d:
+        _class_a_fixture(d)
+        state = memory_lint.collect_state(d)
+        idx_before = state["idx"]
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        assert plan["A"], "positive control"
+        orig = memory_lint.atomic_write
+
+        def failing(path, content):
+            if path == state["index_path"]:
+                raise OSError("disk full")
+            return orig(path, content)
+        memory_lint.atomic_write = failing
+        try:
+            raised = False
+            try:
+                memory_lint.apply_action_plan(state, plan)
+            except OSError:
+                raised = True
+        finally:
+            memory_lint.atomic_write = orig
+        assert raised, "the index write error must surface"
+        assert os.path.exists(os.path.join(d, "stale-topic.md")), "moved file must be rolled back"
+        assert open(state["index_path"]).read() == idx_before   # pointer still live, file back: no STALE POINTER
+
+
+def test_class_d_sizes_against_the_index_text_after_earlier_classes():
+    # GH #964 item 2: when B (or A) already brought the index under the fold target, D plans nothing.
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 480
+        with tempfile.TemporaryDirectory() as d:
+            idx_lines = []
+            for i in range(6):
+                stem = f"topic-{i}"
+                body = ("links to [[topic-0]] [[topic-1]] [[topic-2]] [[topic-3]] [[topic-4]]\n"
+                        if i == 5 else f"some memory content about topic {i}\n")
+                with open(os.path.join(d, f"{stem}.md"), "w") as f:
+                    f.write(f"---\nname: {stem}\n---\n{body}")
+                idx_lines.append(f"- [{stem}]({stem}.md) — a short pointer hook for topic {i} here")
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(idx_lines) + "\n")
+            state = memory_lint.collect_state(d)
+            assert memory_lint.class_d_count_fold(state, set()), "control: D fires on the full index"
+            # Earlier classes left two byte-identical lines; topic-5 links topic-0, so D could still deindex it.
+            short = idx_lines[0] + "\n" + idx_lines[5] + "\n"
+            plan = memory_lint.class_d_count_fold(state, set(), index_text=short)
+            assert plan == [], plan
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
 def test_class_a_archive_stub_is_not_reported_as_stale_pointer():
     # Class A's stub points at _archive/<date>/<file>; the file exists there, so lint must not
     # call it STALE POINTER (else the cold layer leaves every archived entry as a permanent finding).
@@ -1774,4 +1829,6 @@ if __name__ == "__main__":
     test_auto_archive_json_impact_skips_class_c_with_no_target()
     test_auto_archive_dry_run_wins_over_yes()
     test_auto_archive_no_actions_hint_only_without_yes()
+    test_apply_rolls_back_class_a_moves_when_the_index_write_fails()
+    test_class_d_sizes_against_the_index_text_after_earlier_classes()
     print("OK")

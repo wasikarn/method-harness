@@ -685,7 +685,8 @@ def class_d_count_fold(state, exclude_files, removed_files=frozenset(), index_te
     never planned (apply cannot match text that runs across a comment). A chapter index
     (index-*.md) is never a candidate, and a deindex that pushes a topic past MAX_HOPS is skipped."""
     plan = []
-    idx_bytes, idx_lines = measured_index(state["idx"])
+    # Size the index as A and B leave it (GH #964), else D deindexes when B already got under target.
+    idx_bytes, idx_lines = measured_index(state["idx"] if index_text is None else index_text)
     pct = max(idx_lines / LINE_CAP, idx_bytes / BYTE_CAP)
     if pct < FOLD_TRIGGER_PCT:
         return plan
@@ -869,7 +870,14 @@ def apply_action_plan(state, plan):
 
     # Atomic MEMORY.md write (only if changed)
     if new_idx != idx:
-        atomic_write(state["index_path"], new_idx)
+        try:
+            atomic_write(state["index_path"], new_idx)
+        except OSError:
+            # The pointers stay live, so put the moved files back or each becomes a STALE POINTER (GH #964).
+            for e in applied["A"]:
+                if "skipped" not in e:
+                    shutil.move(e["to"], os.path.join(d, e["from"]))
+            raise
 
     return bytes_saved, applied
 
