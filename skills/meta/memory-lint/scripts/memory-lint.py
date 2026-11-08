@@ -764,8 +764,25 @@ def atomic_write(path, content):
 
 
 def apply_action_plan(state, plan):
-    """Execute the plan: Class A moves, B/C rewrites, D deindexes. Returns (bytes_saved, applied_summary)."""
+    """Execute the plan: Class A moves, B/C rewrites, D deindexes. Returns (bytes_saved, applied_summary).
+    Any OSError before MEMORY.md is written puts the Class A moves back (their pointers are still live,
+    so each would become a STALE POINTER) and re-raises the original error (GH #964)."""
     applied = {"A": [], "B": [], "C": [], "D": []}
+    try:
+        return _apply_unguarded(state, plan, applied)
+    except OSError:
+        # Class B/C edits are left in place: they create no new finding without the index write.
+        for moved in applied["A"]:
+            if "skipped" in moved:
+                continue
+            try:
+                shutil.move(moved["to"], os.path.join(state["d"], moved["from"]))
+            except OSError as restore_err:
+                print(f"memory-lint: could not restore {moved['from']} from {moved['to']}: {restore_err}", file=sys.stderr)
+        raise
+
+
+def _apply_unguarded(state, plan, applied):
     bytes_saved = 0
     d = state["d"]
     idx = state["idx"]
@@ -870,14 +887,7 @@ def apply_action_plan(state, plan):
 
     # Atomic MEMORY.md write (only if changed)
     if new_idx != idx:
-        try:
-            atomic_write(state["index_path"], new_idx)
-        except OSError:
-            # The pointers stay live, so put the moved files back or each becomes a STALE POINTER (GH #964).
-            for e in applied["A"]:
-                if "skipped" not in e:
-                    shutil.move(e["to"], os.path.join(d, e["from"]))
-            raise
+        atomic_write(state["index_path"], new_idx)
 
     return bytes_saved, applied
 
