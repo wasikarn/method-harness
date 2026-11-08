@@ -26,7 +26,7 @@ orphans or notices index drift. Semantic review of memory content is out of scop
    one-line pointer, or link it from an indexed memory. Orphan: link it from the memory it belongs
    with. Too deep: link the listed topics from a chapter index (`index-*.md`) that `MEMORY.md` points to,
    so each sits within 2 hops; the ratchet only blocks growth, and a deliberate increase is accepted by
-   deleting `$HOME/.claude/state/memory-lint-depth-baseline-<key>` (`<key>` is the store's `projects/<enc>` name; the next plain run writes the new baseline once no dangling-link, duplicate-slug, missing-index, unindexed or stale-pointer finding stands). Near or over budget: step 3.
+   deleting `$HOME/.claude/state/memory-lint-depth-baseline-<key>` (`<key>` is the `projects/<enc>` name for a store under `~/.claude`, else the store path with non-alphanumerics as `-`; the next plain run writes the new baseline once no dangling-link, duplicate-slug, missing-index, unindexed or stale-pointer finding stands). Near or over budget: step 3.
    Done when: every finding has a named edit and no memory file was deleted.
 3. **Trim only through action mode.** `--auto-archive --dry-run` first, read the plan, then
    `--auto-archive --yes`. Rubric, classes A–D and thresholds: `references/action-mode.md`.

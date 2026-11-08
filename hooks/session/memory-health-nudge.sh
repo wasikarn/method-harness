@@ -90,13 +90,21 @@ LINT="${CLAUDE_PLUGIN_ROOT:-}/skills/meta/memory-lint/scripts/memory-lint.py"
 # matches collect_state()'s non-recursive listdir. _archive/ matters only because a stub pointer
 # resolves while its _archive/<date>/<file> exists: a delete there bumps that dir's mtime, so check dirs.
 # The trailing slash on "$MEMDIR/" makes find follow a symlinked memory/ (else it lists the link only).
-CACHE="$HOME/.claude/state/memory-lint-cache-$ENC"
+# Key on ENC for the default store; a store under another config dir (CLAUDE_CONFIG_DIR) gets its own
+# file (its path as a slug, pure bash like _MARKER_ENC), else one store's clean touch would hide the
+# other's findings. memory-lint's depth_key follows the same idea but compares realpaths, this a string.
+if [ "$MEMDIR" = "$HOME/.claude/projects/$ENC/memory" ]; then _CKEY="$ENC"; else _CKEY="$(LC_ALL=C; printf '%s' "${MEMDIR//[^A-Za-z0-9]/-}")"; fi
+CACHE="$HOME/.claude/state/memory-lint-cache-$_CKEY"
 # Assumes a stub targets exactly _archive/<date>/<file>: a symlinked date dir or deeper nesting is not seen.
 mkdir -p "$HOME/.claude/state" 2>/dev/null
 # -maxdepth 0 -type d is memory/ itself: deleting a file bumps only that mtime, no surviving file's.
 if [ -f "$CACHE" ] && [ -z "$( { find "$MEMDIR/" -maxdepth 1 -type f -newer "$CACHE"; find "$MEMDIR/" -maxdepth 0 -type d -newer "$CACHE"; find "$MEMDIR/_archive/" -maxdepth 1 -type d -newer "$CACHE"; } 2>/dev/null | head -1)" ]; then
   exit 0
 fi
+
+# Stamp BEFORE the scan: a write that lands while lint runs must stay newer than the cache.
+# One file per run (mktemp creates it now, so its mtime is the stamp): two sessions never share it.
+PENDING=$(mktemp "$CACHE.pending.XXXXXX" 2>/dev/null) || PENDING=""
 
 # Exit code = finding count, so only a traceback on stderr means a real crash.
 ERRLOG=$(mktemp "${TMPDIR:-/tmp}/kbg-memlint-err.XXXXXX" 2>/dev/null) || ERRLOG=""
@@ -119,6 +127,7 @@ fi
 # hand. Surface it once per session (never cached, so it keeps firing until
 # fixed, same posture as a real dirty-store finding).
 if [ "$CRASHED" -eq 1 ]; then
+  rm -f "$PENDING" 2>/dev/null
   printf '%s\n' "[memory-lint] session-start check crashed — memory findings are unknown this session. Run \`mh:memory-lint\` manually to see the real error."
   exit 0
 fi
@@ -126,7 +135,9 @@ fi
 # Cache only a clean, non-crashed run — a dirty store must keep firing every
 # session until fixed (regression test in tests/hooks/test-memory-health-nudge.sh).
 if ! command grep -qE 'findings: [1-9]' <<<"$OUT"; then
-  touch "$CACHE" 2>/dev/null
+  mv -f "$PENDING" "$CACHE" 2>/dev/null
+else
+  rm -f "$PENDING" 2>/dev/null
 fi
 
 # Emit only when "findings: N" has N >= 1.
