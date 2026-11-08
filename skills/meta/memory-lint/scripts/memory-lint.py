@@ -480,7 +480,8 @@ def class_a_stale_superseded(state):
         if target_file not in state["files"]:
             continue
         # A chapter index is structure, not a finished topic: archiving it strands everything under it.
-        if is_chapter_index(target_file):
+        # Any pointer, not just the first: the stub replaces the whole line.
+        if any(is_chapter_index(p) for p in POINTER_RE.findall(line)):
             continue
         # Judge the guard on the index exactly as apply will leave it: the whole line becomes a stub, so
         # any other pointer on it goes too, and a second live pointer to this file would go stale.

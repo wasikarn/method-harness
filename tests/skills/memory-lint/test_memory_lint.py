@@ -1714,6 +1714,7 @@ def test_store_with_index_but_no_topic_files_lints_clean():
 
 
 def test_store_with_no_index_and_no_topic_files_is_fatal():
+    # Control for GH #964 item 4: the relaxed guard must still refuse a store with no MEMORY.md.
     with tempfile.TemporaryDirectory() as d:
         try:
             memory_lint.collect_state(d)
@@ -1752,7 +1753,23 @@ def test_class_d_never_deindexes_a_chapter_pointer_in_second_position():
         memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
 
 
+def test_class_a_never_stubs_a_line_carrying_a_chapter_pointer_in_second_position():
+    # GH #964 item 5 (Class A side): the stub replaces the whole line, so a second-position
+    # chapter pointer would be deindexed while the graph guard sees it reachable via new.md.
+    with tempfile.TemporaryDirectory() as d:
+        for fn, body in {"old.md": "n/a", "new.md": "see [[index-chap]]", "index-chap.md": "chapter"}.items():
+            with open(os.path.join(d, fn), "w") as f:
+                f.write(f"---\nname: {fn[:-3]}\n---\n{body}\n")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [old](old.md) **SUPERSEDED** by [[new]]; chapter [chap](index-chap.md)\n"
+                    "- [new](new.md) — the successor\n")
+        state = memory_lint.collect_state(d)
+        plan = memory_lint.class_a_stale_superseded(state)
+        assert plan == [], plan
+
+
 if __name__ == "__main__":
+    test_class_a_never_stubs_a_line_carrying_a_chapter_pointer_in_second_position()
     test_store_with_index_but_no_topic_files_lints_clean()
     test_store_with_no_index_and_no_topic_files_is_fatal()
     test_class_d_never_deindexes_a_chapter_pointer_in_second_position()
