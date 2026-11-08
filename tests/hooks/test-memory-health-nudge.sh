@@ -380,6 +380,21 @@ assert_contains "new file behind the symlink invalidates the cache and is report
 tmp_delete "$MEMDIR"
 
 echo ""
+echo "--- a deleted _archive/<date>/ stub target invalidates the clean cache (GH #964 item 3) ---"
+init_memdir
+mkdir -p "$MEMDIR/_archive/2026-01-01"
+printf -- '---\nname: topic-a\ndescription: "a"\nmetadata:\n  type: project\n---\nsee [[topic-b]]\n' > "$MEMDIR/topic-a.md"
+printf -- '---\nname: topic-b\ndescription: "b"\nmetadata:\n  type: project\n---\nsee [[topic-a]]\n' > "$MEMDIR/topic-b.md"
+printf -- '---\nname: old\n---\nn/a\n' > "$MEMDIR/_archive/2026-01-01/old.md"
+printf '%s\n' "- [topic-a](topic-a.md) — a" "- [topic-b](topic-b.md) — b" "- [old](_archive/2026-01-01/old.md) — archived" > "$MEMDIR/MEMORY.md"
+OUT=$(run_hook)
+assert_not_contains "store with a live archive stub is clean and caches" "[memory-lint]" "$OUT"
+sleep 1
+tmp_delete "$MEMDIR/_archive/2026-01-01/old.md"
+OUT=$(run_hook_no_cache_clear)
+assert_contains "deleting the stub's archived file re-runs lint" "STALE POINTER" "$OUT"
+
+echo ""
 total=$((pass + fail))
 echo "=== $pass/$total passed ==="
 [[ "$fail" -eq 0 ]] && exit 0 || exit 1

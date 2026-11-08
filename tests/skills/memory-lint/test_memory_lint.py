@@ -1700,7 +1700,62 @@ def test_auto_archive_no_actions_hint_only_without_yes():
         assert "re-run with --yes" not in r_yes.stdout, r_yes.stdout  # apply_now -> hint suppressed
 
 
+def test_store_with_index_but_no_topic_files_lints_clean():
+    # GH #964 item 4: after Class A archives the last topic, only MEMORY.md (a stub) and _archive/ remain.
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "_archive", "2026-01-01"))
+        with open(os.path.join(d, "_archive", "2026-01-01", "old.md"), "w") as f:
+            f.write("---\nname: old\n---\nbody\n")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("# idx\n- [old](_archive/2026-01-01/old.md) — archived\n")
+        state = memory_lint.collect_state(d)
+        findings, _, _ = memory_lint.detector_findings(state)
+        assert findings == [], findings
+
+
+def test_store_with_no_index_and_no_topic_files_is_fatal():
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            memory_lint.collect_state(d)
+        except SystemExit as e:
+            assert "FATAL" in str(e.code), e.code
+        else:
+            raise AssertionError("an empty store without MEMORY.md must stay an error")
+
+
+def test_class_d_never_deindexes_a_chapter_pointer_in_second_position():
+    # GH #964 item 5: the guard looked only at the line's first pointer.
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 240
+        with tempfile.TemporaryDirectory() as d:
+            now = 2_000_000_000
+            files = {
+                "old.md": "oldest topic",
+                "index-chap.md": "chapter index",
+                "hub.md": "links [[old]] [[index-chap]]",
+            }
+            for i, (fn, body) in enumerate(files.items()):
+                with open(os.path.join(d, fn), "w") as f:
+                    f.write(f"---\nname: {fn[:-3]}\n---\n{body}\n")
+                os.utime(os.path.join(d, fn), (now + i * 100, now + i * 100))
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("- [old](old.md) — a hook; chapter [chap](index-chap.md) here\n"
+                        "- [hub](hub.md) — a short pointer hook for the hub topic here\n"
+                        "- [hub again](hub.md) — padding pointer line to cross the trigger\n")
+            state = memory_lint.collect_state(d)
+            assert len(state["idx"].encode()) / memory_lint.BYTE_CAP >= memory_lint.FOLD_TRIGGER_PCT
+            plan = memory_lint.class_d_count_fold(state, exclude_files=set())
+            assert all("index-chap.md" not in e["old_pointer_line"] for e in plan), plan
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
 if __name__ == "__main__":
+    test_store_with_index_but_no_topic_files_lints_clean()
+    test_store_with_no_index_and_no_topic_files_is_fatal()
+    test_class_d_never_deindexes_a_chapter_pointer_in_second_position()
     test_typo_link_gets_suggestion()
     test_unrelated_dangling_link_gets_no_suggestion()
     test_markdown_style_dangling_link_is_detected()
