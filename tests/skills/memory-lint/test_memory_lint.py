@@ -795,6 +795,48 @@ def test_class_c_rewrites_dangling_wikilink_to_ledger():
                          "new": "[[project_external_evals_ledger]]", "reason": "dangling-target"}], plan
 
 
+def _ledger_store(d, ledger_files, superseded_ledger=None):
+    """src.md links a ghost; each name in ledger_files exists; superseded_ledger's pointer carries SUPERSEDED."""
+    _write_memory(d, "src.md", "project", "dangling", "see [[ghost-topic]]")
+    lines = ["- [src](src.md) — x\n"]
+    for name in ledger_files:
+        _write_memory(d, name, "project", "a ledger", "n/a")
+        mark = " — **SUPERSEDED** by [[succ]]" if name == superseded_ledger else " — l"
+        lines.append(f"- [{name[:-3]}]({name}){mark}\n")
+    with open(os.path.join(d, "MEMORY.md"), "w") as f:
+        f.write("".join(lines))
+    return memory_lint.collect_state(d)
+
+
+def test_class_c_fallback_picks_any_surviving_ledger_stem():
+    with tempfile.TemporaryDirectory() as d:
+        state = _ledger_store(d, ["proj_ledger.md"])
+        plan = memory_lint.class_c_dangling_link_rewrite(state)
+        assert [e["new"] for e in plan] == ["[[proj_ledger]]"], plan
+
+
+def test_class_c_never_targets_a_ledger_class_a_archives_in_the_same_plan():
+    with tempfile.TemporaryDirectory() as d:
+        state = _ledger_store(d, ["project_external_evals_ledger.md"],
+                              superseded_ledger="project_external_evals_ledger.md")
+        naive = memory_lint.class_c_dangling_link_rewrite(state)
+        assert naive[0]["new"] == "[[project_external_evals_ledger]]", naive   # control: raw-state C is unsafe
+        plan = memory_lint.build_plan(state)
+        assert [e["from"] for e in plan["A"]] == ["project_external_evals_ledger.md"], plan["A"]
+        assert [e["new"] for e in plan["C"]] == [None], plan["C"]
+        memory_lint.apply_action_plan(state, plan)
+        findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
+        assert not [f for f in findings if "project_external_evals_ledger" in f and "DANGLING" in f], findings
+
+
+def test_class_c_falls_back_to_a_surviving_ledger_when_the_preferred_one_is_archived():
+    with tempfile.TemporaryDirectory() as d:
+        state = _ledger_store(d, ["project_external_evals_ledger.md", "proj_ledger.md"],
+                              superseded_ledger="project_external_evals_ledger.md")
+        plan = memory_lint.build_plan(state)
+        assert [e["new"] for e in plan["C"]] == ["[[proj_ledger]]"], plan["C"]
+
+
 def test_class_c_rewrites_archived_link_to_supersedence_target():
     # L1109 (`if not m: continue` on SUPERSEDED lines), L1113 (`if not pm: continue`),
     # L1128 (archived branch). Only test that executes the SUPERSEDED-line parse.

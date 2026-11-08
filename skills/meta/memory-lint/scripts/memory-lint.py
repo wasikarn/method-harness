@@ -583,21 +583,24 @@ def class_b_near_budget_collapse(state, removed_files=frozenset(), index_text=No
     return plan
 
 
-def _pick_ledger_target(state):
+def _pick_ledger_target(state, removed_files=frozenset()):
     """Default rewrite target for a link with no clear resolution: the
     external-evals ledger if it survives, else any surviving file with
-    'ledger' in its stem, else None (caller falls back to manual)."""
+    'ledger' in its stem, else None (caller falls back to manual).
+    `removed_files` = files Class A archives in the same plan; never a target."""
+    survivors = {s for s in state["stems"] if s + ".md" not in removed_files}
     ledger = "project_external_evals_ledger"
-    if ledger in state["stems"]:
+    if ledger in survivors:
         return ledger
-    ledgers = [s for s in sorted(state["stems"])
-               if "ledger" in s and s in state["files"]]
+    ledgers = [s for s in sorted(survivors) if "ledger" in s]
     return ledgers[0] if ledgers else None
 
 
-def class_c_dangling_link_rewrite(state):
+def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
     """Class C: surviving top-level file has a [[wikilink]] that resolves to nothing,
-    OR to a target in _archive/ where the source has a known supersedence target."""
+    OR to a target in _archive/ where the source has a known supersedence target.
+    `removed_files` = files Class A archives in the same plan (build_plan passes them): they are
+    neither rewritten nor chosen as a target, so C judges the graph as A leaves it."""
     plan = []
     archive_stems = list_archive(state["d"])
     # Build index of (stem → first non-section line of MEMORY.md that mentions it as pointer)
@@ -618,7 +621,7 @@ def class_c_dangling_link_rewrite(state):
 
     for f, targets in state["links_out"].items():
         # Only look at surviving top-level files
-        if f not in state["files"]:
+        if f not in state["files"] or f in removed_files:
             continue
         for t in targets:
             if t in state["stems"] or t in state["slug_set"]:
@@ -626,7 +629,7 @@ def class_c_dangling_link_rewrite(state):
             # Dangling: target resolves to nothing
             if t not in archive_stems:
                 # No clear ledger — record as a candidate; agent decides rewrite target
-                new_target = _pick_ledger_target(state)
+                new_target = _pick_ledger_target(state, removed_files)
                 plan.append({
                     "action": "rewrite_wikilink",
                     "file": f,
@@ -637,7 +640,7 @@ def class_c_dangling_link_rewrite(state):
             else:
                 # Archived target — find replacement
                 replacement = super_targets.get(t)
-                if replacement and replacement in state["stems"]:
+                if replacement and replacement in state["stems"] and replacement + ".md" not in removed_files:
                     plan.append({
                         "action": "rewrite_wikilink",
                         "file": f,
@@ -647,7 +650,7 @@ def class_c_dangling_link_rewrite(state):
                     })
                 else:
                     # Archived but no clear supersedence — point to nearest ledger
-                    new_target = _pick_ledger_target(state)
+                    new_target = _pick_ledger_target(state, removed_files)
                     plan.append({
                         "action": "rewrite_wikilink",
                         "file": f,
@@ -915,7 +918,7 @@ def build_plan(state):
     for e in plan_a:
         live, _ = replace_live(live, e["old_pointer_line"], STUB_TEMPLATE.format(e["from"][:-3], e["to_archive_subdir"], e["from"]))
     plan_b = class_b_near_budget_collapse(state, removed_files=removed_a, index_text=live)
-    plan_c = class_c_dangling_link_rewrite(state)
+    plan_c = class_c_dangling_link_rewrite(state, removed_files=removed_a)
     for e in plan_b:
         live, _ = replace_live(live, e["from"], e["to"])
     exclude_files = removed_a | {e["topic_file"] for e in plan_b}
