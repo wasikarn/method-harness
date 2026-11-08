@@ -450,7 +450,9 @@ def depth_key(d):
 
 def run_detector(state, as_json):
     findings, total_links, linked_count = detector_findings(state)
-    too_deep, deep_n, deep_base = depth_ratchet(state, write=not as_json)
+    # Write only from a clean store: a broken index hides topics from N, and a baseline taken then
+    # would read the repaired store as TOO DEEP.
+    too_deep, deep_n, deep_base = depth_ratchet(state, write=not as_json and not findings)
     if too_deep:
         findings.append(too_deep)
     if as_json:
@@ -833,7 +835,7 @@ def apply_action_plan(state, plan):
             if "skipped" in moved:
                 continue
             back = os.path.join(state["d"], moved["from"])
-            if os.path.exists(back):
+            if os.path.lexists(back):   # lexists: a dangling symlink there is also something to keep
                 print(f"memory-lint: not restoring {moved['to']}: {back} already exists; archived copy kept; merge or delete by hand", file=sys.stderr)
                 continue
             try:

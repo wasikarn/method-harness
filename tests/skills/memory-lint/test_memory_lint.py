@@ -1948,6 +1948,33 @@ def test_apply_rollback_does_not_overwrite_a_file_now_at_the_original_path():
         assert "archived copy kept; merge or delete by hand" in err.getvalue(), err.getvalue()
 
 
+def test_apply_rollback_does_not_replace_a_dangling_symlink_at_the_original_path():
+    with tempfile.TemporaryDirectory() as d:
+        _class_a_fixture(d)
+        state = memory_lint.collect_state(d)
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        src = os.path.join(d, plan["A"][0]["from"])
+        orig_write = memory_lint.atomic_write
+
+        def write(path, content):
+            os.symlink(os.path.join(d, "nowhere.md"), src)   # exists() is False for it, lexists() is True
+            raise OSError("disk full")
+        memory_lint.atomic_write = write
+        err = io.StringIO()
+        try:
+            try:
+                with contextlib.redirect_stderr(err):
+                    memory_lint.apply_action_plan(state, plan)
+            except OSError:
+                pass
+        finally:
+            memory_lint.atomic_write = orig_write
+        assert os.path.islink(src), "restore must not replace the symlink"
+        archived = os.path.join(d, "_archive", time.strftime(memory_lint.SUPERSEDED_ARCHIVE_DATE_FMT), plan["A"][0]["from"])
+        assert os.path.exists(archived), "archived copy must be kept"
+        assert "archived copy kept; merge or delete by hand" in err.getvalue(), err.getvalue()
+
+
 def test_apply_rollback_leaves_already_archived_entries_in_the_archive():
     # The `skipped` guard: an entry archived before this run must not be pulled back on rollback.
     with tempfile.TemporaryDirectory() as d:
@@ -2134,7 +2161,24 @@ def test_depth_ratchet_does_not_count_unreachable_topics():
         r = _lint(home, store)
         assert "UNINDEXED: lost.md" in r.stdout, r.stdout
         assert r.returncode == 2, r.stdout  # UNINDEXED lost.md + lost2.md only
-        assert _read_baseline(home, store) == "0"
+        assert "deep>2: 0 (baseline none)" in r.stdout, r.stdout  # N is 0; a dirty run writes no baseline
+
+
+def test_depth_ratchet_does_not_tighten_while_the_store_has_other_findings():
+    # A broken index hides topics from N; tightening then would make the repaired store read as TOO DEEP.
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        _lint(home, store)
+        assert _read_baseline(home, store) == "3"
+        with open(os.path.join(store, "MEMORY.md"), "w") as f:
+            f.write("# index with no pointers\n")
+        r = _lint(home, store)
+        assert r.returncode != 0 and "UNINDEXED" in r.stdout, r.stdout
+        assert _read_baseline(home, store) == "3", "a dirty run must not lower the baseline"
+        with open(os.path.join(store, "MEMORY.md"), "w") as f:
+            f.write("- [a](a.md) — root\n")
+        r = _lint(home, store)
+        assert r.returncode == 0 and "TOO DEEP" not in r.stdout, r.stdout
 
 
 def test_depth_ratchet_json_and_dry_run_never_write_the_baseline():
@@ -2324,12 +2368,14 @@ if __name__ == "__main__":
     test_apply_rollback_runs_on_a_non_oserror_exception()
     test_auto_archive_no_actions_says_clean_when_lint_has_no_findings()
     test_apply_rollback_does_not_overwrite_a_file_now_at_the_original_path()
+    test_apply_rollback_does_not_replace_a_dangling_symlink_at_the_original_path()
     test_apply_rollback_leaves_already_archived_entries_in_the_archive()
     test_depth_ratchet_first_run_writes_baseline_without_a_finding()
     test_depth_ratchet_flags_an_increase_over_the_baseline()
     test_depth_ratchet_tightens_on_a_decrease()
     test_depth_ratchet_tightens_then_flags_a_later_increase()
     test_depth_ratchet_does_not_count_unreachable_topics()
+    test_depth_ratchet_does_not_tighten_while_the_store_has_other_findings()
     test_depth_ratchet_json_and_dry_run_never_write_the_baseline()
     test_depth_ratchet_treats_a_corrupt_baseline_as_missing()
     test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwritable()

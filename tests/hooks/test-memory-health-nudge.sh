@@ -395,6 +395,20 @@ OUT=$(run_hook_no_cache_clear)
 assert_contains "deleting the stub's archived file re-runs lint" "STALE POINTER" "$OUT"
 
 echo ""
+echo "--- a deleted top-level topic invalidates the clean cache (deep-audit 2026-11-08) ---"
+# Red cycle: deleting a file bumps only memory/'s own mtime; the `-type f -newer` check never saw it.
+init_memdir
+printf -- '---\nname: topic-a\ndescription: "a"\nmetadata:\n  type: project\n---\nsee [[topic-b]]\n' > "$MEMDIR/topic-a.md"
+printf -- '---\nname: topic-b\ndescription: "b"\nmetadata:\n  type: project\n---\nsee [[topic-a]]\n' > "$MEMDIR/topic-b.md"
+printf '%s\n' "- [topic-a](topic-a.md) — a" "- [topic-b](topic-b.md) — b" > "$MEMDIR/MEMORY.md"
+OUT=$(run_hook)
+assert_not_contains "two-topic store is clean and caches" "[memory-lint]" "$OUT"
+sleep 1
+tmp_delete "$MEMDIR/topic-b.md"
+OUT=$(run_hook_no_cache_clear)
+assert_contains "deleting a topic MEMORY.md still points at re-runs lint" "STALE POINTER" "$OUT"
+
+echo ""
 total=$((pass + fail))
 echo "=== $pass/$total passed ==="
 [[ "$fail" -eq 0 ]] && exit 0 || exit 1
