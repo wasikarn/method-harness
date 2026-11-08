@@ -2194,6 +2194,46 @@ def test_depth_ratchet_still_writes_the_baseline_when_only_orphans_are_left():
         assert _read_baseline(home, store) == "3", r.stdout
 
 
+def _write(store, name, text):
+    with open(os.path.join(store, name), "w") as f:
+        f.write(text)
+
+
+def _first_run_baseline(mutate, expect):
+    """Lint a depth-3 store after `mutate`; return (stdout, baseline text or None)."""
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        mutate(store)
+        r = _lint(home, store)
+        assert expect in r.stdout, (expect, r.stdout)
+        path = _baseline_path(home, store)
+        return r.stdout, (_read_baseline(home, store) if os.path.exists(path) else None)
+
+
+def test_depth_ratchet_each_blocking_finding_keeps_the_baseline_unwritten():
+    cases = {
+        "DANGLING": lambda s: _write(s, "a.md", "---\nname: a\n---\n[[b]] [[nowhere]]\n"),
+        "DUPLICATE SLUG": lambda s: (_write(s, "dup.md", "---\nname: a\n---\nsee [[b]]\n"),
+                                     _write(s, "MEMORY.md", "- [a](a.md) — root\n- [dup](dup.md) — twin\n")),
+        "MISSING": lambda s: os.unlink(os.path.join(s, "MEMORY.md")),
+        "STALE POINTER": lambda s: _write(s, "MEMORY.md", "- [a](a.md) — root\n- [gone](gone.md) — deleted\n"),
+        "UNINDEXED": lambda s: _write(s, "lost.md", "---\nname: lost\n---\nalone\n"),
+    }
+    for kind, mutate in cases.items():
+        _, baseline = _first_run_baseline(mutate, kind)
+        assert baseline is None, f"{kind} must keep the baseline unwritten, got {baseline}"
+
+
+def test_depth_ratchet_budget_findings_do_not_keep_the_baseline_unwritten():
+    # 170 filler lines (>= 80% of the 200-line cap) -> NEAR-BUDGET; 210 -> OVER-BUDGET. Neither moves N.
+    for kind, lines in (("NEAR-BUDGET", 170), ("OVER-BUDGET", 210)):
+        def pad(s, lines=lines):
+            with open(os.path.join(s, "MEMORY.md"), "a") as f:
+                f.write("filler note\n" * lines)
+        _, baseline = _first_run_baseline(pad, kind)
+        assert baseline == "3", f"{kind} must not block the baseline write, got {baseline}"
+
+
 def test_depth_ratchet_json_and_dry_run_never_write_the_baseline():
     with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
         _deep_store(store, 3)
@@ -2390,6 +2430,8 @@ if __name__ == "__main__":
     test_depth_ratchet_does_not_count_unreachable_topics()
     test_depth_ratchet_does_not_tighten_while_the_store_has_other_findings()
     test_depth_ratchet_still_writes_the_baseline_when_only_orphans_are_left()
+    test_depth_ratchet_each_blocking_finding_keeps_the_baseline_unwritten()
+    test_depth_ratchet_budget_findings_do_not_keep_the_baseline_unwritten()
     test_depth_ratchet_json_and_dry_run_never_write_the_baseline()
     test_depth_ratchet_treats_a_corrupt_baseline_as_missing()
     test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwritable()
