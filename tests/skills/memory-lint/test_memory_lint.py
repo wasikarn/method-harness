@@ -964,6 +964,132 @@ def test_apply_action_plan_moves_superseded_files_and_stubs_pointers():
         assert saved == exp, (saved, exp)   # L1255
 
 
+def test_apply_rolls_back_class_a_moves_when_the_index_write_fails():
+    # GH #964 item 1: a failed MEMORY.md write must not leave an archived file behind a live pointer.
+    with tempfile.TemporaryDirectory() as d:
+        _class_a_fixture(d)
+        state = memory_lint.collect_state(d)
+        idx_before = state["idx"]
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        assert plan["A"], "positive control"
+        orig = memory_lint.atomic_write
+
+        def failing(path, content):
+            if path == state["index_path"]:
+                raise OSError("disk full")
+            return orig(path, content)
+        memory_lint.atomic_write = failing
+        try:
+            raised = False
+            try:
+                memory_lint.apply_action_plan(state, plan)
+            except OSError:
+                raised = True
+        finally:
+            memory_lint.atomic_write = orig
+        assert raised, "the index write error must surface"
+        assert os.path.exists(os.path.join(d, "stale-topic.md")), "moved file must be rolled back"
+        assert open(state["index_path"]).read() == idx_before   # pointer still live, file back: no STALE POINTER
+
+
+def test_apply_rolls_back_earlier_class_a_moves_when_a_later_move_fails():
+    # PR #965 review: a failed second move must not leave the first file archived behind a live pointer.
+    with tempfile.TemporaryDirectory() as d:
+        _class_a_fixture(d, stems=("stale-topic", "stale-topic2"))
+        state = memory_lint.collect_state(d)
+        idx_before = state["idx"]
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        assert len(plan["A"]) == 2, plan
+        second = plan["A"][1]["from"]
+        orig_move, orig_rename = memory_lint.shutil.move, memory_lint.os.rename
+
+        def move(src, dst):
+            if os.path.basename(src) == second and "_archive" not in src:
+                raise OSError("move failed")
+            return orig_move(src, dst)
+
+        def rename(src, dst):
+            if os.path.basename(src) == second and "_archive" not in src:
+                raise OSError("rename failed")
+            return orig_rename(src, dst)
+        memory_lint.shutil.move, memory_lint.os.rename = move, rename
+        try:
+            raised = None
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    memory_lint.apply_action_plan(state, plan)
+            except OSError as exc:
+                raised = exc
+        finally:
+            memory_lint.shutil.move, memory_lint.os.rename = orig_move, orig_rename
+        assert raised is not None and "rename failed" in str(raised), raised
+        for e in plan["A"]:
+            assert os.path.exists(os.path.join(d, e["from"])), e["from"]   # both back at top level
+        assert open(state["index_path"]).read() == idx_before
+
+
+def test_apply_rollback_keeps_going_and_reraises_the_original_error_when_a_restore_fails():
+    # PR #965 review: one failed restore must not hide the index error or stop the other restores.
+    with tempfile.TemporaryDirectory() as d:
+        _class_a_fixture(d, stems=("stale-topic", "stale-topic2"))
+        state = memory_lint.collect_state(d)
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        assert len(plan["A"]) == 2, plan
+        stuck, other = plan["A"][0]["from"], plan["A"][1]["from"]
+        orig_write, orig_move = memory_lint.atomic_write, memory_lint.shutil.move
+
+        def write(path, content):
+            if path == state["index_path"]:
+                raise OSError("disk full")
+            return orig_write(path, content)
+
+        def move(src, dst):
+            if "_archive" in src and os.path.basename(src) == stuck:
+                raise OSError("restore failed")
+            return orig_move(src, dst)
+        memory_lint.atomic_write, memory_lint.shutil.move = write, move
+        err = io.StringIO()
+        try:
+            raised = None
+            try:
+                with contextlib.redirect_stderr(err):
+                    memory_lint.apply_action_plan(state, plan)
+            except OSError as exc:
+                raised = exc
+        finally:
+            memory_lint.atomic_write, memory_lint.shutil.move = orig_write, orig_move
+        assert raised is not None and "disk full" in str(raised), raised
+        assert os.path.exists(os.path.join(d, other)), "the other file must still be restored"
+        assert stuck in err.getvalue(), err.getvalue()
+
+
+def test_class_d_sizes_against_the_index_text_after_earlier_classes():
+    # GH #964 item 2: when B (or A) already brought the index under the fold target, D plans nothing.
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 480
+        with tempfile.TemporaryDirectory() as d:
+            idx_lines = []
+            for i in range(6):
+                stem = f"topic-{i}"
+                body = ("links to [[topic-0]] [[topic-1]] [[topic-2]] [[topic-3]] [[topic-4]]\n"
+                        if i == 5 else f"some memory content about topic {i}\n")
+                with open(os.path.join(d, f"{stem}.md"), "w") as f:
+                    f.write(f"---\nname: {stem}\n---\n{body}")
+                idx_lines.append(f"- [{stem}]({stem}.md) — a short pointer hook for topic {i} here")
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(idx_lines) + "\n")
+            state = memory_lint.collect_state(d)
+            assert memory_lint.class_d_count_fold(state, set()), "control: D fires on the full index"
+            # Earlier classes left two byte-identical lines; topic-5 links topic-0, so D could still deindex it.
+            short = idx_lines[0] + "\n" + idx_lines[5] + "\n"
+            plan = memory_lint.class_d_count_fold(state, set(), index_text=short)
+            assert plan == [], plan
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
 def test_class_a_archive_stub_is_not_reported_as_stale_pointer():
     # Class A's stub points at _archive/<date>/<file>; the file exists there, so lint must not
     # call it STALE POINTER (else the cold layer leaves every archived entry as a permanent finding).
@@ -1827,4 +1953,8 @@ if __name__ == "__main__":
     test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan()
     test_class_c_does_not_use_a_supersedence_target_class_a_archives_in_the_same_plan()
     test_class_c_never_rewrites_a_successors_own_link_to_itself()
+    test_apply_rolls_back_class_a_moves_when_the_index_write_fails()
+    test_class_d_sizes_against_the_index_text_after_earlier_classes()
+    test_apply_rolls_back_earlier_class_a_moves_when_a_later_move_fails()
+    test_apply_rollback_keeps_going_and_reraises_the_original_error_when_a_restore_fails()
     print("OK")
