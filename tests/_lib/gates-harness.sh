@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash disable=SC2034  # gate paths are used by the files that source this
 # gates-harness.sh: shared payload builders and assertions for tests/hooks/test-gates.sh,
-# test-gates-irrecoverable-2.sh and test-gates-other.sh. The caller sets ROOT and sources this.
+# test-gates-irrecoverable-2.sh, -3.sh, -4.sh and test-gates-other.sh. The caller sets ROOT and sources this.
 # Isolate the gate-verdict journal (hooks/gates/_journal.py) from this file's
 # 165+ deny/ask assertions -- run standalone (this file's own header
 # invites it), it would otherwise silently append rows to the operator's
@@ -299,12 +299,36 @@ _ratio_now() { python3 -c 'import time; print(time.monotonic())'; }
 # True when a gate's output is its deadline ask (GH #771, GH #800): the one place that string is matched,
 # so a wording change in hooks/gates/irrecoverable.py is fixed here, not in each timing helper. It matches
 # the gate's own prefix ("irrecoverable: ran out of time"), not the bare phrase, so other output that merely
-# quotes the words is not read as a deadline. Readers: _timed_case, _timed_ratio_case, and _len_diag in
-# tests/hooks/test-gates-irrecoverable-2.sh (pinned there by the GH #771 rows).
+# quotes the words is not read as a deadline. Readers: _timed_case, _timed_ratio_case and _len_diag
+# (pinned by the GH #771 rows in tests/hooks/test-gates-irrecoverable-3.sh).
 _gate_ran_out_of_time() { case "$1" in *"irrecoverable: ran out of time"*) return 0 ;; esac; return 1; }
 
 # Seconds between two _ratio_now readings, two decimals; "?" if either reading is not a number.
 _elapsed() { python3 -c 'import sys; print("%.2f" % (float(sys.argv[2]) - float(sys.argv[1])))' "$1" "$2" || echo "?"; }
+
+# _len_diag <command>: the GH #140 length-cap rows in tests/hooks/test-gates-irrecoverable-2.sh call it on a
+# miss, and the GH #771 rows in test-gates-irrecoverable-3.sh pin its tag; it lives here so both parts see it.
+# A `timeout 2` miss is usually exit 124 at about 2 s, so a starved run and a regressed cap look the
+# same. On a miss, rerun the same input once with a 30 s ceiling and print how long it took, and whether
+# the gate hit its own deadline (hooks/gates/irrecoverable.py DEADLINE_SECS, which asks with exit 0). Read
+# the line together with the load printed beside it. Times seen on a 2026-11 macOS dev host at load 5-10:
+# a rerun of about 0.3 s means the first run was starved (a flake). A rerun of several seconds means the
+# length cap regressed: the uncapped tokenize takes about 3.8 s alone and runs into the gate deadline once
+# the payload build is added (a measured rerun: exit 0 in 4.2 s, tagged). A faster host may end just short
+# of the deadline with the real verdict and no tag, so a long untagged rerun counts too. Either reading is
+# conclusive only at low load, since a working cap on a host about 13 times slower than baseline also
+# reaches the deadline. A smaller, one-try cousin of `_timed_case` below, kept apart because the
+# GH #140 rows hold a 2 s limit, not the hook ceiling; both use `_gate_ran_out_of_time`. The gate's stderr
+# stays visible, so a crash in the gate shows up here instead of reading as timing.
+_len_diag() {
+  local _t0 _t1 _drc _out _late=""
+  _t0=$(_ratio_now)
+  _out=$(bash_payload "$1" | timeout 30 bash "$IRRECOVERABLE")
+  _drc=$?
+  _t1=$(_ratio_now)
+  if _gate_ran_out_of_time "$_out"; then _late=" (gate deadline)"; fi
+  echo "     rerun without the 2 s limit: exit $_drc in $(_elapsed "$_t0" "$_t1")s${_late}, load $(uptime | sed 's/.*load averages*: *//')" >&2
+}
 
 # The time a gate run has before it stops denying, into _HOOK_CEIL: the lower of irrecoverable.sh's hook
 # timeout in hooks/hooks.json (past it the hook blocks) and the gate's own deadline (GH #771: past it the

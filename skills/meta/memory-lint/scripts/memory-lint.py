@@ -260,6 +260,23 @@ def live_lines(idx):
     return out
 
 
+def replace_outside_code(text, old, new):
+    """Replace `old` only where the code-masked text holds it, the text the Class C plan scanned: a
+    backticked example of the same link stays. strip_code_spans keeps offsets. Returns (text, hits)."""
+    masked = strip_code_spans(text)
+    out, pos, hits = [], 0, 0
+    while True:
+        i = masked.find(old, pos)
+        if i < 0:
+            break
+        out.append(text[pos:i])
+        out.append(new)
+        pos = i + len(old)
+        hits += 1
+    out.append(text[pos:])
+    return "".join(out), hits
+
+
 def replace_live(text, old, new, count=-1):
     """str.replace that never touches text inside an HTML comment. Returns (text, replacements)."""
     out, pos, done = [], 0, 0
@@ -446,10 +463,17 @@ def depth_ratchet(state, write):
 
 
 def depth_key(d):
-    """Baseline key: <enc> for a .../projects/<enc>/memory store (the resolver's own key, so a manual
-    run and the nudge share one file), else the slug of the path's abspath. No realpath on purpose."""
-    m = re.search(r"/projects/([^/]+)/memory$", os.path.abspath(d))
-    return m.group(1) if m else _memory_dir_resolver._slug(os.path.abspath(d))
+    """Baseline key: <enc> for a store under the default ~/.claude/projects/<enc>/memory (the resolver's own
+    key, so a manual run and the nudge share one file), else the slug of the path's abspath. No realpath on purpose."""
+    ab = os.path.abspath(d)
+    m = re.search(r"/projects/([^/]+)/memory$", ab)
+    # Only the default config dir shares the bare <enc>: a CLAUDE_CONFIG_DIR store for the same repo
+    # has the same <enc> and would otherwise share (and fight over) one baseline.
+    # realpath only for this comparison (macOS /var vs /private/var), never for the key itself.
+    if m and os.path.realpath(os.path.dirname(os.path.dirname(ab))) == os.path.realpath(
+            os.path.join(os.path.expanduser("~"), ".claude", "projects")):
+        return m.group(1)
+    return _memory_dir_resolver._slug(ab)
 
 
 def run_detector(state, as_json):
@@ -935,9 +959,9 @@ def _apply_unguarded(state, plan, applied):
             # run's real applied["C"] count would then quietly disagree.
             print(f"memory-lint: skipping wikilink rewrite in {path}: {e}", file=sys.stderr)
             continue
-        if entry["old"] in txt:
-            new_txt = txt.replace(entry["old"], entry["new"])
-            bytes_saved += len(entry["old"].encode("utf-8")) - len(entry["new"].encode("utf-8"))
+        new_txt, hits = replace_outside_code(txt, entry["old"], entry["new"])
+        if hits:
+            bytes_saved += hits * (len(entry["old"].encode("utf-8")) - len(entry["new"].encode("utf-8")))
             applied["C"].append({"action": "rewrite_wikilink", "from": entry["old"], "to": entry["new"], "file": entry["file"]})
             atomic_write(path, new_txt)
 

@@ -409,6 +409,53 @@ OUT=$(run_hook_no_cache_clear)
 assert_contains "deleting a topic MEMORY.md still points at re-runs lint" "STALE POINTER" "$OUT"
 
 echo ""
+echo "--- a memory write DURING the lint run must not be hidden by the clean cache ---"
+# Red cycle: the cache was stamped after the lint finished, so a file written mid-run looked older
+# than the cache and the next session skipped the scan. A stub lint writes into the store mid-run.
+init_memdir
+FAKE_ROOT="$TMP/fake-plugin-root"
+mkdir -p "$FAKE_ROOT/skills/meta/memory-lint/scripts"
+ln -s "$ROOT/scripts" "$FAKE_ROOT/scripts"   # the hook loads the directory resolver from the plugin root
+STUB_COUNT="$TMP/stub-count"
+: > "$STUB_COUNT"
+cat > "$FAKE_ROOT/skills/meta/memory-lint/scripts/memory-lint.py" <<EOF
+import os, sys, time
+open("$STUB_COUNT", "a").write("x")
+time.sleep(1.1)   # past a whole-second mtime tick
+open(os.path.join("$MEMDIR", "late-%d.md" % os.path.getsize("$STUB_COUNT")), "w").write("n/a")
+print("memories: 1 | findings: 0")
+EOF
+printf '%s\n' "- [t](t.md) — t" > "$MEMDIR/MEMORY.md"; write_memory t.md "t"
+for f in "$FAKE_HOME/.claude/state"/memory-lint-cache-*; do [ -e "$f" ] && tmp_delete "$f"; done
+OUT1=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" HOME="$FAKE_HOME" bash "$HOOK" 2>&1 )
+OUT2=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" HOME="$FAKE_HOME" bash "$HOOK" 2>&1 )
+assert_not_contains "stub runs print nothing (a hook crash would show here)" "rror" "$OUT1$OUT2"
+RUNS=$(wc -c < "$STUB_COUNT" | tr -d ' ')
+if [ "$RUNS" -ge 2 ]; then
+  echo "  ✅ a file written mid-run re-triggers the scan on the next session (lint ran $RUNS times)"; pass=$((pass + 1))
+else
+  echo "  ❌ the second session skipped the scan although the store changed during the first (lint ran $RUNS time)" >&2; fail=$((fail + 1))
+fi
+
+echo ""
+echo "--- a store outside the default config dir keeps its own cache file ---"
+# Red cycle: both stores of one repo shared memory-lint-cache-<enc>, so the default store's clean touch
+# made the other store's hook skip its scan and hide that store's findings.
+OTHER_STORE="$TMP/other-config/projects/$ENC/memory"
+for S in "$OTHER_STORE" "$MEMDIR"; do
+  tmp_delete "$S"; mkdir -p "$S"
+  printf '%s\n' "- [topic-a](topic-a.md) — a" "- [topic-b](topic-b.md) — b" > "$S/MEMORY.md"
+  printf -- '---\nname: topic-a\ndescription: "a"\nmetadata:\n  type: project\n---\nsee [[topic-b]]\n' > "$S/topic-a.md"
+  printf -- '---\nname: topic-b\ndescription: "b"\nmetadata:\n  type: project\n---\nsee [[topic-a]]\n' > "$S/topic-b.md"
+done
+printf -- '---\nname: lost\ndescription: "l"\nmetadata:\n  type: project\n---\nalone\n' > "$OTHER_STORE/lost.md"   # only the other store is dirty
+for f in "$FAKE_HOME/.claude/state"/memory-lint-cache-*; do [ -e "$f" ] && tmp_delete "$f"; done
+OUT=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$ROOT" HOME="$FAKE_HOME" bash "$HOOK" 2>&1 )
+assert_not_contains "clean default store is silent and caches" "[memory-lint]" "$OUT"
+OUT=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$ROOT" HOME="$FAKE_HOME" CLAUDE_CONFIG_DIR="$TMP/other-config" bash "$HOOK" 2>&1 )
+assert_contains "the other config dir's findings are not hidden by the default store's cache" "UNINDEXED: lost.md" "$OUT"
+
+echo ""
 total=$((pass + fail))
 echo "=== $pass/$total passed ==="
 [[ "$fail" -eq 0 ]] && exit 0 || exit 1
