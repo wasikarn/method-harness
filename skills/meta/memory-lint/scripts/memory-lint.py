@@ -689,7 +689,8 @@ def class_d_count_fold(state, exclude_files, removed_files=frozenset(), index_te
     never planned (apply cannot match text that runs across a comment). A chapter index
     (index-*.md) is never a candidate, and a deindex that pushes a topic past MAX_HOPS is skipped."""
     plan = []
-    idx_bytes, idx_lines = measured_index(state["idx"])
+    # Size the index as A and B leave it (GH #964), else D deindexes when B already got under target.
+    idx_bytes, idx_lines = measured_index(state["idx"] if index_text is None else index_text)
     pct = max(idx_lines / LINE_CAP, idx_bytes / BYTE_CAP)
     if pct < FOLD_TRIGGER_PCT:
         return plan
@@ -767,8 +768,25 @@ def atomic_write(path, content):
 
 
 def apply_action_plan(state, plan):
-    """Execute the plan: Class A moves, B/C rewrites, D deindexes. Returns (bytes_saved, applied_summary)."""
+    """Execute the plan: Class A moves, B/C rewrites, D deindexes. Returns (bytes_saved, applied_summary).
+    Any OSError before MEMORY.md is written puts the Class A moves back (their pointers are still live,
+    so each would become a STALE POINTER) and re-raises the original error (GH #964)."""
     applied = {"A": [], "B": [], "C": [], "D": []}
+    try:
+        return _apply_unguarded(state, plan, applied)
+    except OSError:
+        # Class B/C edits are left in place: they create no new finding without the index write.
+        for moved in applied["A"]:
+            if "skipped" in moved:
+                continue
+            try:
+                shutil.move(moved["to"], os.path.join(state["d"], moved["from"]))
+            except OSError as restore_err:
+                print(f"memory-lint: could not restore {moved['from']} from {moved['to']}: {restore_err}", file=sys.stderr)
+        raise
+
+
+def _apply_unguarded(state, plan, applied):
     bytes_saved = 0
     d = state["d"]
     idx = state["idx"]
