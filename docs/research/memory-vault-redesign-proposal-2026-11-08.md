@@ -18,11 +18,11 @@
 | Topic files (lint count: top-level `.md`, not `MEMORY.md`) | 1,383; all `.md` including `_archive/`: 1,498 files, 4,987,076 B |
 | Largest index share of the load cap | amplitube-presets 70% (18,072 B, 90 lines); method-harness 59% (15,220 B, 110 lines); dotfiles 52% |
 | Stores at or above 80% | 0 |
-| Topics with no link path from `MEMORY.md` | 0 in every store (the 14 found earlier are now linked) |
+| Topics with no link path from `MEMORY.md` | 0 in every store by lint's `compute_depths`; the earlier 14 came from Agent B's own link count, so the two numbers may not measure the same thing |
 | Topics deeper than 2 hops | 246: method-harness 200 (deepest 7), tathep 32 (4), amplitube-presets 9 (4), dotfiles 5 (3), all others 0 |
 | Lint findings | 20, all in 6 stores of 27 files or fewer; method-harness, dotfiles, tathep and amplitube-presets are clean |
 | qmd | 2 of 22 stores indexed (`mh-memory`, `dotfiles-memory`), each at its real path |
-| Backup | `tmutil destinationinfo`: "No destinations configured"; 2 of 22 stores are git repos with no remote (the remote was removed by operator choice) |
+| Backup | `tmutil destinationinfo`: "No destinations configured"; 2 of 22 stores are git repos (method-harness, tathep), and `git remote -v` lists no remote for either |
 | Stores and `$HOME` on one volume | yes: every store, `$HOME` and `/private/tmp` report `st_dev` 16777230, APFS Data volume |
 
 **Verdict: NO-GO on the move now.** G1 fails (highest 70%, none at 80%). G2 is not shown: the stores qmd indexes today it indexes at their real paths, and adding the other 20 is a `qmd collection add` per store with no move; a vault would add nothing a backup needs, because there is no backup destination either way. G3: no incident recorded. The one real structural fact, 246 topics deeper than 2 hops, is 81% one store and needs links, not a move. Revisit when G1, G2 or G3 turns true.
