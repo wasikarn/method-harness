@@ -642,7 +642,8 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
             else:
                 # Archived target — find replacement
                 replacement = super_targets.get(t)
-                if replacement and replacement in state["stems"] and replacement + ".md" not in removed_files:
+                if (replacement and replacement in state["stems"] and replacement + ".md" not in removed_files
+                        and replacement + ".md" != f):
                     plan.append({
                         "action": "rewrite_wikilink",
                         "file": f,

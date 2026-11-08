@@ -859,7 +859,7 @@ def test_every_test_in_this_file_is_registered_in_the_main_runner():
     import re
     src = open(__file__).read()
     defined = set(re.findall(r"^def (test_\w+)", src, re.M))
-    called = set(re.findall(r"^    (test_\w+)\(\)", src, re.M))
+    called = set(re.findall(r"^    (test_\w+)\(\)", src.split('\nif __name__ == "__main__":\n')[-1], re.M))
     assert not defined - called, sorted(defined - called)
 
 
@@ -906,6 +906,19 @@ def test_class_c_rewrites_archived_link_to_supersedence_target():
         e = [x for x in memory_lint.class_c_dangling_link_rewrite(state) if x["file"] == "src.md"][0]
         assert e["old"] == "[[old-topic]]" and e["new"] == "[[new-topic]]", e
         assert e["reason"] == "archived-with-supersedence", e
+
+
+def test_class_c_never_rewrites_a_successors_own_link_to_itself():
+    # The successor file mentions the archived topic it replaced: rewriting that link to the
+    # successor's own name would hide the finding and erase the record. Leave it for manual review.
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "_archive", "2026-01-01"))
+        _write_memory(os.path.join(d, "_archive", "2026-01-01"), "old-topic.md", "project", "archived", "n/a")
+        _write_memory(d, "new-topic.md", "project", "the successor", "Supersedes [[old-topic]].")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [old-topic](old-topic.md) — **SUPERSEDED** by [[new-topic]]\n- [new-topic](new-topic.md) — y\n")
+        plan = memory_lint.class_c_dangling_link_rewrite(memory_lint.collect_state(d))
+        assert [(e["file"], e["new"]) for e in plan] == [("new-topic.md", None)], plan
 
 
 def test_class_c_ignores_link_that_resolves_by_slug_only():
@@ -1800,7 +1813,6 @@ if __name__ == "__main__":
     test_auto_archive_json_impact_skips_class_c_with_no_target()
     test_auto_archive_dry_run_wins_over_yes()
     test_auto_archive_no_actions_hint_only_without_yes()
-    print("OK")
     test_class_a_kept_when_only_inbound_link_uses_the_name_slug_not_the_stem()
     test_class_a_archives_file_whose_only_link_is_to_itself()
     test_self_link_exclusion_does_not_swallow_a_different_files_matching_stem()
@@ -1813,3 +1825,5 @@ if __name__ == "__main__":
     test_every_test_in_this_file_is_registered_in_the_main_runner()
     test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan()
     test_class_c_does_not_use_a_supersedence_target_class_a_archives_in_the_same_plan()
+    test_class_c_never_rewrites_a_successors_own_link_to_itself()
+    print("OK")
