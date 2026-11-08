@@ -945,6 +945,8 @@ def test_class_a_with_an_inline_comment_on_the_pointer_line_never_leaves_a_stale
         memory_lint.apply_action_plan(state, plan)
         findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
         assert not any("STALE POINTER" in x for x in findings), findings
+        # Such a line is skipped, not half-applied: the file stays where its pointer says it is.
+        assert os.path.exists(os.path.join(d, "x.md"))
 
 
 def test_apply_does_not_move_a_file_whose_pointer_line_is_gone_from_the_index():
@@ -988,6 +990,89 @@ def test_class_d_hop_guard_alone_blocks_a_deindex_that_leaves_a_three_hop_backup
             assert "t0.md" not in [e["file"] for e in plan], plan
     finally:
         memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
+def _d_store_with_t0_line(d, t0_line, y_file=False):
+    """Six topics sized to cross the Class D trigger at BYTE_CAP=480; t0 is oldest, reachable via t5."""
+    now = 2_000_000_000
+    names = [f"t{i}" for i in range(6)]
+    bodies = {"t5": "see [[t0]] [[t1]] [[t2]] [[t3]] [[t4]]"}
+    lines = []
+    for i, stem in enumerate(names):
+        with open(os.path.join(d, f"{stem}.md"), "w") as f:
+            f.write(f"---\nname: {stem}\n---\n{bodies.get(stem, 'leaf')}\n")
+        os.utime(os.path.join(d, f"{stem}.md"), (now + i * 100, now + i * 100))
+        lines.append(t0_line if i == 0 else f"- [{stem}]({stem}.md) — a short pointer hook for topic {i} here")
+    if y_file:
+        _write_memory(d, "y.md", "project", "y", "n/a")
+    with open(os.path.join(d, "MEMORY.md"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return memory_lint.collect_state(d)
+
+
+def test_class_d_skips_a_deindex_whose_line_also_carries_the_only_pointer_to_another_topic():
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 380
+        plain = "- [t0](t0.md) — a short pointer hook for topic 0 here"
+        with tempfile.TemporaryDirectory() as d:
+            state = _d_store_with_t0_line(d, plain)
+            assert "t0.md" in [e["file"] for e in memory_lint.class_d_count_fold(state, set())], "control"
+        with tempfile.TemporaryDirectory() as d:
+            state = _d_store_with_t0_line(d, plain + " also [y](y.md)", y_file=True)
+            assert "y.md" in state["referenced"]
+            assert len(state["idx"].encode()) / memory_lint.BYTE_CAP >= 0.80
+            plan = memory_lint.class_d_count_fold(state, set())
+            assert "t0.md" not in [e["file"] for e in plan], plan
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
+def test_class_d_never_plans_a_line_that_carries_an_inline_comment():
+    # apply cannot match text that runs across a comment, so such a plan entry would be a lie.
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 380
+        with tempfile.TemporaryDirectory() as d:
+            state = _d_store_with_t0_line(d, "- [t0](t0.md) — a short pointer hook <!-- keep me --> for topic 0")
+            plan = memory_lint.class_d_count_fold(state, set())
+            assert plan, "control: other candidates still planned"
+            assert "t0.md" not in [e["file"] for e in plan], plan
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
+def test_class_b_never_plans_a_line_that_carries_an_inline_comment():
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 300
+        with tempfile.TemporaryDirectory() as d:
+            _write_memory(d, "big.md", "project", "big", "short first paragraph\n\n" + "x" * 6000)
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("- [big](big.md) — " + "detail " * 40 + "\n")
+            assert len(memory_lint.class_b_near_budget_collapse(memory_lint.collect_state(d))) == 1, "control"
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("- [big](big.md) — " + "detail " * 40 + "<!-- private note -->\n")
+            assert memory_lint.class_b_near_budget_collapse(memory_lint.collect_state(d)) == []
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
+def test_class_b_does_not_annotate_a_topic_whose_pointer_rewrite_did_not_land():
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "big.md", "project", "big", "body")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [big](big.md) — short\n")
+        state = memory_lint.collect_state(d)
+        entry = {"action": "rewrite_pointer", "from": "- [big](big.md) — a line no longer in the index",
+                 "to": "- [big](big.md) — stub", "from_chars": 10, "to_chars": 5, "delta_bytes": -5,
+                 "topic_file": "big.md"}
+        before = open(os.path.join(d, "big.md")).read()
+        memory_lint.apply_action_plan(state, {"A": [], "B": [entry], "C": [], "D": []})
+        assert open(os.path.join(d, "big.md")).read() == before
 
 
 def test_class_a_never_archives_a_chapter_index():
@@ -1429,6 +1514,10 @@ if __name__ == "__main__":
     test_class_a_with_an_inline_comment_on_the_pointer_line_never_leaves_a_stale_pointer()
     test_apply_does_not_move_a_file_whose_pointer_line_is_gone_from_the_index()
     test_class_d_hop_guard_alone_blocks_a_deindex_that_leaves_a_three_hop_backup()
+    test_class_d_skips_a_deindex_whose_line_also_carries_the_only_pointer_to_another_topic()
+    test_class_d_never_plans_a_line_that_carries_an_inline_comment()
+    test_class_b_never_plans_a_line_that_carries_an_inline_comment()
+    test_class_b_does_not_annotate_a_topic_whose_pointer_rewrite_did_not_land()
     test_class_a_never_archives_a_chapter_index()
     test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment()
     test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched()

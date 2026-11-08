@@ -326,8 +326,6 @@ def collect_state(d):
         "d": d, "files": files, "stems": stems, "slugs": slugs, "slug_set": slug_set,
         "dup_slugs": dup_slugs, "inbound": inbound, "links_out": links_out,
         "index_path": index_path, "idx": idx, "referenced": referenced,
-        # What Claude Code actually loads. Class A/B/D scan this; writes go through the raw `idx`.
-        "idx_live": HTML_COMMENT_RE.sub("", idx),
     }
 
 
@@ -540,7 +538,7 @@ def class_b_near_budget_collapse(state, removed_files=frozenset()):
         if not m:
             continue
         fname = m.group(1)
-        if len(full_line) < 250:
+        if len(full_line) < 250 or full_line != live_text:
             continue
         if fname not in state["files"] or fname in removed_files:
             continue
@@ -654,7 +652,7 @@ def class_c_dangling_link_rewrite(state):
     return plan
 
 
-def class_d_count_fold(state, exclude_files, removed_files=frozenset(), referenced=None):
+def class_d_count_fold(state, exclude_files, removed_files=frozenset(), index_text=None):
     """Class D: pure count-pressure fallback valve. Only produces entries when the
     index is still >= FOLD_TRIGGER_PCT of cap — A/B/C's per-entry heuristics don't
     catch pure entry-count accumulation (many small terse pointer lines, no single
@@ -671,8 +669,10 @@ def class_d_count_fold(state, exclude_files, removed_files=frozenset(), referenc
     plan A/B, so nothing double-counts. Self-contained byte accounting — does not
     participate in the shared estimated_impact sum used by A/B/C, which mixes
     savings-sign conventions across classes; D reports its own delta separately.
-    `removed_files` / `referenced` describe the graph as A and B leave it (build_plan passes them), so
-    D's guard never judges on a graph the earlier classes are about to change. A chapter index
+    `removed_files` / `index_text` describe the graph as A and B leave it (build_plan passes them), so
+    D's guard never judges on a graph the earlier classes are about to change; the guard drops the
+    WHOLE pointer line, so any other pointer on it counts as lost. A line carrying an inline comment is
+    never planned (apply cannot match text that runs across a comment). A chapter index
     (index-*.md) is never a candidate, and a deindex that pushes a topic past MAX_HOPS is skipped."""
     plan = []
     idx_bytes, idx_lines = measured_index(state["idx"])
@@ -693,7 +693,7 @@ def class_d_count_fold(state, exclude_files, removed_files=frozenset(), referenc
         fname = m.group(1)
         if fname in exclude_files or fname in removed_files or fname not in state["files"]:
             continue
-        if is_chapter_index(fname):
+        if is_chapter_index(fname) or full_line != live_text:
             continue
         try:
             mtime = os.path.getmtime(os.path.join(state["d"], fname))
@@ -707,7 +707,8 @@ def class_d_count_fold(state, exclude_files, removed_files=frozenset(), referenc
     # tentatively accepted, so an interaction between two accepted candidates
     # (one only reachable through the other) is caught too, not just each in
     # isolation.
-    still_referenced = set(state["referenced"] if referenced is None else referenced) - set(removed_files)
+    cur = state["idx"] if index_text is None else index_text
+    still_referenced = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", cur))) - set(removed_files)
     files_now = [f for f in state["files"] if f not in removed_files]
     links_now = {f: v for f, v in state["links_out"].items() if f not in removed_files}
     baseline_reachable = compute_reachable(files_now, state["slugs"], links_now, still_referenced)
@@ -717,13 +718,18 @@ def class_d_count_fold(state, exclude_files, removed_files=frozenset(), referenc
     for _mtime, fname, full_line in candidates:
         if remaining_bytes <= target_bytes and remaining_lines <= target_lines:
             break
-        trial_referenced = still_referenced - {fname}
+        trial, hits = replace_live(cur, full_line + "\n", "", 1)
+        if not hits:
+            trial, hits = replace_live(cur, full_line, "", 1)
+        if not hits:
+            continue
+        trial_referenced = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", trial))) - set(removed_files)
         trial_reachable = compute_reachable(files_now, state["slugs"], links_now, trial_referenced)
         if trial_reachable != baseline_reachable:
             continue  # would orphan fname (or something only reachable through it) — skip, don't propose
         if hurts_graph(state, removed_files, still_referenced, removed_files, trial_referenced):
             continue  # reachable, but a topic that sat within MAX_HOPS would end up deeper
-        still_referenced = trial_referenced
+        still_referenced, cur = trial_referenced, trial
         remaining_bytes -= len(full_line.encode("utf-8")) + 1  # +1 for the newline
         remaining_lines -= 1
         plan.append({"action": "deindex", "file": fname, "old_pointer_line": full_line})
@@ -794,9 +800,11 @@ def apply_action_plan(state, plan):
         old_line = entry["from"]
         new_line = entry["to"]
         new_idx, hits = replace_live(new_idx, old_line, new_line)
-        if hits:
-            bytes_saved += entry["delta_bytes"]
-            applied["B"].append({"action": "rewrite_pointer", "from": old_line, "to": new_line})
+        if not hits:
+            print(f"memory-lint: pointer line for {entry['topic_file']} not found in MEMORY.md, not collapsing it", file=sys.stderr)
+            continue
+        bytes_saved += entry["delta_bytes"]
+        applied["B"].append({"action": "rewrite_pointer", "from": old_line, "to": new_line})
         # Add a 1-line supersedes: note at top of topic file
         topic_path = os.path.join(d, entry["topic_file"])
         try:
@@ -898,9 +906,10 @@ def build_plan(state):
     live = state["idx"]
     for e in plan_b:
         live, _ = replace_live(live, e["from"], e["to"], 1)
-    referenced = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", live))) - removed_a
+    for e in plan_a:
+        live, _ = replace_live(live, e["old_pointer_line"], STUB_TEMPLATE.format(e["from"][:-3], e["to_archive_subdir"], e["from"]))
     exclude_files = removed_a | {e["topic_file"] for e in plan_b}
-    plan_d = class_d_count_fold(state, exclude_files, removed_files=removed_a, referenced=referenced)
+    plan_d = class_d_count_fold(state, exclude_files, removed_files=removed_a, index_text=live)
     return {"A": plan_a, "B": plan_b, "C": plan_c, "D": plan_d}
 
 
