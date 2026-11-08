@@ -88,9 +88,10 @@ LINT="${CLAUDE_PLUGIN_ROOT:-}/skills/meta/memory-lint/scripts/memory-lint.py"
 
 # Skip the python3 scan if nothing changed since the last clean run. -maxdepth 1
 # matches collect_state()'s non-recursive listdir; _archive/ never feeds the detector.
+# The trailing slash on "$MEMDIR/" makes find follow a symlinked memory/ (else it lists the link only).
 CACHE="$HOME/.claude/state/memory-lint-cache-$ENC"
 mkdir -p "$HOME/.claude/state" 2>/dev/null
-if [ -f "$CACHE" ] && [ -z "$(find "$MEMDIR" -maxdepth 1 -type f -newer "$CACHE" 2>/dev/null | head -1)" ]; then
+if [ -f "$CACHE" ] && [ -z "$(find "$MEMDIR/" -maxdepth 1 -type f -newer "$CACHE" 2>/dev/null | head -1)" ]; then
   exit 0
 fi
 

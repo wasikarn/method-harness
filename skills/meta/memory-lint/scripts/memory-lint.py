@@ -181,6 +181,92 @@ def compute_reachable(files, slugs, links_out, referenced):
     return reachable
 
 
+MAX_HOPS = 2  # the book model: MEMORY.md pointer = hop 1, each [[link]] from there adds one
+
+
+def compute_depths(files, slugs, links_out, referenced):
+    """stem -> hop distance from MEMORY.md (a pointer is hop 1). Same resolution as compute_reachable."""
+    target_stem = {f[:-3]: f[:-3] for f in files}
+    for f in files:
+        s = slugs[f]
+        if s and s not in target_stem:
+            target_stem[s] = f[:-3]
+    depth = {ref[:-3]: 1 for ref in referenced if ref in files}
+    frontier = list(depth)
+    while frontier:
+        nxt = []
+        for cur in frontier:
+            for t in links_out.get(cur + ".md", []):
+                r = target_stem.get(t)
+                if r is not None and r not in depth:
+                    depth[r] = depth[cur] + 1
+                    nxt.append(r)
+        frontier = nxt
+    return depth
+
+
+def _view(state, removed, referenced):
+    """(files, links_out, referenced) with `removed` filenames gone, as an action plan would leave them."""
+    files = [f for f in state["files"] if f not in removed]
+    links = {f: v for f, v in state["links_out"].items() if f not in removed}
+    return files, links, {r for r in referenced if r not in removed}
+
+
+def hurts_graph(state, removed_before, ref_before, removed_after, ref_after):
+    """True if going from the first view to the second strands a topic or pushes one that sat within
+    MAX_HOPS past it. Topics the second view removes itself are not counted."""
+    f0, l0, r0 = _view(state, removed_before, ref_before)
+    f1, l1, r1 = _view(state, removed_after, ref_after)
+    before = compute_depths(f0, state["slugs"], l0, r0)
+    after = compute_depths(f1, state["slugs"], l1, r1)
+    gone = set(removed_after) - set(removed_before)
+    for stem, hops in before.items():
+        if stem + ".md" in gone:
+            continue
+        now = after.get(stem)
+        if now is None or (hops <= MAX_HOPS < now):
+            return True
+    return False
+
+
+def is_chapter_index(fname):
+    return fname.startswith("index-")
+
+
+def live_lines(idx):
+    """(raw_line, comment-stripped line) for each index line Claude Code would load whole.
+    A line that starts inside a comment, or opens one it never closes, is skipped: its raw text
+    cannot be matched safely. The raw line is what apply must find in the file."""
+    spans = [(m.start(), m.end()) for m in HTML_COMMENT_RE.finditer(idx)]
+    out, off = [], 0
+    for raw in idx.split("\n"):
+        start, off = off, off + len(raw) + 1
+        if any(s <= start < e for s, e in spans):
+            continue
+        live = HTML_COMMENT_RE.sub("", raw)
+        if "<!--" in live:
+            continue
+        out.append((raw, live))
+    return out
+
+
+def replace_live(text, old, new, count=-1):
+    """str.replace that never touches text inside an HTML comment. Returns (text, replacements)."""
+    out, pos, done = [], 0, 0
+    spans = [(m.start(), m.end()) for m in HTML_COMMENT_RE.finditer(text)] + [(len(text), len(text))]
+    for start, end in spans:
+        seg = text[pos:start]
+        left = -1 if count < 0 else count - done
+        if left != 0:
+            n = seg.count(old) if left < 0 else min(seg.count(old), left)
+            seg = seg.replace(old, new, left)
+            done += n
+        out.append(seg)
+        out.append(text[start:end])
+        pos = end
+    return "".join(out), done
+
+
 def collect_state(d):
     """Build the shared data structures used by both detector and action modes."""
     files = [f for f in os.listdir(d) if f.endswith(".md") and f != "MEMORY.md"]
@@ -233,7 +319,9 @@ def collect_state(d):
     referenced = set()
     if os.path.isfile(index_path):
         idx = open(index_path, encoding="utf-8").read()
-        referenced = set(POINTER_RE.findall(idx))
+        # Scan the comment-stripped text only: Claude Code never loads a commented pointer.
+        # `idx` stays raw because apply_action_plan writes it back.
+        referenced = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", idx)))
     return {
         "d": d, "files": files, "stems": stems, "slugs": slugs, "slug_set": slug_set,
         "dup_slugs": dup_slugs, "inbound": inbound, "links_out": links_out,
@@ -290,6 +378,9 @@ def detector_findings(state):
             if f not in referenced and f[:-3] not in reachable:
                 findings.append(f"UNINDEXED: {f} not pointed to from MEMORY.md and not [[link]]-reachable from any indexed memory")
         for ref in sorted(referenced):
+            # Class A's stub points at _archive/<date>/<file>: the cold layer, resolvable if it exists.
+            if os.path.normpath(ref).startswith("_archive" + os.sep) and os.path.isfile(os.path.join(state["d"], ref)):
+                continue
             if ref not in files:
                 findings.append(f"STALE POINTER: MEMORY.md → ({ref}) but file missing")
 
@@ -372,7 +463,10 @@ def class_a_stale_superseded(state):
     The supersedence-target `[[X]]` in the marker is recorded for downstream Class C
     rewrites only (it's the canonical successor, not the file to move)."""
     plan = []
-    for line in state["idx"].splitlines():
+    removed = set()
+    cur = state["idx"]   # raw index with each accepted stub applied, so the guard sees what apply will write
+    archive_date = time.strftime(SUPERSEDED_ARCHIVE_DATE_FMT)
+    for raw_line, line in live_lines(state["idx"]):
         m = SUPERSEDED_RE.search(line)
         if not m:
             continue
@@ -383,6 +477,25 @@ def class_a_stale_superseded(state):
         target_file = link_m.group(1)
         target_stem = target_file[:-3]
         if target_file not in state["files"]:
+            continue
+        # A chapter index is structure, not a finished topic: archiving it strands everything under it.
+        if is_chapter_index(target_file):
+            continue
+        # Judge the guard on the index exactly as apply will leave it: the whole line becomes a stub, so
+        # any other pointer on it goes too, and a second live pointer to this file would go stale.
+        # A same-day rerun finds the destination taken: apply cannot move the file, so plan nothing.
+        if os.path.exists(os.path.join(state["d"], "_archive", archive_date, target_file)):
+            continue
+        stub = STUB_TEMPLATE.format(target_stem, archive_date, target_file)
+        trial, hits = replace_live(cur, raw_line, stub)
+        if not hits:
+            continue
+        ref_now = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", cur)))
+        ref_next = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", trial)))
+        if target_file in ref_next:
+            continue
+        # Never leave a topic stranded or past MAX_HOPS (cumulative over this plan's earlier moves).
+        if hurts_graph(state, removed, ref_now, removed | {target_file}, ref_next):
             continue
         # A duplicate name: slug makes any [[slug]] link to this file ambiguous (it could just
         # as well resolve to the other file holding the same slug) -- can't safely confirm 0
@@ -397,18 +510,22 @@ def class_a_stale_superseded(state):
         # Successor for downstream use
         successor = m.group(1).split("|", 1)[0].strip()
         successor = successor[:-3] if successor.endswith(".md") else successor
+        removed.add(target_file)
+        cur = trial
         plan.append({
             "action": "move",
             "from": target_file,
-            "to_archive_subdir": time.strftime(SUPERSEDED_ARCHIVE_DATE_FMT),
-            "old_pointer_line": line,
+            "to_archive_subdir": archive_date,
+            "old_pointer_line": raw_line,
             "successor": successor,
         })
     return plan
 
 
-def class_b_near_budget_collapse(state):
-    """Class B: longest pointer-lines (>=250 chars) where topic is >5KB and pointer is >= 1.2x first paragraph."""
+def class_b_near_budget_collapse(state, removed_files=frozenset(), index_text=None):
+    """Class B: longest pointer-lines (>=250 chars) where topic is >5KB and pointer is >= 1.2x first paragraph.
+    `removed_files` / `index_text` = the files Class A is about to archive and the index with A's stubs
+    applied; the graph guard judges each collapse on the graph as A leaves it."""
     plan = []
     if not state["idx"]:
         return plan
@@ -419,13 +536,14 @@ def class_b_near_budget_collapse(state):
         return plan
 
     candidates = []
-    for m in POINTER_LINE_RE.finditer(state["idx"]):
-        fname = m.group(1)
-        rest = m.group(2)
-        full_line = m.group(0)
-        if len(full_line) < 250:
+    for full_line, live_text in live_lines(state["idx"]):
+        m = POINTER_LINE_RE.match(live_text)
+        if not m:
             continue
-        if fname not in state["files"]:
+        fname = m.group(1)
+        if len(full_line) < 250 or full_line != live_text:
+            continue
+        if fname not in state["files"] or fname in removed_files:
             continue
         topic_size = file_size(state["d"], fname)
         if topic_size <= 5 * 1024:
@@ -437,10 +555,21 @@ def class_b_near_budget_collapse(state):
             candidates.append((len(full_line), fname, full_line, topic_size))
 
     candidates.sort(key=lambda x: -x[0])  # longest first
-    for line_len, fname, full_line, topic_size in candidates:
+    live = state["idx"] if index_text is None else index_text
+    for _line_len, fname, full_line, topic_size in candidates:
         # Stub: ~80 chars
         stem = fname[:-3]
         stub = f"- [{stem}]({fname}) — see [[{stem}]] for full record"
+        # The collapsed line may carry other pointers (`](y.md)`); losing y's only one strands y.
+        # apply collapses every copy of the line, so the guard must too; a later duplicate is then already gone
+        trial_live, hits = replace_live(live, full_line, stub)
+        if not hits:
+            continue
+        ref_now = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", live)))
+        ref_next = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", trial_live)))
+        if hurts_graph(state, removed_files, ref_now, removed_files, ref_next):
+            continue
+        live = trial_live
         # supersedes: note in topic file
         plan.append({
             "action": "rewrite_pointer",
@@ -529,7 +658,7 @@ def class_c_dangling_link_rewrite(state):
     return plan
 
 
-def class_d_count_fold(state, exclude_files):
+def class_d_count_fold(state, exclude_files, removed_files=frozenset(), index_text=None):
     """Class D: pure count-pressure fallback valve. Only produces entries when the
     index is still >= FOLD_TRIGGER_PCT of cap — A/B/C's per-entry heuristics don't
     catch pure entry-count accumulation (many small terse pointer lines, no single
@@ -545,7 +674,12 @@ def class_d_count_fold(state, exclude_files):
     exists to relieve pressure on. exclude_files = filenames already claimed by
     plan A/B, so nothing double-counts. Self-contained byte accounting — does not
     participate in the shared estimated_impact sum used by A/B/C, which mixes
-    savings-sign conventions across classes; D reports its own delta separately."""
+    savings-sign conventions across classes; D reports its own delta separately.
+    `removed_files` / `index_text` describe the graph as A and B leave it (build_plan passes them), so
+    D's guard never judges on a graph the earlier classes are about to change; the guard drops the
+    WHOLE pointer line, so any other pointer on it counts as lost. A line carrying an inline comment is
+    never planned (apply cannot match text that runs across a comment). A chapter index
+    (index-*.md) is never a candidate, and a deindex that pushes a topic past MAX_HOPS is skipped."""
     plan = []
     idx_bytes, idx_lines = measured_index(state["idx"])
     pct = max(idx_lines / LINE_CAP, idx_bytes / BYTE_CAP)
@@ -558,10 +692,14 @@ def class_d_count_fold(state, exclude_files):
         return plan
 
     candidates = []
-    for m in POINTER_LINE_RE.finditer(state["idx"]):
+    for full_line, live_text in live_lines(state["idx"]):
+        m = POINTER_LINE_RE.match(live_text)
+        if not m:
+            continue
         fname = m.group(1)
-        full_line = m.group(0)
-        if fname in exclude_files or fname not in state["files"]:
+        if fname in exclude_files or fname in removed_files or fname not in state["files"]:
+            continue
+        if is_chapter_index(fname) or full_line != live_text:
             continue
         try:
             mtime = os.path.getmtime(os.path.join(state["d"], fname))
@@ -575,19 +713,29 @@ def class_d_count_fold(state, exclude_files):
     # tentatively accepted, so an interaction between two accepted candidates
     # (one only reachable through the other) is caught too, not just each in
     # isolation.
-    still_referenced = set(state["referenced"])
-    baseline_reachable = compute_reachable(state["files"], state["slugs"], state["links_out"], still_referenced)
+    cur = state["idx"] if index_text is None else index_text
+    still_referenced = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", cur))) - set(removed_files)
+    files_now = [f for f in state["files"] if f not in removed_files]
+    links_now = {f: v for f, v in state["links_out"].items() if f not in removed_files}
+    baseline_reachable = compute_reachable(files_now, state["slugs"], links_now, still_referenced)
 
     remaining_bytes = idx_bytes
     remaining_lines = idx_lines
     for _mtime, fname, full_line in candidates:
         if remaining_bytes <= target_bytes and remaining_lines <= target_lines:
             break
-        trial_referenced = still_referenced - {fname}
-        trial_reachable = compute_reachable(state["files"], state["slugs"], state["links_out"], trial_referenced)
+        trial, hits = replace_live(cur, full_line + "\n", "", 1)
+        if not hits:
+            trial, hits = replace_live(cur, full_line, "", 1)
+        if not hits:
+            continue
+        trial_referenced = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", trial))) - set(removed_files)
+        trial_reachable = compute_reachable(files_now, state["slugs"], links_now, trial_referenced)
         if trial_reachable != baseline_reachable:
             continue  # would orphan fname (or something only reachable through it) — skip, don't propose
-        still_referenced = trial_referenced
+        if hurts_graph(state, removed_files, still_referenced, removed_files, trial_referenced):
+            continue  # reachable, but a topic that sat within MAX_HOPS would end up deeper
+        still_referenced, cur = trial_referenced, trial
         remaining_bytes -= len(full_line.encode("utf-8")) + 1  # +1 for the newline
         remaining_lines -= 1
         plan.append({"action": "deindex", "file": fname, "old_pointer_line": full_line})
@@ -624,9 +772,22 @@ def apply_action_plan(state, plan):
     for entry in plan["A"]:
         src = os.path.join(d, entry["from"])
         dst = os.path.join(archive_dir, entry["from"])
+        if os.path.exists(dst) and os.path.exists(src):
+            # Both exist: the move cannot happen, so the pointer must not change either.
+            print(f"memory-lint: _archive/{archive_date}/{entry['from']} already exists, not archiving {entry['from']}", file=sys.stderr)
+            continue
+        # Rewrite the pointer first: a plan built on a stale index finds nothing to rewrite, and moving
+        # the file anyway would leave a STALE POINTER behind.
+        old_line = entry["old_pointer_line"]
+        new_line = STUB_TEMPLATE.format(entry["from"][:-3], archive_date, entry["from"])
+        new_idx, hits = replace_live(new_idx, old_line, new_line)
+        if not hits:
+            print(f"memory-lint: pointer for {entry['from']} not found in MEMORY.md, not archiving it", file=sys.stderr)
+            continue
+        bytes_saved += len(old_line.encode("utf-8")) - len(new_line.encode("utf-8"))
         os.makedirs(archive_dir, exist_ok=True)
         if os.path.exists(dst):
-            # Skip if already archived at this date; record as a no-op
+            # src is gone and dst exists: an earlier run moved it; record a no-op
             applied["A"].append({"action": "move", "from": entry["from"], "to": dst, "skipped": "already-archived"})
             # Still rewrite the pointer
         else:
@@ -643,22 +804,17 @@ def apply_action_plan(state, plan):
                 print(f"memory-lint: shutil.move failed for {entry['from']} ({e}), falling back to os.rename", file=sys.stderr)
                 os.rename(src, dst)
                 applied["A"].append({"action": "move", "from": entry["from"], "to": dst})
-        # Rewrite pointer line to stub
-        old_line = entry["old_pointer_line"]
-        stem = entry["from"][:-3]
-        new_line = STUB_TEMPLATE.format(stem, archive_date, entry["from"])
-        if old_line in new_idx:
-            new_idx = new_idx.replace(old_line, new_line)
-            bytes_saved += len(old_line.encode("utf-8")) - len(new_line.encode("utf-8"))
 
     # Class B — pointer rewrites
     for entry in plan["B"]:
         old_line = entry["from"]
         new_line = entry["to"]
-        if old_line in new_idx:
-            new_idx = new_idx.replace(old_line, new_line)
-            bytes_saved += entry["delta_bytes"]
-            applied["B"].append({"action": "rewrite_pointer", "from": old_line, "to": new_line})
+        new_idx, hits = replace_live(new_idx, old_line, new_line)
+        if not hits:
+            print(f"memory-lint: pointer line for {entry['topic_file']} not found in MEMORY.md, not collapsing it", file=sys.stderr)
+            continue
+        bytes_saved += entry["delta_bytes"]
+        applied["B"].append({"action": "rewrite_pointer", "from": old_line, "to": new_line})
         # Add a 1-line supersedes: note at top of topic file
         topic_path = os.path.join(d, entry["topic_file"])
         try:
@@ -697,12 +853,13 @@ def apply_action_plan(state, plan):
     # Class D — pure deindex (remove pointer line only, backing file untouched)
     for entry in plan.get("D", []):
         old_line = entry["old_pointer_line"]
-        if old_line + "\n" in new_idx:
-            new_idx = new_idx.replace(old_line + "\n", "", 1)
+        new_idx, hits = replace_live(new_idx, old_line + "\n", "", 1)
+        if hits:
             bytes_saved += len(old_line.encode("utf-8")) + 1
             applied["D"].append({"action": "deindex", "file": entry["file"]})
-        elif old_line in new_idx:
-            new_idx = new_idx.replace(old_line, "", 1)
+            continue
+        new_idx, hits = replace_live(new_idx, old_line, "", 1)
+        if hits:
             bytes_saved += len(old_line.encode("utf-8"))
             applied["D"].append({"action": "deindex", "file": entry["file"]})
 
@@ -750,14 +907,25 @@ def print_plan(state, plan, estimated_impact):
     print(f"  MEMORY.md {idx_bytes}B → {new_bytes}B ({pct_now}% → {pct_after}% of {BYTE_CAP}B cap, before Class D)")
 
 
-def run_action_mode(state, args):
-    # Build plan
+def build_plan(state):
+    """A, B, C, D composed: each class judges its guard on the graph the earlier classes leave."""
     plan_a = class_a_stale_superseded(state)
-    plan_b = class_b_near_budget_collapse(state)
+    removed_a = frozenset(e["from"] for e in plan_a)
+    live = state["idx"]   # the index as apply leaves it: A's stubs first, then B's collapses
+    for e in plan_a:
+        live, _ = replace_live(live, e["old_pointer_line"], STUB_TEMPLATE.format(e["from"][:-3], e["to_archive_subdir"], e["from"]))
+    plan_b = class_b_near_budget_collapse(state, removed_files=removed_a, index_text=live)
     plan_c = class_c_dangling_link_rewrite(state)
-    exclude_files = {e["from"] for e in plan_a} | {e["topic_file"] for e in plan_b}
-    plan_d = class_d_count_fold(state, exclude_files)
-    plan = {"A": plan_a, "B": plan_b, "C": plan_c, "D": plan_d}
+    for e in plan_b:
+        live, _ = replace_live(live, e["from"], e["to"])
+    exclude_files = removed_a | {e["topic_file"] for e in plan_b}
+    plan_d = class_d_count_fold(state, exclude_files, removed_files=removed_a, index_text=live)
+    return {"A": plan_a, "B": plan_b, "C": plan_c, "D": plan_d}
+
+
+def run_action_mode(state, args):
+    plan = build_plan(state)
+    plan_a, plan_b, plan_c, plan_d = plan["A"], plan["B"], plan["C"], plan["D"]
     estimated_impact = (
         sum(len(e["old_pointer_line"]) - len(STUB_TEMPLATE.format(e["from"][:-3], e["to_archive_subdir"], e["from"])) for e in plan_a)
         + sum(e["delta_bytes"] for e in plan_b)

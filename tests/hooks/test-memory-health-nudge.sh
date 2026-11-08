@@ -361,6 +361,25 @@ fi
 tmp_delete "$PROJECT_DIR/rel"
 
 echo ""
+echo "--- memory/ is a symlink: a file written after the clean-cache touch still re-triggers the scan ---"
+# Red cycle: `find "$MEMDIR"` without a trailing slash lists the link itself, never its contents,
+# so the clean cache was never invalidated and the new UNINDEXED file stayed invisible.
+REAL_STORE="$TMP/vault-store"
+tmp_delete "$REAL_STORE"; mkdir -p "$REAL_STORE"
+printf -- '---\nname: topic-a\ndescription: "a"\nmetadata:\n  type: project\n---\nsee [[topic-b]]\n' > "$REAL_STORE/topic-a.md"
+printf -- '---\nname: topic-b\ndescription: "b"\nmetadata:\n  type: project\n---\nsee [[topic-a]]\n' > "$REAL_STORE/topic-b.md"
+printf '%s\n' "- [topic-a](topic-a.md) — a" "- [topic-b](topic-b.md) — b" > "$REAL_STORE/MEMORY.md"
+tmp_delete "$MEMDIR"
+ln -s "$REAL_STORE" "$MEMDIR"
+OUT=$(run_hook)
+assert_not_contains "symlinked clean store is silent and writes the clean cache" "[memory-lint]" "$OUT"
+sleep 1
+printf -- '---\nname: late\ndescription: "late"\nmetadata:\n  type: project\n---\nn/a\n' > "$REAL_STORE/late.md"
+OUT=$(run_hook_no_cache_clear)
+assert_contains "new file behind the symlink invalidates the cache and is reported" "UNINDEXED: late.md" "$OUT"
+tmp_delete "$MEMDIR"
+
+echo ""
 total=$((pass + fail))
 echo "=== $pass/$total passed ==="
 [[ "$fail" -eq 0 ]] && exit 0 || exit 1
