@@ -519,10 +519,10 @@ def class_a_stale_superseded(state):
     return plan
 
 
-def class_b_near_budget_collapse(state, removed_files=frozenset()):
+def class_b_near_budget_collapse(state, removed_files=frozenset(), index_text=None):
     """Class B: longest pointer-lines (>=250 chars) where topic is >5KB and pointer is >= 1.2x first paragraph.
-    `removed_files` = files Class A is about to archive; the graph guard judges each collapse on the
-    graph as A leaves it."""
+    `removed_files` / `index_text` = the files Class A is about to archive and the index with A's stubs
+    applied; the graph guard judges each collapse on the graph as A leaves it."""
     plan = []
     if not state["idx"]:
         return plan
@@ -552,7 +552,7 @@ def class_b_near_budget_collapse(state, removed_files=frozenset()):
             candidates.append((len(full_line), fname, full_line, topic_size))
 
     candidates.sort(key=lambda x: -x[0])  # longest first
-    live = state["idx"]
+    live = state["idx"] if index_text is None else index_text
     for _line_len, fname, full_line, topic_size in candidates:
         # Stub: ~80 chars
         stem = fname[:-3]
@@ -901,13 +901,13 @@ def build_plan(state):
     """A, B, C, D composed: each class judges its guard on the graph the earlier classes leave."""
     plan_a = class_a_stale_superseded(state)
     removed_a = frozenset(e["from"] for e in plan_a)
-    plan_b = class_b_near_budget_collapse(state, removed_files=removed_a)
-    plan_c = class_c_dangling_link_rewrite(state)
-    live = state["idx"]
-    for e in plan_b:
-        live, _ = replace_live(live, e["from"], e["to"], 1)
+    live = state["idx"]   # the index as apply leaves it: A's stubs first, then B's collapses
     for e in plan_a:
         live, _ = replace_live(live, e["old_pointer_line"], STUB_TEMPLATE.format(e["from"][:-3], e["to_archive_subdir"], e["from"]))
+    plan_b = class_b_near_budget_collapse(state, removed_files=removed_a, index_text=live)
+    plan_c = class_c_dangling_link_rewrite(state)
+    for e in plan_b:
+        live, _ = replace_live(live, e["from"], e["to"], 1)
     exclude_files = removed_a | {e["topic_file"] for e in plan_b}
     plan_d = class_d_count_fold(state, exclude_files, removed_files=removed_a, index_text=live)
     return {"A": plan_a, "B": plan_b, "C": plan_c, "D": plan_d}

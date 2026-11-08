@@ -1075,6 +1075,47 @@ def test_class_b_does_not_annotate_a_topic_whose_pointer_rewrite_did_not_land():
         assert open(os.path.join(d, "big.md")).read() == before
 
 
+def test_a_and_b_together_never_strand_a_topic_each_relied_on_the_other_to_keep():
+    # Alone, A's stubbed line and B's collapsed line each leave `y` pointed to by the other's line.
+    # Applied together both lines lose `y`; B's guard must see A's rewrite (build_plan composes them).
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 400
+        with tempfile.TemporaryDirectory() as d:
+            _write_memory(d, "old.md", "project", "finished", "n/a")
+            _write_memory(d, "big.md", "project", "big", "short first paragraph\n\n" + "x" * 6000)
+            _write_memory(d, "y.md", "project", "y", "n/a")
+            _write_memory(d, "new.md", "project", "new", "n/a")
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("- [old](old.md) — **SUPERSEDED** by [[new]] also [y](y.md)\n"
+                        "- [big](big.md) — " + "detail " * 40 + "see [y](y.md)\n"
+                        "- [new](new.md) — hook\n")
+            state = memory_lint.collect_state(d)
+            # controls: each class alone would plan its change
+            assert len(memory_lint.class_a_stale_superseded(state)) == 1
+            assert len(memory_lint.class_b_near_budget_collapse(state)) == 1
+            memory_lint.apply_action_plan(state, memory_lint.build_plan(state))
+            findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
+            assert not any("UNINDEXED" in x for x in findings), findings
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
+def test_class_b_annotates_the_topic_when_its_pointer_rewrite_lands():
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "big.md", "project", "big", "body")
+        line = "- [big](big.md) — a long hook"
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write(line + "\n")
+        state = memory_lint.collect_state(d)
+        entry = {"action": "rewrite_pointer", "from": line, "to": "- [big](big.md) — stub",
+                 "from_chars": len(line), "to_chars": 22, "delta_bytes": 22 - len(line), "topic_file": "big.md"}
+        memory_lint.apply_action_plan(state, {"A": [], "B": [entry], "C": [], "D": []})
+        assert "pointer collapsed" in open(os.path.join(d, "big.md")).read()
+        assert "- [big](big.md) — stub" in open(os.path.join(d, "MEMORY.md")).read()
+
+
 def test_class_a_never_archives_a_chapter_index():
     with tempfile.TemporaryDirectory() as d:
         _write_memory(d, "index-old.md", "reference", "a chapter", "n/a")
@@ -1518,6 +1559,8 @@ if __name__ == "__main__":
     test_class_d_never_plans_a_line_that_carries_an_inline_comment()
     test_class_b_never_plans_a_line_that_carries_an_inline_comment()
     test_class_b_does_not_annotate_a_topic_whose_pointer_rewrite_did_not_land()
+    test_a_and_b_together_never_strand_a_topic_each_relied_on_the_other_to_keep()
+    test_class_b_annotates_the_topic_when_its_pointer_rewrite_lands()
     test_class_a_never_archives_a_chapter_index()
     test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment()
     test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched()
