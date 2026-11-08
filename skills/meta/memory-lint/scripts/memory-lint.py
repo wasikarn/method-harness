@@ -23,6 +23,10 @@ Detector checks (default mode):
   - index drift           — MEMORY.md pointer ↔ file, both directions; UNINDEXED only
                             fires for a file that is also unreachable via [[links]]
   - load budget           — 200-line / 25KB cap on MEMORY.md
+  - depth ratchet         — TOO DEEP when more reachable topics sit past MAX_HOPS than the
+                            baseline in $HOME/.claude/state/memory-lint-depth-baseline-<key>.
+                            Only a plain run writes it (first run, or N fell); --json and
+                            --auto-archive only read it. Delete the file to accept an increase.
 Exit code = finding count (0 = clean). Fails loud if MEMORY_DIR is missing.
 
 Action mode (--auto-archive) — applies the A3 trim rubric (memory/project_memory_trim_session_2026_06_04.md):
@@ -399,8 +403,42 @@ def detector_findings(state):
     return findings, total_links, linked_count
 
 
+def depth_ratchet(state, write):
+    """(finding or None, N, baseline or None). N = reachable topics deeper than MAX_HOPS.
+    Only a write run creates or tightens the baseline; a read run (--json) never touches it.
+    Spec: docs/research/memory-vault-redesign-proposal-2026-11-08.md § Depth ratchet."""
+    depths = compute_depths(state["files"], state["slugs"], state["links_out"], state["referenced"])
+    deep = sorted(((h, s) for s, h in depths.items() if h > MAX_HOPS), key=lambda x: (-x[0], x[1]))
+    n = len(deep)
+    path = os.path.join(os.path.expanduser("~"), ".claude", "state",
+                        "memory-lint-depth-baseline-" + state["depth_key"])
+    base = None
+    try:
+        with open(path, encoding="utf-8") as f:
+            base = int(f.read().strip())
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as e:
+        print(f"memory-lint: ignoring unreadable depth baseline {path}: {e}", file=sys.stderr)
+    if base is not None and n > base:
+        top = ", ".join(f"{s}.md {h}" for h, s in deep[:5])
+        return (f"TOO DEEP: {n} topics are more than {MAX_HOPS} hops from MEMORY.md "
+                f"(baseline {base}); deepest: {top}"), n, base
+    if write and (base is None or n < base):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            atomic_write(path, f"{n}\n")
+            base = n
+        except OSError as e:
+            print(f"memory-lint: cannot write depth baseline {path}: {e}", file=sys.stderr)
+    return None, n, base
+
+
 def run_detector(state, as_json):
     findings, total_links, linked_count = detector_findings(state)
+    too_deep, deep_n, deep_base = depth_ratchet(state, write=not as_json)
+    if too_deep:
+        findings.append(too_deep)
     if as_json:
         print(json.dumps({
             "mode": "detector",
@@ -417,6 +455,7 @@ def run_detector(state, as_json):
     print(f"=== memory-lint: {state['d']} ===")
     print(f"memories: {len(state['files'])} | links: {total_links} | "
           f"linked: {linked_count} | MEMORY.md: {pct}% of load cap | "
+          f"deep>{MAX_HOPS}: {deep_n} (baseline {'none' if deep_base is None else deep_base}) | "
           f"findings: {len(findings)}")
     print()
     for line in findings:
@@ -1087,6 +1126,9 @@ def main():
     if not os.path.isdir(d):
         sys.exit(f"FATAL: memory dir not found: {d}")
     state = collect_state(d)
+    # Baseline key: the resolver's <enc> when lint resolved the dir itself, else the path as given.
+    state["depth_key"] = (_memory_dir_resolver._slug(args.memory_dir) if args.memory_dir
+                          else _memory_dir_resolver.resolve_enc())
 
     if args.auto_archive:
         sys.exit(run_action_mode(state, args))
