@@ -270,7 +270,8 @@ def replace_live(text, old, new, count=-1):
 def collect_state(d):
     """Build the shared data structures used by both detector and action modes."""
     files = [f for f in os.listdir(d) if f.endswith(".md") and f != "MEMORY.md"]
-    if not files:
+    # An index with no topics left (Class A archived the last one) is a valid, lintable store.
+    if not files and not os.path.isfile(os.path.join(d, "MEMORY.md")):
         sys.exit(f"FATAL: no memory files in {d}")
 
     stems = {f[:-3] for f in files}
@@ -479,7 +480,8 @@ def class_a_stale_superseded(state):
         if target_file not in state["files"]:
             continue
         # A chapter index is structure, not a finished topic: archiving it strands everything under it.
-        if is_chapter_index(target_file):
+        # Any pointer, not just the first: the stub replaces the whole line.
+        if any(is_chapter_index(p) for p in POINTER_RE.findall(line)):
             continue
         # Judge the guard on the index exactly as apply will leave it: the whole line becomes a stub, so
         # any other pointer on it goes too, and a second live pointer to this file would go stale.
@@ -706,7 +708,7 @@ def class_d_count_fold(state, exclude_files, removed_files=frozenset(), index_te
         fname = m.group(1)
         if fname in exclude_files or fname in removed_files or fname not in state["files"]:
             continue
-        if is_chapter_index(fname) or full_line != live_text:
+        if any(is_chapter_index(p) for p in POINTER_RE.findall(live_text)) or full_line != live_text:
             continue
         try:
             mtime = os.path.getmtime(os.path.join(state["d"], fname))
