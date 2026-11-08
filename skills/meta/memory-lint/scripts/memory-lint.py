@@ -23,6 +23,12 @@ Detector checks (default mode):
   - index drift           — MEMORY.md pointer ↔ file, both directions; UNINDEXED only
                             fires for a file that is also unreachable via [[links]]
   - load budget           — 200-line / 25KB cap on MEMORY.md
+  - depth ratchet         — TOO DEEP when more reachable topics sit past MAX_HOPS than the
+                            baseline in $HOME/.claude/state/memory-lint-depth-baseline-<key>.
+                            Only a plain run writes it (first run, or N fell); --json only
+                            reads it. --auto-archive plans no depth fix and writes no baseline;
+                            it only stops calling the store clean while N is over it.
+                            Delete the file to accept an increase.
 Exit code = finding count (0 = clean). Fails loud if MEMORY_DIR is missing.
 
 Action mode (--auto-archive) — applies the A3 trim rubric (memory/project_memory_trim_session_2026_06_04.md):
@@ -327,6 +333,7 @@ def collect_state(d):
         "d": d, "files": files, "stems": stems, "slugs": slugs, "slug_set": slug_set,
         "dup_slugs": dup_slugs, "inbound": inbound, "links_out": links_out,
         "index_path": index_path, "idx": idx, "referenced": referenced,
+        "depth_key": depth_key(d),
     }
 
 
@@ -399,8 +406,53 @@ def detector_findings(state):
     return findings, total_links, linked_count
 
 
+def depth_ratchet(state, write):
+    """(finding or None, N, baseline or None). N = reachable topics deeper than MAX_HOPS.
+    Only a write run creates or tightens the baseline; a read run (--json) never touches it.
+    Spec: docs/research/memory-vault-redesign-proposal-2026-11-08.md § Depth ratchet."""
+    depths = compute_depths(state["files"], state["slugs"], state["links_out"], state["referenced"])
+    deep = sorted(((h, s) for s, h in depths.items() if h > MAX_HOPS), key=lambda x: (-x[0], x[1]))
+    n = len(deep)
+    path = os.path.join(os.path.expanduser("~"), ".claude", "state",
+                        "memory-lint-depth-baseline-" + state["depth_key"])
+    base = None
+    try:
+        with open(path, encoding="utf-8") as f:
+            base = int(f.read().strip())
+        if base < 0:
+            base = None
+            raise ValueError("negative count")
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as e:
+        print(f"memory-lint: ignoring unreadable depth baseline {path}: {e}", file=sys.stderr)
+    if base is not None and n > base:
+        top = ", ".join(f"{s}.md {h}" for h, s in deep[:5])
+        return (f"TOO DEEP: {n} topics are more than {MAX_HOPS} hops from MEMORY.md "
+                f"(baseline {base}); deepest: {top}"), n, base
+    if write and (base is None or n < base):
+        # shortcut: two concurrent plain runs can race (last write wins); accepted, the value is a count.
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            atomic_write(path, f"{n}\n")
+            base = n
+        except OSError as e:
+            print(f"memory-lint: cannot write depth baseline {path}: {e}", file=sys.stderr)
+    return None, n, base
+
+
+def depth_key(d):
+    """Baseline key: <enc> for a .../projects/<enc>/memory store (the resolver's own key, so a manual
+    run and the nudge share one file), else the slug of the path's abspath. No realpath on purpose."""
+    m = re.search(r"/projects/([^/]+)/memory$", os.path.abspath(d))
+    return m.group(1) if m else _memory_dir_resolver._slug(os.path.abspath(d))
+
+
 def run_detector(state, as_json):
     findings, total_links, linked_count = detector_findings(state)
+    too_deep, deep_n, deep_base = depth_ratchet(state, write=not as_json)
+    if too_deep:
+        findings.append(too_deep)
     if as_json:
         print(json.dumps({
             "mode": "detector",
@@ -417,6 +469,7 @@ def run_detector(state, as_json):
     print(f"=== memory-lint: {state['d']} ===")
     print(f"memories: {len(state['files'])} | links: {total_links} | "
           f"linked: {linked_count} | MEMORY.md: {pct}% of load cap | "
+          f"deep>{MAX_HOPS}: {deep_n} (baseline {'none' if deep_base is None else deep_base}) | "
           f"findings: {len(findings)}")
     print()
     for line in findings:
@@ -1017,7 +1070,7 @@ def run_action_mode(state, args):
 
     if not any(plan.values()):
         print()
-        findings, _, _ = detector_findings(state)
+        findings = detector_findings(state)[0] + [x for x in [depth_ratchet(state, write=False)[0]] if x]
         if findings:
             print("No actions proposed — lint findings remain that action mode does not fix; run plain lint to see them.")
         else:

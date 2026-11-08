@@ -2044,6 +2044,187 @@ def test_class_a_never_stubs_a_line_carrying_a_chapter_pointer_in_second_positio
         assert plan == [], plan
 
 
+# ── Depth ratchet (docs/research/memory-vault-redesign-proposal-2026-11-08.md § Depth ratchet) ──
+
+LINT_SCRIPT = os.path.join(HERE, "..", "..", "..", "skills", "meta", "memory-lint", "scripts", "memory-lint.py")
+
+
+def _deep_store(d, deep, unreachable=False):
+    """MEMORY.md -> a (hop 1) -> b (hop 2) -> c1..cN (hop 3, past MAX_HOPS)."""
+    for f in os.listdir(d):
+        if f.endswith(".md"):
+            os.unlink(os.path.join(d, f))
+    with open(os.path.join(d, "MEMORY.md"), "w") as f:
+        f.write("- [a](a.md) — root\n")
+    with open(os.path.join(d, "a.md"), "w") as f:
+        f.write("---\nname: a\n---\n[[b]]\n")
+    with open(os.path.join(d, "b.md"), "w") as f:
+        f.write("---\nname: b\n---\n" + " ".join(f"[[c{i}]]" for i in range(1, deep + 1)) + "\n")
+    for i in range(1, deep + 1):
+        with open(os.path.join(d, f"c{i}.md"), "w") as f:
+            f.write(f"---\nname: c{i}\n---\nback to [[b]]\n")
+    if unreachable:
+        with open(os.path.join(d, "lost.md"), "w") as f:
+            f.write("---\nname: lost\n---\nsee [[lost2]]\n")
+        with open(os.path.join(d, "lost2.md"), "w") as f:
+            f.write("---\nname: lost2\n---\nsee [[lost]]\n")
+
+
+def _lint(home, store, *flags, cwd=None):
+    env = dict(os.environ, HOME=home)
+    return subprocess.run(["python3", LINT_SCRIPT, store, *flags], capture_output=True, text=True, env=env, cwd=cwd)
+
+
+def _baseline_path(home, store):
+    return os.path.join(home, ".claude", "state",
+                        "memory-lint-depth-baseline-" + memory_lint._memory_dir_resolver._slug(store))
+
+
+def _read_baseline(home, store):
+    with open(_baseline_path(home, store)) as f:
+        return f.read().strip()
+
+
+def test_depth_ratchet_first_run_writes_baseline_without_a_finding():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        r = _lint(home, store)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _read_baseline(home, store) == "3"
+        assert "deep>2: 3 (baseline 3)" in r.stdout, r.stdout
+
+
+def test_depth_ratchet_flags_an_increase_over_the_baseline():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        _lint(home, store)
+        _deep_store(store, 4)
+        r = _lint(home, store)
+        assert r.returncode == 1, r.stdout + r.stderr
+        deep = [l for l in r.stdout.splitlines() if "TOO DEEP" in l]
+        assert len(deep) == 1 and "TOO DEEP: 4 topics are more than 2 hops from MEMORY.md (baseline 3)" in deep[0], deep
+        assert "c4.md 3" in deep[0], deep
+        assert _read_baseline(home, store) == "3"  # an increase never loosens the baseline
+
+
+def test_depth_ratchet_tightens_on_a_decrease():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 4)
+        _lint(home, store)
+        _deep_store(store, 2)
+        r = _lint(home, store)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _read_baseline(home, store) == "2"
+
+
+def test_depth_ratchet_tightens_then_flags_a_later_increase():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 4)
+        _lint(home, store)
+        _deep_store(store, 2)
+        _lint(home, store)
+        _deep_store(store, 3)
+        r = _lint(home, store)
+        assert r.returncode == 1 and "TOO DEEP: 3 topics" in r.stdout and "(baseline 2)" in r.stdout, r.stdout
+
+
+def test_depth_ratchet_does_not_count_unreachable_topics():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 0, unreachable=True)
+        r = _lint(home, store)
+        assert "UNINDEXED: lost.md" in r.stdout, r.stdout
+        assert r.returncode == 2, r.stdout  # UNINDEXED lost.md + lost2.md only
+        assert _read_baseline(home, store) == "0"
+
+
+def test_depth_ratchet_json_and_dry_run_never_write_the_baseline():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        for flags in (["--json"], ["--auto-archive", "--dry-run"], ["--auto-archive", "--json"]):
+            _lint(home, store, *flags)
+            assert not os.path.exists(_baseline_path(home, store)), flags
+        _lint(home, store)
+        _deep_store(store, 1)
+        _lint(home, store, "--json")
+        assert _read_baseline(home, store) == "3", "a --json run must not tighten the baseline"
+        _deep_store(store, 4)
+        r = _lint(home, store, "--json")
+        assert any("TOO DEEP" in x for x in json.loads(r.stdout)["findings"]), r.stdout
+
+
+def test_depth_ratchet_treats_a_corrupt_baseline_as_missing():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        os.makedirs(os.path.dirname(_baseline_path(home, store)))
+        with open(_baseline_path(home, store), "w") as f:
+            f.write("not a number\n")
+        r = _lint(home, store)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Traceback" not in r.stderr and "baseline" in r.stderr, r.stderr
+        assert _read_baseline(home, store) == "3"
+
+
+def test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwritable():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        os.makedirs(os.path.join(home, ".claude"))
+        os.chmod(os.path.join(home, ".claude"), 0o555)
+        try:
+            r = _lint(home, store)
+        finally:
+            os.chmod(os.path.join(home, ".claude"), 0o755)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Traceback" not in r.stderr and len(r.stderr.strip().splitlines()) == 1, r.stderr
+        assert "cannot write depth baseline" in r.stderr, r.stderr
+        assert "deep>2: 3 (baseline none)" in r.stdout, r.stdout
+
+
+def test_depth_ratchet_unchanged_count_is_not_a_finding():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        _lint(home, store)
+        r = _lint(home, store)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _read_baseline(home, store) == "3"
+
+
+def test_depth_ratchet_treats_a_negative_baseline_as_unreadable():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 0)
+        os.makedirs(os.path.dirname(_baseline_path(home, store)))
+        with open(_baseline_path(home, store), "w") as f:
+            f.write("-5\n")
+        r = _lint(home, store)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "baseline" in r.stderr and "Traceback" not in r.stderr, r.stderr
+        assert _read_baseline(home, store) == "0"
+
+
+def test_depth_ratchet_key_is_shared_by_every_spelling_of_a_projects_store():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as root:
+        store = os.path.join(root, "projects", "-x-enc", "memory")
+        os.makedirs(store)
+        _deep_store(store, 3)
+        _lint(home, store)
+        state_dir = os.path.join(home, ".claude", "state")
+        assert os.listdir(state_dir) == ["memory-lint-depth-baseline--x-enc"], os.listdir(state_dir)
+        _deep_store(store, 4)
+        for given, cwd in ((store + "/", None), (os.path.join("projects", "-x-enc", "memory"), root)):
+            r = _lint(home, given, cwd=cwd)
+            assert r.returncode == 1 and "(baseline 3)" in r.stdout, (given, r.stdout)
+        assert os.listdir(state_dir) == ["memory-lint-depth-baseline--x-enc"], os.listdir(state_dir)
+
+
+def test_action_mode_does_not_call_a_store_over_its_depth_baseline_clean():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        _lint(home, store)
+        _deep_store(store, 4)
+        r = _lint(home, store, "--auto-archive", "--dry-run")
+        assert "No actions proposed" in r.stdout, r.stdout
+        assert "store is clean" not in r.stdout, r.stdout
+
+
 if __name__ == "__main__":
     test_class_a_never_stubs_a_line_carrying_a_chapter_pointer_in_second_position()
     test_store_with_index_but_no_topic_files_lints_clean()
@@ -2144,4 +2325,16 @@ if __name__ == "__main__":
     test_auto_archive_no_actions_says_clean_when_lint_has_no_findings()
     test_apply_rollback_does_not_overwrite_a_file_now_at_the_original_path()
     test_apply_rollback_leaves_already_archived_entries_in_the_archive()
+    test_depth_ratchet_first_run_writes_baseline_without_a_finding()
+    test_depth_ratchet_flags_an_increase_over_the_baseline()
+    test_depth_ratchet_tightens_on_a_decrease()
+    test_depth_ratchet_tightens_then_flags_a_later_increase()
+    test_depth_ratchet_does_not_count_unreachable_topics()
+    test_depth_ratchet_json_and_dry_run_never_write_the_baseline()
+    test_depth_ratchet_treats_a_corrupt_baseline_as_missing()
+    test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwritable()
+    test_depth_ratchet_unchanged_count_is_not_a_finding()
+    test_depth_ratchet_treats_a_negative_baseline_as_unreadable()
+    test_depth_ratchet_key_is_shared_by_every_spelling_of_a_projects_store()
+    test_action_mode_does_not_call_a_store_over_its_depth_baseline_clean()
     print("OK")

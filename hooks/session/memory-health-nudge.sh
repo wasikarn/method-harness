@@ -132,7 +132,7 @@ fi
 command grep -qE 'findings: [1-9]' <<<"$OUT" || exit 0
 
 printf '%s\n' \
-  "[memory-lint] The memory store has findings (dangling links / orphans / index drift / near-budget):" \
+  "[memory-lint] The memory store has findings (dangling links / orphans / index drift / near-budget / too-deep topics):" \
   "$OUT" \
   "Run \`mh:memory-lint\` for detail, or dispatch a fixer. Advisory only — not a gate."
 
