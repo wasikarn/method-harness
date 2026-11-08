@@ -25,7 +25,8 @@ Detector checks (default mode):
   - load budget           — 200-line / 25KB cap on MEMORY.md
   - depth ratchet         — TOO DEEP when more reachable topics sit past MAX_HOPS than the
                             baseline in $HOME/.claude/state/memory-lint-depth-baseline-<key>.
-                            Only a plain run writes it (first run, or N fell); --json only
+                            Only a plain run on a store with no other findings writes it (first run,
+                            or N fell; deliberately broad, an ORPHAN-only store also waits); --json only
                             reads it. --auto-archive plans no depth fix and writes no baseline;
                             it only stops calling the store clean while N is over it.
                             Delete the file to accept an increase.
@@ -450,7 +451,9 @@ def depth_key(d):
 
 def run_detector(state, as_json):
     findings, total_links, linked_count = detector_findings(state)
-    too_deep, deep_n, deep_base = depth_ratchet(state, write=not as_json)
+    # Write only from a clean store: a broken index hides topics from N, and a baseline taken then
+    # would read the repaired store as TOO DEEP.
+    too_deep, deep_n, deep_base = depth_ratchet(state, write=not as_json and not findings)
     if too_deep:
         findings.append(too_deep)
     if as_json:
@@ -833,7 +836,7 @@ def apply_action_plan(state, plan):
             if "skipped" in moved:
                 continue
             back = os.path.join(state["d"], moved["from"])
-            if os.path.exists(back):
+            if os.path.lexists(back):   # lexists: a dangling symlink there is also something to keep
                 print(f"memory-lint: not restoring {moved['to']}: {back} already exists; archived copy kept; merge or delete by hand", file=sys.stderr)
                 continue
             try:

@@ -93,7 +93,8 @@ LINT="${CLAUDE_PLUGIN_ROOT:-}/skills/meta/memory-lint/scripts/memory-lint.py"
 CACHE="$HOME/.claude/state/memory-lint-cache-$ENC"
 # Assumes a stub targets exactly _archive/<date>/<file>: a symlinked date dir or deeper nesting is not seen.
 mkdir -p "$HOME/.claude/state" 2>/dev/null
-if [ -f "$CACHE" ] && [ -z "$( { find "$MEMDIR/" -maxdepth 1 -type f -newer "$CACHE"; find "$MEMDIR/_archive/" -maxdepth 1 -type d -newer "$CACHE"; } 2>/dev/null | head -1)" ]; then
+# -maxdepth 0 -type d is memory/ itself: deleting a file bumps only that mtime, no surviving file's.
+if [ -f "$CACHE" ] && [ -z "$( { find "$MEMDIR/" -maxdepth 1 -type f -newer "$CACHE"; find "$MEMDIR/" -maxdepth 0 -type d -newer "$CACHE"; find "$MEMDIR/_archive/" -maxdepth 1 -type d -newer "$CACHE"; } 2>/dev/null | head -1)" ]; then
   exit 0
 fi
 
