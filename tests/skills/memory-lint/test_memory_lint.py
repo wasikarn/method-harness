@@ -796,6 +796,22 @@ def test_class_c_rewrites_dangling_wikilink_to_ledger():
                          "new": "[[project_external_evals_ledger]]", "reason": "dangling-target"}], plan
 
 
+def test_class_c_apply_leaves_a_backticked_example_of_the_link_alone():
+    # The plan scans code-masked text, so apply must only touch what the plan saw.
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "src.md", "project", "dangling", "real [[ghost-topic]] and an example `[[ghost-topic]]` in code")
+        _write_memory(d, "project_external_evals_ledger.md", "project", "the ledger", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [src](src.md) — x\n- [project_external_evals_ledger](project_external_evals_ledger.md) — l\n")
+        state = memory_lint.collect_state(d)
+        plan = {"A": [], "B": [], "C": memory_lint.class_c_dangling_link_rewrite(state), "D": []}
+        assert plan["C"], plan
+        memory_lint.apply_action_plan(state, plan)
+        text = open(os.path.join(d, "src.md")).read()
+        assert "real [[project_external_evals_ledger]]" in text, text
+        assert "`[[ghost-topic]]`" in text, text
+
+
 def _ledger_store(d, ledger_files, superseded_ledger=None):
     """src.md links a ghost; each name in ledger_files exists; superseded_ledger's pointer carries SUPERSEDED."""
     _write_memory(d, "src.md", "project", "dangling", "see [[ghost-topic]]")
@@ -2297,8 +2313,26 @@ def test_depth_ratchet_treats_a_negative_baseline_as_unreadable():
         assert _read_baseline(home, store) == "0"
 
 
+def test_depth_ratchet_key_differs_for_a_store_under_another_config_dir():
+    # A CLAUDE_CONFIG_DIR store for the same repo has the same <enc>; sharing one baseline file made
+    # the shallower store tighten it and the deeper one report a false TOO DEEP.
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as other:
+        default = os.path.join(home, ".claude", "projects", "-x-enc", "memory")
+        second = os.path.join(other, "projects", "-x-enc", "memory")
+        os.makedirs(default)
+        os.makedirs(second)
+        _deep_store(default, 2)
+        _deep_store(second, 5)
+        _lint(home, default)
+        r = _lint(home, second)
+        assert r.returncode == 0 and "TOO DEEP" not in r.stdout, r.stdout
+        names = sorted(os.listdir(os.path.join(home, ".claude", "state")))
+        assert len(names) == 2 and "memory-lint-depth-baseline--x-enc" in names, names
+
+
 def test_depth_ratchet_key_is_shared_by_every_spelling_of_a_projects_store():
-    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as root:
+    with tempfile.TemporaryDirectory() as home:
+        root = os.path.join(home, ".claude")
         store = os.path.join(root, "projects", "-x-enc", "memory")
         os.makedirs(store)
         _deep_store(store, 3)
@@ -2382,6 +2416,7 @@ if __name__ == "__main__":
     test_class_b_first_para_proxy_is_inclusive_at_exact_1_2x()
     test_class_b_returns_nothing_under_budget_trigger()
     test_class_c_rewrites_dangling_wikilink_to_ledger()
+    test_class_c_apply_leaves_a_backticked_example_of_the_link_alone()
     test_class_c_rewrites_archived_link_to_supersedence_target()
     test_class_c_ignores_link_that_resolves_by_slug_only()
     test_apply_action_plan_moves_superseded_files_and_stubs_pointers()
@@ -2437,6 +2472,7 @@ if __name__ == "__main__":
     test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwritable()
     test_depth_ratchet_unchanged_count_is_not_a_finding()
     test_depth_ratchet_treats_a_negative_baseline_as_unreadable()
+    test_depth_ratchet_key_differs_for_a_store_under_another_config_dir()
     test_depth_ratchet_key_is_shared_by_every_spelling_of_a_projects_store()
     test_action_mode_does_not_call_a_store_over_its_depth_baseline_clean()
     print("OK")
