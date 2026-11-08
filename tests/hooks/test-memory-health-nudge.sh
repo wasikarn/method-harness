@@ -421,14 +421,15 @@ STUB_COUNT="$TMP/stub-count"
 cat > "$FAKE_ROOT/skills/meta/memory-lint/scripts/memory-lint.py" <<EOF
 import os, sys, time
 open("$STUB_COUNT", "a").write("x")
-time.sleep(0.05)
+time.sleep(1.1)   # past a whole-second mtime tick
 open(os.path.join("$MEMDIR", "late-%d.md" % os.path.getsize("$STUB_COUNT")), "w").write("n/a")
 print("memories: 1 | findings: 0")
 EOF
 printf '%s\n' "- [t](t.md) — t" > "$MEMDIR/MEMORY.md"; write_memory t.md "t"
-rm -f "$FAKE_HOME/.claude/state"/memory-lint-cache-*
-( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" HOME="$FAKE_HOME" bash "$HOOK" ) >/dev/null
-( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" HOME="$FAKE_HOME" bash "$HOOK" ) >/dev/null
+for f in "$FAKE_HOME/.claude/state"/memory-lint-cache-*; do [ -e "$f" ] && tmp_delete "$f"; done
+OUT1=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" HOME="$FAKE_HOME" bash "$HOOK" 2>&1 )
+OUT2=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" HOME="$FAKE_HOME" bash "$HOOK" 2>&1 )
+assert_not_contains "stub runs print nothing (a hook crash would show here)" "rror" "$OUT1$OUT2"
 RUNS=$(wc -c < "$STUB_COUNT" | tr -d ' ')
 if [ "$RUNS" -ge 2 ]; then
   echo "  ✅ a file written mid-run re-triggers the scan on the next session (lint ran $RUNS times)"; pass=$((pass + 1))
@@ -438,7 +439,8 @@ fi
 
 echo ""
 echo "--- a store outside the default config dir keeps its own cache file ---"
-# Red cycle: both stores of one repo shared memory-lint-cache-<enc>, so one clean touch hid the other's findings.
+# Red cycle: both stores of one repo shared memory-lint-cache-<enc>, so the default store's clean touch
+# made the other store's hook skip its scan and hide that store's findings.
 OTHER_STORE="$TMP/other-config/projects/$ENC/memory"
 for S in "$OTHER_STORE" "$MEMDIR"; do
   tmp_delete "$S"; mkdir -p "$S"
@@ -446,15 +448,12 @@ for S in "$OTHER_STORE" "$MEMDIR"; do
   printf -- '---\nname: topic-a\ndescription: "a"\nmetadata:\n  type: project\n---\nsee [[topic-b]]\n' > "$S/topic-a.md"
   printf -- '---\nname: topic-b\ndescription: "b"\nmetadata:\n  type: project\n---\nsee [[topic-a]]\n' > "$S/topic-b.md"
 done
-rm -f "$FAKE_HOME/.claude/state"/memory-lint-cache-*
-( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$ROOT" HOME="$FAKE_HOME" CLAUDE_CONFIG_DIR="$TMP/other-config" bash "$HOOK" ) >/dev/null 2>&1
-( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$ROOT" HOME="$FAKE_HOME" bash "$HOOK" ) >/dev/null 2>&1
-NCACHE=$(ls "$FAKE_HOME/.claude/state" | /usr/bin/grep -c '^memory-lint-cache-')
-if [ "$NCACHE" -eq 2 ]; then
-  echo "  ✅ default and CLAUDE_CONFIG_DIR stores write two different cache files"; pass=$((pass + 1))
-else
-  echo "  ❌ expected 2 cache files for 2 stores of one repo, got $NCACHE" >&2; fail=$((fail + 1))
-fi
+printf -- '---\nname: lost\ndescription: "l"\nmetadata:\n  type: project\n---\nalone\n' > "$OTHER_STORE/lost.md"   # only the other store is dirty
+for f in "$FAKE_HOME/.claude/state"/memory-lint-cache-*; do [ -e "$f" ] && tmp_delete "$f"; done
+OUT=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$ROOT" HOME="$FAKE_HOME" bash "$HOOK" 2>&1 )
+assert_not_contains "clean default store is silent and caches" "[memory-lint]" "$OUT"
+OUT=$( cd "$PROJECT_DIR" && CLAUDE_PLUGIN_ROOT="$ROOT" HOME="$FAKE_HOME" CLAUDE_CONFIG_DIR="$TMP/other-config" bash "$HOOK" 2>&1 )
+assert_contains "the other config dir's findings are not hidden by the default store's cache" "UNINDEXED: lost.md" "$OUT"
 
 echo ""
 total=$((pass + fail))

@@ -91,8 +91,9 @@ LINT="${CLAUDE_PLUGIN_ROOT:-}/skills/meta/memory-lint/scripts/memory-lint.py"
 # resolves while its _archive/<date>/<file> exists: a delete there bumps that dir's mtime, so check dirs.
 # The trailing slash on "$MEMDIR/" makes find follow a symlinked memory/ (else it lists the link only).
 # Key on ENC for the default store; a store under another config dir (CLAUDE_CONFIG_DIR) gets its own
-# file, else one store's clean touch would hide the other's findings. Same rule as memory-lint's depth_key.
-if [ "$MEMDIR" = "$HOME/.claude/projects/$ENC/memory" ]; then _CKEY="$ENC"; else _CKEY=$(printf '%s' "$MEMDIR" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g'); fi
+# file (its path as a slug, pure bash like _MARKER_ENC), else one store's clean touch would hide the
+# other's findings. memory-lint's depth_key follows the same idea but compares realpaths, this a string.
+if [ "$MEMDIR" = "$HOME/.claude/projects/$ENC/memory" ]; then _CKEY="$ENC"; else _CKEY="$(LC_ALL=C; printf '%s' "${MEMDIR//[^A-Za-z0-9]/-}")"; fi
 CACHE="$HOME/.claude/state/memory-lint-cache-$_CKEY"
 # Assumes a stub targets exactly _archive/<date>/<file>: a symlinked date dir or deeper nesting is not seen.
 mkdir -p "$HOME/.claude/state" 2>/dev/null
@@ -102,8 +103,8 @@ if [ -f "$CACHE" ] && [ -z "$( { find "$MEMDIR/" -maxdepth 1 -type f -newer "$CA
 fi
 
 # Stamp BEFORE the scan: a write that lands while lint runs must stay newer than the cache.
-PENDING="$CACHE.pending"
-touch "$PENDING" 2>/dev/null
+# One file per run (mktemp creates it now, so its mtime is the stamp): two sessions never share it.
+PENDING=$(mktemp "$CACHE.pending.XXXXXX" 2>/dev/null) || PENDING=""
 
 # Exit code = finding count, so only a traceback on stderr means a real crash.
 ERRLOG=$(mktemp "${TMPDIR:-/tmp}/kbg-memlint-err.XXXXXX" 2>/dev/null) || ERRLOG=""

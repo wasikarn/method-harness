@@ -961,7 +961,7 @@ def _apply_unguarded(state, plan, applied):
             continue
         new_txt, hits = replace_outside_code(txt, entry["old"], entry["new"])
         if hits:
-            bytes_saved += len(entry["old"].encode("utf-8")) - len(entry["new"].encode("utf-8"))
+            bytes_saved += hits * (len(entry["old"].encode("utf-8")) - len(entry["new"].encode("utf-8")))
             applied["C"].append({"action": "rewrite_wikilink", "from": entry["old"], "to": entry["new"], "file": entry["file"]})
             atomic_write(path, new_txt)
 
