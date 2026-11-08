@@ -2070,9 +2070,9 @@ def _deep_store(d, deep, unreachable=False):
             f.write("---\nname: lost2\n---\nsee [[lost]]\n")
 
 
-def _lint(home, store, *flags):
+def _lint(home, store, *flags, cwd=None):
     env = dict(os.environ, HOME=home)
-    return subprocess.run(["python3", LINT_SCRIPT, store, *flags], capture_output=True, text=True, env=env)
+    return subprocess.run(["python3", LINT_SCRIPT, store, *flags], capture_output=True, text=True, env=env, cwd=cwd)
 
 
 def _baseline_path(home, store):
@@ -2133,7 +2133,7 @@ def test_depth_ratchet_does_not_count_unreachable_topics():
         _deep_store(store, 0, unreachable=True)
         r = _lint(home, store)
         assert "UNINDEXED: lost.md" in r.stdout, r.stdout
-        assert "TOO DEEP" not in r.stdout, r.stdout
+        assert r.returncode == 2, r.stdout  # UNINDEXED lost.md + lost2.md only
         assert _read_baseline(home, store) == "0"
 
 
@@ -2175,7 +2175,54 @@ def test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwri
             os.chmod(os.path.join(home, ".claude"), 0o755)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "Traceback" not in r.stderr and len(r.stderr.strip().splitlines()) == 1, r.stderr
-        assert "TOO DEEP" not in r.stdout
+        assert "cannot write depth baseline" in r.stderr, r.stderr
+        assert "deep>2: 3 (baseline none)" in r.stdout, r.stdout
+
+
+def test_depth_ratchet_unchanged_count_is_not_a_finding():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        _lint(home, store)
+        r = _lint(home, store)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _read_baseline(home, store) == "3"
+
+
+def test_depth_ratchet_treats_a_negative_baseline_as_unreadable():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 0)
+        os.makedirs(os.path.dirname(_baseline_path(home, store)))
+        with open(_baseline_path(home, store), "w") as f:
+            f.write("-5\n")
+        r = _lint(home, store)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "baseline" in r.stderr and "Traceback" not in r.stderr, r.stderr
+        assert _read_baseline(home, store) == "0"
+
+
+def test_depth_ratchet_key_is_shared_by_every_spelling_of_a_projects_store():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as root:
+        store = os.path.join(root, "projects", "-x-enc", "memory")
+        os.makedirs(store)
+        _deep_store(store, 3)
+        _lint(home, store)
+        state_dir = os.path.join(home, ".claude", "state")
+        assert os.listdir(state_dir) == ["memory-lint-depth-baseline--x-enc"], os.listdir(state_dir)
+        _deep_store(store, 4)
+        for given, cwd in ((store + "/", None), (os.path.join("projects", "-x-enc", "memory"), root)):
+            r = _lint(home, given, cwd=cwd)
+            assert r.returncode == 1 and "(baseline 3)" in r.stdout, (given, r.stdout)
+        assert os.listdir(state_dir) == ["memory-lint-depth-baseline--x-enc"], os.listdir(state_dir)
+
+
+def test_action_mode_does_not_call_a_store_over_its_depth_baseline_clean():
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        _lint(home, store)
+        _deep_store(store, 4)
+        r = _lint(home, store, "--auto-archive", "--dry-run")
+        assert "No actions proposed" in r.stdout, r.stdout
+        assert "store is clean" not in r.stdout, r.stdout
 
 
 if __name__ == "__main__":
@@ -2286,4 +2333,8 @@ if __name__ == "__main__":
     test_depth_ratchet_json_and_dry_run_never_write_the_baseline()
     test_depth_ratchet_treats_a_corrupt_baseline_as_missing()
     test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwritable()
+    test_depth_ratchet_unchanged_count_is_not_a_finding()
+    test_depth_ratchet_treats_a_negative_baseline_as_unreadable()
+    test_depth_ratchet_key_is_shared_by_every_spelling_of_a_projects_store()
+    test_action_mode_does_not_call_a_store_over_its_depth_baseline_clean()
     print("OK")
