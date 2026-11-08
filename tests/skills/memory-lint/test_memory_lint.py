@@ -1158,11 +1158,14 @@ def test_class_a_does_not_touch_the_pointer_when_the_archive_destination_already
         with open(os.path.join(d, "MEMORY.md"), "w") as f:
             f.write(line + "\n- [keep](keep.md) — k\n")
         state = memory_lint.collect_state(d)
-        assert len(memory_lint.class_a_stale_superseded(state)) == 1   # control: no collision, A plans it
+        planned = memory_lint.class_a_stale_superseded(state)   # built before the collision, as a dry-run would be
+        assert len(planned) == 1   # control: no collision, A plans it
         today = time.strftime("%Y-%m-%d")
         os.makedirs(os.path.join(d, "_archive", today))
         _write_memory(os.path.join(d, "_archive", today), "old.md", "project", "earlier copy", "n/a")
-        memory_lint.apply_action_plan(state, {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []})
+        # apply must refuse on its own: the stale plan still names old.md, and the destination now exists
+        assert memory_lint.class_a_stale_superseded(state) == [], "plan-time guard also sees the collision"
+        memory_lint.apply_action_plan(state, {"A": planned, "B": [], "C": [], "D": []})
         findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
         assert not any("UNINDEXED" in x or "STALE POINTER" in x for x in findings), findings
         assert os.path.exists(os.path.join(d, "old.md"))
@@ -1200,6 +1203,18 @@ def test_b_and_d_together_never_strand_a_topic_each_relied_on_the_other_to_keep(
             assert not any("UNINDEXED" in x for x in findings), findings
     finally:
         memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
+def test_class_a_guard_is_cumulative_over_the_plans_earlier_moves():
+    # old1 and old2 both link kid, which has no other pointer. Either can go alone; both together strand it.
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "old1.md", "project", "finished", "child [[kid]]")
+        _write_memory(d, "old2.md", "project", "finished", "child [[kid]]")
+        _write_memory(d, "kid.md", "project", "child", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [old1](old1.md) — **SUPERSEDED** by [[new]]\n- [old2](old2.md) — **SUPERSEDED** by [[new]]\n")
+        plan = memory_lint.class_a_stale_superseded(memory_lint.collect_state(d))
+        assert [e["from"] for e in plan] == ["old1.md"], plan
 
 
 def test_class_a_never_archives_a_chapter_index():
@@ -1657,6 +1672,7 @@ if __name__ == "__main__":
     test_class_b_plan_and_apply_replace_the_same_lines_when_a_long_line_is_duplicated()
     test_class_a_does_not_touch_the_pointer_when_the_archive_destination_already_exists()
     test_b_and_d_together_never_strand_a_topic_each_relied_on_the_other_to_keep()
+    test_class_a_guard_is_cumulative_over_the_plans_earlier_moves()
     test_class_a_never_archives_a_chapter_index()
     test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment()
     test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched()
