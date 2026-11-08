@@ -583,12 +583,13 @@ def class_b_near_budget_collapse(state, removed_files=frozenset(), index_text=No
     return plan
 
 
-def _pick_ledger_target(state, removed_files=frozenset()):
+def _pick_ledger_target(state, removed_files=frozenset(), source=None):
     """Default rewrite target for a link with no clear resolution: the
     external-evals ledger if it survives, else any surviving file with
     'ledger' in its stem, else None (caller falls back to manual).
-    `removed_files` = files Class A archives in the same plan; never a target."""
-    survivors = {s for s in state["stems"] if s + ".md" not in removed_files}
+    `removed_files` = files Class A archives in the same plan; never a target. `source` = the file
+    holding the link; never its own target (a self-link would hide the dangling link, not fix it)."""
+    survivors = {s for s in state["stems"] if s + ".md" not in removed_files and s + ".md" != source}
     ledger = "project_external_evals_ledger"
     if ledger in survivors:
         return ledger
@@ -630,7 +631,7 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
             # Dangling: target resolves to nothing
             if t not in archive_stems:
                 # No clear ledger — record as a candidate; agent decides rewrite target
-                new_target = _pick_ledger_target(state, removed_files)
+                new_target = _pick_ledger_target(state, removed_files, f)
                 plan.append({
                     "action": "rewrite_wikilink",
                     "file": f,
@@ -651,7 +652,7 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
                     })
                 else:
                     # Archived but no clear supersedence — point to nearest ledger
-                    new_target = _pick_ledger_target(state, removed_files)
+                    new_target = _pick_ledger_target(state, removed_files, f)
                     plan.append({
                         "action": "rewrite_wikilink",
                         "file": f,

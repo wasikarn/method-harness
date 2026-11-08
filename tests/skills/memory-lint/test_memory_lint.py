@@ -837,6 +837,32 @@ def test_class_c_falls_back_to_a_surviving_ledger_when_the_preferred_one_is_arch
         assert [e["new"] for e in plan["C"]] == ["[[proj_ledger]]"], plan["C"]
 
 
+def test_class_c_never_rewrites_a_link_to_point_at_its_own_file():
+    # A ledger holding the dangling link must not be "fixed" into a self-link: the detector would go
+    # quiet while the link stays broken. With no other ledger the entry stays manual (new: None).
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "proj_ledger.md", "project", "the only ledger", "see [[ghost-topic]]")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [proj_ledger](proj_ledger.md) — l\n")
+        plan = memory_lint.class_c_dangling_link_rewrite(memory_lint.collect_state(d))
+        assert [(e["file"], e["new"]) for e in plan] == [("proj_ledger.md", None)], plan
+        _write_memory(d, "other_ledger.md", "project", "a second ledger", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "a") as f:
+            f.write("- [other_ledger](other_ledger.md) — l\n")
+        plan = memory_lint.class_c_dangling_link_rewrite(memory_lint.collect_state(d))
+        assert [(e["file"], e["new"]) for e in plan] == [("proj_ledger.md", "[[other_ledger]]")], plan
+
+
+def test_every_test_in_this_file_is_registered_in_the_main_runner():
+    # run-gauntlet.sh executes this file with python3, not pytest: a test missing from the __main__
+    # block below never runs there (5 of GH #960's tests were missing once).
+    import re
+    src = open(__file__).read()
+    defined = set(re.findall(r"^def (test_\w+)", src, re.M))
+    called = set(re.findall(r"^    (test_\w+)\(\)", src, re.M))
+    assert not defined - called, sorted(defined - called)
+
+
 def test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan():
     with tempfile.TemporaryDirectory() as d:
         _write_memory(d, "old.md", "project", "about to move", "see [[ghost-topic]]")
@@ -1775,3 +1801,15 @@ if __name__ == "__main__":
     test_auto_archive_dry_run_wins_over_yes()
     test_auto_archive_no_actions_hint_only_without_yes()
     print("OK")
+    test_class_a_kept_when_only_inbound_link_uses_the_name_slug_not_the_stem()
+    test_class_a_archives_file_whose_only_link_is_to_itself()
+    test_self_link_exclusion_does_not_swallow_a_different_files_matching_stem()
+    test_class_a_skips_archival_when_the_target_slug_is_duplicated()
+    test_duplicate_slug_does_not_false_positive_as_orphan()
+    test_class_c_fallback_picks_any_surviving_ledger_stem()
+    test_class_c_never_targets_a_ledger_class_a_archives_in_the_same_plan()
+    test_class_c_falls_back_to_a_surviving_ledger_when_the_preferred_one_is_archived()
+    test_class_c_never_rewrites_a_link_to_point_at_its_own_file()
+    test_every_test_in_this_file_is_registered_in_the_main_runner()
+    test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan()
+    test_class_c_does_not_use_a_supersedence_target_class_a_archives_in_the_same_plan()
