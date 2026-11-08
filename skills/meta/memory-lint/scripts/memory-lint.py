@@ -483,6 +483,9 @@ def class_a_stale_superseded(state):
             continue
         # Judge the guard on the index exactly as apply will leave it: the whole line becomes a stub, so
         # any other pointer on it goes too, and a second live pointer to this file would go stale.
+        # A same-day rerun finds the destination taken: apply cannot move the file, so plan nothing.
+        if os.path.exists(os.path.join(state["d"], "_archive", archive_date, target_file)):
+            continue
         stub = STUB_TEMPLATE.format(target_stem, archive_date, target_file)
         trial, hits = replace_live(cur, raw_line, stub)
         if not hits:
@@ -558,7 +561,10 @@ def class_b_near_budget_collapse(state, removed_files=frozenset(), index_text=No
         stem = fname[:-3]
         stub = f"- [{stem}]({fname}) — see [[{stem}]] for full record"
         # The collapsed line may carry other pointers (`](y.md)`); losing y's only one strands y.
-        trial_live, _ = replace_live(live, full_line, stub, 1)
+        # apply collapses every copy of the line, so the guard must too; a later duplicate is then already gone
+        trial_live, hits = replace_live(live, full_line, stub)
+        if not hits:
+            continue
         ref_now = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", live)))
         ref_next = set(POINTER_RE.findall(HTML_COMMENT_RE.sub("", trial_live)))
         if hurts_graph(state, removed_files, ref_now, removed_files, ref_next):
@@ -766,6 +772,10 @@ def apply_action_plan(state, plan):
     for entry in plan["A"]:
         src = os.path.join(d, entry["from"])
         dst = os.path.join(archive_dir, entry["from"])
+        if os.path.exists(dst) and os.path.exists(src):
+            # Both exist: the move cannot happen, so the pointer must not change either.
+            print(f"memory-lint: _archive/{archive_date}/{entry['from']} already exists, not archiving {entry['from']}", file=sys.stderr)
+            continue
         # Rewrite the pointer first: a plan built on a stale index finds nothing to rewrite, and moving
         # the file anyway would leave a STALE POINTER behind.
         old_line = entry["old_pointer_line"]
@@ -777,7 +787,7 @@ def apply_action_plan(state, plan):
         bytes_saved += len(old_line.encode("utf-8")) - len(new_line.encode("utf-8"))
         os.makedirs(archive_dir, exist_ok=True)
         if os.path.exists(dst):
-            # Skip if already archived at this date; record as a no-op
+            # src is gone and dst exists: an earlier run moved it; record a no-op
             applied["A"].append({"action": "move", "from": entry["from"], "to": dst, "skipped": "already-archived"})
             # Still rewrite the pointer
         else:
@@ -907,7 +917,7 @@ def build_plan(state):
     plan_b = class_b_near_budget_collapse(state, removed_files=removed_a, index_text=live)
     plan_c = class_c_dangling_link_rewrite(state)
     for e in plan_b:
-        live, _ = replace_live(live, e["from"], e["to"], 1)
+        live, _ = replace_live(live, e["from"], e["to"])
     exclude_files = removed_a | {e["topic_file"] for e in plan_b}
     plan_d = class_d_count_fold(state, exclude_files, removed_files=removed_a, index_text=live)
     return {"A": plan_a, "B": plan_b, "C": plan_c, "D": plan_d}

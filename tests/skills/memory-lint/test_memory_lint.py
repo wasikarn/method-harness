@@ -921,6 +921,9 @@ def test_class_a_skips_archive_when_its_line_also_carries_the_only_pointer_to_an
         state = memory_lint.collect_state(d)
         assert "w.md" in state["referenced"]   # control: w is indexed only through that line
         assert memory_lint.class_a_stale_superseded(state) == []
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:   # control: without the shared pointer A archives x
+            f.write("- [x](x.md) — **SUPERSEDED** by [[y]]\n- [w](w.md) — w\n")
+        assert len(memory_lint.class_a_stale_superseded(memory_lint.collect_state(d))) == 1
 
 
 def test_class_a_skips_archive_when_the_file_has_a_second_live_pointer():
@@ -930,6 +933,9 @@ def test_class_a_skips_archive_when_the_file_has_a_second_live_pointer():
             f.write("- [x](x.md) — **SUPERSEDED** by [[y]]\n- [x again](x.md) — still wanted\n")
         state = memory_lint.collect_state(d)
         assert memory_lint.class_a_stale_superseded(state) == []
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:   # control: a single pointer is archived
+            f.write("- [x](x.md) — **SUPERSEDED** by [[y]]\n")
+        assert len(memory_lint.class_a_stale_superseded(memory_lint.collect_state(d))) == 1
 
 
 def test_class_a_with_an_inline_comment_on_the_pointer_line_never_leaves_a_stale_pointer():
@@ -1116,6 +1122,86 @@ def test_class_b_annotates_the_topic_when_its_pointer_rewrite_lands():
         assert "- [big](big.md) — stub" in open(os.path.join(d, "MEMORY.md")).read()
 
 
+def test_class_b_plan_and_apply_replace_the_same_lines_when_a_long_line_is_duplicated():
+    # The same long line twice, both carrying the only pointers to y: apply collapses every copy, so the
+    # plan must too, or the guard sees y kept by a copy that apply is about to collapse as well.
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 400
+        with tempfile.TemporaryDirectory() as d:
+            _write_memory(d, "a.md", "project", "a", "short first paragraph\n\n" + "x" * 6000)
+            _write_memory(d, "y.md", "project", "y", "n/a")
+            line = "- [a](a.md) — " + "detail " * 40
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write(line + "\n" + line + "\n")
+            control = memory_lint.class_b_near_budget_collapse(memory_lint.collect_state(d))
+            assert len(control) == 1, "control: without y the duplicated line collapses once"
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write(line + " also [y](y.md)\n" + line + " also [y](y.md)\n")
+            state = memory_lint.collect_state(d)
+            assert memory_lint.class_b_near_budget_collapse(state) == []
+            memory_lint.apply_action_plan(state, memory_lint.build_plan(state))
+            findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
+            assert not any("UNINDEXED" in x for x in findings), findings
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
+def test_class_a_does_not_touch_the_pointer_when_the_archive_destination_already_exists():
+    # A second run on the same day finds _archive/<today>/old.md already there. Rewriting the pointer
+    # while old.md stays at top level would leave it unindexed.
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "old.md", "project", "finished", "n/a")
+        _write_memory(d, "keep.md", "project", "keep", "n/a")
+        line = "- [old](old.md) — **SUPERSEDED** by [[keep]]"
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write(line + "\n- [keep](keep.md) — k\n")
+        state = memory_lint.collect_state(d)
+        assert len(memory_lint.class_a_stale_superseded(state)) == 1   # control: no collision, A plans it
+        today = time.strftime("%Y-%m-%d")
+        os.makedirs(os.path.join(d, "_archive", today))
+        _write_memory(os.path.join(d, "_archive", today), "old.md", "project", "earlier copy", "n/a")
+        memory_lint.apply_action_plan(state, {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []})
+        findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
+        assert not any("UNINDEXED" in x or "STALE POINTER" in x for x in findings), findings
+        assert os.path.exists(os.path.join(d, "old.md"))
+
+
+def test_b_and_d_together_never_strand_a_topic_each_relied_on_the_other_to_keep():
+    # B collapses `big`'s line, D deindexes t0's line; both lines carry a pointer to y. D must judge on
+    # the index with B's collapse already applied, where only t0's line still points at y.
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 700
+        with tempfile.TemporaryDirectory() as d:
+            now = 2_000_000_000
+            lines = []
+            for i in range(6):
+                stem = f"t{i}"
+                body = "see [[t0]] [[t1]] [[t2]] [[t3]] [[t4]]" if i == 5 else "leaf"
+                _write_memory(d, f"{stem}.md", "project", stem, body)
+                os.utime(os.path.join(d, f"{stem}.md"), (now + i * 100, now + i * 100))
+                tail = " also [y](y.md)" if i == 0 else ""
+                lines.append(f"- [{stem}]({stem}.md) — a short pointer hook for topic {i} here{tail}")
+            _write_memory(d, "big.md", "project", "big", "short first paragraph\n\n" + "x" * 6000)
+            _write_memory(d, "y.md", "project", "y", "n/a")
+            os.utime(os.path.join(d, "big.md"), (now + 900, now + 900))
+            lines.append("- [big](big.md) — " + "detail " * 40 + "see [y](y.md)")
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(lines) + "\n")
+            state = memory_lint.collect_state(d)
+            assert len(memory_lint.class_b_near_budget_collapse(state)) == 1, "control: B plans big"
+            alone = memory_lint.class_d_count_fold(state, exclude_files={"big.md"})
+            assert "t0.md" in [e["file"] for e in alone], "control: D alone would deindex t0"
+            memory_lint.apply_action_plan(state, memory_lint.build_plan(state))
+            findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
+            assert not any("UNINDEXED" in x for x in findings), findings
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
+
+
 def test_class_a_never_archives_a_chapter_index():
     with tempfile.TemporaryDirectory() as d:
         _write_memory(d, "index-old.md", "reference", "a chapter", "n/a")
@@ -1123,6 +1209,10 @@ def test_class_a_never_archives_a_chapter_index():
             f.write("- [index-old](index-old.md) — **SUPERSEDED** by [[new-topic]]\n")
         state = memory_lint.collect_state(d)
         assert memory_lint.class_a_stale_superseded(state) == []
+        _write_memory(d, "plain-old.md", "reference", "a topic", "n/a")   # control: same line, ordinary name
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [plain-old](plain-old.md) — **SUPERSEDED** by [[new-topic]]\n")
+        assert len(memory_lint.class_a_stale_superseded(memory_lint.collect_state(d))) == 1
 
 
 def test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment():
@@ -1132,6 +1222,9 @@ def test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment():
             f.write("<!--\n- [old](old.md) — **SUPERSEDED** by [[new-topic]]\n-->\n")
         state = memory_lint.collect_state(d)
         assert memory_lint.class_a_stale_superseded(state) == []
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:   # control: the same line outside a comment
+            f.write("- [old](old.md) — **SUPERSEDED** by [[new-topic]]\n")
+        assert len(memory_lint.class_a_stale_superseded(memory_lint.collect_state(d))) == 1
 
 
 def test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched():
@@ -1561,6 +1654,9 @@ if __name__ == "__main__":
     test_class_b_does_not_annotate_a_topic_whose_pointer_rewrite_did_not_land()
     test_a_and_b_together_never_strand_a_topic_each_relied_on_the_other_to_keep()
     test_class_b_annotates_the_topic_when_its_pointer_rewrite_lands()
+    test_class_b_plan_and_apply_replace_the_same_lines_when_a_long_line_is_duplicated()
+    test_class_a_does_not_touch_the_pointer_when_the_archive_destination_already_exists()
+    test_b_and_d_together_never_strand_a_topic_each_relied_on_the_other_to_keep()
     test_class_a_never_archives_a_chapter_index()
     test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment()
     test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched()
