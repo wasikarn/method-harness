@@ -133,6 +133,9 @@ s=$(date +%s); timeout 20 python3 "$SCRIPT" --root "$T/root" "$T/long.md" > /dev
 # Round-2 review findings (spec and standards): red on the round-1 script.
 printf 'src/app.py\nsrc/removed.py\n' > "$T/diff-names"
 [ "$(label_of 'src/app.py:999' --diff-paths "$T/diff-names")" = "missing" ] && ok "diff list does not skip the line check of a file still on disk" || bad "diff-listed existing file past EOF -> '$(label_of 'src/app.py:999' --diff-paths "$T/diff-names")'"
+printf 'setup.py\n' > "$T/diff-root"
+[ "$(label_of 'setup.py:3' --diff-paths "$T/diff-root")" = "resolved" ] && ok "deleted root-level file in the diff list -> resolved" || bad "root-level deleted file -> '$(label_of 'setup.py:3' --diff-paths "$T/diff-root")'"
+[ "$(label_of 'setup.py:3')" = "ambiguous-or-outside" ] && ok "same bare name with no diff list -> ambiguous-or-outside" || bad "bare name without diff list"
 [ "$(label_of 'src/removed.py:7' --diff-paths "$T/diff-names")" = "resolved" ] && ok "diff-listed file gone from the tree -> resolved" || bad "diff-listed deleted file"
 printf 'src/app.py:1\n' | python3 "$SCRIPT" --root "$T/root" --root "$T/nope" > "$T/stale.out" 2> "$T/stale.err"; rc=$?
 [ "$rc" -eq 0 ] && /usr/bin/grep -q "citations exist: 1 of 1" "$T/stale.out" && /usr/bin/grep -q "nope" "$T/stale.err" && ok "a stale --root warns and is skipped" || bad "stale --root rc=$rc"

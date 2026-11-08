@@ -129,9 +129,11 @@ class Resolver:
             found = self._real_files((r, p) for r in self.roots
                                      for p in self._basename_index().get(norm, ())
                                      if p.startswith(r + os.sep))
-            if not found or len(found) != 1:
+            if found is None or len(found) > 1:
                 return OUTSIDE
-            return self._check_lines(found.pop(), span)
+            if found:
+                return self._check_lines(found.pop(), span)
+            return RESOLVED if norm in self.diff else OUTSIDE
         found = self._real_files((r, os.path.join(r, norm)) for r in self.roots)
         if found is None or len(found) > 1:
             return OUTSIDE
