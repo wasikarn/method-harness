@@ -5,9 +5,14 @@ The shape every dispatched subagent prompt takes. Short on purpose; the constrai
 ```
 # Task: <one line>
 [role: builder|validator|fixer|re-validator|research|other]
+[posture: explore|narrow]
 
 ## What
 <the deliverable, in the dispatcher's own words; tracker text paraphrased, never pasted>
+
+## Why
+<optional, one sentence: the goal behind the task, so the agent can judge an edge case the What did
+not foresee. Skip it for a mechanical edit.>
 
 ## FILES YOU OWN
 <explicit paths; everything else is read-only>
@@ -19,6 +24,10 @@ fits. Exit 0 alone is not evidence (a skipped suite exits 0). A file existing is
 either — check the content that has to be there, not just presence, or a stale file passes free.
 Exercise a negative control before trusting an absence claim (a check that fails on a known-bad
 input); measure a stated number independently before writing it into Done-when as its own proof.>
+
+`posture` is optional and defaults to `narrow`: do exactly the What and nothing wider. `explore` lets
+the agent look wide and report options; set it only for `research` and `other` roles, never for a
+builder or fixer, whose scope is its FILES YOU OWN.
 
 Builder/fixer: before returning, re-read your diff once against Done-when's own assertions and fix
 what's cheap to fix. This is a private pass, not the pass/fail decision, and you don't report having
