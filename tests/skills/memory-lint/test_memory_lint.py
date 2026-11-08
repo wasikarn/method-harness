@@ -882,7 +882,7 @@ def test_archive_stub_whose_file_is_gone_is_still_stale():
 
 
 def test_class_a_skips_archive_that_would_strand_a_child_topic():
-    # NEW-1: `kid` is reachable only through `old` ([[kid]] in old's body). Archiving `old` would
+    # `kid` is reachable only through `old` ([[kid]] in old's body). Archiving `old` would
     # leave `kid` unreachable, so lint would then report UNINDEXED for a file Class A just orphaned.
     with tempfile.TemporaryDirectory() as d:
         _write_memory(d, "old.md", "project", "finished", "child is [[kid]]")
@@ -897,8 +897,7 @@ def test_class_a_skips_archive_that_would_strand_a_child_topic():
 
 
 def test_class_a_skips_archive_that_pushes_a_topic_past_two_hops():
-    # NEW-1, second shape: `kid` is indexed directly (hop 1) AND via old; no, here kid is hop 2 via
-    # `hub`, but hub's route is removed: only a longer route through `other` remains (hop 3).
+    # `kid` is 2 hops deep via `hub`. Archiving `hub` leaves only a longer route through `other` (3 hops).
     with tempfile.TemporaryDirectory() as d:
         _write_memory(d, "hub.md", "project", "hub", "see [[kid]]")
         _write_memory(d, "other.md", "project", "other", "see [[deep]]")
@@ -910,6 +909,85 @@ def test_class_a_skips_archive_that_pushes_a_topic_past_two_hops():
         depths = memory_lint.compute_depths(state["files"], state["slugs"], state["links_out"], state["referenced"])
         assert depths["kid"] == 2 and depths["deep"] == 2, depths   # control: kid is 2 hops today
         assert memory_lint.class_a_stale_superseded(state) == []
+
+
+def test_class_a_skips_archive_when_its_line_also_carries_the_only_pointer_to_another_topic():
+    # Apply replaces the whole line with a stub, so a second `](w.md)` on the same line is lost with it.
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "x.md", "project", "finished", "n/a")
+        _write_memory(d, "w.md", "project", "other", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [x](x.md) — **SUPERSEDED** by [[y]] see also [w](w.md)\n")
+        state = memory_lint.collect_state(d)
+        assert "w.md" in state["referenced"]   # control: w is indexed only through that line
+        assert memory_lint.class_a_stale_superseded(state) == []
+
+
+def test_class_a_skips_archive_when_the_file_has_a_second_live_pointer():
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "x.md", "project", "finished", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [x](x.md) — **SUPERSEDED** by [[y]]\n- [x again](x.md) — still wanted\n")
+        state = memory_lint.collect_state(d)
+        assert memory_lint.class_a_stale_superseded(state) == []
+
+
+def test_class_a_with_an_inline_comment_on_the_pointer_line_never_leaves_a_stale_pointer():
+    # Regression: the plan used to carry the comment-stripped line, which has no match in the raw index;
+    # apply then moved the file anyway and left the pointer behind (lint: STALE POINTER, exit 1).
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "x.md", "project", "finished", "n/a")
+        _write_memory(d, "keep.md", "project", "keep", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [x](x.md) <!-- old --> **SUPERSEDED** by [[y]]\n- [keep](keep.md) — k\n")
+        state = memory_lint.collect_state(d)
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        memory_lint.apply_action_plan(state, plan)
+        findings, _, _ = memory_lint.detector_findings(memory_lint.collect_state(d))
+        assert not any("STALE POINTER" in x for x in findings), findings
+
+
+def test_apply_does_not_move_a_file_whose_pointer_line_is_gone_from_the_index():
+    # A plan built against a stale index must not archive the file when the pointer rewrite finds nothing.
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "x.md", "project", "finished", "n/a")
+        _write_memory(d, "keep.md", "project", "keep", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [keep](keep.md) — k\n")
+        state = memory_lint.collect_state(d)
+        entry = {"action": "move", "from": "x.md", "to_archive_subdir": "2026-01-01",
+                 "old_pointer_line": "- [x](x.md) — **SUPERSEDED** by [[y]]", "successor": "y"}
+        memory_lint.apply_action_plan(state, {"A": [entry], "B": [], "C": [], "D": []})
+        assert os.path.exists(os.path.join(d, "x.md"))
+
+
+def test_class_d_hop_guard_alone_blocks_a_deindex_that_leaves_a_three_hop_backup():
+    # t0 stays reachable after deindexing (t4 -> t3 -> t0) but would sit 3 hops deep, past MAX_HOPS.
+    orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
+    try:
+        memory_lint.LINE_CAP = 10_000
+        memory_lint.BYTE_CAP = 330
+        with tempfile.TemporaryDirectory() as d:
+            now = 2_000_000_000
+            bodies = {"t0": "leaf", "t1": "leaf", "t2": "leaf", "t3": "see [[t0]]", "t4": "see [[t3]]", "t5": "leaf"}
+            lines = []
+            for i, stem in enumerate(["t0", "t1", "t2", "t3", "t4", "t5"]):
+                with open(os.path.join(d, f"{stem}.md"), "w") as f:
+                    f.write(f"---\nname: {stem}\n---\n{bodies[stem]}\n")
+                os.utime(os.path.join(d, f"{stem}.md"), (now + i * 100, now + i * 100))
+                if stem != "t3":   # t3 is deliberately unindexed: reachable only through t4
+                    lines.append(f"- [{stem}]({stem}.md) — a short pointer hook for topic {i} here")
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(lines) + "\n")
+            state = memory_lint.collect_state(d)
+            assert len(state["idx"].encode()) / memory_lint.BYTE_CAP >= 0.80, "fixture must cross the trigger"
+            without_t0 = state["referenced"] - {"t0.md"}
+            same = memory_lint.compute_reachable(state["files"], state["slugs"], state["links_out"], without_t0)
+            assert "t0" in same, "control: reachability alone would allow deindexing t0"
+            plan = memory_lint.class_d_count_fold(state, exclude_files=set())
+            assert "t0.md" not in [e["file"] for e in plan], plan
+    finally:
+        memory_lint.LINE_CAP, memory_lint.BYTE_CAP = orig_line_cap, orig_byte_cap
 
 
 def test_class_a_never_archives_a_chapter_index():
@@ -931,7 +1009,7 @@ def test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment():
 
 
 def test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched():
-    # NEW-4: the same pointer line sits live and inside a comment block; only the live one may change.
+    # the same pointer line sits live and inside a comment block; only the live one may change.
     with tempfile.TemporaryDirectory() as d:
         _write_memory(d, "old.md", "project", "finished", "n/a")
         _write_memory(d, "keep.md", "project", "keep", "n/a")
@@ -949,7 +1027,7 @@ def test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched():
 
 
 def test_class_b_skips_a_collapse_that_drops_the_only_pointer_to_another_topic():
-    # NEW-3: the long pointer line also carries `](y.md)`, y's only index pointer. Collapsing the
+    # the long pointer line also carries `](y.md)`, y's only index pointer. Collapsing the
     # line to a stub would delete it and strand y.
     orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
     try:
@@ -987,7 +1065,7 @@ def _class_d_store(d, names, bodies=None, comment_first=None):
 
 
 def test_class_d_never_deindexes_a_chapter_index():
-    # B8: index-old is the oldest and stays reachable through topic-5, so only the name guard stops it.
+    # index-old is the oldest and stays reachable through topic-5, so only the name guard stops it.
     orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
     try:
         memory_lint.LINE_CAP = 10_000
@@ -1006,7 +1084,7 @@ def test_class_d_never_deindexes_a_chapter_index():
 
 
 def test_class_d_apply_leaves_a_byte_identical_comment_copy_untouched():
-    # NEW-4: topic-0's pointer line also sits, byte for byte, in a comment block above the live index.
+    # topic-0's pointer line also sits, byte for byte, in a comment block above the live index.
     orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
     try:
         memory_lint.LINE_CAP = 10_000
@@ -1029,7 +1107,7 @@ def test_class_d_apply_leaves_a_byte_identical_comment_copy_untouched():
 
 
 def test_class_d_is_evaluated_after_class_a_has_removed_its_files():
-    # NEW-3: x is reachable only through `old` (a Class A archive candidate). Judged on today's graph x
+    # x is reachable only through `old` (a Class A archive candidate). Judged on today's graph x
     # looks safe to deindex; once A has archived old, deindexing x would strand it.
     orig_line_cap, orig_byte_cap = memory_lint.LINE_CAP, memory_lint.BYTE_CAP
     try:
@@ -1346,6 +1424,11 @@ if __name__ == "__main__":
     test_archive_stub_whose_file_is_gone_is_still_stale()
     test_class_a_skips_archive_that_would_strand_a_child_topic()
     test_class_a_skips_archive_that_pushes_a_topic_past_two_hops()
+    test_class_a_skips_archive_when_its_line_also_carries_the_only_pointer_to_another_topic()
+    test_class_a_skips_archive_when_the_file_has_a_second_live_pointer()
+    test_class_a_with_an_inline_comment_on_the_pointer_line_never_leaves_a_stale_pointer()
+    test_apply_does_not_move_a_file_whose_pointer_line_is_gone_from_the_index()
+    test_class_d_hop_guard_alone_blocks_a_deindex_that_leaves_a_three_hop_backup()
     test_class_a_never_archives_a_chapter_index()
     test_class_a_ignores_a_superseded_line_that_only_exists_inside_a_comment()
     test_class_a_apply_leaves_a_byte_identical_comment_copy_untouched()

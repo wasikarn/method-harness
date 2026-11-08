@@ -377,7 +377,7 @@ sleep 1
 printf -- '---\nname: late\ndescription: "late"\nmetadata:\n  type: project\n---\nn/a\n' > "$REAL_STORE/late.md"
 OUT=$(run_hook_no_cache_clear)
 assert_contains "new file behind the symlink invalidates the cache and is reported" "UNINDEXED: late.md" "$OUT"
-rm -f "$MEMDIR"
+tmp_delete "$MEMDIR"
 
 echo ""
 total=$((pass + fail))
