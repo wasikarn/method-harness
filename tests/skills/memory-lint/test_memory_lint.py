@@ -1880,6 +1880,18 @@ def test_auto_archive_no_actions_does_not_claim_clean_when_lint_has_findings():
             assert "store is clean" not in r.stdout, r.stdout
 
 
+def test_auto_archive_no_actions_says_clean_when_lint_has_no_findings():
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "a.md", "project", "alpha", "see [[b]]")
+        _write_memory(d, "b.md", "project", "beta", "see [[a]]")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [a](a.md) — x\n- [b](b.md) — y\n")
+        for flags in (["--auto-archive", "--dry-run"], ["--auto-archive", "--yes"]):
+            r = subprocess.run(["python3", SCRIPT, d, *flags], input="", capture_output=True, text=True)
+            assert "store is clean" in r.stdout, r.stdout
+            assert "lint findings remain" not in r.stdout, r.stdout
+
+
 def test_apply_rollback_runs_on_a_non_oserror_exception():
     # A UnicodeDecodeError (or KeyboardInterrupt) after a Class A move must still put the file back.
     for exc in (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"), KeyboardInterrupt()):
@@ -1920,15 +1932,20 @@ def test_apply_rollback_does_not_overwrite_a_file_now_at_the_original_path():
         memory_lint.atomic_write = write
         err = io.StringIO()
         try:
+            raised = None
             try:
                 with contextlib.redirect_stderr(err):
                     memory_lint.apply_action_plan(state, plan)
-            except OSError:
-                pass
+            except OSError as e:
+                raised = e
         finally:
             memory_lint.atomic_write = orig_write
+        assert raised is not None and "disk full" in str(raised), raised
         assert open(src).read() == "NEW", "restore must not overwrite"
-        assert src in err.getvalue() and "_archive" in err.getvalue(), err.getvalue()
+        archived = os.path.join(d, "_archive", time.strftime(memory_lint.SUPERSEDED_ARCHIVE_DATE_FMT), plan["A"][0]["from"])
+        assert os.path.exists(archived), "archived copy must be kept"
+        assert src in err.getvalue() and archived in err.getvalue(), err.getvalue()
+        assert "archived copy kept; merge or delete by hand" in err.getvalue(), err.getvalue()
 
 
 def test_apply_rollback_leaves_already_archived_entries_in_the_archive():
@@ -1947,13 +1964,15 @@ def test_apply_rollback_leaves_already_archived_entries_in_the_archive():
             raise OSError("disk full")
         memory_lint.atomic_write = write
         try:
+            raised = None
             try:
                 with contextlib.redirect_stderr(io.StringIO()):
                     memory_lint.apply_action_plan(state, plan)
-            except OSError:
-                pass
+            except OSError as e:
+                raised = e
         finally:
             memory_lint.atomic_write = orig_write
+        assert raised is not None and "disk full" in str(raised), raised
         assert not os.path.exists(os.path.join(d, entry["from"])), "already-archived file was pulled back"
 
 
@@ -2122,6 +2141,7 @@ if __name__ == "__main__":
     test_apply_rollback_keeps_going_and_reraises_the_original_error_when_a_restore_fails()
     test_auto_archive_no_actions_does_not_claim_clean_when_lint_has_findings()
     test_apply_rollback_runs_on_a_non_oserror_exception()
+    test_auto_archive_no_actions_says_clean_when_lint_has_no_findings()
     test_apply_rollback_does_not_overwrite_a_file_now_at_the_original_path()
     test_apply_rollback_leaves_already_archived_entries_in_the_archive()
     print("OK")

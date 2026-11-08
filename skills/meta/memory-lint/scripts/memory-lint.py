@@ -781,7 +781,7 @@ def apply_action_plan(state, plan):
                 continue
             back = os.path.join(state["d"], moved["from"])
             if os.path.exists(back):
-                print(f"memory-lint: not restoring {moved['to']}: {back} already exists", file=sys.stderr)
+                print(f"memory-lint: not restoring {moved['to']}: {back} already exists; archived copy kept; merge or delete by hand", file=sys.stderr)
                 continue
             try:
                 shutil.move(moved["to"], back)
@@ -1017,7 +1017,8 @@ def run_action_mode(state, args):
 
     if not any(plan.values()):
         print()
-        if detector_findings(state)[0]:
+        findings, _, _ = detector_findings(state)
+        if findings:
             print("No actions proposed — lint findings remain that action mode does not fix; run plain lint to see them.")
         else:
             print("No actions proposed — store is clean (within action-mode heuristics).")
