@@ -600,7 +600,8 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
     """Class C: surviving top-level file has a [[wikilink]] that resolves to nothing,
     OR to a target in _archive/ where the source has a known supersedence target.
     `removed_files` = files Class A archives in the same plan (build_plan passes them): they are
-    neither rewritten nor chosen as a target, so C judges the graph as A leaves it."""
+    neither rewritten nor chosen as a target. A link TO such a file is already live in the raw state
+    (A only archives files with no inbound link), so the resolvability test below needs no change."""
     plan = []
     archive_stems = list_archive(state["d"])
     # Build index of (stem → first non-section line of MEMORY.md that mentions it as pointer)

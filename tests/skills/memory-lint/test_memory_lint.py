@@ -837,6 +837,34 @@ def test_class_c_falls_back_to_a_surviving_ledger_when_the_preferred_one_is_arch
         assert [e["new"] for e in plan["C"]] == ["[[proj_ledger]]"], plan["C"]
 
 
+def test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan():
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "old.md", "project", "about to move", "see [[ghost-topic]]")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [old](old.md) — **SUPERSEDED** by [[succ]]\n")
+        state = memory_lint.collect_state(d)
+        assert [e["file"] for e in memory_lint.class_c_dangling_link_rewrite(state)] == ["old.md"]   # control
+        plan = memory_lint.build_plan(state)
+        assert [e["from"] for e in plan["A"]] == ["old.md"], plan["A"]
+        assert plan["C"] == [], plan["C"]
+
+
+def test_class_c_does_not_use_a_supersedence_target_class_a_archives_in_the_same_plan():
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "_archive", "2026-01-01"))
+        _write_memory(os.path.join(d, "_archive", "2026-01-01"), "old-topic.md", "project", "archived", "n/a")
+        _write_memory(d, "new-topic.md", "project", "successor, itself superseded", "n/a")
+        _write_memory(d, "src.md", "project", "links an archived topic", "see [[old-topic]]")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [old-topic](old-topic.md) — **SUPERSEDED** by [[new-topic]]\n"
+                    "- [new-topic](new-topic.md) — **SUPERSEDED** by [[x]]\n- [src](src.md) — z\n")
+        state = memory_lint.collect_state(d)
+        assert [e["new"] for e in memory_lint.class_c_dangling_link_rewrite(state)] == ["[[new-topic]]"]   # control
+        plan = memory_lint.build_plan(state)
+        assert [e["from"] for e in plan["A"]] == ["new-topic.md"], plan["A"]
+        assert [e["new"] for e in plan["C"]] == [None], plan["C"]
+
+
 def test_class_c_rewrites_archived_link_to_supersedence_target():
     # L1109 (`if not m: continue` on SUPERSEDED lines), L1113 (`if not pm: continue`),
     # L1128 (archived branch). Only test that executes the SUPERSEDED-line parse.
