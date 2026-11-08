@@ -26,7 +26,7 @@ orphans or notices index drift. Semantic review of memory content is out of scop
    one-line pointer, or link it from an indexed memory. Orphan: link it from the memory it belongs
    with. Too deep: link the listed topics from a chapter index (`index-*.md`) that `MEMORY.md` points to,
    so each sits within 2 hops; the ratchet only blocks growth, and a deliberate increase is accepted by
-   deleting `$HOME/.claude/state/memory-lint-depth-baseline-<key>` (`<key>` is the store's `projects/<enc>` name; the new baseline is written by the next plain run once the store has no other findings). Near or over budget: step 3.
+   deleting `$HOME/.claude/state/memory-lint-depth-baseline-<key>` (`<key>` is the store's `projects/<enc>` name; the next plain run writes the new baseline once no dangling-link, unindexed or stale-pointer finding stands). Near or over budget: step 3.
    Done when: every finding has a named edit and no memory file was deleted.
 3. **Trim only through action mode.** `--auto-archive --dry-run` first, read the plan, then
    `--auto-archive --yes`. Rubric, classes A–D and thresholds: `references/action-mode.md`.
@@ -42,7 +42,7 @@ orphans or notices index drift. Semantic review of memory content is out of scop
 | Orphan | an indexed memory has no links in or out |
 | Index drift | `MEMORY.md` points at a missing file, or a file has no pointer and is not `[[link]]`-reachable from an indexed one |
 | Load budget | `MEMORY.md` at 80% or more of 200 lines / 25 KB; once over the cap, trailing entries never load |
-| Too deep | more topics sit past 2 hops from `MEMORY.md` than the baseline file holds. A plain run on an otherwise clean store writes or tightens the baseline; `--json` and `--auto-archive` never write it |
+| Too deep | more topics sit past 2 hops from `MEMORY.md` than the baseline file holds. A plain run writes or tightens the baseline unless a dangling-link, unindexed, stale-pointer, duplicate-slug or missing-index finding stands; `--json` and `--auto-archive` never write it |
 
 ## Authoring rules the checks assume
 

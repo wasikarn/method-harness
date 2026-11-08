@@ -2181,6 +2181,19 @@ def test_depth_ratchet_does_not_tighten_while_the_store_has_other_findings():
         assert r.returncode == 0 and "TOO DEEP" not in r.stdout, r.stdout
 
 
+def test_depth_ratchet_still_writes_the_baseline_when_only_orphans_are_left():
+    # ORPHAN and the budget findings cannot hide a topic from N, so they must not keep the ratchet off.
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
+        _deep_store(store, 3)
+        with open(os.path.join(store, "MEMORY.md"), "a") as f:
+            f.write("- [orph](orph.md) — indexed, no links\n")
+        with open(os.path.join(store, "orph.md"), "w") as f:
+            f.write("---\nname: orph\n---\nnothing\n")
+        r = _lint(home, store)
+        assert "ORPHAN: orph.md" in r.stdout, r.stdout
+        assert _read_baseline(home, store) == "3", r.stdout
+
+
 def test_depth_ratchet_json_and_dry_run_never_write_the_baseline():
     with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as store:
         _deep_store(store, 3)
@@ -2376,6 +2389,7 @@ if __name__ == "__main__":
     test_depth_ratchet_tightens_then_flags_a_later_increase()
     test_depth_ratchet_does_not_count_unreachable_topics()
     test_depth_ratchet_does_not_tighten_while_the_store_has_other_findings()
+    test_depth_ratchet_still_writes_the_baseline_when_only_orphans_are_left()
     test_depth_ratchet_json_and_dry_run_never_write_the_baseline()
     test_depth_ratchet_treats_a_corrupt_baseline_as_missing()
     test_depth_ratchet_fails_open_with_a_stderr_line_when_the_state_dir_is_unwritable()
