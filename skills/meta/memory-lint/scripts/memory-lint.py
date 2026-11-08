@@ -769,18 +769,22 @@ def atomic_write(path, content):
 
 def apply_action_plan(state, plan):
     """Execute the plan: Class A moves, B/C rewrites, D deindexes. Returns (bytes_saved, applied_summary).
-    Any OSError before MEMORY.md is written puts the Class A moves back (their pointers are still live,
-    so each would become a STALE POINTER) and re-raises the original error (GH #964)."""
+    Any exception (KeyboardInterrupt too) before MEMORY.md is written puts the Class A moves back (their
+    pointers are still live, so each would become a STALE POINTER) and re-raises the original (GH #964)."""
     applied = {"A": [], "B": [], "C": [], "D": []}
     try:
         return _apply_unguarded(state, plan, applied)
-    except OSError:
+    except BaseException:
         # Class B/C edits are left in place: they create no new finding without the index write.
         for moved in applied["A"]:
             if "skipped" in moved:
                 continue
+            back = os.path.join(state["d"], moved["from"])
+            if os.path.exists(back):
+                print(f"memory-lint: not restoring {moved['to']}: {back} already exists", file=sys.stderr)
+                continue
             try:
-                shutil.move(moved["to"], os.path.join(state["d"], moved["from"]))
+                shutil.move(moved["to"], back)
             except OSError as restore_err:
                 print(f"memory-lint: could not restore {moved['from']} from {moved['to']}: {restore_err}", file=sys.stderr)
         raise
@@ -1013,7 +1017,10 @@ def run_action_mode(state, args):
 
     if not any(plan.values()):
         print()
-        print("No actions proposed — store is clean (within action-mode heuristics).")
+        if detector_findings(state)[0]:
+            print("No actions proposed — lint findings remain that action mode does not fix; run plain lint to see them.")
+        else:
+            print("No actions proposed — store is clean (within action-mode heuristics).")
         if not apply_now:
             print("  (re-run with --yes to exit cleanly without re-checking)")
         return 0

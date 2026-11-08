@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -1866,6 +1867,96 @@ def test_auto_archive_no_actions_hint_only_without_yes():
         assert "re-run with --yes" not in r_yes.stdout, r_yes.stdout  # apply_now -> hint suppressed
 
 
+def test_auto_archive_no_actions_does_not_claim_clean_when_lint_has_findings():
+    # A dangling index pointer is a lint finding no action class fixes: "no actions" must not say "clean".
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "a.md", "project", "alpha", "see [[b]]")
+        _write_memory(d, "b.md", "project", "beta", "see [[a]]")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [a](a.md) — x\n- [b](b.md) — y\n- [gone](gone.md) — z\n")
+        for flags in (["--auto-archive", "--dry-run"], ["--auto-archive", "--yes"]):
+            r = subprocess.run(["python3", SCRIPT, d, *flags], input="", capture_output=True, text=True)
+            assert "No actions proposed" in r.stdout, r.stdout
+            assert "store is clean" not in r.stdout, r.stdout
+
+
+def test_apply_rollback_runs_on_a_non_oserror_exception():
+    # A UnicodeDecodeError (or KeyboardInterrupt) after a Class A move must still put the file back.
+    for exc in (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"), KeyboardInterrupt()):
+        with tempfile.TemporaryDirectory() as d:
+            _class_a_fixture(d)
+            state = memory_lint.collect_state(d)
+            plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+            assert len(plan["A"]) == 1, plan
+            orig_write = memory_lint.atomic_write
+
+            def write(path, content):
+                raise exc
+            memory_lint.atomic_write = write
+            try:
+                raised = None
+                try:
+                    memory_lint.apply_action_plan(state, plan)
+                except BaseException as e:
+                    raised = e
+            finally:
+                memory_lint.atomic_write = orig_write
+            assert raised is exc, raised
+            assert os.path.exists(os.path.join(d, plan["A"][0]["from"])), type(exc)
+
+
+def test_apply_rollback_does_not_overwrite_a_file_now_at_the_original_path():
+    with tempfile.TemporaryDirectory() as d:
+        _class_a_fixture(d)
+        state = memory_lint.collect_state(d)
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        src = os.path.join(d, plan["A"][0]["from"])
+        orig_write = memory_lint.atomic_write
+
+        def write(path, content):
+            with open(src, "w") as f:   # something new lands at the original path mid-apply
+                f.write("NEW")
+            raise OSError("disk full")
+        memory_lint.atomic_write = write
+        err = io.StringIO()
+        try:
+            try:
+                with contextlib.redirect_stderr(err):
+                    memory_lint.apply_action_plan(state, plan)
+            except OSError:
+                pass
+        finally:
+            memory_lint.atomic_write = orig_write
+        assert open(src).read() == "NEW", "restore must not overwrite"
+        assert src in err.getvalue() and "_archive" in err.getvalue(), err.getvalue()
+
+
+def test_apply_rollback_leaves_already_archived_entries_in_the_archive():
+    # The `skipped` guard: an entry archived before this run must not be pulled back on rollback.
+    with tempfile.TemporaryDirectory() as d:
+        _class_a_fixture(d)
+        state = memory_lint.collect_state(d)
+        plan = {"A": memory_lint.class_a_stale_superseded(state), "B": [], "C": [], "D": []}
+        entry = plan["A"][0]
+        dst_dir = os.path.join(d, "_archive", time.strftime(memory_lint.SUPERSEDED_ARCHIVE_DATE_FMT))
+        os.makedirs(dst_dir, exist_ok=True)
+        shutil.move(os.path.join(d, entry["from"]), os.path.join(dst_dir, entry["from"]))
+        orig_write = memory_lint.atomic_write
+
+        def write(path, content):
+            raise OSError("disk full")
+        memory_lint.atomic_write = write
+        try:
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    memory_lint.apply_action_plan(state, plan)
+            except OSError:
+                pass
+        finally:
+            memory_lint.atomic_write = orig_write
+        assert not os.path.exists(os.path.join(d, entry["from"])), "already-archived file was pulled back"
+
+
 def test_store_with_index_but_no_topic_files_lints_clean():
     # GH #964 item 4: after Class A archives the last topic, only MEMORY.md (a stub) and _archive/ remain.
     with tempfile.TemporaryDirectory() as d:
@@ -2029,4 +2120,8 @@ if __name__ == "__main__":
     test_class_d_sizes_against_the_index_text_after_earlier_classes()
     test_apply_rolls_back_earlier_class_a_moves_when_a_later_move_fails()
     test_apply_rollback_keeps_going_and_reraises_the_original_error_when_a_restore_fails()
+    test_auto_archive_no_actions_does_not_claim_clean_when_lint_has_findings()
+    test_apply_rollback_runs_on_a_non_oserror_exception()
+    test_apply_rollback_does_not_overwrite_a_file_now_at_the_original_path()
+    test_apply_rollback_leaves_already_archived_entries_in_the_archive()
     print("OK")
