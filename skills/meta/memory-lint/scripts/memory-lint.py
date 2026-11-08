@@ -25,8 +25,9 @@ Detector checks (default mode):
   - load budget           — 200-line / 25KB cap on MEMORY.md
   - depth ratchet         — TOO DEEP when more reachable topics sit past MAX_HOPS than the
                             baseline in $HOME/.claude/state/memory-lint-depth-baseline-<key>.
-                            Only a plain run on a store with no other findings writes it (first run,
-                            or N fell; deliberately broad, an ORPHAN-only store also waits); --json only
+                            Only a plain run writes it (first run, or N fell), and not while a finding
+                            that can hide topics from N stands (DANGLING, DUPLICATE SLUG, MISSING,
+                            UNINDEXED, STALE POINTER); ORPHAN and budget findings do not block; --json only
                             reads it. --auto-archive plans no depth fix and writes no baseline;
                             it only stops calling the store clean while N is over it.
                             Delete the file to accept an increase.
@@ -188,6 +189,8 @@ def compute_reachable(files, slugs, links_out, referenced):
     return reachable
 
 
+# Finding prefixes that can hide topics from N (unreachable or deeper); while one stands, no baseline write.
+BASELINE_BLOCKERS = ("DANGLING", "DUPLICATE SLUG", "MISSING", "UNINDEXED", "STALE POINTER")
 MAX_HOPS = 2  # the book model: MEMORY.md pointer = hop 1, each [[link]] from there adds one
 
 
@@ -451,9 +454,11 @@ def depth_key(d):
 
 def run_detector(state, as_json):
     findings, total_links, linked_count = detector_findings(state)
-    # Write only from a clean store: a broken index hides topics from N, and a baseline taken then
-    # would read the repaired store as TOO DEEP.
-    too_deep, deep_n, deep_base = depth_ratchet(state, write=not as_json and not findings)
+    # Write only when nothing hides topics from N: a broken index or link makes topics unreachable or
+    # deeper, and a baseline taken then would read the repaired store as TOO DEEP. ORPHAN and the
+    # budget findings cannot move N, so they do not block the write.
+    too_deep, deep_n, deep_base = depth_ratchet(
+        state, write=not as_json and not any(f.startswith(BASELINE_BLOCKERS) for f in findings))
     if too_deep:
         findings.append(too_deep)
     if as_json:
