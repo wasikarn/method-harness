@@ -631,7 +631,7 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
             # Dangling: target resolves to nothing
             if t not in archive_stems:
                 # No clear ledger — record as a candidate; agent decides rewrite target
-                new_target = _pick_ledger_target(state, removed_files, f)
+                new_target = _pick_ledger_target(state, removed_files, source=f)
                 plan.append({
                     "action": "rewrite_wikilink",
                     "file": f,
@@ -653,7 +653,7 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
                     })
                 else:
                     # Archived but no clear supersedence — point to nearest ledger
-                    new_target = _pick_ledger_target(state, removed_files, f)
+                    new_target = _pick_ledger_target(state, removed_files, source=f)
                     plan.append({
                         "action": "rewrite_wikilink",
                         "file": f,

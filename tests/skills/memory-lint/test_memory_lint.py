@@ -855,9 +855,10 @@ def test_class_c_never_rewrites_a_link_to_point_at_its_own_file():
 
 def test_every_test_in_this_file_is_registered_in_the_main_runner():
     # run-gauntlet.sh executes this file with python3, not pytest: a test missing from the __main__
-    # block below never runs there (5 of GH #960's tests were missing once).
+    # block below never runs there (10 tests were missing once, 5 of them GH #960's).
     import re
-    src = open(__file__).read()
+    with open(__file__) as fh:
+        src = fh.read()
     defined = set(re.findall(r"^def (test_\w+)", src, re.M))
     called = set(re.findall(r"^    (test_\w+)\(\)", src.split('\nif __name__ == "__main__":\n')[-1], re.M))
     assert not defined - called, sorted(defined - called)
