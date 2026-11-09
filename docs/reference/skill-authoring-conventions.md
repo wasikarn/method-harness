@@ -12,7 +12,7 @@ question; do not conflate them.
 
 **English only in skill and agent files** (operator rule, 2026-09-07): no Thai words, trigger
 phrases, or markers in any `skills/**/*.md` or `agents/*.md`; Rule 14's Thai marker is written `insufficient evidence` inside a
-skill. The Thai humanizer that needed an exception moved out to its own plugin, `siang`.
+skill.
 
 **Description cap: 25 words, third person.** This is mh's own token-budget rule (skill and agent
 descriptions ride in every session's context), not matt's. Check 20 WARNs past 1536 chars; check 43

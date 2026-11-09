@@ -68,8 +68,7 @@ or interpreting a finding.
 
 ## Boundary vs. `siang:humanize`
 
-They pull in opposite directions on purpose: `siang:humanize` (the `siang`
-plugin) wants varied
+They pull in opposite directions on purpose: `siang:humanize` wants varied
 sentence length and a human voice; STE wants a uniform cap and flat prose
 for non-native and machine readers. "Sounds AI-generated" goes to
 `siang:humanize`. "Simple English for a non-native reader" or a named STE ask
