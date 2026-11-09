@@ -35,6 +35,13 @@ what's cheap to fix. This is a private pass, not the pass/fail decision, and you
 done it — the fresh-context validator still independently re-verifies every claim, and its brief is
 never narrowed on the strength of "already self-checked."
 
+Bash command shape (GH #994): Claude Code raises a permission prompt for how a command is written, not
+only for what it does. When a brief expects shell work, tell the agent to write the final form: run
+`git -C <dir> ...` as its own command (not `cd <dir> && git ...`), start a command with the program (no
+`VAR=value` first), keep `$(...)` and `${...}` out of a command that would otherwise be plain, and run
+steps as separate commands instead of chaining them. This changes no gate: every deny and every first
+ask stays.
+
 Validator/re-validator: return `{pass, findings[], checked[], scope_ok, unexpected_files[]}` and
 nothing else (bar the `not_checked:` line below); `checked[]` holds ≥1 `{claim, evidence}` even on a clean pass — this is where
 Rule 13's "one checkable fact" lands, and an empty `checked[]` is not verified, same as a missing
