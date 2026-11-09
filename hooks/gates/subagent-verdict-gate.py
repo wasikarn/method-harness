@@ -247,7 +247,9 @@ def _reasons_and_record(event, d, msg, can_block):
     # verdict. A scan failure must not turn into a crash, so it counts as no reasons.
     try:
         reasons = _verdict_reasons(msg)
-    except Exception:
+    except Exception as e:
+        # Fail open with a diagnostic (repo-gotchas.md), same as the scan-crash path above.
+        print(f"[mh:gate] subagent-verdict-check: verdict check crashed, allowing ({e})", file=sys.stderr)
         reasons = []
     v = _SEEN.get("v")
     if v is not None:

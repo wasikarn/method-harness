@@ -68,6 +68,10 @@ def journal(gate_id, tool_name, decision, session_id=None, rule=None, command=No
 
 
 def journal_outcome(event, agent_type, session_id, verdict, flaws, denied):
+    # Second file this module owns (the header above covers gate-decisions.jsonl only).
+    # Keep the HOME guard, the symlink refusal and the version read in sync with journal():
+    # they are repeated on purpose so journal() stays byte-identical, and a fix to one
+    # (see the 2026-08-28 note above) must be made in both. A follow-up can share them.
     # GH #994: one row per Rule 13 validator verdict, allow path included, so the
     # first-pass rate and the rounds needed can be measured. Counts and booleans
     # only: never a finding's text, a command, a path or any prompt text. A

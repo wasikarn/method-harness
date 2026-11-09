@@ -9,9 +9,10 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SH="$ROOT/hooks/gates/subagent-verdict-gate.sh"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 
 TMP="$(mktemp -d)" || { echo "mktemp failed" >&2; exit 1; }
-trap 'python3 "${MH_PLUGIN_ROOT:-$ROOT}/scripts/_lib/tmp_delete.py" "$TMP" >/dev/null 2>&1 || true' EXIT
+trap 'tmp_delete "$TMP"' EXIT
 export MH_GATE_JOURNAL_PATH="$TMP/gate-decisions.jsonl"
 OUTCOMES="$TMP/validator-outcomes.jsonl"
 export MH_VALIDATOR_OUTCOMES_PATH="$OUTCOMES"
@@ -128,6 +129,35 @@ MH_VALIDATOR_OUTCOMES_PATH="$BAD_DIR" send stop "$CLEAN"
 REAL="$TMP/real.jsonl"; : > "$REAL"; ln -s "$REAL" "$TMP/link.jsonl"
 MH_VALIDATOR_OUTCOMES_PATH="$TMP/link.jsonl" send stop "$CLEAN"
 [ "$CODE" -eq 0 ] && [ ! -s "$REAL" ]; check "outcomes path that is a symlink is refused (nothing written through it)" "$?"
+
+# --- rounds: a denied verdict followed by its corrected one stays two ordered rows ---
+reset
+send stop "$VACUOUS"
+send stop "$CLEAN" active
+rows_is 2 && field_is 1 denied 'true' && field_ge 1 flaws 1 && field_is 2 denied 'false' && field_is 2 flaws '0'; check "SubagentStop: deny then corrected verdict = two rows (denied=true then denied=false, flaws=0)" "$?"
+reset
+send handback "$VACUOUS"
+send handback "$CLEAN"
+rows_is 2 && field_is 1 event '"handback"' && field_is 1 denied 'true' && field_is 2 event '"handback"' && field_is 2 denied 'false'; check "SubagentHandback: deny then corrected verdict = two rows in order" "$?"
+
+# --- double count: on CC >= 2.1.271 in auto mode the report goes through SubagentHandback and the
+# SubagentStop message holds only the closing text, so one report is one row ---
+reset
+send handback "$CLEAN"
+send stop "Done. The verdict was returned through SubagentHandback."
+rows_is 1; check "handback verdict plus a closing-text-only stop: one row, no double count" "$?"
+# If both messages do carry the verdict, two rows are written; the event field lets a reader drop one
+# (rule in docs/reference/measurement-coverage-status.md: same session and agent_type, same counts, within a few seconds).
+reset
+send handback "$CLEAN"
+send stop "$CLEAN"
+rows_is 2 && field_is 1 event '"handback"' && field_is 2 event '"stop"'; check "both messages carry the verdict: two rows told apart by event" "$?"
+
+# --- mh_version comes from the plugin manifest ---
+PR="$TMP/plugin-root"; mkdir -p "$PR/.claude-plugin"; printf '{"version": "9.9.9"}\n' > "$PR/.claude-plugin/plugin.json"
+reset
+CLAUDE_PLUGIN_ROOT="$PR" send stop "$CLEAN"
+field_is 1 mh_version '"9.9.9"'; check "mh_version is read from CLAUDE_PLUGIN_ROOT's plugin.json" "$?"
 
 echo ""
 echo "=== Results: $pass passed, $fail failed ==="
