@@ -60,8 +60,9 @@ GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 BEYOND_ANY_FILE = 10 ** 9  # a line number of more than 9 digits is past the end of any real file
 # A checker that double-escapes writes a literal backslash and n/t/r after a cite's line number; PATH_RE would
-# take that backslash for a Windows path and drop the next cite. Only after a digit, so `C:\temp\new.py` stays whole.
-LITERAL_ESCAPE = re.compile(r"(?<=\d)\\[nrt]")
+# take that backslash for a Windows path and drop the next cite. Only right after a `:line` or `:line-line` number,
+# so a Windows folder that ends in a digit (`C:\dir1\new.py`) stays whole.
+LITERAL_ESCAPE = re.compile(r"(:\d+(?:-\d+)?)\\[nrt]")
 
 
 def _line_number(digits):
@@ -87,7 +88,7 @@ def _lines(text):
     while todo:
         v = todo.pop()
         if isinstance(v, str):
-            out.append(LITERAL_ESCAPE.sub(" ", v))
+            out.append(LITERAL_ESCAPE.sub(r"\1 ", v))
         elif isinstance(v, dict):
             todo.extend(reversed(list(v.values())))
         elif isinstance(v, list):

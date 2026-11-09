@@ -182,6 +182,13 @@ python3 "$SCRIPT" --root "$T/root" "$T/double.json" > "$T/d.out" 2>&1
 printf '["C:\\\\temp\\\\new.py:2"]\n' > "$T/win.json"
 python3 "$SCRIPT" --root "$T/root" "$T/win.json" > "$T/w.out" 2>&1
 /usr/bin/grep -q "citations exist: 0 of 0 resolved" "$T/w.out" && ok "JSON input: a Windows path is not a citation" || bad "Windows path in JSON: $(head -1 "$T/w.out")"
+# The escape rule applies only after a cite's line number: a folder name ending in a digit must not trigger it.
+printf '["see C:\\\\dir1\\\\new.py:3", "D:\\\\v2\\\\nested\\\\a.py:5"]\n' > "$T/win2.json"
+python3 "$SCRIPT" --root "$T/root" "$T/win2.json" > "$T/w2.out" 2>&1
+/usr/bin/grep -q "citations exist: 0 of 0 resolved" "$T/w2.out" && ok "JSON input: a Windows folder ending in a digit is not turned into a cite" || bad "Windows path with digit folder in JSON: $(head -3 "$T/w2.out" | tr '\n' ' ')"
+printf '["src/app.py:1-3\\\\nsrc/nope.py:9"]\n' > "$T/range.json"
+python3 "$SCRIPT" --root "$T/root" "$T/range.json" > "$T/r.out" 2>&1
+/usr/bin/grep -q "citations exist: 1 of 2 resolved" "$T/r.out" && ok "JSON input: a double-escaped newline after a line range does not hide the next cite" || bad "double escape after a range: $(head -1 "$T/r.out")"
 # A JSON number of thousands of digits must not make the parse fall back to raw text.
 python3 -c "print('{\"n\": ' + '9' * 5000 + ', \"e\": \"src/app.py:1\\\\nsrc/nope.py:9\"}')" > "$T/bigint.json"
 python3 "$SCRIPT" --root "$T/root" "$T/bigint.json" > "$T/b.out" 2>&1
