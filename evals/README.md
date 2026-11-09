@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-85 cases in Claude Code's native `claude plugin eval` layout (count:
+81 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Twelve cover the six review
@@ -26,13 +26,6 @@ fail by construction (inflating Δ), and an Agent check can pass on the failed d
 already leaves `tool_used` on `tool: Skill` out of the score, so `skill-fired.md` needs no `arm:`.
 `tests/evals/test-eval-cases.sh` fails on a mechanism grader with no `arm:`. A two-arm Δ from
 before 2026-11-06 on these cases is high by about one scored grader's share (0.33 to 0.5 a case).
-
-Five for the `tech-humanize` skill (tag `tech-humanize`): three planted cases (English prose,
-Thai standup, Thai UI copy), a clean human-written control that must survive lightly edited, and a file-input
-case that proves the prose-only constraint (frontmatter and code block byte-identical, graded on
-the file's contents). Their `skill-fired.md` is `tool_used: Skill`; their regex graders assert a
-planted tell is absent (`not_contains`) or a source specific is kept (`contains`), and the loader
-test proves each pattern against the scaffolded fixture.
 
 Two for `post-mortem` (tag `post-mortem`): a complete case whose repo carries the fix commit and
 regression test, graded on all 11 sections in order, no hedging, a Rule 4 failure class, and an
@@ -423,11 +416,6 @@ A break in these paths does not show up in an eval run.
   `percent(7, 100)` is `7.0`), and its commit and NOTES say exactly what changed (a bare
   `ZeroDivisionError` became a `ValueError`). So no case fails when the skill fixes something beyond
   the claims.
-- **Invented facts in `tech-humanize` rewrites.** The Grit Gate's fabrication boundary (no new
-  fact, number, cause, name or result) has no grader (GH #921). The one-word haiku judge cannot
-  check it in either phrasing: written "PASS unless", it passed every planted invention (a new
-  person and test count, a new cause and name, a new flag and region); written "Score 1 only if",
-  it failed correct replies 3/3. Presence of the source's specifics is checked by regex instead.
 
 ### Fold-vs-keep (one agent)
 

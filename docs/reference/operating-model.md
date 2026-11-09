@@ -88,7 +88,7 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   `requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) have a planted-defect case and a clean control each
   under `evals/`, in `claude plugin eval`'s native layout, graded on their own Output Format
   (`evals/README.md`). The other agents with cases are `backend-architect`
-  and `ideate-critic`; the skills are `code-architect`, `performance-optimizer`, `tech-humanize`, `ste-lint`,
+  and `ideate-critic`; the skills are `code-architect`, `performance-optimizer`, `ste-lint`,
   `harness-audit`, `memory-lint`, `deep-audit`, `compliance-audit`, `idea-audit`, `learn`,
   `post-mortem`, `cost-report`, `ideate`, `attack-proposal`, `gate-report`, and `model-bench`, so every
   skill and agent has cases. One doctrine subject, `rule4`, grades METHODOLOGY Rule 4 on a plain
