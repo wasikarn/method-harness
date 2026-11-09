@@ -1,4 +1,0 @@
-schema_version: "1.1"
-name: tech-humanize-file-prose-only
-context:
-  scaffold_script: scaffold.sh

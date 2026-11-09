@@ -104,7 +104,7 @@ for c in sorted(os.listdir(f"{root}/evals")):
         pat = m.group(1).replace("''", "'")
         if not node_match(pat, json.dumps({"skill": f"mh:{a}"})) or not node_match(pat, json.dumps({"skill": a})):
             print(f"{c}/{g}: input_match misses a Skill input for {a}")
-        if node_match(pat, json.dumps({"skill": "mh:tech-humanize"})):
+        if node_match(pat, json.dumps({"skill": "mh:ste-lint"})):
             print(f"{c}/{g}: input_match also matches another skill")
     calls = f"{out}/folded/evals/{c}/graders/fold-agent-calls.md"
     if not os.path.isfile(calls) or not re.search(r"^tool:\s*Agent\s*$", open(calls).read(), re.M):

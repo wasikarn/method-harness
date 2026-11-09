@@ -12,7 +12,7 @@ question; do not conflate them.
 
 **English only in skill and agent files** (operator rule, 2026-09-07): no Thai words, trigger
 phrases, or markers in any `skills/**/*.md` or `agents/*.md`; Rule 14's Thai marker is written `insufficient evidence` inside a
-skill. Exception: `tech-humanize`, whose Thai content is the subject matter.
+skill. The Thai humanizer that needed an exception moved out to its own plugin, `siang`.
 
 **Description cap: 25 words, third person.** This is mh's own token-budget rule (skill and agent
 descriptions ride in every session's context), not matt's. Check 20 WARNs past 1536 chars; check 43
@@ -43,9 +43,9 @@ user types (`/mh:<name>`), never "invoke X now": the model cannot call it, and a
 does not lift that.
 
 **`model_limitation:` frontmatter (optional, mh-native):** declare it when a skill's correctness
-rests on a model behaviour that could shift on upgrade. First adopter: `tech-humanize`, whose
-lexical-tell catalog assumes current-gen output still carries the enumerated tells. No check
-enforces re-verification; it is a human-cadence pointer.
+rests on a model behaviour that could shift on upgrade. First adopter was `tech-humanize` (since
+moved to the `siang` plugin), whose lexical-tell catalog assumes current-gen output still carries
+the enumerated tells. No check enforces re-verification; it is a human-cadence pointer.
 
 **`disable-model-invocation-reason:` frontmatter (mh-native):** one line on why a skill is
 user-only, next to `disable-model-invocation: true`. Claude Code ignores both mh-native keys.
