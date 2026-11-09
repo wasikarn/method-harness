@@ -53,6 +53,16 @@ except Exception:
     def journal(*a, **k):
         pass
 
+try:
+    from _outcome import journal_outcome
+except Exception:
+    def journal_outcome(*a, **k):
+        pass
+
+# The one verdict _verdict_reasons settled on (a single distinct pass-bearing
+# object), kept for the outcome row (GH #994). Empty when there was none.
+_SEEN = {}
+
 GATE_ID = "gate:agent:subagent-verdict-check"
 GATE_ID_HANDBACK = "gate:agent:subagent-verdict-check-handback"
 
@@ -195,6 +205,7 @@ def _verdict_reasons(msg):
         _allow(f"{len(verdicts)} distinct pass-bearing objects found, ambiguous -- allowing without a check")
 
     v = verdicts[0]
+    _SEEN["v"] = v
     reasons = []
 
     if v.get("pass") is True:
@@ -234,6 +245,22 @@ def _reason_text(reasons):
     )
 
 
+def _reasons_and_record(event, d, msg, can_block):
+    # GH #994: the reasons for `msg`, and one outcome row when it held a single
+    # verdict. A scan failure must not turn into a crash, so it counts as no reasons.
+    try:
+        reasons = _verdict_reasons(msg)
+    except Exception as e:
+        # Fail open with a diagnostic (repo-gotchas.md), same as the scan-crash path above.
+        print(f"[mh:gate] subagent-verdict-check: verdict check crashed, allowing ({e})", file=sys.stderr)
+        reasons = []
+    v = _SEEN.get("v")
+    if v is not None:
+        journal_outcome(event, d.get("agent_type"), d.get("session_id"), v, len(reasons),
+                        bool(reasons) and can_block)
+    return reasons
+
+
 try:
     d = json.load(sys.stdin)
 except Exception as e:
@@ -245,10 +272,12 @@ if not isinstance(d, dict):
 event = d.get("hook_event_name")
 
 if event == "SubagentStop":
-    if d.get("stop_hook_active") is True:
+    active = d.get("stop_hook_active") is True
+    reasons = _reasons_and_record("stop", d, d.get("last_assistant_message"), not active)
+    if active:
         # Already re-prompted once this stop; never block a second time in a row.
+        # The verdict was still recorded above: it is the corrected second round.
         sys.exit(0)
-    reasons = _verdict_reasons(d.get("last_assistant_message"))
     if not reasons:
         sys.exit(0)
     journal(GATE_ID, d.get("agent_type"), "deny", d.get("session_id"))
@@ -265,7 +294,7 @@ if event == "PreToolUse":
     # "The report is that call's `message` input, which a PreToolUse or
     # PostToolUse hook matched on SubagentHandback receives as
     # tool_input.message."
-    reasons = _verdict_reasons(tool_input.get("message"))
+    reasons = _reasons_and_record("handback", d, tool_input.get("message"), True)
     if not reasons:
         sys.exit(0)
     journal(GATE_ID_HANDBACK, d.get("tool_name"), "deny", d.get("session_id"))
