@@ -27,7 +27,8 @@ input); measure a stated number independently before writing it into Done-when a
 
 `posture` is optional and defaults to `narrow`: do exactly the What and nothing wider. `explore` lets
 the agent look wide and report options; set it only for `research` and `other` roles, never for a
-builder or fixer, whose scope is its FILES YOU OWN.
+builder or fixer, whose scope is its FILES YOU OWN. It never widens FILES YOU OWN or write access, and
+it has nothing to do with the `Explore` agent type.
 
 Builder/fixer: before returning, re-read your diff once against Done-when's own assertions and fix
 what's cheap to fix. This is a private pass, not the pass/fail decision, and you don't report having
