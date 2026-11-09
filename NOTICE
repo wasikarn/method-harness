@@ -9,3 +9,47 @@ carry this notice under Apache License 2.0 section 4:
   modified on 2026-09-06 (mh v1.1.18): new descriptions, read-only tool allowlist, Prompt
   Defense Baseline, evidence gate, scope-vs-neighbors section, and a closed-vocabulary verdict
   line. The analysis process and rating axes follow the originals.
+
+---
+
+Git history notice: tech-humanize (MIT and CC BY-SA, not the Apache section above)
+
+The `tech-humanize` skill and its evals were in this repository from 8830a72e (2026-06-10) to
+c4521023^ (deleted 2026-06-27), and again from e2f98665 (restored 2026-07-02) to 4c0d7126^
+(moved to https://github.com/wasikarn/siang on 2026-11-09). Paths: skills/tech-humanize/, later
+skills/design/tech-humanize/, plus its eval cases and fixtures under evals/ and tests/. Commits in
+those two spans carry the text below without the notices it needed. Where those commits'
+skills/*/references.md calls humanizer "a sibling project, not a source", that wording was wrong.
+
+- Text adapted from https://github.com/blader/humanizer (pattern titles, rule text and examples of
+  its universal catalog), used under the MIT License:
+
+  MIT License
+
+  Copyright (c) 2025 Siqi Chen
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+- Short example passages quoted from https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing,
+  (c) Wikipedia contributors, licensed CC BY-SA 4.0
+  (https://creativecommons.org/licenses/by-sa/4.0/). Those passages stay under CC BY-SA 4.0
+  wherever the old commits are used; mh's MIT license does not cover them.
+
+The current tree contains neither: the skill now lives in wasikarn/siang, which credits both
+sources in its own notices.
