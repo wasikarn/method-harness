@@ -134,21 +134,17 @@ a failure, never a fallback trigger.
 
 **On any other outcome** — non-zero exit, empty or malformed output, a schema mismatch, timeout,
 auth failure, or a semantic refusal — fall back to a Claude `Explore`/review agent (same brief)
-and note "independence reduced for this pass" in the final report. Its return contract is the 6-key
-`{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}`, validated by
-`check-verdict.py` on its raw final message. `references/codex-fallback.md` — that contract and `check-verdict.py` validation. **Load before dispatching the
+and note "independence reduced for this pass" in the final report. Its return contract and how
+`check-verdict.py` validates it: `references/codex-fallback.md`. **Load before dispatching the
 fallback.**
 
 **Re-fingerprint after the checker returns:**
 ```
 python3 "${CLAUDE_SKILL_DIR}/scripts/scope-fingerprint.py" compare "$MANIFEST"
 ```
-Exit 0 means scope is stable; exit 1 prints one `changed:`/`appeared:`/`disappeared:` line per
-drifted path; exit 2 means the manifest is missing, unreadable or empty, which counts as unstable. A
-mismatch against the pre-dispatch manifest — a changed hash, a path that appeared or
-disappeared — means a concurrent session touched scope
-mid-check (this session keeps working in its own worktree while the checker runs): rebuild scope from git and
-re-run the checker once.
+Exit 0 means scope is stable; exit 1 prints a `changed:`/`appeared:`/`disappeared:` line per drifted
+path; exit 2 (manifest missing, unreadable or empty) counts as unstable. Any drift means a concurrent
+session touched scope mid-check: rebuild scope from git and re-run the checker once.
 
 **If the fallback also fails to produce a valid result, or the manifest is still unstable after
 that retry**, this is not a soft note: it hard-forces the Final Verdict below to **fail,
@@ -156,23 +152,14 @@ reason "verification incomplete"** — overriding whatever step 2's rubric total
 say. Say plainly this means the audit
 couldn't verify the work, not that the work is wrong — the two are different claims.
 
-The checker returns `{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}` — its own
-return value, distinct from this skill's Final Verdict and report in "Final output" below.
-
-**Check that the checker's citations exist (report-only).** Once `check-verdict.py` has accepted the
-verdict, pipe its validated JSON through the citation resolver. `check-verdict.py` checks the shape of
-a `path:line`, not whether it points anywhere:
+**Check the citations exist (report-only).** `check-verdict.py` checks a cite's shape, not that it
+points anywhere. Save its accepted stdout to `$VERDICT`, then:
 ```
 git diff --name-only <first-sha>^..HEAD > "$DIFFPATHS"
-python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/citation_exists.py" --root <repo-root> [--root <repo named in step 1> ...] --diff-paths "$DIFFPATHS" <<< "$VALIDATED_VERDICT_JSON"
+python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/citation_exists.py" --root <repo-root> --diff-paths "$DIFFPATHS" "$VERDICT"
 ```
-Each cite comes back `resolved`, `missing` or `ambiguous-or-outside`. Say "N of M citations exist"
-in the report, never "verified": the script confirms a file, a line in range or a commit is there,
-not that the claim built on it is true. A `missing` cite is flagged on its finding for you to recheck
-by hand, and `missing` is not proof of fabrication (the cite may point into another repo, so pass
-that repo as a `--root`). This step is report-only: it never changes `pass`, never drops a finding,
-and its exit code (0 whenever it ran, 2 on a usage error) is not a verdict. A usage error is
-noted in the report and the audit goes on.
+Report "N of M citations exist" (never "verified") under Final output item 4. It never changes `pass`
+and never drops a finding. Labels, roots, a `missing` cite: `references/citation-check.md`.
 
 Reconcile its findings with your own. A finding survives only with a concrete trigger; a
 speculative "consider X" is dropped. Rank survivors by severity, impact, likelihood, confidence,
