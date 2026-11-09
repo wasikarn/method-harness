@@ -7,7 +7,8 @@
 
 - `$VERDICT`: the validated JSON `check-verdict.py` printed on exit 0, saved to a file outside the repo (a
   fresh `mktemp`). The script reads every `path:line` and commit SHA in it, in `findings[]` and `checked[]`.
-- `$DIFFPATHS`: `git diff --name-only <first-sha>^..HEAD`, saved the same way. A path listed there counts as
+- `$DIFFPATHS`: `git diff --name-only --no-renames <first-sha>^`, saved the same way. No `..HEAD`, so a file
+  deleted but not yet committed is listed; `--no-renames`, so the old name of a renamed file is listed too. A path listed there counts as
   present only when no file is on disk, so a file the session deleted still resolves; the line check still
   runs for a file that exists.
 - `--root`: the repo root, and one more per repo the scope named in step 1. A cite into a repo with no
@@ -24,9 +25,11 @@
 ## Report
 
 The output says "citations exist: N of M resolved", never "verified": the script confirms that a file, a line
-in range or a commit is there, not that the claim built on it is true. It reports the line of the input where
-a bad cite sits, not the finding it belongs to, so map each `missing` cite to its finding by hand and flag
-that finding for a recheck. `missing` is not proof of fabrication.
+in range or a commit is there, not that the claim built on it is true. It reports the line where a bad cite
+sits, not the finding it belongs to (for a JSON verdict, N is the 1-based index of the string value in
+document order: count the verdict's strings, skipping keys, not the file's own lines), so map each `missing`
+cite to its finding by hand, or search the verdict for the printed cite, and flag that finding for a recheck.
+`missing` is not proof of fabrication.
 
 ## What it never does
 
