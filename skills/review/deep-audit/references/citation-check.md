@@ -24,9 +24,10 @@
 ## Report
 
 The output says "citations exist: N of M resolved", never "verified": the script confirms that a file, a line
-in range or a commit is there, not that the claim built on it is true. It reports the line of the input where
-a bad cite sits, not the finding it belongs to, so map each `missing` cite to its finding by hand and flag
-that finding for a recheck. `missing` is not proof of fabrication.
+in range or a commit is there, not that the claim built on it is true. It reports the line where a bad cite
+sits, not the finding it belongs to (for a JSON verdict, the verdict's string values count one per line, in
+document order, not the file's own lines), so map each `missing` cite to its finding by hand and flag that
+finding for a recheck. `missing` is not proof of fabrication.
 
 ## What it never does
 

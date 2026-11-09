@@ -14,6 +14,10 @@ it one of three labels:
                         under no root; a `..` segment, an absolute path outside every root,
                         or a symlink whose target leaves its root; a SHA found in no root.
 
+Input that is one JSON object or array (check-verdict.py's output) is read as its string values,
+one per line, so a cite after an escaped newline is still found; `(line N)` then counts those
+strings, not the file's own lines. Any other input is read as it is.
+A line number of more than 9 digits is a cite past the end of any file: `missing`.
 A backticked command is never run, but a path:line inside it is still extracted and checked.
 A word of 7 to 40 hex characters with a digit and a letter (a CSS colour, a hash) counts as a
 SHA cite and lands in ambiguous-or-outside. `missing` can also mean a cite into another repo
@@ -32,6 +36,7 @@ Usage: citation_exists.py --root PATH [--root PATH ...] [--diff-paths FILE] [--j
 Tests: tests/scripts/test-citation-exists.sh
 """
 import argparse
+import bisect
 import json
 import os
 import re
@@ -51,17 +56,51 @@ SKIP_DIRS = {".git", "node_modules"}
 GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
+BEYOND_ANY_FILE = 10 ** 9  # a line number of more than 9 digits is past the end of any real file
+
+
+def _line_number(digits):
+    # int() of a very long digit run raises ValueError (Python's 4300-digit limit); such a cite is simply missing.
+    return int(digits) if len(digits) <= 9 else BEYOND_ANY_FILE
+
+
+def decode_json_strings(text):
+    """If text is one JSON object or array, return its string values (not its keys), one per line.
+
+    check-verdict.py's output is JSON, where a newline or tab inside a string is written as a backslash
+    escape; left raw, that backslash would sit in front of the next cite and hide it (PATH_RE rejects a
+    path after a backslash). Any other text comes back unchanged."""
+    try:
+        doc = json.loads(text)
+    except (ValueError, RecursionError):
+        return text
+    if not isinstance(doc, (dict, list)):
+        return text
+    out, todo = [], [doc]
+    while todo:
+        v = todo.pop()
+        if isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, dict):
+            todo.extend(reversed(list(v.values())))
+        elif isinstance(v, list):
+            todo.extend(reversed(v))
+    return "\n".join(out)
+
+
 def extract(text):
     """Yield (line_no, kind, citation, path, last_line) for every cite in text."""
     for n, line in enumerate(text.splitlines(), 1):
-        spans = []
+        starts, ends = [], []  # the path cites' spans, in order and disjoint, so a SHA lookup can bisect
         for m in PATH_RE.finditer(line):
             if not HAS_LETTER.search(m.group(1)) or not ("." in m.group(1) or "/" in m.group(1)):
                 continue
-            spans.append(m.span())
-            yield n, "path", m.group(0), m.group(1), (int(m.group(2)), int(m.group(3) or m.group(2)))
+            starts.append(m.start())
+            ends.append(m.end())
+            yield n, "path", m.group(0), m.group(1), (_line_number(m.group(2)), _line_number(m.group(3) or m.group(2)))
         for m in SHA_RE.finditer(line):
-            if not any(a <= m.start() < b for a, b in spans):
+            i = bisect.bisect_right(starts, m.start()) - 1
+            if i < 0 or m.start() >= ends[i]:
                 yield n, "sha", m.group(0), m.group(0), None
 
 
@@ -161,7 +200,7 @@ class Resolver:
 def check(text, roots, diff_paths=()):
     res = Resolver(roots, set(diff_paths))
     items = []
-    for n, kind, cite, target, span in extract(text):
+    for n, kind, cite, target, span in extract(decode_json_strings(text)):
         label = res.resolve_path(target, span) if kind == "path" else res.resolve_sha(target)
         items.append({"line": n, "kind": kind, "citation": cite, "label": label})
     counts = {k: sum(1 for i in items if i["label"] == k) for k in LABELS}

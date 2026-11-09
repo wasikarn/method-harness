@@ -142,6 +142,30 @@ printf 'src/app.py:1\n' | python3 "$SCRIPT" --root "$T/root" --root "$T/nope" > 
 printf 'src/app.py:1\n' | python3 "$SCRIPT" --root "$T/nope" > /dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "no usable --root -> exit 2" || bad "no usable --root -> exit $rc"
 
+# Audit findings on PRs 975 to 978 (deep-audit, Codex checker): red on the merged script.
+# 1. deep-audit feeds check-verdict.py's JSON; an escaped newline put a backslash in front of the next cite.
+python3 - "$T/verdict.json" <<'PY'
+import json, sys
+verdict = {"contract_version": 1, "pass": True, "findings": [], "scope_ok": True, "unexpected_files": [],
+           "checked": [{"claim": "c", "evidence": "src/app.py:1\nsrc/nope.py:999\tsrc/app.py:3"}]}
+json.dump(verdict, open(sys.argv[1], "w"), indent=2)
+PY
+python3 "$SCRIPT" --root "$T/root" "$T/verdict.json" > "$T/v.out" 2>&1
+/usr/bin/grep -q "citations exist: 2 of 3 resolved" "$T/v.out" && /usr/bin/grep -q "missing: 1" "$T/v.out" && ok "JSON verdict: a cite after an escaped newline or tab is still checked" || bad "JSON verdict with escaped newline: $(head -3 "$T/v.out" | tr '\n' ' ')"
+python3 "$SCRIPT" --root "$T/root" < "$T/verdict.json" > "$T/v2.out" 2>&1
+/usr/bin/grep -q "citations exist: 2 of 3 resolved" "$T/v2.out" && ok "the same JSON verdict on stdin" || bad "JSON verdict on stdin: $(head -1 "$T/v2.out")"
+printf '["src/app.py:1", "not a cite 1.1.591"]\n' > "$T/list.json"
+python3 "$SCRIPT" --root "$T/root" "$T/list.json" > "$T/v3.out" 2>&1
+/usr/bin/grep -q "citations exist: 1 of 1 resolved" "$T/v3.out" && ok "a JSON array of strings is read too" || bad "JSON array: $(head -1 "$T/v3.out")"
+# 2. A huge line number is a cite past the end of any file, not a crash (exit 0 whenever it ran).
+python3 -c "print('src/app.py:' + '9' * 5000); print('src/app.py:1-' + '9' * 5000)" > "$T/bigline.md"
+python3 "$SCRIPT" --root "$T/root" "$T/bigline.md" > "$T/big.out" 2> "$T/big.err"; rc=$?
+[ "$rc" -eq 0 ] && /usr/bin/grep -q "missing: 2" "$T/big.out" && [ ! -s "$T/big.err" ] && ok "5000-digit line numbers -> missing, exit 0, no traceback" || bad "huge line number rc=$rc: $(tail -1 "$T/big.err")"
+# 3. The SHA-versus-path-cite overlap check stays linear.
+python3 -c "print('src/app.py:1 ' * 16000 + 'deadbeef1234567 ' * 16000)" > "$T/many.md"
+s=$(date +%s); timeout 30 python3 "$SCRIPT" --root "$T/root" "$T/many.md" > /dev/null; rc=$?; e=$(date +%s)
+[ "$rc" -eq 0 ] && [ $((e - s)) -lt 5 ] && ok "32000 cites on one line finish under 5 s" || bad "many cites rc=$rc, $((e - s)) s"
+
 python3 "$SCRIPT" --selftest > /dev/null; rc=$?
 [ "$rc" -eq 0 ] && ok "--selftest passes" || bad "--selftest exit $rc"
 
