@@ -59,10 +59,6 @@ except Exception:
     def journal_outcome(*a, **k):
         pass
 
-# The one verdict _verdict_reasons settled on (a single distinct pass-bearing
-# object), kept for the outcome row (GH #994). Empty when there was none.
-_SEEN = {}
-
 GATE_ID = "gate:agent:subagent-verdict-check"
 GATE_ID_HANDBACK = "gate:agent:subagent-verdict-check-handback"
 
@@ -156,23 +152,25 @@ def _find_json_dicts(text):
 
 
 def _verdict_reasons(msg):
+    # Returns (reasons, verdict): the verdict is the one distinct pass-bearing
+    # object found (kept for the outcome row, GH #994), or None.
     # Shared by both events: the list of reasons a verdict in `msg` is vacuous
     # or self-contradictory, [] when there is nothing to block on.
     if not isinstance(msg, str) or not msg.strip():
-        return []
+        return [], None
 
     if len(msg) > 200_000:
         # ponytail: a message this long is not an ordinary verdict reply
         # anyway. Skip the check rather than risk the 8s timeout (fail-open on
         # timeout is safe here, but cheaper to just skip).
-        return []
+        return [], None
 
     # A subagent that correctly declined to guess is never a vacuous pass --
     # this is a valid, non-guessing response and must never be blocked
     # (spawn-brief.md's own escalation return; same precedent every
     # check-verdict.py script in this repo already follows).
     if "NEEDS-DECISION" in msg:
-        return []
+        return [], None
 
     try:
         candidates = _find_json_dicts(msg)
@@ -193,7 +191,7 @@ def _verdict_reasons(msg):
     if len(verdicts) == 0:
         # Not a Rule 13 verdict-shaped response at all (most subagents: Explore,
         # research, a builder reporting its edits) -- nothing to check.
-        return []
+        return [], None
 
     if len(verdicts) > 1:
         # Two or more distinct pass-bearing objects (a decoy example quoted
@@ -205,7 +203,6 @@ def _verdict_reasons(msg):
         _allow(f"{len(verdicts)} distinct pass-bearing objects found, ambiguous -- allowing without a check")
 
     v = verdicts[0]
-    _SEEN["v"] = v
     reasons = []
 
     if v.get("pass") is True:
@@ -233,7 +230,7 @@ def _verdict_reasons(msg):
                 + ("y" if len(unexpected) == 1 else "ies")
                 + " -- reconcile or explain the scope mismatch before reporting pass"
             )
-    return reasons
+    return reasons, v
 
 
 def _reason_text(reasons):
@@ -249,12 +246,11 @@ def _reasons_and_record(event, d, msg, can_block):
     # GH #994: the reasons for `msg`, and one outcome row when it held a single
     # verdict. A scan failure must not turn into a crash, so it counts as no reasons.
     try:
-        reasons = _verdict_reasons(msg)
+        reasons, v = _verdict_reasons(msg)
     except Exception as e:
         # Fail open with a diagnostic (repo-gotchas.md), same as the scan-crash path above.
         print(f"[mh:gate] subagent-verdict-check: verdict check crashed, allowing ({e})", file=sys.stderr)
-        reasons = []
-    v = _SEEN.get("v")
+        reasons, v = [], None
     if v is not None:
         journal_outcome(event, d.get("agent_type"), d.get("session_id"), v, len(reasons),
                         bool(reasons) and can_block)
