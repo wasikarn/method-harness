@@ -98,7 +98,7 @@ rows_is 1 && field_is 1 flaws '0'; check "stop_hook_active: corrected clean verd
 reset
 send stop "I edited three files and everything passes."
 rows_is 0; check "prose with no verdict object writes no row" "$?"
-send stop '{"note": "needs decision"} NEEDS-DECISION which db?'
+send stop '{"pass": false, "findings": [], "checked": ["read a.py:3"], "scope_ok": true, "unexpected_files": []} NEEDS-DECISION which db?'
 rows_is 0; check "NEEDS-DECISION writes no row" "$?"
 send stop "$CLEAN and also $VACUOUS"
 [ "$CODE" -eq 0 ] && [ -z "$OUT" ] && rows_is 0; check "two distinct verdicts (ambiguous): allowed, no row" "$?"
