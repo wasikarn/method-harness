@@ -159,6 +159,21 @@ couldn't verify the work, not that the work is wrong — the two are different c
 The checker returns `{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}` — its own
 return value, distinct from this skill's Final Verdict and report in "Final output" below.
 
+**Check that the checker's citations exist (report-only).** Once `check-verdict.py` has accepted the
+verdict, pipe its validated JSON through the citation resolver. `check-verdict.py` checks the shape of
+a `path:line`, not whether it points anywhere:
+```
+git diff --name-only <first-sha>^..HEAD > "$DIFFPATHS"
+python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/citation_exists.py" --root <repo-root> [--root <repo named in step 1> ...] --diff-paths "$DIFFPATHS" <<< "$VALIDATED_VERDICT_JSON"
+```
+Each cite comes back `resolved`, `missing` or `ambiguous-or-outside`. Say "N of M citations exist"
+in the report, never "verified": the script confirms a file, a line in range or a commit is there,
+not that the claim built on it is true. A `missing` cite is flagged on its finding for you to recheck
+by hand, and `missing` is not proof of fabrication (the cite may point into another repo, so pass
+that repo as a `--root`). This step is report-only: it never changes `pass`, never drops a finding,
+and its exit code (0 whenever it ran, 2 on a usage error) is not a verdict. A usage error is
+noted in the report and the audit goes on.
+
 Reconcile its findings with your own. A finding survives only with a concrete trigger; a
 speculative "consider X" is dropped. Rank survivors by severity, impact, likelihood, confidence,
 and effort. Zero survivors is a valid result: an already-high baseline is a legitimate baseline,
