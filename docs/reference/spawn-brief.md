@@ -123,7 +123,7 @@ worktree is always discarded.
    session-level convention). Record `<base-sha>` = `git -C <path> rev-parse HEAD` right after —
    steps 3 and 4 both use this value.
 2. **Brief**: FILES YOU OWN names paths under `<path>`, given as absolute paths (Read/Write/Edit
-   have no cwd concept) or with an explicit `cd <path> &&` prefix on every Bash git command. The
+   have no cwd concept) or, for git, `git -C <path>` as its own command (a `cd <path> && git ...` prefix always prompts). The
    subagent commits its own work there — `gate:bash:subagent-git-guard` only denies
    `stash`/`reset`/`clean`, `git add`/`git commit` inside the worktree are unaffected.
 3. **Validate**: first `git -C <path> status --porcelain` must be empty — an untracked or
