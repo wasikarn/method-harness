@@ -78,9 +78,9 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 
 ## What it ships
 
-- **Skills (15):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
+- **Skills (14):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
   `mh:gate-report`, `mh:learn`, `mh:model-bench`, `mh:compliance-audit`, `mh:deep-audit`,
-  `mh:attack-proposal`, `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:tech-humanize`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
+  `mh:attack-proposal`, `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
   and is tested, but `.claude-plugin/plugin.json`'s skills list deliberately excludes it.
 - **Agents (8):** backend-architect, blind-spot-hunter, ideate-critic,
   plan-reviewer, requirement-analyst, silent-failure-hunter,
@@ -91,7 +91,7 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
   read-only and never grant `Agent`.
 - **Evals:** `evals/` holds cases in `claude plugin eval`'s native layout: a planted case and a
   clean control for each of the six review agents and for `harness-audit`, `memory-lint`, `deep-audit`,
-  `post-mortem`, and `cost-report`; five for `tech-humanize`; a run and an abort case for `ideate`.
+  `post-mortem`, and `cost-report`; a run and an abort case for `ideate`.
   Recompute the count with `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`
   rather than trust a stale literal here. `tests/evals/test-eval-cases.sh` keeps them loadable
   while the runner is early-access gated (`evals/README.md`). No CI wiring — each run is a paid

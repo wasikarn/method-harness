@@ -1,6 +1,6 @@
 ---
 name: ste-lint
-description: "Checks prose against ASD-STE100 writing rules: sentence length, semicolons, contractions. Use when checking plain English or STE compliance. Don't use for AI-tell cleanup, see tech-humanize."
+description: "Checks prose against ASD-STE100 writing rules: sentence length, semicolons, contractions. Use when checking plain English or STE compliance. Don't use for AI-tell cleanup, see siang:humanize."
 argument-hint: "[path]"
 model: inherit
 effort: medium
@@ -66,10 +66,10 @@ or interpreting a finding.
 - **9.4 / 1.11**: one term per concept. Don't call the same thing "skill" in
   one paragraph and "plugin" in the next.
 
-## Boundary vs. `tech-humanize`
+## Boundary vs. `siang:humanize`
 
-They pull in opposite directions on purpose: `tech-humanize` wants varied
+They pull in opposite directions on purpose: `siang:humanize` wants varied
 sentence length and a human voice; STE wants a uniform cap and flat prose
 for non-native and machine readers. "Sounds AI-generated" goes to
-`tech-humanize`. "Simple English for a non-native reader" or a named STE ask
+`siang:humanize`. "Simple English for a non-native reader" or a named STE ask
 comes here.
