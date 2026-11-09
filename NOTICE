@@ -10,13 +10,19 @@ carry this notice under Apache License 2.0 section 4:
   Defense Baseline, evidence gate, scope-vs-neighbors section, and a closed-vocabulary verdict
   line. The analysis process and rating axes follow the originals.
 
+---
 
-The `tech-humanize` skill (skills/tech-humanize/ from 2026-06-10, later skills/design/tech-humanize/,
-removed by commit 4c0d7126 on 2026-11-09 when it moved to https://github.com/wasikarn/siang) was in
-this repository's git history without the notices below. Commits in that range contain:
+Git history notice: tech-humanize (MIT and CC BY-SA, not the Apache section above)
+
+The `tech-humanize` skill and its evals were in this repository from 8830a72e (2026-06-10) to
+c4521023^ (deleted 2026-06-27), and again from e2f98665 (restored 2026-07-02) to 4c0d7126^
+(moved to https://github.com/wasikarn/siang on 2026-11-09). Paths: skills/tech-humanize/, later
+skills/design/tech-humanize/, plus its eval cases and fixtures under evals/ and tests/. Commits in
+those two spans carry the text below without the notices it needed. Where those commits'
+skills/*/references.md calls humanizer "a sibling project, not a source", that wording was wrong.
 
 - Text adapted from https://github.com/blader/humanizer (pattern titles, rule text and examples of
-  its universal catalog, from its v2.7.0), used under the MIT License:
+  its universal catalog), used under the MIT License:
 
   MIT License
 
@@ -46,4 +52,4 @@ this repository's git history without the notices below. Commits in that range c
   wherever the old commits are used; mh's MIT license does not cover them.
 
 The current tree contains neither: the skill now lives in wasikarn/siang, which credits both
-sources and replaced the copied examples.
+sources in its own notices.
