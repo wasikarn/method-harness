@@ -91,7 +91,7 @@ print(json.dumps(d))
 " > "$f"
   OUT="$(/bin/bash "$SH" < "$f" 2>/dev/null)"
   CODE=$?
-  rm -f "$f"
+  tmp_delete "$f"
 }
 run_oversized
 [ -z "$OUT" ]; check "message over 200k chars: skipped, silent allow even on vacuous pass" "$?"
@@ -133,7 +133,7 @@ print(json.dumps(d))
 " "$1" > "$f"
   OUT="$(timeout 5 /bin/bash "$SH" < "$f" 2>/dev/null)"
   CODE=$?
-  rm -f "$f"
+  tmp_delete "$f"
 }
 run_braces 30000
 [ "$CODE" -ne 124 ]; check "30k leading braces: finishes under timeout 5 (rc $CODE, not 124), no silent timeout-drop" "$?"
@@ -158,7 +158,7 @@ print(json.dumps(d))
 " "$1" > "$f"
   OUT="$(timeout 5 /bin/bash "$SH" < "$f" 2>/dev/null)"
   CODE=$?
-  rm -f "$f"
+  tmp_delete "$f"
 }
 run_nested_braces 1500
 grep -q '"decision": *"block"' <<<"$OUT" && ok=0 || ok=1
@@ -234,7 +234,7 @@ run_no_python3() {
   payload '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}' > "$f"
   OUT="$(PATH="/nonexistent" /bin/bash "$SH" < "$f" 2>/dev/null)"
   CODE=$?
-  rm -f "$f"
+  tmp_delete "$f"
 }
 run_no_python3
 [ "$CODE" -eq 0 ] && [ -z "$OUT" ]; check "missing python3: exit 0, no block JSON (fail-open)" "$?"
@@ -250,7 +250,8 @@ run_missing_sibling() {
   sed "s#subagent-verdict-gate.py#does-not-exist.py#" "$SH" > "$tmp_sh"
   OUT="$(/bin/bash "$tmp_sh" < "$f" 2>/dev/null)"
   CODE=$?
-  rm -f "$f" "$tmp_sh"
+  tmp_delete "$f"
+  tmp_delete "$tmp_sh"
 }
 run_missing_sibling
 [ "$CODE" -eq 0 ] && [ -z "$OUT" ]; check "missing sibling .py: exit 0, no block JSON (fail-open)" "$?"
