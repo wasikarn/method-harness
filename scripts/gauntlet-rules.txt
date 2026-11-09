@@ -29,6 +29,7 @@ hooks/gates/config-write-guard.*            medium tests/hooks/test-config-write
 hooks/gates/codex-setup-guard.*             medium tests/hooks/test-codex-setup-guard.sh tests/hooks/test-doctrine-bootstrap.sh
 hooks/gates/test-integrity.*                medium tests/hooks/test-test-integrity.sh tests/hooks/test-gate-canary.sh tests/hooks/test-gate-journal.sh tests/hooks/test-quotemask.sh tests/skills/test-gate-report.sh
 hooks/gates/subagent-verdict-gate.*         medium tests/hooks/test-subagent-verdict-gate.sh tests/hooks/test-validator-outcome-log.sh tests/hooks/test-gate-journal.sh
+hooks/gates/_outcome.py                     medium tests/hooks/test-validator-outcome-log.sh tests/hooks/test-subagent-verdict-gate.sh
 hooks/gates/subagent-spawn-guard.*          medium tests/hooks/test-gates-irrecoverable-2.sh tests/hooks/test-doctrine-bootstrap.sh
 hooks/gates/routine-trigger-guard.*         medium tests/hooks/test-gates-irrecoverable-2.sh
 hooks/gates/task-complete-separation.*      medium tests/hooks/test-gates-irrecoverable-2.sh tests/hooks/test-gate-canary.sh

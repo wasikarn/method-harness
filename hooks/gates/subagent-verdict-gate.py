@@ -48,11 +48,14 @@ if hasattr(sys, "set_int_max_str_digits"):
     sys.set_int_max_str_digits(0)
 
 try:
-    from _journal import journal, journal_outcome
+    from _journal import journal
 except Exception:
     def journal(*a, **k):
         pass
 
+try:
+    from _outcome import journal_outcome
+except Exception:
     def journal_outcome(*a, **k):
         pass
 

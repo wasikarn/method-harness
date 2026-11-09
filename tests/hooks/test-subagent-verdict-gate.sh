@@ -9,6 +9,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SH="$ROOT/hooks/gates/subagent-verdict-gate.sh"
+. "$ROOT/scripts/_lib/tmp-delete.sh"
 
 # The gate journals every block it makes; keep those rows out of the real journal, where
 # "test-session" rows were read as live gate events by gate-report.
@@ -18,7 +19,7 @@ export MH_GATE_JOURNAL_PATH="$JOURNAL"
 # "test-session" rows out of the real validator-outcomes.jsonl.
 OUTCOMES="$(mktemp)" || { echo "mktemp failed: no scratch outcomes file, refusing to run against the real one" >&2; exit 1; }
 export MH_VALIDATOR_OUTCOMES_PATH="$OUTCOMES"
-trap 'rm -f "$JOURNAL" "$OUTCOMES"' EXIT
+trap 'tmp_delete "$JOURNAL"; tmp_delete "$OUTCOMES"' EXIT
 
 pass=0
 fail=0
