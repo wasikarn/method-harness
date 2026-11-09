@@ -155,7 +155,7 @@ couldn't verify the work, not that the work is wrong — the two are different c
 **Check the citations exist (report-only).** `check-verdict.py` checks a cite's shape, not that it
 points anywhere. Save its accepted stdout to `$VERDICT`, then:
 ```
-git diff --name-only <first-sha>^..HEAD > "$DIFFPATHS"
+git diff --name-only --no-renames <first-sha>^ > "$DIFFPATHS"
 python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/citation_exists.py" --root <repo-root> --diff-paths "$DIFFPATHS" "$VERDICT"
 ```
 Report "N of M citations exist" (never "verified") under Final output item 4. It never changes `pass`
