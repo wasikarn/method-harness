@@ -14,7 +14,11 @@ SH="$ROOT/hooks/gates/subagent-verdict-gate.sh"
 # "test-session" rows were read as live gate events by gate-report.
 JOURNAL="$(mktemp)" || { echo "mktemp failed: no scratch journal, refusing to run against the real one" >&2; exit 1; }
 export MH_GATE_JOURNAL_PATH="$JOURNAL"
-trap 'rm -f "$JOURNAL"' EXIT
+# GH #994: the gate also writes a validator-outcome row per verdict; same rule, keep the
+# "test-session" rows out of the real validator-outcomes.jsonl.
+OUTCOMES="$(mktemp)" || { echo "mktemp failed: no scratch outcomes file, refusing to run against the real one" >&2; exit 1; }
+export MH_VALIDATOR_OUTCOMES_PATH="$OUTCOMES"
+trap 'rm -f "$JOURNAL" "$OUTCOMES"' EXIT
 
 pass=0
 fail=0
