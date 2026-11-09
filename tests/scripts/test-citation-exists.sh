@@ -166,6 +166,29 @@ python3 -c "print('src/app.py:1 ' * 16000 + 'deadbeef1234567 ' * 16000)" > "$T/m
 s=$(date +%s); timeout 30 python3 "$SCRIPT" --root "$T/root" "$T/many.md" > /dev/null; rc=$?; e=$(date +%s)
 [ "$rc" -eq 0 ] && [ $((e - s)) -lt 5 ] && ok "32000 cites on one line finish under 5 s" || bad "many cites rc=$rc, $((e - s)) s"
 
+# Round 2 of the same audit (whole-picture hunter and the Codex re-check): red on the first fix commit.
+# `line` for JSON input is the index of the string value, even when a string holds newlines.
+printf '["one\\ntwo", "src/gone.py:4"]\n' > "$T/lines.json"
+python3 "$SCRIPT" --root "$T/root" "$T/lines.json" > "$T/l.out" 2>&1
+/usr/bin/grep -q "src/gone.py:4  (line 2)" "$T/l.out" && ok "JSON input: line is the string's index, not a physical line" || bad "JSON line number: $(tail -1 "$T/l.out")"
+# A double-escaped newline (a literal backslash and n inside the decoded string) must not hide the next cite.
+python3 - "$T/double.json" <<'PY'
+import json, sys
+json.dump({"checked": [{"claim": "c", "evidence": "src/app.py:1\\nsrc/nope.py:999\\tsrc/app.py:3"}]}, open(sys.argv[1], "w"))
+PY
+python3 "$SCRIPT" --root "$T/root" "$T/double.json" > "$T/d.out" 2>&1
+/usr/bin/grep -q "citations exist: 2 of 3 resolved" "$T/d.out" && /usr/bin/grep -q "missing: 1" "$T/d.out" && ok "JSON input: a double-escaped newline or tab does not hide a cite" || bad "double-escaped newline: $(head -3 "$T/d.out" | tr '\n' ' ')"
+# A Windows path inside JSON is still not a citation (the escape rule only follows a digit).
+printf '["C:\\\\temp\\\\new.py:2"]\n' > "$T/win.json"
+python3 "$SCRIPT" --root "$T/root" "$T/win.json" > "$T/w.out" 2>&1
+/usr/bin/grep -q "citations exist: 0 of 0 resolved" "$T/w.out" && ok "JSON input: a Windows path is not a citation" || bad "Windows path in JSON: $(head -1 "$T/w.out")"
+# A JSON number of thousands of digits must not make the parse fall back to raw text.
+python3 -c "print('{\"n\": ' + '9' * 5000 + ', \"e\": \"src/app.py:1\\\\nsrc/nope.py:9\"}')" > "$T/bigint.json"
+python3 "$SCRIPT" --root "$T/root" "$T/bigint.json" > "$T/b.out" 2>&1
+/usr/bin/grep -q "citations exist: 1 of 2 resolved" "$T/b.out" && ok "JSON with a 5000-digit number is still decoded" || bad "big integer leaf: $(head -1 "$T/b.out")"
+# A zero-padded line number is its value, not its digit count.
+[ "$(label_of 'src/app.py:0000000001')" = "resolved" ] && ok "zero-padded line number -> resolved" || bad "zero-padded line number -> '$(label_of 'src/app.py:0000000001')'"
+
 python3 "$SCRIPT" --selftest > /dev/null; rc=$?
 [ "$rc" -eq 0 ] && ok "--selftest passes" || bad "--selftest exit $rc"
 

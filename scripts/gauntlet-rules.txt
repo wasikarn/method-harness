@@ -68,7 +68,7 @@ skills/*/learn/*                  medium tests/skills/learn/test*.sh tests/scrip
 skills/*/memory-lint/*            medium tests/skills/memory-lint/test_*.py tests/hooks/test-memory-health-nudge.sh
 skills/*/model-bench/*            medium tests/scripts/test-model-bench.sh
 skills/*/compliance-audit/*       medium tests/skills/test-compliance-audit-*.sh tests/skills/test-check-verdict-drift.sh
-skills/*/deep-audit/*             medium tests/skills/test-deep-audit-*.sh tests/skills/test-check-verdict-drift.sh tests/skills/test-weighted-score.sh
+skills/*/deep-audit/*             medium tests/skills/test-deep-audit-*.sh tests/skills/test-check-verdict-drift.sh tests/skills/test-weighted-score.sh tests/scripts/test-citation-exists.sh
 skills/*/idea-audit/*             medium tests/skills/test-idea-audit-*.sh tests/skills/test-check-verdict-drift.sh
 skills/*/ideate/*                 medium tests/skills/test-ideate-*.sh
 
