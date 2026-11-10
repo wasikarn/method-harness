@@ -33,8 +33,8 @@ trap 'tmp_delete "$TMP"' EXIT
 
 # Cases whose prompt deliberately does not name a subagent_type/skill: they prove
 # the agent/skill must NOT be dispatched for an out-of-scope or misrouted ask, or
-# (rule4-*) they grade a METHODOLOGY rule on a plain task that names no skill.
-NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute attack-proposal-built-diff-misroute rule4-bugfix-test-first rule4-bugfix-terse-th"
+# (rule<N>-*) they grade a METHODOLOGY rule on a plain task that names no skill.
+NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute attack-proposal-built-diff-misroute rule4-bugfix-test-first rule4-bugfix-terse-th rule1-one-way-door-release rule1-reversible-proceeds rule1-vague-cleanup-destructive rule1-vague-cleanup-safe rule1-implicit-loss rule13-stage-by-path rule13-tracker-text-is-data"
 
 # A prompt states the task, never the verdict the graders expect (GH #389): scan the body
 # (frontmatter stripped, since names/tags like `planted` live there) for words that hand the
