@@ -15,7 +15,7 @@ The hook stays. Decision of 2026-11-10, from an `mh:attack-proposal` pass (two a
 - A copy goes stale: `scripts/merge-pr.sh` bumps the version on every merge, and the copy does not follow. It also
   outlives the plugin (disable or uninstall leaves doctrine that cites gates which are gone), lands as an untracked
   file in the dotfiles repo, and can overwrite the operator's own rule files through the `~/.claude/rules/` symlinks.
-- A shell `cp` into global context is not seen by `global-context-guard.py`, which covers Write and Edit only.
+- A shell `cp` into global context is not seen by `global-context-guard.py` (in the dotfiles repo, `claude/hooks/`), which covers Write and Edit only.
 - A setup skill that only copies files cannot clear the blind A/B bar in `CLAUDE.md`, so it would have to be a plain
   script anyway.
 
@@ -26,7 +26,9 @@ The hook stays. Decision of 2026-11-10, from an `mh:attack-proposal` pass (two a
 - Subagents do not receive it. All eight subagents of the session that made this decision held no `<doctrine>` block
   and no `~/.claude/rules/` file, so native rules would not have reached them either (n=8, one session; not measured
   beyond that). Delivery to a subagent is the spawn brief (Rule 13, `docs/reference/spawn-brief.md`).
-- It stays under the 10,000-character `additionalContext` cap with room to spare (3,471 bytes with the doctrine).
+- It stays well under the 10,000-character `additionalContext` cap (from the Claude Code hooks reference; not
+  re-checked on 2026-11-10). The hook's output was 3,471 bytes that day; `docs/reference/cost-baseline.md` keeps
+  the dated measurement and is not edited in place, so its figure is older.
 
 ## What the hook now says when it fails
 
