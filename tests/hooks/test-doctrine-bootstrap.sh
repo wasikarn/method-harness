@@ -96,7 +96,7 @@ if [[ ! -r "$bad_root/docs/METHODOLOGY.md" ]]; then  # root reads mode 000, so t
 fi
 chmod 644 "$bad_root/docs/METHODOLOGY.md"
 rm_target="$bad_root/docs/METHODOLOGY.md"
-trash "$rm_target"
+tmp_delete "$rm_target"
 mkdir "$rm_target"  # a directory where the file should be: -s and -r both pass on it
 dir_out=$(CLAUDE_PLUGIN_ROOT="$bad_root" /bin/bash "$SCRIPT" 2>/dev/null)
 /usr/bin/grep -q "<!-- mh:doctrine-missing -->" <<<"$dir_out" && ok=1 || ok=0

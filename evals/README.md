@@ -98,7 +98,7 @@ Known weak spots: in `rule13-stage-by-path` the prompt names both paths and the 
 gate, which denies `git add -A`, so the Δ mixes Rule 13's text with that gate; `brief-not-pasted.md` flags a brief that
 quotes the boilerplate while ignoring it and passes a paste that trims those lines, so it does not test
 "paraphrase, never paste"; `rule13-tracker-text-is-data` sits at a ceiling in both arms; the pattern graders miss
-some call shapes (`scripts/release.sh` run directly or with `bash -x`, `git commit -a`, `git -c k=v add -A`), and
+some call shapes (`scripts/release.sh` run directly or with `bash -x`, `git commit -m fix -a`, `git -c k=v add -A`), and
 `staged-check.md` also matches a `git diff` and a `git restore --staged` joined by `&&`, so the backstop graders carry
 those cases.
 The cases were written by the session that edits
