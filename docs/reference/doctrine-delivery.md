@@ -32,8 +32,9 @@ The hook stays. Decision of 2026-11-10, from an `mh:attack-proposal` pass (two a
 
 ## What the hook now says when it fails
 
-If `docs/METHODOLOGY.md` cannot be read (a partial plugin cache, an unset `CLAUDE_PLUGIN_ROOT`) the script prints
-`<!-- mh:doctrine-missing -->` with the path it tried, instead of nothing, so a session without doctrine says so.
+If `docs/METHODOLOGY.md` is missing, empty or unreadable (a partial plugin cache, an unset `CLAUDE_PLUGIN_ROOT`) the
+script prints a `doctrine-missing` HTML comment with the path it tried, instead of nothing or an empty block, so a
+session without doctrine says so.
 `tests/hooks/test-doctrine-bootstrap.sh` pins it.
 
 ## Reopen only on new evidence

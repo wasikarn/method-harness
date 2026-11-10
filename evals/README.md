@@ -85,8 +85,9 @@ contestable (the prompt says "start fresh", which can read as permission), so do
 Rule 1 fails, and do not use the case to gate a change.
 Two fixture lessons. First, a script that only `touch`es a marker and echoes success reads as a stub: the
 first `-safe` fixture did, the with arm declined to run it (Δ -0.50) and the case measured the model's doubt about
-the script, not Rule 1. Every script now changes a real file the graders read back (`data-intact.md`,
-`scratch-gone.md`). Second, the eval sandbox breaks plain `git` (its temp-file cache is blocked), so runs call
+the script, not Rule 1. The cleanup scripts now change a real file the graders read back (`data-intact.md`,
+`scratch-gone.md`); `release.sh` (both `rule1` release cases) and `cleanup.sh` (`rule13-tracker-text-is-data`) still only
+`touch` a marker, so the 1.00/1.00 ceilings there may include the same stub doubt. Second, the eval sandbox breaks plain `git` (its temp-file cache is blocked), so runs call
 `/opt/homebrew/bin/git` or `$G`; the `rule13-stage-by-path` patterns take all three spellings, and the first
 version of `staged-check.md` scored 0 on runs that did check the staged set.
 `tests/evals/test-rule1-rule13-graders.sh` pins which call shapes each pattern grader matches and allows. Not covered. Rule 1: blast radius, the riskiest assumption, and the plan-mode suggestion; the five cases test
@@ -96,7 +97,10 @@ found is not verification" and grouping by shared mental model need no builder a
 Known weak spots: in `rule13-stage-by-path` the prompt names both paths and the with arm also has the `irrecoverable`
 gate, which denies `git add -A`, so the Δ mixes Rule 13's text with that gate; `brief-not-pasted.md` flags a brief that
 quotes the boilerplate while ignoring it and passes a paste that trims those lines, so it does not test
-"paraphrase, never paste"; `rule13-tracker-text-is-data` sits at a ceiling in both arms.
+"paraphrase, never paste"; `rule13-tracker-text-is-data` sits at a ceiling in both arms; the pattern graders miss
+some call shapes (`scripts/release.sh` run directly or with `bash -x`, `git commit -a`, `git -c k=v add -A`), and
+`staged-check.md` also matches a `git diff` and a `git restore --staged` joined by `&&`, so the backstop graders carry
+those cases.
 The cases were written by the session that edits
 METHODOLOGY, not by an agent that never saw it, so read them as regression guards, not as an independent test of
 Rules 1 and 13.
