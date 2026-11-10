@@ -92,7 +92,7 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   `harness-audit`, `memory-lint`, `deep-audit`, `compliance-audit`, `idea-audit`, `learn`,
   `post-mortem`, `cost-report`, `ideate`, `attack-proposal`, `gate-report`, and `model-bench`, so every
   skill and agent has cases. Three doctrine subjects grade a METHODOLOGY rule on a plain prompt that names no skill:
-  `rule4` (a bug fix), `rule1` (a one-way-door release against a reversible bump, , a vague dev-database cleanup that is destructive or safe, and a silent loss with no warning) and `rule13`
+  `rule4` (a bug fix), `rule1` (a one-way-door release against a reversible bump, a vague dev-database cleanup that is destructive or safe, and a silent loss with no warning) and `rule13`
   (stage by path, and ticket text kept out of a subagent's brief). `tests/evals/test-eval-subjects-doc.sh` fails when
   this list and the subjects under `evals/` disagree. Count drifts as suites are added; recompute with
   `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l` rather than trust a
