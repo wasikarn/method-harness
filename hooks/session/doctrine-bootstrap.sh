@@ -5,12 +5,12 @@ set -uo pipefail
 
 METHODOLOGY="${CLAUDE_PLUGIN_ROOT:-}/docs/METHODOLOGY.md"
 
-if [[ -f "$METHODOLOGY" ]]; then
+if [[ -s "$METHODOLOGY" && -r "$METHODOLOGY" ]]; then
   echo "<doctrine>"
   cat "$METHODOLOGY"
   echo "</doctrine>"
 else
-  # A partial or corrupt plugin cache, or an unset root: say so, or the session starts with no doctrine and no sign.
+  # A partial or corrupt plugin cache, an empty or unreadable file, or an unset root: say so, or the session starts with no doctrine and no sign.
   echo "<!-- mh:doctrine-missing -->"
   echo "**method-harness:** cannot read ${METHODOLOGY}, so this session has no doctrine. Reinstall mh@wasikarn or check CLAUDE_PLUGIN_ROOT."
   echo "<!-- /mh:doctrine-missing -->"

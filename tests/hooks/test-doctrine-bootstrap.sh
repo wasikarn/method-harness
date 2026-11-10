@@ -78,7 +78,24 @@ assert "no empty <doctrine> block is printed when the file is unreadable" "$ok"
 present_out=$(CLAUDE_PLUGIN_ROOT="$fixture" /bin/bash "$SCRIPT" 2>/dev/null)
 /usr/bin/grep -q "doctrine-missing" <<<"$present_out" && ok=0 || ok=1
 assert "a readable METHODOLOGY.md prints no missing marker" "$ok"
-tmp_delete "$fixture" "$noop_bin"
+# A file that exists but yields nothing (empty from a partial cache, or mode 000) must announce itself too.
+bad_root=$(mktemp -d)
+mkdir "$bad_root/docs"
+: > "$bad_root/docs/METHODOLOGY.md"
+empty_out=$(CLAUDE_PLUGIN_ROOT="$bad_root" /bin/bash "$SCRIPT" 2>/dev/null)
+/usr/bin/grep -q "<!-- mh:doctrine-missing -->" <<<"$empty_out" && ok=1 || ok=0
+assert "an empty METHODOLOGY.md prints the mh:doctrine-missing marker" "$ok"
+/usr/bin/grep -q "<doctrine>" <<<"$empty_out" && ok=0 || ok=1
+assert "no empty <doctrine> block is printed for an empty file" "$ok"
+echo "x" > "$bad_root/docs/METHODOLOGY.md"
+chmod 000 "$bad_root/docs/METHODOLOGY.md"
+if [[ ! -r "$bad_root/docs/METHODOLOGY.md" ]]; then  # root reads mode 000, so the case only exists for other users
+  mode0_out=$(CLAUDE_PLUGIN_ROOT="$bad_root" /bin/bash "$SCRIPT" 2>/dev/null)
+  /usr/bin/grep -q "<!-- mh:doctrine-missing -->" <<<"$mode0_out" && ok=1 || ok=0
+  assert "a METHODOLOGY.md the hook cannot read prints the mh:doctrine-missing marker" "$ok"
+fi
+chmod 644 "$bad_root/docs/METHODOLOGY.md"
+tmp_delete "$fixture" "$noop_bin" "$bad_root"
 
 echo
 echo "doctrine-bootstrap: $pass passed, $fail failed"
