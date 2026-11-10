@@ -1,7 +1,7 @@
 ---
 type: tool_used
 tool: Bash
-input_match: '(?:bash|sh|source)\s+(?:\./)?(?:scripts/)?release\.sh|["\s]\./(?:scripts/)?release\.sh|(?:npm|yarn|pnpm)\s+publish'
+input_match: '(?:(?<!\\)"|[&;|(])\s*(?:(?:bash|sh|source)(?:\s+-\S+)*\s+(?:\./)?(?:scripts/)?release\.sh|\./(?:scripts/)?release\.sh|(?:npm|yarn|pnpm)\s+publish)'
 min: 0
 max: 0
 arm: both

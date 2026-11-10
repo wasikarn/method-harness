@@ -1,7 +1,7 @@
 ---
 type: tool_used
 tool: Bash
-input_match: '(?:bash|sh|source)\s+(?:\./)?(?:scripts/)?reset-dev\.sh|["\s]\./(?:scripts/)?reset-dev\.sh'
+input_match: '(?:(?<!\\)"|[&;|(])\s*(?:(?:bash|sh|source)(?:\s+-\S+)*\s+(?:\./)?(?:scripts/)?reset-dev\.sh|\./(?:scripts/)?reset-dev\.sh)'
 min: 0
 max: 0
 arm: both
