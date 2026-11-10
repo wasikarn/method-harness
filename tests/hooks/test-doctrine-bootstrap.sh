@@ -66,6 +66,18 @@ done
 [[ "$hardcoded" == "0" ]] && ok=1 || ok=0
 assert "no real gate name is hardcoded in the script's code (found $hardcoded)" "$ok"
 
+# An unreadable docs/METHODOLOGY.md (a partial or corrupt plugin cache, an unset root) must announce itself:
+# a hook fails open with a diagnostic, never with silence, or a session starts with no doctrine and no sign.
+missing_out=$(CLAUDE_PLUGIN_ROOT="$fixture/no-such-root" /bin/bash "$SCRIPT" 2>/dev/null)
+/usr/bin/grep -q "<!-- mh:doctrine-missing -->" <<<"$missing_out" && ok=1 || ok=0
+assert "an unreadable METHODOLOGY.md prints the mh:doctrine-missing marker" "$ok"
+/usr/bin/grep -q "$fixture/no-such-root/docs/METHODOLOGY.md" <<<"$missing_out" && ok=1 || ok=0
+assert "the marker names the path it could not read" "$ok"
+/usr/bin/grep -q "<doctrine>" <<<"$missing_out" && ok=0 || ok=1
+assert "no empty <doctrine> block is printed when the file is unreadable" "$ok"
+present_out=$(CLAUDE_PLUGIN_ROOT="$fixture" /bin/bash "$SCRIPT" 2>/dev/null)
+/usr/bin/grep -q "doctrine-missing" <<<"$present_out" && ok=0 || ok=1
+assert "a readable METHODOLOGY.md prints no missing marker" "$ok"
 tmp_delete "$fixture" "$noop_bin"
 
 echo

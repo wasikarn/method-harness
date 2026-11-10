@@ -9,6 +9,11 @@ if [[ -f "$METHODOLOGY" ]]; then
   echo "<doctrine>"
   cat "$METHODOLOGY"
   echo "</doctrine>"
+else
+  # A partial or corrupt plugin cache, or an unset root: say so, or the session starts with no doctrine and no sign.
+  echo "<!-- mh:doctrine-missing -->"
+  echo "**method-harness:** cannot read ${METHODOLOGY}, so this session has no doctrine. Reinstall mh@wasikarn or check CLAUDE_PLUGIN_ROOT."
+  echo "<!-- /mh:doctrine-missing -->"
 fi
 
 # Dependency preflight (#93): the deny gates fail OPEN (with a per-call stderr

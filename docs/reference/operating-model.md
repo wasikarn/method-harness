@@ -137,3 +137,4 @@ the model controls.
 - No orchestration layer of its own: dispatch shape is one page (`spawn-brief.md`); Claude
   Code's native Agent tool does the rest.
 - No response style of its own: the `ponytail` plugin is the only style layer.
+- No rules-file delivery of the doctrine: it stays a SessionStart hook (`doctrine-delivery.md`).
