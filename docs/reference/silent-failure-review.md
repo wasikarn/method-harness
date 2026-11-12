@@ -92,9 +92,9 @@ you may note, outside the severity count, and it doesn't turn a `CLEAN` verdict 
 **Scope boundary:** this doctrine is about an error, exception, or failed call that goes
 unsurfaced. A write that completes without error but affects fewer rows/records than intended
 (a bulk `UPDATE`/`DELETE` matching fewer IDs than requested, say) is a data-integrity question,
-not a silent failure — there's no error anywhere in that flow for this agent to be about.
+not a silent failure — there's no error anywhere in that flow for this review to be about.
 Unchecked bulk writes are common and usually benign; flagging them here is exactly the
-false-positive flood this agent exists to avoid.
+false-positive flood this review exists to avoid.
 
 ### 6. Concurrency-Dependent Silent Failures
 
@@ -143,7 +143,7 @@ like an empty catch") is not sufficient:
    functions each handling one case of the same category — check the other branches for the
    same class of mistake before writing up the review. A bug isolated to one branch is a strong
    prior the others share it; stopping at the first strong, well-evidenced finding produces a
-   false-negative flood, the mirror image of the false-positive flood this agent's opening line
+   false-negative flood, the mirror image of the false-positive flood this doc's opening paragraph
    already guards against.
 
 **Returning zero findings on a clean file is a valid, expected outcome.** A codebase with

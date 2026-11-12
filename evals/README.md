@@ -1,9 +1,9 @@
 # Review-agent and skill evals
 
-81 cases in Claude Code's native `claude plugin eval` layout (count:
+106 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
-Round 3). Twelve cover the six review
+Round 3). Ten cover the five review
 agents, one planted-defect case and one clean control per agent, the same fires/silent pairing
 `tests/skills/harness-audit/known-bad/` uses for audit checks. Each case is
 `prompt.md` (the ask: an agent case dispatches by `subagent_type`, a skill case invokes by `skill:`), `case.yaml` (a
@@ -556,11 +556,12 @@ ablation pilots instead) so the suite stays loadable while the runner is gated. 
 
 ## Blind cases: does mh beat bare Claude? (2026-11-12, mh 1.1.610, `--runs 3`)
 
-Six cases written by two agents that never read METHODOLOGY or the docs, graded on outcome (file state,
+Six `blind-*` cases written by two agents that never read METHODOLOGY or the docs, graded on outcome (file state,
 commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `blind-hidden-callers`,
 `blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
+The subject also holds the three `ab-sfh-*` cases (next section), so `--tag blind` runs nine cases.
 
 Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
 recorder hooks (PR #1012), so the two columns are not the same instrument.
@@ -586,6 +587,30 @@ reply that states a silent choice as fact in some runs and fails it in others, a
 green, to cover all three test modules, and to come after the rename; a `pytest` run is not recorded. The
 recorders in `blind-hidden-callers` and `blind-missing-acceptance` cannot see a session that edits and never
 reruns its tests.
+
+## Blind A/B: silent-failure-hunter (`ab-sfh-*`; 2026-11-12, mh 1.1.612, `--runs 5`)
+
+The first per-part blind A/B against the operator's keep-bar: with-plugin mean above 0.90 at 5 runs per
+arm, and no case below the no-plugin arm by more than 0.05. An agent that never saw mh chose the topics
+and wrote the cases: a Python payout batch and a TypeScript price sync, each with 2 planted silent
+failures and a decoy, plus a clean Go exporter. The decision rule was written and the graders hashed
+before each run.
+
+| case | run 1 with / without | run 2 with / without |
+|---|---|---|
+| `ab-sfh-order-export` (clean) | 0.50 / 0.80 | 0.70 / 0.40 |
+| `ab-sfh-payout-batch` | 0.76 / 0.96 | 0.84 / 0.80 |
+| `ab-sfh-price-sync` | 0.88 / 1.00 | 1.00 / 0.88 |
+
+- Run 1 (grader hash `8154d15a…`, $6.65) used the plain prompt in these cases. The with arm dispatched
+  the agent in 0 of 15 runs, so this run measures mh's session context: mean 0.71, which fails both clauses.
+- Run 2 (the same grader files at `ab-sfh-named-*` paths, hash `c77d3405…`, $7.13) added one prompt line
+  asking for a `silent-failure-hunter` agent if one is available. The agent ran in 15 of 15 runs: mean
+  0.85, which fails the 0.90 clause. That line also lowered the bare arm's score against run 1.
+- Both arms found every planted defect. The with arm lost on the false-positive graders, and the haiku
+  judge voted FAIL on several replies that met their rubric. Both caveats apply to both arms.
+- Outcome: the agent became `docs/reference/silent-failure-review.md` (PR #1017). The run-2 cases are in
+  that PR's history.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 
