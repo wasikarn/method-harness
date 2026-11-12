@@ -1,7 +1,7 @@
 ---
 type: regex
 target: trace
-pattern: 'renameSync|\.rename\(|write-file-atomic'
+pattern: '\brename(?:Sync)?\(|write-file-atomic'
 ---
 `src/tray.js` runs as a separate process and calls `loadSettings()` on every change event, and
 `loadSettings()` throws on malformed JSON. A plain `fs.writeFileSync(FILE, ...)` truncates the file

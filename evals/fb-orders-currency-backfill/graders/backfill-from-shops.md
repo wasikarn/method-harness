@@ -2,7 +2,7 @@
 type: regex
 target: trace
 flags: i
-pattern: 'update(?:\s|\\n)+orders[\s\S]{0,400}shops|currency(?:\s|\\n)*=(?:\s|\\n)*\((?:\s|\\n)*select[\s\S]{0,200}shops'
+pattern: 'update[\s\S]{0,20}orders[\s\S]{0,400}shops|currency(?:\s|\\n)*=(?:\s|\\n)*\((?:\s|\\n)*select[\s\S]{0,200}shops'
 ---
 Existing orders were placed in their shop's currency (the seed shows THB, JPY and EUR shops). The
 scaffold contains no `UPDATE orders` statement, so a match comes from the subject's own migration.
