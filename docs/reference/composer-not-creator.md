@@ -28,7 +28,8 @@ A clone reached via `claude --add-dir` loads none of its own CLAUDE.md by defaul
 A new skill, agent or workflow is built only if bare Claude leaves room to beat it. Run the pilot first:
 
 - Cases written by an agent that never saw mh.
-- Bare Claude only: `claude plugin eval --ablation none`, without the `with_default_enabled_true` wrapper.
+- Bare Claude only, with mh disabled: `claude plugin eval --ablation none`, without the
+  `with_default_enabled_true` wrapper.
 - The decision rule written and the graders' hash recorded before the run.
 
 Build only if bare Claude scores 0.85 or lower on a case; otherwise report "no headroom" and stop. A case that

@@ -562,6 +562,7 @@ commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `b
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
 The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` runs twelve cases.
+The `ab-wfr-*` cases are a bare-only check: run them with `--tag wf-review --ablation none` and no wrapper.
 
 Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
 recorder hooks (PR #1012), so the two columns are not the same instrument.
@@ -631,7 +632,8 @@ plant (rotated-out secrets kept without a cap, so the signature header grows) ag
 drops a case only when a planted decoy turns out to be a real bug, so that run is rescored instead: 0.80 raw, 0.83
 rescored, 0.84 without the decoy grader. The case qualifies for step 2, an A/B against the workflow, which has not
 been run; no workflow is built yet. Its gap is bug 1 (a seconds value passed where a `time.Duration` is due, missed
-in 3 of 5 runs) and one bug-4 miss. $5.71.
+in 3 of 5 runs) and one bug-4 miss. All three scores are at or below 0.85, so the verdict does not depend on
+the rescore. $5.71.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 

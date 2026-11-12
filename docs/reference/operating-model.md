@@ -94,7 +94,8 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   skill and agent has cases. Three doctrine subjects grade a METHODOLOGY rule on a plain prompt that names no skill:
   `rule4` (a bug fix), `rule1` (a one-way-door release against a reversible bump, a vague dev-database cleanup that is destructive or safe, and a silent loss with no warning) and `rule13`
   (stage by path, and ticket text kept out of a subagent's brief). One more subject, `blind`, holds plain tasks
-  written by agents that never read the doctrine; it compares the session with and without mh (`evals/README.md`).
+  written by agents that never read the doctrine; most compare the session with and without mh, while the three
+  `ab-wfr-*` cases run bare only, as a headroom check (`evals/README.md`).
   Its three `ab-sfh-*` cases are the blind A/B that turned the former `silent-failure-hunter` agent into
   `docs/reference/silent-failure-review.md`.
   The `headroom` subject is plain
