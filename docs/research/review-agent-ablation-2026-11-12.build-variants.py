@@ -2,13 +2,12 @@
 <case>-agent (the original prompt, naming the mh agent) and <case>-plain (the same task with no
 agent named). Both carry one LLM grader that judges substance only, so a bare model is not marked
 down for lacking the agent's report format."""
-import glob, os, re, shutil, subprocess, sys
+import glob, os, re, shutil, subprocess, sys, tempfile
 
 repo, out = sys.argv[1], sys.argv[2]
 
 
 def under_tmp(p):  # these scripts delete their output dirs: only ever under the temp dir
-    import tempfile
     root = os.path.realpath(tempfile.gettempdir()) + os.sep
     if not os.path.realpath(p).startswith(root):
         sys.exit("refusing %r: the output directory must be under %s" % (p, root))

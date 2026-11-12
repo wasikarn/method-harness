@@ -4,7 +4,8 @@
 > measurably more often than the same request as a plain prompt (18 against 16 of 33 runs on
 > sonnet, 16 against 16 of 21 on opus), at roughly three times the cost per case; the model
 > mattered more than the condition. The repository's own fixtures are at the ceiling and separate
-> nothing, except `requirement-analyst-clean`, where only the agent passed.
+> nothing, except `requirement-analyst-clean`, where the agent and the short sentence passed and
+> the plain prompt did not, with the plugin on or off.
 >
 > **Status:** a record of measurements from one cloud session. The raw result files were in the
 > session scratchpad and are not kept, so the numbers below, read from them at the time, cannot be
@@ -92,9 +93,9 @@ later fix commit touched. Each case gave the model the repository at the pull re
 (without `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.claude-plugin/`) and `pr.diff`. The agent
 condition dispatched `mh:blind-spot-hunter` and `mh:silent-failure-hunter` in parallel
 (`silent-failure-hunter` has since been removed from `develop`). A bug case passes when the
-answer names one of the defects its criterion in `build-pr.py` lists (two to four per case); other
-findings do not lower the score. Each list holds the bug the later fix confirms, and some hold
-further defects this record does not show a later fix for.
+answer names a defect its criterion in `build-pr.py` lists (one to four per case); other
+findings do not lower the score. Each list holds the bug the later fix confirms, and the longer
+ones hold further defects this record does not show a later fix for.
 
 Passes of 3, sonnet for runs and judge:
 
@@ -162,8 +163,8 @@ condition also overstated one finding. This is a reading of four cases, not a co
   than a plain prompt (18 against 16 of 33 on sonnet; 16 against 16 of 21 on opus), at about
   three times the cost per case (24.20 USD against half of the 14.40 USD that plain and bare
   shared on sonnet; the split between those two was not recorded).
-- The model mattered more than the condition: opus was ahead of sonnet by 3 to 4 of 21 in every
-  condition.
+- The model mattered more than the condition: opus was ahead of sonnet by 3 to 4 of 21 in each
+  of agent, plain and bare (the short sentence was not run on opus).
 - The conditions found different bugs (#502 only by the agents on opus; #494 and #625 mostly by
   the plain prompt on opus), so they are not interchangeable.
 - The short sentence is harmful on hard input: 2 of 33. Its 39 of 39 in run 2 came from easy

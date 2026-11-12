@@ -1,11 +1,10 @@
 """Real-PR review benchmark: each case is a merged PR (repo tree at the PR head + pr.diff) whose
 bug a later PR fixed. Three variants per case: agent (mh review agents), plain, short."""
-import os, re, shutil, subprocess, sys, glob
+import os, re, shutil, subprocess, sys, glob, tempfile
 repo, out, tars = sys.argv[1], sys.argv[2], sys.argv[3]
 
 
 def under_tmp(p):  # these scripts delete their output dirs: only ever under the temp dir
-    import tempfile
     root = os.path.realpath(tempfile.gettempdir()) + os.sep
     if not os.path.realpath(p).startswith(root):
         sys.exit("refusing %r: the output directory must be under %s" % (p, root))
