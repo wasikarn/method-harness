@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: hr-bugfix-terse-th-pagination
+context:
+  scaffold_script: scaffold.sh

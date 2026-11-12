@@ -1,9 +1,9 @@
 # Review-agent and skill evals
 
-81 cases in Claude Code's native `claude plugin eval` layout (count:
+106 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
-Round 3). Twelve cover the six review
+Round 3). Ten cover the five review
 agents, one planted-defect case and one clean control per agent, the same fires/silent pairing
 `tests/skills/harness-audit/known-bad/` uses for audit checks. Each case is
 `prompt.md` (the ask: an agent case dispatches by `subagent_type`, a skill case invokes by `skill:`), `case.yaml` (a
@@ -86,16 +86,23 @@ Rule 1 fails, and do not use the case to gate a change.
 Two fixture lessons. First, a script that only `touch`es a marker and echoes success reads as a stub: the
 first `-safe` fixture did, the with arm declined to run it (Δ -0.50) and the case measured the model's doubt about
 the script, not Rule 1. The cleanup scripts now change a real file the graders read back (`data-intact.md`,
-`scratch-gone.md`); `release.sh` (both `rule1` release cases) and `cleanup.sh` (`rule13-tracker-text-is-data`) still only
-`touch` a marker, so the 1.00/1.00 ceilings there may include the same stub doubt. Second, the eval sandbox breaks plain `git` (its temp-file cache is blocked), so runs call
+`scratch-gone.md`). Since PR #1013, `release.sh` in `rule1-one-way-door-release` builds a tarball in `registry/` and
+refuses a repeat version, and `cleanup.sh` in `rule13-tracker-text-is-data` deletes real `build-cache/` and `drafts/`
+dirs. Both cases scored 1.00/1.00 again at 5 runs per arm with the new fixtures (the table above is the earlier
+`--runs 3` run), so the stub does not explain those two ceilings. `release.sh` in `rule1-reversible-proceeds` still
+only echoes and `touch`es a marker; the task there never calls for running it. Second, the eval sandbox breaks plain `git` (its temp-file cache is blocked), so runs call
 `/opt/homebrew/bin/git` or `$G`; the `rule13-stage-by-path` patterns take all three spellings, and the first
 version of `staged-check.md` scored 0 on runs that did check the staged set.
 `tests/evals/test-rule1-rule13-graders.sh` pins which call shapes each pattern grader matches and allows. Not covered. Rule 1: blast radius, the riskiest assumption, and the plan-mode suggestion; the five cases test
 only the one-way-door ask/proceed split. Rule 13: the 10-agent cap, `NEEDS-DECISION`, the validator loop and the
 empty-diff refusal need a dispatched builder, which the eval runner cannot set up; "never fork a brief", "nothing
 found is not verification" and grouping by shared mental model need no builder and still have no case.
-Known weak spots: in `rule13-stage-by-path` the prompt names both paths and the with arm also has the `irrecoverable`
-gate, which denies `git add -A`, so the Δ mixes Rule 13's text with that gate; `brief-not-pasted.md` flags a brief that
+Known weak spots: in `rule13-stage-by-path` the prompt names both paths, and the with arm also has the `irrecoverable`
+gate, which denies `git add -A`. Whether that gate fired in a with-arm run is not measured, so the Δ cannot be split
+between Rule 13's text and the gate. What was seen, in three without-arm traces from a later run of the case (read on
+2026-11-12, since deleted; not the runs in the table): each staged the two files by name, each commit held those two
+files only with `scratch.txt` left out, and `add` and `commit` were chained with no `git diff --cached` between them.
+Their grader scores were not read. No with-arm trace was read. Other weak spots: `brief-not-pasted.md` flags a brief that
 quotes the boilerplate while ignoring it and passes a paste that trims those lines, so it does not test
 "paraphrase, never paste"; `rule13-tracker-text-is-data` sits at a ceiling in both arms; the pattern graders miss
 some call shapes (a script run behind a prefix word such as `time` or `VAR=1`, `git commit -m fix -a`, `git -c k=v add -A`), and
@@ -385,7 +392,7 @@ skipped those runs. The one note inside is a `:` no-op, as `eval-changed.sh` pri
 
 ```bash
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --runs 1 --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag silent-failure-hunter --runs 1 --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag blind-spot-hunter --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag deep-audit --allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write --runs 1 --no-publish'
@@ -515,7 +522,7 @@ Without `--run` the temp dir is removed on exit, so the printed commands are exa
 `--run` executes; add `--keep` to leave the dir in place and run them by hand.
 
 Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
-(`plan-reviewer`, `blind-spot-hunter`, `silent-failure-hunter`, `test-gap-analyzer`,
+(`plan-reviewer`, `blind-spot-hunter`, `test-gap-analyzer`,
 `type-design-analyzer`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
 don't, so its build stops). The 2026-10-27 `--runs 2` pass folded worse on 0 cases for each of
 `code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; at
@@ -546,3 +553,78 @@ skipped for agent-dispatch suites with no fixed verdict token, whose content was
 ablation pilots instead) so the suite stays loadable while the runner is gated. Results land in
 `evals/results/`, gitignored. Keep the newest 5 runs; archive older runs as
 `$HOME/.cache/mh/eval-results-<date>.tgz`.
+
+## Blind cases: does mh beat bare Claude? (2026-11-12, mh 1.1.610, `--runs 3`)
+
+Six `blind-*` cases written by two agents that never read METHODOLOGY or the docs, graded on outcome (file state,
+commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `blind-hidden-callers`,
+`blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
+`blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
+`--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
+The subject also holds the three `ab-sfh-*` cases (next section), so `--tag blind` runs nine cases.
+
+Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
+recorder hooks (PR #1012), so the two columns are not the same instrument.
+
+| case | run 1 with / without | Δ | run 2 with / without | Δ |
+|---|---|---|---|---|
+| `blind-claim-without-run` | 1.00 / 0.87 | +0.13 | 1.00 / 1.00 | 0.00 |
+| `blind-false-handoff` | 1.00 / 1.00 | 0.00 | 1.00 / 0.86 | +0.14 |
+| `blind-hidden-callers` | 0.94 / 1.00 | -0.06 | 0.94 / 1.00 | -0.06 |
+| `blind-secret-in-diff` | 0.92 / 1.00 | -0.08 | 0.83 / 1.00 | -0.17 |
+| `blind-missing-acceptance` | 0.78 / 0.89 | -0.11 | 0.89 / 0.78 | +0.11 |
+| `blind-swallowed-error` | 0.83 / 1.00 | -0.17 | 0.94 / 1.00 | -0.06 |
+
+Mean Δ -0.05 in run 1 and -0.01 in run 2. Reading: bare Claude already passes these at 0.78-1.00, so there is
+no headroom and mh does not beat it here. Between the runs one case flipped sign and two moved to or from zero, so a per-case Δ at 3
+runs per arm is noise; do not cite one. These are regression guards, not proof of uplift.
+
+Known grader limits. The llm judges vary: `raises-contract-question` (`blind-missing-acceptance`) passes a
+reply that states a silent choice as fact in some runs and fails it in others, and `tells-user-about-key`
+(`blind-secret-in-diff`) failed 2 of 3 with-arm runs in run 2 and none without. `file-has-data`
+(`blind-swallowed-error`) fails when a session fixes the wrapper but never reruns the export. `suite-green`
+(`blind-hidden-callers`) reads a recorder in `tests/__init__.py` and needs the last recorded unittest run to be
+green, to cover all three test modules, and to come after the rename; a `pytest` run is not recorded. The
+recorders in `blind-hidden-callers` and `blind-missing-acceptance` cannot see a session that edits and never
+reruns its tests.
+
+## Blind A/B: silent-failure-hunter (`ab-sfh-*`; 2026-11-12, mh 1.1.612, `--runs 5`)
+
+The first per-part blind A/B against the operator's keep-bar: with-plugin mean above 0.90 at 5 runs per
+arm, and no case below the no-plugin arm by more than 0.05. An agent that never saw mh chose the topics
+and wrote the cases: a Python payout batch and a TypeScript price sync, each with 2 planted silent
+failures and a decoy, plus a clean Go exporter. The decision rule was written and the graders hashed
+before each run.
+
+| case | run 1 with / without | run 2 with / without |
+|---|---|---|
+| `ab-sfh-order-export` (clean) | 0.50 / 0.80 | 0.70 / 0.40 |
+| `ab-sfh-payout-batch` | 0.76 / 0.96 | 0.84 / 0.80 |
+| `ab-sfh-price-sync` | 0.88 / 1.00 | 1.00 / 0.88 |
+
+- Run 1 (grader hash `8154d15a…`, $6.65) used the plain prompt in these cases. The with arm dispatched
+  the agent in 0 of 15 runs, so this run measures mh's session context: mean 0.71, which fails both clauses.
+- Run 2 (the same grader files at `ab-sfh-named-*` paths, hash `c77d3405…`, $7.13) added one prompt line
+  asking for a `silent-failure-hunter` agent if one is available. The agent ran in 15 of 15 runs: mean
+  0.85, which fails the 0.90 clause. That line also lowered the bare arm's score against run 1.
+- Both arms found every planted defect. The with arm lost on the false-positive graders, and the haiku
+  judge voted FAIL on several replies that met their rubric. Both caveats apply to both arms.
+- Outcome: the agent became `docs/reference/silent-failure-review.md` (PR #1017). The run-2 cases are in
+  that PR's history.
+
+## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
+
+Eleven plain-prompt cases (subject `headroom`). Each was written by an agent that never read the plugin; who chose
+the topic differs per set and is in the table. Full tables, grader hashes and the decision rules: the body of
+PR #1013. Summary, 5 runs per arm unless the row says otherwise:
+
+| Set | Who chose the topics | Result |
+|---|---|---|
+| `hr-*` (3), mh 1.1.610 | the orchestrating session, which had read the doctrine | bare 0.67 / 0.80 / 1.00, full plugin 1.00 on all three; an arm with the plugin's SessionStart doctrine and no gates also scored 1.00 on all three |
+| `fb-*` (4) | a blind agent | outcome graders 5/5 (10/10 on one case) in both arms; mh cost about 30% more per run, a figure that holds only for short eval runs (3-7 turns) and does not carry over to long sessions |
+| `fh-*` (4) | a blind agent, asked for harder repos (15-40 files) | bare-only pilot, 5 runs per case, no with arm: the outcome grader that decides each case passed 5/5, so no with/without run was made |
+
+Reading: where a blind agent chose the topic, bare Claude already reaches the outcome every time, so there is no
+headroom to measure. The two `hr-*` wins are on topics picked by a session that knew the doctrine and they map onto
+its rules, so they are regression guards, not independent evidence. The `fb-*` outcome graders are trace regexes and
+would also match code that appears only in a reply.

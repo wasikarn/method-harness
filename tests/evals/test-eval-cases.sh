@@ -33,8 +33,9 @@ trap 'tmp_delete "$TMP"' EXIT
 
 # Cases whose prompt deliberately does not name a subagent_type/skill: they prove
 # the agent/skill must NOT be dispatched for an out-of-scope or misrouted ask, or
-# (rule<N>-*) they grade a METHODOLOGY rule on a plain task that names no skill.
-NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute attack-proposal-built-diff-misroute rule4-bugfix-test-first rule4-bugfix-terse-th rule1-one-way-door-release rule1-reversible-proceeds rule1-vague-cleanup-destructive rule1-vague-cleanup-safe rule1-implicit-loss rule13-stage-by-path rule13-tracker-text-is-data"
+# (rule<N>-*) they grade a METHODOLOGY rule on a plain task that names no skill, or (blind-*)
+# they compare bare Claude with and without mh on a plain task written blind to the doctrine.
+NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute attack-proposal-built-diff-misroute rule4-bugfix-test-first rule4-bugfix-terse-th rule1-one-way-door-release rule1-reversible-proceeds rule1-vague-cleanup-destructive rule1-vague-cleanup-safe rule1-implicit-loss rule13-stage-by-path rule13-tracker-text-is-data blind-claim-without-run blind-false-handoff blind-hidden-callers blind-missing-acceptance blind-secret-in-diff blind-swallowed-error"
 
 # A prompt states the task, never the verdict the graders expect (GH #389): scan the body
 # (frontmatter stripped, since names/tags like `planted` live there) for words that hand the
@@ -168,6 +169,8 @@ for d in "$EVALS"/*/; do
     attack-proposal-*) /usr/bin/grep -q 'skill: "mh:attack-proposal"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     gate-report-*)   /usr/bin/grep -q '^/mh:gate-report' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
     model-bench-*)   /usr/bin/grep -q '^/mh:model-bench' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
+    hr-*|fb-*|fh-*) : ;;  # headroom cases (fb-: fair-blind, topics chosen blind; fh-: fair-hard): a plain task that names no skill or agent
+    ab-*) : ;;  # blind A/B of one skill or agent (second tag names the part under test): a plain task written by an agent that never saw it, so it names no agent
     *) /usr/bin/grep -q 'subagent_type: "mh:' "$d/prompt.md" || { bad "$c: prompt.md does not name a subagent_type"; continue; } ;;
     esac ;;
   esac
@@ -217,9 +220,8 @@ PY
   # 2026-09-06 wrote it bold or after a `Verdict:` label, which a bare `(^|\n)\s*`
   # anchor rejects (deep-audit finding, v1.1.22).
   case "$c" in
-    blind-spot-hunter-planted|silent-failure-hunter-planted) sample=$'## Verdict\n\n**1 MEDIUM, 2 LOW**' ;;
+    blind-spot-hunter-planted) sample=$'## Verdict\n\n**1 MEDIUM, 2 LOW**' ;;
     blind-spot-hunter-clean)      sample=$'## Verdict\n\n**CLEAN (1 dormant: 1 LOW)**' ;;
-    silent-failure-hunter-clean)  sample=$'## Verdict\n\n**CLEAN**' ;;
     test-gap-analyzer-planted)    sample=$'**Verdict:** `4 GAPS, highest 6/10`' ;;
     test-gap-analyzer-clean)      sample=$'**Verdict:** `COVERED`' ;;
     type-design-analyzer-planted) sample=$'**6 CONCERNS across 4 types, lowest Encapsulation 4/10**' ;;

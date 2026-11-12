@@ -7,7 +7,7 @@ pattern-match against. Prose guidance, not a gate; the mechanical checks are nam
 
 Every agent declares `tools:` as an explicit allowlist (`harness-audit` check 09, CRIT when
 missing). Read-only reviewers and analysts (`backend-architect`, `blind-spot-hunter`,
-`silent-failure-hunter`, `requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) get `Read`, `Grep`, `Glob`, and
+`requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) get `Read`, `Grep`, `Glob`, and
 usually `Bash` for `git log`/`git diff` inspection (read-only by discipline, not by tool grant);
 never `Write`/`Edit` (check 32). An agent that must mutate files adds `Write`/`Edit`; none
 does today. **`Agent` is never granted** (check 41): a
@@ -99,7 +99,7 @@ artifact, a `docs/research/*.md` file) and last when it's read as one narrative 
 terminal or chat stream, where the final line is what the reader's eye lands on first.
 `skills/review/deep-audit/SKILL.md`'s "Final Verdict" on line one and this fleet's "End with
 a one-line verdict" (`agents/type-design-analyzer.md`, `agents/blind-spot-hunter.md`,
-`agents/test-gap-analyzer.md`, `agents/silent-failure-hunter.md`) are the same principle applied
+`agents/test-gap-analyzer.md`) are the same principle applied
 to two different media, not a contradiction between them.
 
 This item doesn't cover a structured, multi-field report (`agents/requirement-analyst.md`,

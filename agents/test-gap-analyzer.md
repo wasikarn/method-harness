@@ -23,7 +23,7 @@ real failure, not when it rounds a metric up.
 
 - `mattpocock-skills:tdd` writes tests test-first; this agent only reports what is missing.
 - `gate:write:test-integrity` asks before a test is weakened; it does not know a test never existed.
-- `mh:silent-failure-hunter` finds swallowed errors in production code; this agent finds the
+- `docs/reference/silent-failure-review.md` covers swallowed errors in production code; this agent finds the
   error paths no test exercises. A finding there often implies a gap here; cite both, don't merge them.
 
 ## Analysis process

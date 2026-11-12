@@ -138,7 +138,7 @@ a reason to stop looking. **Run once.** Do not spawn another hunt off your own f
   value is the leftover seam, not a first pass. Running you first wastes the deep trace on bugs a
   cheap lens catches.
 - **On a trivial diff** (a single non-test file): not worth the dispatch.
-- **For a single narrow class.** Swallowed errors / silent failures → `silent-failure-hunter`
+- **For a single narrow class.** Swallowed errors / silent failures → `docs/reference/silent-failure-review.md`
   (one fixed class, checklist-driven; you are the open-ended emergent/interaction case).
   Security-specific → native `/security-review`.
 - **To pressure-test reasoning, a plan, or a decision** (no code delta) → that's the `plan-reviewer` agent. You
