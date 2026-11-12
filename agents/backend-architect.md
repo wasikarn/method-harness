@@ -137,5 +137,5 @@ attempt now re-checks `status` after the first transaction's commit, sees `'char
 
 ## Handoffs
 
-Code-level error-handling audit behind the Reliability Posture checklist: `silent-failure-hunter`.
+Code-level error-handling audit behind the Reliability Posture checklist: `docs/reference/silent-failure-review.md`.
 Tactical fix once a scalability bottleneck is identified: the `mh:performance-optimizer` skill.

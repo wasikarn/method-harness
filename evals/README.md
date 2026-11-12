@@ -385,7 +385,7 @@ skipped those runs. The one note inside is a `:` no-op, as `eval-changed.sh` pri
 
 ```bash
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --runs 1 --no-publish'
-bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag silent-failure-hunter --runs 1 --no-publish'
+bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag blind-spot-hunter --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag harness-audit --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag memory-lint --allow-tools Bash --runs 1 --no-publish'
 bash -c 'source scripts/_lib/eval-default-enabled.sh && with_default_enabled_true claude plugin eval . --scaffold --tag deep-audit --allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write --runs 1 --no-publish'
@@ -515,7 +515,7 @@ Without `--run` the temp dir is removed on exit, so the printed commands are exa
 `--run` executes; add `--keep` to leave the dir in place and run them by hand.
 
 Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
-(`plan-reviewer`, `blind-spot-hunter`, `silent-failure-hunter`, `test-gap-analyzer`,
+(`plan-reviewer`, `blind-spot-hunter`, `test-gap-analyzer`,
 `type-design-analyzer`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
 don't, so its build stops). The 2026-10-27 `--runs 2` pass folded worse on 0 cases for each of
 `code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; at

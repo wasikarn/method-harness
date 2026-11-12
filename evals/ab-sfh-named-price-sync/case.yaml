@@ -1,4 +1,0 @@
-schema_version: "1.1"
-name: ab-sfh-named-price-sync
-context:
-  scaffold_script: scaffold.sh

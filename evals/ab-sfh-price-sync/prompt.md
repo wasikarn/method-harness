@@ -1,6 +1,6 @@
 ---
 name: ab-sfh-price-sync
-tags: [silent-failure-hunter, blind-ab]
+tags: [blind, silent-failure-review]
 runs: 5
 max_turns: 20
 timeout_seconds: 600
