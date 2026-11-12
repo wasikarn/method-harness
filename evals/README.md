@@ -623,7 +623,7 @@ before each run.
 - Outcome: the agent became `docs/reference/silent-failure-review.md` (PR #1017). The run-2 cases are in
   that PR's history.
 
-## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12, `--runs 5`, bare only)
+## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12 and 11-13, `--runs 5`, bare only)
 
 The first step of a workflow pilot. A deterministic review workflow (find findings, then 3 independent refuters
 per finding) would be built only if bare Claude left room on a large-PR review. An agent that never saw mh wrote
@@ -659,10 +659,14 @@ and new domains. Each needed bare at most 0.85 to join an A/B, and the A/B would
 | `ab-wfr-account-deletion` (Python) | 0.97 | 5,5,5,5,5 / 4 |
 | `ab-wfr-stock-holds` (Go) | 1.00 | 5,5,5,5,5 / 5 |
 
-Neither qualifies, so no A/B ran and no review workflow goes into mh: bare Claude left no headroom on held-out
+In the one failing decoy run on `account-deletion`, the judge (2 of 3) counted a point that the purge loop stops
+when `remove_export` raises anything but `FileNotFoundError`. That is the loop's error handling, not the decoy
+itself (suppressing only `FileNotFoundError` is right), so the run is rescored: 1.00 for the case.
+
+Neither qualifies under either score, so no A/B ran and no review workflow goes into mh: bare Claude left no headroom on held-out
 large-PR reviews. `ab-wfr-stock-holds` bug 3 is the same kind of unit bug as `webhook-dlq`'s bug 1 (minutes
 multiplied by `time.Second`); bare Claude caught it in 5 of 5 runs. A workflow (one finder, 3 refuters per finding)
-was written by a fresh agent that saw only the design and smoke-tested ($1.76 a run against bare's $0.42); it is not
+was written by a fresh agent that saw only the design and smoke-tested ($1.76 a run on `ab-wfr-class-waitlist` against bare's $0.31 there in step 1); it is not
 committed. $6.07 in all.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
