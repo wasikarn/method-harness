@@ -17,8 +17,10 @@
 #
 # Needs: git 2.29+, ssh, ssh-keygen, gh (logged in as the repo owner), jq.
 # Everything it creates locally (the private deploy key, the clones, results.md) lives under
-# $PROBE_BRANCH_KEY_DIR, default ~/.cache/mh/branch-key-probe: outside the repository, so the key
-# cannot be committed. The path must not contain spaces (it goes into GIT_SSH_COMMAND unquoted).
+# $PROBE_BRANCH_KEY_DIR, default ~/.cache/mh/branch-key-probe. The default is outside the
+# repository, so the key cannot be committed; never point the variable inside a git work tree
+# (the script does not check). The path must not contain spaces (it goes into GIT_SSH_COMMAND
+# unquoted).
 # Delete the test repository yourself when done (Settings, Danger zone).
 set -uo pipefail
 

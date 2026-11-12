@@ -2,8 +2,8 @@
 
 > **Status (2026-11-12): NO-GO, not built.** This is the working file of an `mh:attack-proposal`
 > run, kept as a record. Three attack lanes found 17 breaks in the first text; three validator
-> rounds then closed them or accepted them as stated residuals (C3, C5, C10, C14/C15, N1), and each
-> found 1 or 2 new ones, and the skill stops at three
+> rounds then closed them or accepted them as residuals (the final list is at the end of
+> `## Revision 3`), and each found 1 or 2 new ones, and the skill stops at three
 > rounds. The two breaks open at the end (a rename on `develop` moving an agent edit to another
 > path at sync time, and the owner-login comparison being case-sensitive) have a proposed fix
 > each, named in the last validator's report and **not** written into this file or checked.
