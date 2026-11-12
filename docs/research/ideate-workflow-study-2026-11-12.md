@@ -18,14 +18,18 @@ kept in a session scratchpad and are not in this repo; only the workflow script 
    and lost clearly to the skill on one case of four (section 5).
 2. **This is not evidence about workflows in general.** The workflow differs from the skill in five ways at once
    (section 5, limits). No other mh skill was tried.
-3. **`ideate` does not start on its own stated trigger.** With mh loaded and a prompt that opens with "Brainstorm",
-   the skill fired in 0 of 20 runs (section 3). Its description says "Say 'brainstorm'".
+3. **`ideate` does not start on its own stated trigger.** With mh loaded and a prompt that asks to
+   "Brainstorm ..." after a sentence or two of context, the skill fired in 0 of 20 runs (section 3). Its
+   description says "Say 'brainstorm'". No prompt opened with the word, so an opening trigger was not tested.
 4. **`ideate` does widen the option set when it runs.** A reply had 1.5 to 2.7 times as many distinct approaches
    as bare Claude's (section 5 table; 2.6 to 4.0 times in the first measurement, section 4).
 5. **Bare Claude already avoids the evidenced-bad option.** 19 of 20 as adjudicated (section 2), so the outcome
    grader has no headroom on these cases for either form.
 6. **Do not trust the llm judge alone on these cases.** It failed 7 replies that a reader passes (4 bare, 1
-   skill, 2 workflow): each recommends the acceptable option and names the ruled-out one only as a later step.
+   skill, 2 workflow): the 4 bare and 2 workflow ones each recommend the acceptable option and name the
+   ruled-out one only as a later step; why it failed the skill reply was not recorded. This counts
+   `avoids-evidenced-cost` only: the judge also failed 3 bare replies on `commits-to-one` that the adjudicator
+   passed.
 
 ## 2. Bare Claude (no plugin)
 
@@ -34,10 +38,16 @@ kept in a session scratchpad and are not in this repo; only the workflow script 
 period on `dq-account-restore`, past the fixture's 21-day limit. `commits-to-one`: 20 of 20 as adjudicated.
 Limit: the adjudicator did not read three `dq-partner-notify` replies to the end.
 
+The pilot's rule, written before it ran: a case has headroom if bare Claude fails the decisive grader in 2 or more
+of 5 runs; with 0 or 1 such cases, stop and build neither the skill arm nor the workflow. Read from the automated
+judge, 2 cases had headroom; read from the adjudicator, none. The later arms went ahead on a different question,
+breadth, which the pilot's plan named as outside what it measures; they are not licensed by this rule.
+
 ## 3. mh loaded, skill not named
 
-Same frozen prompts. `mh:ideate` fired in 0 of 20 runs (no `Skill` or `Agent` call in any trace; the skill was
-listed and the doctrine injected). 0.23 USD per run. Automated judge 16 of 20; not adjudicated.
+Same frozen prompts. `mh:ideate` fired in 0 of 20 runs (no `Skill` or `Agent` call in any trace; on the five
+`dq-partner-notify` runs the skill was confirmed listed and the doctrine injected, the other cases were not checked
+for that). 0.23 USD per run. Automated judge 16 of 20; not adjudicated.
 
 ## 4. Skill named in the prompt
 
@@ -98,12 +108,15 @@ Limits:
 - **Width is not quality.** The extra approaches include ones the replies themselves flag as traps.
 - **Small and same-family.** Five runs per arm; extractor, clusterer and adjudicators are the same model family as
   the arms; one of each per case. The extractor could tell workflow replies apart by their wording; the clusterer
-  could not.
+  saw only the neutral lines.
 - **Plain prompt not tested for the workflow.** It was only ever invoked by name.
+- **A diagnostic in the script is unreliable.** It compares an index into the untrimmed critic reply with the
+  trimmed length, so a pure-JSON reply with leading whitespace is reported as "wrapped in other text". It still
+  parses; the 20-of-20 figure is unaffected. The script is kept as measured, not fixed.
 
 ## 6. Workflow mechanics checked before the rewrite
 
-Three probes with a throwaway plugin, each run once:
+Three probes with a throwaway plugin, each run once; their output was not kept in this repo:
 
 - mh's gates fire inside workflow agents: `git add -A` was denied, and `git stash` was denied as a subagent action.
 - Workflow agents receive `CLAUDE.md` but not the `docs/METHODOLOGY.md` that mh injects at session start.
@@ -112,10 +125,11 @@ Three probes with a throwaway plugin, each run once:
 Also seen: a plugin ships workflows from `workflows/` at its root, invoked by `name: "<plugin>:<workflow>"`;
 `claude plugin eval` runs them in its sandbox with `--allow-tools Workflow`; a `tool_used: Workflow` grader works.
 
-## 7. Spend
+## 7. Eval spend
 
 Bare 3.0 USD (plus 0.42 on runs made before `case.yaml` declared the scaffold, which had an empty workspace);
-mh with the skill not named 4.7; skill named 24.3; workflow 19.4 plus 0.82 for the smoke run. About 53 USD.
+mh with the skill not named 4.7; skill named 24.3; workflow 19.4 plus 0.82 for the smoke run. About 53 USD,
+not counting the extractor, clusterer and adjudicator agents or the probes.
 
 ## 8. Not done
 
