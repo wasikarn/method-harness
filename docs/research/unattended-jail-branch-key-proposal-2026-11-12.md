@@ -10,6 +10,9 @@
 > round 1's output did not go through the mechanical verdict and citation checkers, and nothing
 > about containers, the ruleset or the deploy key was run against GitHub or Docker. The final
 > residual list is at the end of `## Revision 3`. Read later sections as overriding earlier ones.
+> A script for testing the GitHub-side facts on a throwaway repository sits beside this file
+> (`unattended-jail-branch-key-proposal-2026-11-12.probe-branch-key.sh`); it has not been run
+> against GitHub. The design before this one is `unattended-jail-intake-bundle-proposal-2026-11-12.md`.
 
 Fourth design for unattended Claude Code runs on `wasikarn/method-harness` (the `mh` plugin; a
 public repository on a personal GitHub account, no CI, no `.github/` directory, merges done by
