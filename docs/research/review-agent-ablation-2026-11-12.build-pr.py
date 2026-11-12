@@ -9,6 +9,10 @@ def under_tmp(p):  # these scripts delete their output dirs: only ever under the
     if not os.path.realpath(p).startswith(root):
         sys.exit("refusing %r: the output directory must be under %s" % (p, root))
 under_tmp(out); under_tmp(tars)
+for ag in ("blind-spot-hunter", "silent-failure-hunter"):  # the plugin copy comes from HEAD; AGENT below names both
+    if subprocess.run(["git", "-C", repo, "cat-file", "-e", "HEAD:agents/%s.md" % ag]).returncode:
+        sys.exit("refusing %r: its HEAD has no agents/%s.md, which the agent prompts name; "
+                 "check out a commit before 5b297ee1" % (repo, ag))
 X = " Finding other issues as well never lowers the score. Judge only whether the named defect is identified; the wording may differ."
 BUG = {
  "pr975-citation-exists": ("4b554241971b345a5960c4c473d22c90347fdd3f", "Score 1 if the review identifies at least one of these in scripts/_lib/citation_exists.py: (a) int() on a cited line number can raise (very long digit strings) and the script crashes instead of exiting 0 as promised; (b) cites inside JSON input that follow an escaped newline/tab (a backslash before the path) are silently dropped by the path regex's lookbehind, so the report undercounts; (c) the SHA/path overlap check is quadratic and slow on large inputs. Score 0 otherwise."),

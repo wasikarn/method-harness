@@ -597,7 +597,12 @@ reply that states a silent choice as fact in some runs and fails it in others, a
 (`blind-hidden-callers`) reads a recorder in `tests/__init__.py` and needs the last recorded unittest run to be
 green, to cover all three test modules, and to come after the rename; a `pytest` run is not recorded. The
 recorders in `blind-hidden-callers` and `blind-missing-acceptance` cannot see a session that edits and never
-reruns its tests.
+reruns its tests. Two false passes were found on 2026-11-13 and are left as run, so the recorded numbers still
+match these files: `ran-full-suite` (`blind-claim-without-run`) matches any `unittest discover`, so
+`unittest discover -s tests -p test_money.py`, which skips `test_report`, counts as the whole suite; and the
+`blind-missing-acceptance` recorder drops an import error (`_FailedTest`) from the file on the next run of any
+test, so a session that breaks the import of `tests/test_checkout.py` and then runs only another test module
+keeps the baseline PASS lines and passes `contract-tests-pass`.
 
 ## Blind A/B: silent-failure-hunter (`ab-sfh-*`; 2026-11-12, mh 1.1.612, `--runs 5`)
 
