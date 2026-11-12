@@ -66,7 +66,8 @@ and inverted one guardrail in the cut, found by an audit afterwards and restored
 
 A separate bare-Claude run of all seven `deep-audit` eval cases (the two pilot cases among them) passed the end-state
 checks 35/35 at about 0.20 USD per run, so on those cases the skill's text, long or short, is not what decides the
-outcome. The mh pilot's decision rule, written before the run, returned "no change": the short `deep-audit` in the
+outcome. The mh pilot's decision rule, written before the run for 5 runs per arm and applied here to the 3-run data,
+returned "no change": the short `deep-audit` in the
 appendix was not shipped.
 
 So the reason to write short is the reader (a maintainer or an agent finds the contract faster), not the score or
@@ -399,7 +400,7 @@ Nothing automated. `docs/productivity/writing-for-agents.md` states: "There is n
 
 The 1,266-word body tested against the 2,378-word shipped one (`skills/review/deep-audit/SKILL.md` on 2026-11-12). Scoring rules and the checker dispatch brief moved to
 `references/scoring.md` and `references/checker-dispatch.md`, which are not kept here, so the appendix's `references/` pointers to those two files lead nowhere. It is an example of the rewrite shape, not a
-recommended replacement: same outcome, higher cost (section 2).
+recommended replacement: same outcome; cost difference not established (section 2).
 
 ````markdown
 ---
