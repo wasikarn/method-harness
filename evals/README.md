@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-105 cases in Claude Code's native `claude plugin eval` layout (count:
+107 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Seven cover the three review
@@ -569,7 +569,7 @@ commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `b
 `blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
-The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` matches twelve cases.
+The subject also holds the three `ab-sfh-*` and five `ab-wfr-*` cases (next sections), so `--tag blind` matches fourteen cases.
 Do not run the `ab-wfr-*` cases that way: they are a bare-only check, and a wrapped `--tag blind` run gives them an
 mh arm they were never meant to have. Run them with `--tag wf-review --ablation none --scaffold` and no wrapper, and
 run the other nine by name.
@@ -628,14 +628,14 @@ before each run.
 - Outcome: the agent became `docs/reference/silent-failure-review.md` (PR #1017). The run-2 cases are in
   that PR's history.
 
-## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12, `--runs 5`, bare only)
+## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12 and 11-13, `--runs 5`, bare only)
 
 The first step of a workflow pilot. A deterministic review workflow (find findings, then 3 independent refuters
 per finding) would be built only if bare Claude left room on a large-PR review. An agent that never saw mh wrote
 three cases. Each has a PR of 17-20 changed files in its own language (Python, TypeScript, Go), 5 planted bugs
 (at least 2 need another file to see), and 3 decoys. The PR is in `pr.diff` because git may not run in the
 sandbox. Grader hash `e4cf1aad…`
-(`shasum -a 256 evals/ab-wfr-*/graders/*.md | shasum -a 256`); the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
+(`shasum -a 256 evals/ab-wfr-{class-waitlist,plan-proration,webhook-dlq}/graders/*.md | shasum -a 256`, in that order); the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
 
 | case | bare mean | passes: bugs 1-5, no-decoy (of 5) |
 |---|---|---|
@@ -652,6 +652,27 @@ in 3 of 5 runs) and one bug-4 miss. All three scores are at or below 0.85, so th
 the rescore. $5.71. Before step 2, `ab-wfr-webhook-dlq`'s `outcome-no-decoy-flagged` grader needs an exception for
 that unplanted issue, as it already has for two other real bugs; it is left as run here so the hash above still
 reproduces, and a changed grader takes a new hash.
+
+Step 2 (2026-11-13) did not reach the A/B. `ab-wfr-webhook-dlq` was picked for its low score, and the workflow's
+author would have known which bug bare Claude missed there, so a win on that case alone could not count as blind.
+The rule, written before any step-2 run, added two cases from another agent that never saw mh, with the same brief
+and new domains. Each needed bare at most 0.85 to join an A/B, and the A/B would run only if one did. Grader hash
+`34e95619…` (`shasum -a 256 evals/ab-wfr-{account-deletion,stock-holds}/graders/*.md | shasum -a 256`, in that order).
+
+| case | bare mean | passes: bugs 1-5, no-decoy (of 5) |
+|---|---|---|
+| `ab-wfr-account-deletion` (Python) | 0.97 | 5,5,5,5,5 / 4 |
+| `ab-wfr-stock-holds` (Go) | 1.00 | 5,5,5,5,5 / 5 |
+
+In the one failing decoy run on `account-deletion`, the judge (2 of 3) counted a point that the purge loop stops
+when `remove_export` raises anything but `FileNotFoundError`. That is the loop's error handling, not the decoy
+itself (suppressing only `FileNotFoundError` is right), so the run is rescored: 1.00 for the case.
+
+Neither qualifies under either score, so no A/B ran and no review workflow goes into mh: bare Claude left no headroom on held-out
+large-PR reviews. `ab-wfr-stock-holds` bug 3 is the same kind of unit bug as `webhook-dlq`'s bug 1 (minutes
+multiplied by `time.Second`); bare Claude caught it in 5 of 5 runs. A workflow (one finder, 3 refuters per finding)
+was written by a fresh agent that saw only the design and smoke-tested ($1.76 a run on `ab-wfr-class-waitlist` against bare's $0.31 there in step 1); it is not
+committed. $6.07 in all.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 

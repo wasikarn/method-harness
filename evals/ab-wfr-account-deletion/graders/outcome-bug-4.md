@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that `login` in `accounts/sessions.py` now refuses any user whose status is not `active`, while `deletion.request` (`accounts/deletion.py`) sets the status to `pending_deletion` and signs the user out everywhere, and `POST /account/delete/cancel` (`accounts/web.py`) needs a signed-in user, so a user who asked for deletion can never sign in again to cancel it, contrary to docs/privacy.md ("sign in again within those 14 days and choose Cancel deletion"); the deletion becomes irreversible. Placing it at `login`, at the cancel route, or at `deletion.request` all count, as long as the reply says the user cannot cancel during the grace period. Score 0 if the reply does not mention this, or treats the refusal to sign in as correct.
