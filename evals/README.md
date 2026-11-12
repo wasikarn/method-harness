@@ -94,8 +94,11 @@ version of `staged-check.md` scored 0 on runs that did check the staged set.
 only the one-way-door ask/proceed split. Rule 13: the 10-agent cap, `NEEDS-DECISION`, the validator loop and the
 empty-diff refusal need a dispatched builder, which the eval runner cannot set up; "never fork a brief", "nothing
 found is not verification" and grouping by shared mental model need no builder and still have no case.
-Known weak spots: in `rule13-stage-by-path` the prompt names both paths and the with arm also has the `irrecoverable`
-gate, which denies `git add -A`, so the Δ mixes Rule 13's text with that gate; `brief-not-pasted.md` flags a brief that
+Known weak spots: in `rule13-stage-by-path` the prompt names both paths, and the Δ is a difference in process, not
+in the commit: in the three without-arm traces read on 2026-11-12 each run staged the two files by name and its commit
+held those two files only, with `scratch.txt` left out; it scored 0 on `committed-only-two.md` because `add` and
+`commit` were chained with no `git diff --cached` between them. The with arm also has the `irrecoverable` gate, which
+denies `git add -A`; no trace read so far shows it firing in this case, so its share of the Δ is unmeasured; `brief-not-pasted.md` flags a brief that
 quotes the boilerplate while ignoring it and passes a paste that trims those lines, so it does not test
 "paraphrase, never paste"; `rule13-tracker-text-is-data` sits at a ceiling in both arms; the pattern graders miss
 some call shapes (a script run behind a prefix word such as `time` or `VAR=1`, `git commit -m fix -a`, `git -c k=v add -A`), and
