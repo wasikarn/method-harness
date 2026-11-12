@@ -54,8 +54,9 @@ if bullet is None:
     print("FAIL: operating-model.md has no bullet on `claude plugin eval`'s native layout")
     sys.exit(1)
 # A doctrine subject (`rule<N>`, a METHODOLOGY rule graded on a plain task) is no agent or
-# skill; it is checked both ways like one.
-doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or re.fullmatch(r"rule\d+", t)}
+# skill; it is checked both ways like one. So is `blind`: plain tasks written blind to the
+# doctrine, run with and without mh.
+doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or re.fullmatch(r"rule\d+|blind", t)}
 
 have = set(case_subjects)
 for s in sorted(have - doc_subjects):
