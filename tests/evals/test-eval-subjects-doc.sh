@@ -55,7 +55,8 @@ if bullet is None:
     sys.exit(1)
 # A doctrine subject (`rule<N>`, a METHODOLOGY rule graded on a plain task) is no agent or
 # skill; it is checked both ways like one.
-doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or re.fullmatch(r"rule\d+", t)}
+# `headroom` is the same kind: plain tasks written blind, where a careful engineer scores 1.0.
+doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or re.fullmatch(r"rule\d+|headroom", t)}
 
 have = set(case_subjects)
 for s in sorted(have - doc_subjects):
