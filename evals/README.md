@@ -649,9 +649,10 @@ drops a case only when a planted decoy turns out to be a real bug, so that run i
 rescored, 0.84 without the decoy grader. The case qualifies for step 2, an A/B against the workflow, which has not
 been run; no workflow is built yet. Its gap is bug 1 (a seconds value passed where a `time.Duration` is due, missed
 in 3 of 5 runs) and one bug-4 miss. All three scores are at or below 0.85, so the verdict does not depend on
-the rescore. $5.71. Before step 2, `ab-wfr-webhook-dlq`'s `outcome-no-decoy-flagged` grader needs an exception for
-that unplanted issue, as it already has for two other real bugs; it is left as run here so the hash above still
-reproduces, and a changed grader takes a new hash.
+the rescore. $5.71. Step 2 did not rerun this case, so its grader is unchanged. Before any later run,
+`ab-wfr-webhook-dlq`'s `outcome-no-decoy-flagged` grader needs an exception for that unplanted issue, as it already
+has for two other real bugs; it is left as run here so the hash above still reproduces, and a changed grader takes a
+new hash.
 
 Step 2 (2026-11-13) did not reach the A/B. `ab-wfr-webhook-dlq` was picked for its low score, and the workflow's
 author would have known which bug bare Claude missed there, so a win on that case alone could not count as blind.
@@ -665,12 +666,13 @@ and new domains. Each needed bare at most 0.85 to join an A/B, and the A/B would
 | `ab-wfr-stock-holds` (Go) | 1.00 | 5,5,5,5,5 / 5 |
 
 In the one failing decoy run on `account-deletion`, the judge (2 of 3) counted a point that the purge loop stops
-when `remove_export` raises anything but `FileNotFoundError`. That is the loop's error handling, not the decoy
-itself (suppressing only `FileNotFoundError` is right), so the run is rescored: 1.00 for the case.
+when `remove_export` raises anything but `FileNotFoundError`. That is a real issue the author did not plant
+(`purge_due` has no error handling around `purge_user`, so one failed removal ends the whole purge run), not the decoy
+itself (suppressing only `FileNotFoundError` is right). The headroom-pilot rule rescores such a run: 1.00 for the case.
 
 Neither qualifies under either score, so no A/B ran and no review workflow goes into mh: bare Claude left no headroom on held-out
-large-PR reviews. `ab-wfr-stock-holds` bug 3 is the same kind of unit bug as `webhook-dlq`'s bug 1 (minutes
-multiplied by `time.Second`); bare Claude caught it in 5 of 5 runs. A workflow (one finder, 3 refuters per finding)
+large-PR reviews. `ab-wfr-stock-holds` bug 3 (minutes multiplied by `time.Second`) is the same kind of unit bug as
+`webhook-dlq`'s bug 1; bare Claude caught it in 5 of 5 runs. A workflow (one finder, 3 refuters per finding)
 was written by a fresh agent that saw only the design and smoke-tested ($1.76 a run on `ab-wfr-class-waitlist` against bare's $0.31 there in step 1); it is not
 committed. $6.07 in all.
 
