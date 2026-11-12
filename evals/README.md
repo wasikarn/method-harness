@@ -533,7 +533,7 @@ injection case in the eval). `requirement-analyst` was removed on 2026-11-12 wit
 `test-gap-analyzer` and `type-design-analyzer` (PR #1021), which also removed that read-only
 boundary. The measurement behind it, from the PR, not kept as result files: their six cases, 3 runs
 each, sonnet, graded on substance by criteria written for that run. Named agent 18 of 18; a plain
-prompt 15 of 18 with the plugin on and 15 of 18 with it off, all three misses on
+prompt 15 of 18 with the plugin on and 15 of 18 with it off, in each arm all three misses on
 `requirement-analyst-clean` (the ticket was called clear, then gaps were listed anyway); a plain
 prompt plus one "report only real problems" sentence 18 of 18, but that sentence cut detection on 11
 real PRs to 2 of 33 runs (plain prompt 16 of 33), so no such prompt is shipped. The fixtures are near
