@@ -33,8 +33,9 @@ reference), and a live probe showed it beating `modelSettings.<model>.effortLeve
 `CLAUDE_CODE_EFFORT_LEVEL` outranks it ("overriding the session level but not the environment
 variable"), and `maxEffortLevel` or an org cap still clamps it.
 Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded review or
-mutation (the fleet's one `sonnet` agent is `ideate-critic`; no shipped agent is a bounded
-reviewer since 2026-11-12); `effort: high` for judgment and adversarial surfaces, `medium`/`low`
+mutation (no shipped agent is either since 2026-11-12; the fleet's one `sonnet` agent,
+`ideate-critic`, is the exception: it judges at `effort: high`, and its non-Opus pin keeps it
+independent by model from an Opus main session, see below); `effort: high` for judgment and adversarial surfaces, `medium`/`low`
 for mechanical work, bounded review or design trade-offs (`backend-architect` is `medium`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
 pins: `plan-reviewer` and `blind-spot-hunter`
 (adversarial), `backend-architect` (design trade-offs). Never pin `fable`
