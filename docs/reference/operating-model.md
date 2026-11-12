@@ -26,8 +26,9 @@ tool call — see its own row below for what that means in practice:
 
 Everything not in that table is advice: METHODOLOGY.md text, skill prose, agent guardrails.
 `sensor:bash:output-redact` is advice too, not a gate: a `PostToolUse` hook that replaces
-vendor-shaped credential tokens (`secret-scan.py`'s patterns, with the leading word boundary
-dropped and whole PEM blocks taken) in Bash stdout/stderr (`updatedToolOutput`) and in the
+vendor-shaped credential tokens (`secret-scan.py`'s patterns, with the word boundary dropped
+at both ends, and whole PEM blocks: a header with a key body under it, through the END line
+or the last body line) in Bash stdout/stderr (`updatedToolOutput`) and in the
 text blocks of an MCP tool's result, including an embedded resource's text
 (`updatedMCPToolOutput`, matcher `mcp__.*`), with `[REDACTED:<kind>]`. It is best-effort: a
 token outside those shapes, one split across stdout and stderr, Read output, a
