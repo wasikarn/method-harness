@@ -68,7 +68,7 @@ def resolve(short, config_dir, cwd):
                 manifest = {}
             name = manifest.get("name")
             if not isinstance(name, str) or not name:
-                name = key.split("@")[0]  # no usable manifest name: the install key's
+                name = key.split("@")[0]  # no usable manifest name: fall back to the install key's plugin name
             entries = manifest.get("skills")
             if isinstance(entries, str):
                 entries = [entries]
