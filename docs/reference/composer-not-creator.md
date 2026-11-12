@@ -31,6 +31,9 @@ A new skill, agent or workflow is built only if bare Claude leaves room to beat 
 - Bare Claude only, with mh disabled: `claude plugin eval --ablation none` (plus `--scaffold` for scaffolded
   cases), without the `with_default_enabled_true` wrapper.
 - The decision rule written and the graders' hash recorded before the run.
+- A failing decoy grader is read before it counts: a planted decoy that turns out to be a real bug drops the case,
+  and a real issue the author did not plant means that run is rescored (the first `ab-wfr-*` verdict was wrong
+  until this was applied).
 
 Build only if bare Claude scores 0.85 or lower on a case; otherwise report "no headroom" and stop. A case that
 qualifies then goes to the operator's blind A/B keep-bar. Operator decision of 2026-11-12: bare Claude passed most

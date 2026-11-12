@@ -561,8 +561,10 @@ commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `b
 `blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
-The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` runs twelve cases.
-The `ab-wfr-*` cases are a bare-only check: run them with `--tag wf-review --ablation none --scaffold` and no wrapper.
+The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` matches twelve cases.
+Do not run the `ab-wfr-*` cases that way: they are a bare-only check, and a wrapped `--tag blind` run gives them an
+mh arm they were never meant to have. Run them with `--tag wf-review --ablation none --scaffold` and no wrapper, and
+run the other nine by name.
 
 Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
 recorder hooks (PR #1012), so the two columns are not the same instrument.
@@ -619,7 +621,8 @@ The first step of a workflow pilot. A deterministic review workflow (find findin
 per finding) would be built only if bare Claude left room on a large-PR review. An agent that never saw mh wrote
 three cases. Each has a PR of 17-20 changed files in its own language (Python, TypeScript, Go), 5 planted bugs
 (at least 2 need another file to see), and 3 decoys. The PR is in `pr.diff` because git may not run in the
-sandbox. Grader hash `e4cf1aad…`; the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
+sandbox. Grader hash `e4cf1aad…`
+(`shasum -a 256 evals/ab-wfr-*/graders/*.md | shasum -a 256`); the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
 
 | case | bare mean | passes: bugs 1-5, no-decoy (of 5) |
 |---|---|---|
@@ -633,7 +636,9 @@ drops a case only when a planted decoy turns out to be a real bug, so that run i
 rescored, 0.84 without the decoy grader. The case qualifies for step 2, an A/B against the workflow, which has not
 been run; no workflow is built yet. Its gap is bug 1 (a seconds value passed where a `time.Duration` is due, missed
 in 3 of 5 runs) and one bug-4 miss. All three scores are at or below 0.85, so the verdict does not depend on
-the rescore. $5.71.
+the rescore. $5.71. Before step 2, `ab-wfr-webhook-dlq`'s `outcome-no-decoy-flagged` grader needs an exception for
+that unplanted issue, as it already has for two other real bugs; it is left as run here so the hash above still
+reproduces, and a changed grader takes a new hash.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 
