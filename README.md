@@ -85,9 +85,10 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 - **Agents (4):** backend-architect, blind-spot-hunter, ideate-critic,
   plan-reviewer. Removed: the silent-failure agent (now a checklist,
   `docs/reference/silent-failure-review.md`, after it failed a blind A/B), and on 2026-11-12
-  requirement-analyst, test-gap-analyzer and type-design-analyzer (no skill dispatched them, and
-  on their own eval fixtures a plain prompt with one added sentence scored the same; history in
-  `NOTICE` for the two adapted from Anthropic's `pr-review-toolkit`). Generic TS review and security review go to
+  requirement-analyst, test-gap-analyzer and type-design-analyzer (no skill dispatched them; on
+  their own eval fixtures a plain prompt matched the last two, and missed requirement-analyst's
+  clean case in 3 of 3 runs, see `evals/README.md`; history in `NOTICE` for the two adapted from
+  Anthropic's `pr-review-toolkit`). Generic TS review and security review go to
   `mattpocock-skills:code-review` and native `/security-review` instead — reviewers here are
   read-only and never grant `Agent`.
 - **Evals:** `evals/` holds cases in `claude plugin eval`'s native layout: a planted case and a

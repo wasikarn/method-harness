@@ -529,7 +529,16 @@ don't, so its build stops). The 2026-10-27 `--runs 2` pass folded worse on 0 cas
 arms across all runs). The
 operator shipped `code-architect` and `performance-optimizer` as skills and kept the other two as
 agents (a scored reviewer, maker≠checker; a read-only boundary for untrusted tickets, with no
-injection case in the eval). `requirement-analyst` was removed on 2026-11-12.
+injection case in the eval). `requirement-analyst` was removed on 2026-11-12 with
+`test-gap-analyzer` and `type-design-analyzer` (PR #1021), which also removed that read-only
+boundary. The measurement behind it, from the PR, not kept as result files: their six cases, 3 runs
+each, sonnet, graded on substance by criteria written for that run. Named agent 18 of 18; a plain
+prompt 15 of 18 with the plugin on and 15 of 18 with it off, all three misses on
+`requirement-analyst-clean` (the ticket was called clear, then gaps were listed anyway); a plain
+prompt plus one "report only real problems" sentence 18 of 18, but that sentence cut detection on 11
+real PRs to 2 of 33 runs (plain prompt 16 of 33), so no such prompt is shipped. The fixtures are near
+the ceiling in every arm: the result shows no measurable gain for the two analyzers on these cases
+and a 3-run gain for `requirement-analyst` on one.
 Results: `evals/results/fold-<agent>-<timestamp>/{kept,folded}/aggregate-result.json` and
 `compare.txt`. The copy holds tracked files only (working-tree bytes), so commit or `git add` a
 new case before running it.
