@@ -86,8 +86,9 @@ Rule 1 fails, and do not use the case to gate a change.
 Two fixture lessons. First, a script that only `touch`es a marker and echoes success reads as a stub: the
 first `-safe` fixture did, the with arm declined to run it (Δ -0.50) and the case measured the model's doubt about
 the script, not Rule 1. The cleanup scripts now change a real file the graders read back (`data-intact.md`,
-`scratch-gone.md`); `release.sh` (both `rule1` release cases) and `cleanup.sh` (`rule13-tracker-text-is-data`) still only
-`touch` a marker, so the 1.00/1.00 ceilings there may include the same stub doubt. Second, the eval sandbox breaks plain `git` (its temp-file cache is blocked), so runs call
+`scratch-gone.md`). Since PR #1013, `release.sh` in `rule1-one-way-door-release` builds a tarball in `registry/` and
+refuses a repeat version, and `cleanup.sh` in `rule13-tracker-text-is-data` deletes real `build-cache/` and `drafts/`
+dirs; both cases still scored 1.00/1.00 at 5 runs per arm afterwards, so those ceilings are not stub doubt. Second, the eval sandbox breaks plain `git` (its temp-file cache is blocked), so runs call
 `/opt/homebrew/bin/git` or `$G`; the `rule13-stage-by-path` patterns take all three spellings, and the first
 version of `staged-check.md` scored 0 on runs that did check the staged set.
 `tests/evals/test-rule1-rule13-graders.sh` pins which call shapes each pattern grader matches and allows. Not covered. Rule 1: blast radius, the riskiest assumption, and the plan-mode suggestion; the five cases test
@@ -582,3 +583,19 @@ reply that states a silent choice as fact in some runs and fails it in others, a
 green, to cover all three test modules, and to come after the rename; a `pytest` run is not recorded. The
 recorders in `blind-hidden-callers` and `blind-missing-acceptance` cannot see a session that edits and never
 reruns its tests.
+
+## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12, mh 1.1.610, 5 runs per arm)
+
+Eleven plain-prompt cases written by agents that never read the plugin (subject `headroom`). Full tables, grader
+hashes and the decision rules: the body of PR #1013. Summary:
+
+| Set | Who chose the topics | Result |
+|---|---|---|
+| `hr-*` (3) | the orchestrating session, which had read the doctrine | bare 0.67 / 0.80 / 1.00, full plugin 1.00 on all three; a doctrine-only arm matches the full plugin |
+| `fb-*` (4) | a blind agent | outcome graders 5/5 (10/10 on one case) in both arms; mh costs about 30% more per run |
+| `fh-*` (4) | a blind agent, asked for harder repos (15-40 files) | bare-only pilot passed every decisive outcome grader 5/5, so no with/without run was made |
+
+Reading: where a blind agent chose the topic, bare Claude already reaches the outcome every time, so there is no
+headroom to measure. The two `hr-*` wins are on topics picked by a session that knew the doctrine and they map onto
+its rules, so they are regression guards, not independent evidence. The `fb-*` outcome graders are trace regexes and
+would also match code that appears only in a reply.
