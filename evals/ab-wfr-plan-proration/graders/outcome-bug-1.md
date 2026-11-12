@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that `days_left` (used by `upgrade_charge`) in `billing/proration.py` counts one day too many: it adds `+ 1` to `(period.end - on).days`, but `BillingPeriod.end` is exclusive (`billing/dates.py`: the first day of the next period), so that difference already includes the day of the change. Every prorated upgrade overcharges the customer by one extra day of the price difference; an upgrade on the 1st of a 31-day month bills 32/31 of the difference (4026 instead of 3900 cents for basic to pro), and one on the last day bills two days instead of one. The reply must point at the extra day / off-by-one in the proration and say customers are overcharged. Any wording and any line within the named function count; a suggested fix is welcome but not required. Score 0 if the reply does not report this, or calls this code correct.
