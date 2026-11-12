@@ -170,6 +170,7 @@ for d in "$EVALS"/*/; do
     gate-report-*)   /usr/bin/grep -q '^/mh:gate-report' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
     model-bench-*)   /usr/bin/grep -q '^/mh:model-bench' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
     hr-*|fb-*|fh-*) : ;;  # headroom cases (fb-: fair-blind, topics chosen blind; fh-: fair-hard): a plain task that names no skill or agent
+    ab-*) : ;;  # blind A/B of one skill or agent (second tag names the part under test): a plain task written by an agent that never saw it, so it names no agent
     *) /usr/bin/grep -q 'subagent_type: "mh:' "$d/prompt.md" || { bad "$c: prompt.md does not name a subagent_type"; continue; } ;;
     esac ;;
   esac
@@ -219,9 +220,8 @@ PY
   # 2026-09-06 wrote it bold or after a `Verdict:` label, which a bare `(^|\n)\s*`
   # anchor rejects (deep-audit finding, v1.1.22).
   case "$c" in
-    blind-spot-hunter-planted|silent-failure-hunter-planted) sample=$'## Verdict\n\n**1 MEDIUM, 2 LOW**' ;;
+    blind-spot-hunter-planted) sample=$'## Verdict\n\n**1 MEDIUM, 2 LOW**' ;;
     blind-spot-hunter-clean)      sample=$'## Verdict\n\n**CLEAN (1 dormant: 1 LOW)**' ;;
-    silent-failure-hunter-clean)  sample=$'## Verdict\n\n**CLEAN**' ;;
     test-gap-analyzer-planted)    sample=$'**Verdict:** `4 GAPS, highest 6/10`' ;;
     test-gap-analyzer-clean)      sample=$'**Verdict:** `COVERED`' ;;
     type-design-analyzer-planted) sample=$'**6 CONCERNS across 4 types, lowest Encapsulation 4/10**' ;;
