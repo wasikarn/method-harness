@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that `purge_user` in `accounts/deletion.py` deletes only the `users` row and relies on `ON DELETE CASCADE` (schema.sql) to remove the user's posts and other rows, but SQLite does not enforce foreign keys unless `PRAGMA foreign_keys = ON` is set on each connection, and `connect` in `accounts/db.py` never sets it, so a deleted user's posts stay stored and publicly served (`GET /posts/<id>`), and can even show up under a new account that reuses the same user id. This breaks the promise in docs/privacy.md that posts are deleted. Any wording counts as long as the reply says the cascade will not happen (foreign keys off / pragma missing) and so the user's data is left behind. Score 0 if the reply does not mention this, or says purge_user correctly deletes the posts.
