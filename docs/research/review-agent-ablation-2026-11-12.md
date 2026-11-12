@@ -203,7 +203,8 @@ Both scripts need a checkout at a commit before `5b297ee1`, where the `silent-fa
 agent and its eval cases left `develop`. `build-variants.py` reads the eval cases of that
 checkout and stops with `FileNotFoundError` when one is missing. `build-pr.py` takes each case's
 tree from its merge commit, so it needs the full history, and copies the plugin from `HEAD`; it
-refuses a `HEAD` without `agents/silent-failure-hunter.md`, the agent its prompts name (before
-2026-11-13 it built from such a `HEAD` without an error, and the agent condition then named an
-agent the copy did not have). The commit the runs were built from is not recorded here. Both
-refuse an output directory outside the temp dir, because they delete and rebuild it.
+refuses a `HEAD` that lacks either agent its prompts name, `blind-spot-hunter` or
+`silent-failure-hunter` (before 2026-11-13 it built from such a `HEAD` without an error, and the
+agent condition then named an agent the copy did not have). The commit the runs were built from
+is not recorded here. Both refuse an output directory outside the temp dir, because they delete
+and rebuild it.
