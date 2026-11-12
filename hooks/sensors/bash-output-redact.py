@@ -20,25 +20,45 @@ def load_secret_scan():
     finally:
         sys.stdin = saved
     # Output text glues tokens to word characters far more often than source files do
-    # (a JSON-escaped newline before a token, a KEY_ prefix), so drop the gate's leading
-    # word boundary: over-redacting output is cheaper than leaking a token.
-    lead = "\\b"
-    patterns = [(label, re.compile(p.pattern[len(lead):] if p.pattern.startswith(lead) else p.pattern, p.flags), chk)
-                for label, p, chk in ns["PATTERNS"]]
+    # (a JSON-escaped newline before a token, a KEY_ prefix, a `_old` suffix), so drop the
+    # gate's word boundary at both ends: over-redacting output is cheaper than leaking a token.
+    edge = "\\b"
+    patterns = []
+    for label, p, chk in ns["PATTERNS"]:
+        src = p.pattern
+        src = src[len(edge):] if src.startswith(edge) else src
+        src = src[:-len(edge)] if src.endswith(edge) else src
+        patterns.append((label, re.compile(src, p.flags), chk))
     return patterns, ns["is_placeholder"]
 
 
 # The gate's Private key pattern only has to detect a key, so it stops at the first
-# body line. Redaction has to take the whole block: through the END line, or to the end
-# of the stream when the output was cut off.
+# body line. Redaction has to take the whole block: every body line and the END line, or,
+# when the output was cut off, every body line there is. It needs a body line under the
+# header (16+ base64 characters; the gate asks for 40): a header alone is text about keys, and
+# taking everything after it erased the rest of a grep or cat of this repo's own tests.
+# A line break is a real one or a JSON-escaped one, since keys also arrive inside JSON strings.
+_NL = r"[ \t]*(?:\\r\\n|\\n|\r?\n)"
+_B64 = r"[A-Za-z0-9+/=]"
+_END = r"-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
 PEM_BLOCK = re.compile(
-    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----.*?"
-    r"(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\Z)", re.S)
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----" + _NL
+    + r"(?:[A-Za-z0-9-]+:[^\n\\]*" + _NL + r")*(?:" + _NL + r")*"
+    + _B64 + r"{16,}"
+    + r"(?:(?:" + _NL + r")+" + _B64 + r"+(?=" + _NL + r"|[ \t]*\Z))*"
+    + r"(?:(?:" + _NL + r")+" + _END + r")?")
+
+# A pattern whose every match holds a fixed marker is skipped when the text lacks the marker.
+# Without its leading word boundary the OpenAI pattern starts at every `sk-` inside a word and
+# rescans the run each time: 400 KB of "risk-" took 33 s, past the hook's timeout.
+REQUIRED_TEXT = {"OpenAI": "T3BlbkFJ"}
 
 
 def redact(text, patterns, is_placeholder):
     text, hits = PEM_BLOCK.subn("[REDACTED:Private key]", text)
     for label, pattern, has_placeholder_check in patterns:
+        if label in REQUIRED_TEXT and REQUIRED_TEXT[label] not in text:
+            continue
         def sub(m, label=label, check=has_placeholder_check):
             nonlocal hits
             if check and is_placeholder(m.group(1)):

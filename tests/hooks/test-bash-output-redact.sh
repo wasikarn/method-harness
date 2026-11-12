@@ -140,11 +140,62 @@ out="$(mcp_payload mcp__srv__get "nothing here" | bash "$HOOK")"; rc=$?
 out="$(printf '{"tool_name":"mcp__srv__get","tool_response":"a string %s"}' "$GH" | bash "$HOOK" 2>&1)"; rc=$?
 { [ "$rc" -eq 0 ] && [ -z "$out" ]; } || _r=1; check "silent: MCP tool_response that is not a block list" "$_r"; _r=0
 
-# 7. large clean output stays fast and silent
-big="$(python3 -c 'print("line of ordinary text\n" * 20000)')"
+# 6f. a private-key header with no key body under it is text about keys, not a key: grep or cat
+# output that only names the header line keeps everything after it (found 2026-11-12: the
+# rest of the stream was erased, 410 lines of tests/hooks/test-secret-scan.sh came back as 123)
+hdr="a.py:1: if '-----BEGIN RSA PRIVATE KEY-----' in s:"
+out="$(payload Bash "$(printf '%s\nb.py:2: important\nc.py:3: more' "$hdr")" "" | bash "$HOOK")"; rc=$?
+{ [ "$rc" -eq 0 ] && [ -z "$out" ]; } || _r=1; check "bare private-key header: output left whole" "$_r"; _r=0
+mixed="$(printf -- '%s\nkept one\n-----BEGIN PRIVATE KEY-----\n%s\n-----END PRIVATE KEY-----\nkept two' "$hdr" "$PEM_BODY")"
+out="$(payload Bash "$mixed" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"kept one"* && "$res" == *"kept two" && "$res" == *"[REDACTED:Private key]"* && "$res" != *"$PEM_BODY"* ]]; } || _r=1; check "bare header then a real key: only the key goes" "$_r"; _r=0
+cut_key="$(printf -- '-----BEGIN PRIVATE KEY-----\n%s\n%s\n\nnext command output' "$line1" "$line5")"
+out="$(payload Bash "$cut_key" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:Private key]"* && "$res" != *"$line1"* && "$res" != *"$line5"* && "$res" == *"next command output" ]]; } || _r=1; check "key with no END line: body lines go, later text stays" "$_r"; _r=0
+enc="$(printf -- '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00\n\n%s\n-----END RSA PRIVATE KEY-----\nafter' "$PEM_BODY")"
+out="$(payload Bash "$enc" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:Private key]"* && "$res" != *"$PEM_BODY"* && "$res" == *"after" ]]; } || _r=1; check "key with header fields before the body is replaced" "$_r"; _r=0
+esc="$(printf -- '{"key":"-----BEGIN PRIVATE KEY-----\\n%s\\n-----END PRIVATE KEY-----\\n","n":1}' "$PEM_BODY")"
+out="$(payload Bash "$esc" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:Private key]"* && "$res" != *"$PEM_BODY"* && "$res" == *'"n":1}' ]]; } || _r=1; check "key inside a JSON string (escaped newlines) is replaced" "$_r"; _r=0
+
+# 6g. a token glued to a word character on its right still goes (found 2026-11-12: `<token>_old`
+# and `<token>x` came back whole, because only the leading word boundary was dropped)
+for tail in "_old" "x"; do
+  out="$(payload Bash "v=${GH}${tail} done" "" | bash "$HOOK")"
+  res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+  { [[ "$res" == *"[REDACTED:GitHub token]"* && "$res" != *"$GH"* ]]; } || _r=1; check "token followed by '$tail' is replaced" "$_r"; _r=0
+done
+out="$(payload Bash "${AWS}abc" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:AWS access/session key]"* && "$res" != *"$AWS"* ]]; } || _r=1; check "AWS key followed by lowercase letters is replaced" "$_r"; _r=0
+
+# 7. large clean output stays fast and silent. The payload goes through a file: as one argument
+# it is over Linux's per-argument limit, python3 never started, and this row passed on an empty
+# payload (found 2026-11-12).
+big_payload() { # big_payload <python expression for stdout> <payload file> [value for sys.argv[3]]
+  python3 -c 'import json,sys; json.dump({"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"x"},"tool_response":{"stdout":eval(sys.argv[1]),"stderr":""}}, open(sys.argv[2],"w"))' "$1" "$2" "${3:-}"
+}
+tmp="$(mktemp -d)"
+big_payload '"line of ordinary text\n" * 20000' "$tmp/big.json"
+[ "$(wc -c <"$tmp/big.json")" -gt 400000 ] || _r=1; check "the 400 KB payload was really built" "$_r"; _r=0
 start=$SECONDS
-out="$(payload Bash "$big" "" | bash "$HOOK")"
-[ -z "$out" ] && [ $((SECONDS - start)) -lt 5 ] || _r=1; check "400 KB clean output: silent, under 5 s" "$_r"; _r=0
+out="$(bash "$HOOK" <"$tmp/big.json" 2>"$tmp/err")"
+{ [ -z "$out" ] && [ ! -s "$tmp/err" ] && [ $((SECONDS - start)) -lt 5 ]; } || _r=1; check "400 KB clean output: silent, no diagnostic, under 5 s" "$_r"; _r=0
+big_payload '"line of ordinary text\n" * 20000 + sys.argv[3]' "$tmp/hit.json" "$GH"
+out="$(bash "$HOOK" <"$tmp/hit.json")"
+[[ "$out" == *"[REDACTED:GitHub token]"* ]] || _r=1; check "a token at the end of 400 KB is still replaced" "$_r"; _r=0
+# 7b. a long run of `sk-` inside ordinary words must not turn quadratic (found 2026-11-12:
+# 400 KB of "risk-" took 33 s, past the hook's timeout, so the output went out unredacted)
+big_payload '"risk-" * 80000' "$tmp/risk.json"
+start=$SECONDS
+out="$(bash "$HOOK" <"$tmp/risk.json" 2>"$tmp/err")"
+{ [ -z "$out" ] && [ ! -s "$tmp/err" ] && [ $((SECONDS - start)) -lt 5 ]; } || _r=1; check "400 KB of 'risk-': silent, under 5 s" "$_r"; _r=0
+tmp_delete "$tmp"
 
 echo
 echo "bash-output-redact: $pass passed, $fail failed"
