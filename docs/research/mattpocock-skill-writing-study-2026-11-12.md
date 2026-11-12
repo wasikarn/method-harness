@@ -4,12 +4,13 @@
 **Source:** `mattpocock-skills` 1.3.2, read from the local plugin cache
 (`~/.claude/plugins/cache/mattpocock/mattpocock-skills/1.3.2/`): all 38 `SKILL.md` files, their sibling files, and
 the repo's own authoring docs (`AGENTS.md`, `SCOPE.md`, `.agents/`, `.out-of-scope/`, `docs/`).
-**Why:** mh skills have a median body of 1,094 words; matt's is 548. The question was whether writing a skill short,
+**Why:** mh skills have a median body of 1,051 words (15 `SKILL.md` files, words after the frontmatter); matt's is 548. The question was whether writing a skill short,
 matt's way, makes it score better or cost less than the long form.
 **How it was read:** two read-only subagents, one for the 20 `engineering/` skills and one for the other 18 plus the
-repo rules. Sections 4 and 5 are their reports, edited only to remove tool wrappers. Every quoted string was then
-searched for in the 1.3.2 cache by script (145 fragments); each one was found, allowing for line wraps and markdown
-marks.
+repo rules. Sections 4 and 5 are their reports, edited to remove tool wrappers and to correct two claims a review
+found wrong; "I" in those sections is the subagent. Every quoted string was then
+searched for in the 1.3.2 cache by a one-off script that was not kept (145 fragments); each one was found, allowing
+for line wraps and markdown marks.
 
 ## 1. What to do when writing or shortening a skill
 
@@ -18,8 +19,10 @@ marks.
 2. **End each step on a "Done when".** One artifact or one checkable state per step, not a quality bar.
 3. **Move formats, templates and examples to sibling files.** `SKILL.md` keeps the process. The pointer names the
    question the file answers and sits where it is used ("Use the format in ...", "Copy ... to the repo root").
-4. **Few prohibitions, each with its reason.** Write a rule only for a failure seen in a real session (`SCOPE.md`).
-5. **No failure handling unless it guards a real hazard.** Most matt skills say nothing about errors or retries.
+4. **Few prohibitions, each with its reason.** matt's `SCOPE.md` admits a new idea only when it comes from a failure
+   seen in a real session; apply the same bar to each rule inside a skill (the second half is this study's reading).
+5. **No failure handling unless it guards a real hazard.** Section 4 names five engineering skills that say little
+   about errors or retries and three that guard one narrow hazard; the rest were not tallied.
 6. **A user-invoked skill is a thin wrapper.** `grill-me` is one line; the reusable discipline lives in a
    model-invoked skill other skills can call. 23 of 38 set `disable-model-invocation: true`.
 7. **Leading words in place of procedure.** Name the concept once (frontier, design tree, fog of war) and let the
@@ -37,13 +40,20 @@ The full style guide is matt's own `writing-for-agents` skill (`skills/productiv
 
 ## 2. What the measurements say (read before shortening for cost)
 
-Shorter text did not make a skill cheaper or better in either pilot. Cost follows the number of steps the skill makes
-the agent take, not the number of words.
+Neither pilot shows that a shorter skill scores better or costs less. Both are small, so read them as "no evidence
+for", not as proof that short costs more.
 
 | Pilot | Long | Short | Outcome | Cost per with-arm run | Turns |
 |---|---|---|---|---|---|
-| mh `deep-audit`, 2 cases, 3 runs per arm (this session) | 2,412 words | 1,266 words | 5/5 vs 6/6 (one long run timed out and is excluded) | 1.58 vs 1.84 USD | 8-10 vs 13-16 |
+| mh `deep-audit`, 2 cases, 3 runs per arm (measured 2026-11-12 for this study) | 2,378 words | 1,266 words | 5/5 vs 6/6 (one long run timed out and is excluded) | mean 1.58 vs 1.84 USD; by case 1.79 vs 1.70 (planted) and 1.44 vs 1.98 (step6) | per-case means 8 and 10 vs 13 and 16 |
 | siang `humanize`, 2 cases, 5 runs per arm (reported by the siang session; siang `evals/README.md`). A rerun on cases that session already knew, not a fresh blind result | 2,119 words | 799 words | Thai case 0.82 with skill (long form scored 0.96 and 0.78 earlier), English 1.00 | 0.26-0.29 vs 0.41 USD on the Thai case | 8 vs 11.4 |
+
+Word counts are bodies after the frontmatter. Limits of the mh pilot: its plan set 5 runs per arm and a rerun of any
+timed-out run; it ran 3 and did not rerun the timeout. The short form cost more on the pooled mean and on one case,
+less on the other, and turns within one arm ranged from 2 to 34, so the cost difference is not established. The
+pilot kept no tool traces, so why the short arm took more turns is unknown; reads of the new sibling files are a
+guess. For `humanize` the same cause is probable, not shown: the siang archive keeps no traces, and on the English
+case with-arm turns fell (6.6 to 6.4).
 
 A later siang run on a fresh blind pair (`humanize` 0.1.41, short form with the dropped instructions restored, 5 runs
 per arm, reported by the siang session) scored 1.00 in both arms on both cases: no gain, and that pair cannot show
@@ -51,16 +61,18 @@ one, since an unedited fixture already scores 0.67. A with-arm run cost 0.305 US
 against 0.122 without the skill, and 0.178 against 0.112 on the English case. That compares skill with no skill, not
 short with long.
 
-In both, the short form cost more. In the mh pilot the extra turns are reads of the sibling files. For `humanize`
-that cause is probable, not shown: the siang archive keeps no traces, and on the English case with-arm turns fell
-(6.6 to 6.4). The `humanize` rewrite also shows why a contract is moved and never dropped: siang 0.1.40 lost three
-instructions and inverted one guardrail in the cut, found by an audit afterwards and restored in 0.1.41. On the same seven
-`deep-audit` cases, Claude with no plugin passed the end-state checks 35/35 at about 0.20 USD per run, so the skill's
-text length is not what decides the result there. The mh pilot's decision rule, written before the run, returned
-"no change": the short `deep-audit` in the appendix was not shipped.
+The `humanize` rewrite also shows why a contract is moved and never dropped: siang 0.1.40 lost three instructions
+and inverted one guardrail in the cut, found by an audit afterwards and restored in 0.1.41.
+
+A separate bare-Claude run of all seven `deep-audit` eval cases (the two pilot cases among them) passed the end-state
+checks 35/35 at about 0.20 USD per run, so on those cases the skill's text, long or short, is not what decides the
+outcome. The mh pilot's decision rule, written before the run, returned "no change": the short `deep-audit` in the
+appendix was not shipped.
 
 So the reason to write short is the reader (a maintainer or an agent finds the contract faster), not the score or
 the bill. matt's repo makes no score claim either: it has no automated eval (section 5, "How they test skills").
+mh caps a `description` at 25 words (`docs/reference/skill-authoring-conventions.md`); some of matt's in section 3
+run longer, and that is not a habit to copy.
 
 ## 3. Size of each skill
 
@@ -114,7 +126,7 @@ n 38 median 547.5 mean 672 total 25541 descMedian 19.5
 
 ## 4. The 20 engineering skills
 
-I read all 20 SKILL.md files, every sibling file, and the 20 `agents/openai.yaml` files, which are only a display name plus `allow_implicit_invocation`. The only files I skimmed were `template.sh`, `issue-tracker-gitlab.md` (first 25 lines each) and `README.md` (first 30 lines). All quotes are verbatim.
+I read all 20 SKILL.md files, every sibling file, and the 20 `agents/openai.yaml` files, which are a display name and, on the user-invoked ones, `allow_implicit_invocation: false`. The only files I skimmed were `template.sh`, `issue-tracker-gitlab.md` (first 25 lines each) and `README.md` (first 30 lines). All quotes are verbatim.
 
 Word-count buckets: tiny is under 150 words, short is 150–600, medium is 600–1200, long is over 1200.
 
@@ -267,9 +279,9 @@ Word-count buckets: tiny is under 150 words, short is 150–600, medium is 600�
 - **Sibling files hold formats, templates and examples. SKILL.md holds the process.** domain-modeling, triage, prototype, codebase-design, improve-codebase-architecture and tdd all do this, usually with a pointer that names the question the file answers.
 - **A tracker-agnostic dependency via one shared fallback line.** to-spec, to-tickets, code-review, implement-spec, triage and wayfinder all end up at "tell the user to run `/setup-matt-pocock-skills`".
 - **Completion is stated as one named artifact or checkbox list, not as a quality bar.** diagnosing-bugs ("Phase 1 is done when…"), wizard ("Done when:"), implement-spec ("the entire spec implemented on a single integration branch") and to-tickets (user approval).
-- **Staleness is designed out.** to-spec, to-tickets and triage's AGENT-BRIEF all ban file paths and line numbers. domain-modeling creates files lazily. setup-matt-pocock-skills edits an existing block in place.
+- **Staleness is designed out.** to-spec and to-tickets ban file paths and code snippets; triage's AGENT-BRIEF bans file paths and line numbers. domain-modeling creates files lazily. setup-matt-pocock-skills edits an existing block in place.
 - **Leaving out failure handling is the norm.** implement, research, grill-with-docs, to-spec and implement-spec say little about errors or retries. The exceptions are the narrow ones that guard a real hazard (diagnosing-bugs, code-review ref checks, setup's `gh repo view`).
-- **The 11 skills with `disable-model-invocation: true` are the user-invoked ones.** These are ask-matt, grill-with-docs, triage, improve-codebase-architecture, setup, to-spec, to-tickets, implement, implement-spec, wayfinder and retro. The README says so, and every skill ships an `openai.yaml` with `allow_implicit_invocation: false`. Several of them are the tiny ones.
+- **The 11 skills with `disable-model-invocation: true` are the user-invoked ones.** These are ask-matt, grill-with-docs, triage, improve-codebase-architecture, setup, to-spec, to-tickets, implement, implement-spec, wayfinder and retro. The README says so, and each of them ships an `openai.yaml` with `allow_implicit_invocation: false` (23 of the 38 across all buckets; the other 15 have no `policy` block). Several of them are the tiny ones.
 
 ### Counter-examples (long or rule-heavy, and why)
 
@@ -385,8 +397,8 @@ Nothing automated. `docs/productivity/writing-for-agents.md` states: "There is n
 
 ## Appendix: the short `deep-audit` from the pilot (not shipped)
 
-The 1,266-word body tested against the 2,412-word shipped one. Scoring rules and the checker dispatch brief moved to
-`references/scoring.md` and `references/checker-dispatch.md`, which are not kept here. It is an example of the rewrite shape, not a
+The 1,266-word body tested against the 2,378-word shipped one (`skills/review/deep-audit/SKILL.md` on 2026-11-12). Scoring rules and the checker dispatch brief moved to
+`references/scoring.md` and `references/checker-dispatch.md`, which are not kept here, so the appendix's `references/` pointers to those two files lead nowhere. It is an example of the rewrite shape, not a
 recommended replacement: same outcome, higher cost (section 2).
 
 ````markdown
