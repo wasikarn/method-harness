@@ -168,7 +168,7 @@ for d in "$EVALS"/*/; do
     attack-proposal-*) /usr/bin/grep -q 'skill: "mh:attack-proposal"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     gate-report-*)   /usr/bin/grep -q '^/mh:gate-report' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
     model-bench-*)   /usr/bin/grep -q '^/mh:model-bench' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
-    hr-*) : ;;  # headroom cases: a plain task that names no skill or agent
+    hr-*|fb-*) : ;;  # headroom cases (fb-: fair-blind, topics chosen blind): a plain task that names no skill or agent
     *) /usr/bin/grep -q 'subagent_type: "mh:' "$d/prompt.md" || { bad "$c: prompt.md does not name a subagent_type"; continue; } ;;
     esac ;;
   esac
