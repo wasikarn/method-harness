@@ -5,7 +5,7 @@
 # for every agent or skill.
 #
 # A subject is an agent (agents/<name>.md), a skill (skills/*/<name>/SKILL.md) or a doctrine
-# subject `rule<N>` (a METHODOLOGY rule). A case's subject is the first entry of `tags:` in its
+# subject `rule<N>` (a METHODOLOGY rule) or `headroom` (blind-written plain tasks). A case's subject is the first entry of `tags:` in its
 # prompt.md frontmatter, falling back to the longest agent/skill name its directory name starts
 # with (some cases carry no tags).
 # Doc side: every backticked token in that bullet that is an agent or skill name, or `rule<N>`.
