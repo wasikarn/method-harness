@@ -11,3 +11,5 @@ scaffold's `app/dashboard.py` never mentions `org_id`; the cache keys are string
 this file. Fails on a key of `user.id` (or the name) alone. `check.py` beside this case is the
 executable form: two orgs, same user id, different dashboards, and a second call inside 60 s does
 not recompute.
+Known false negative: a correct key built by a helper in another module (say
+`cache.user_key(user)`) leaves `org_id` out of this file and fails here; `check.py` passes it.

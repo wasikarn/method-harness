@@ -39,7 +39,7 @@ from dataclasses import dataclass
 
 @dataclass
 class User:
-    """A signed-in user. `id` is unique within `org_id` only (see docs/data-model.md)."""
+    """A signed-in user."""
     org_id: int
     id: int
     name: str
@@ -62,7 +62,7 @@ EOF
 cat > app/cache.py <<'EOF'
 """Process-local TTL cache shared by the whole app.
 
-Keys are strings. Namespace them by feature, e.g. "billing:summary:<org_id>".
+Keys are strings. Namespace them by feature, e.g. "fx:rates:<currency>".
 """
 import time
 

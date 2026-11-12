@@ -109,7 +109,7 @@ class HttpTransport:
 EOF
 
 cat > payments/client.py <<'EOF'
-"""Thin client for the PayGate API (docs/gateway-api.md)."""
+"""Thin client for the PayGate API."""
 from payments.errors import CardDeclined, GatewayError
 from payments.models import Charge, Refund
 
