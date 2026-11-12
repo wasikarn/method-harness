@@ -562,7 +562,7 @@ commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `b
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
 The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` runs twelve cases.
-The `ab-wfr-*` cases are a bare-only check: run them with `--tag wf-review --ablation none` and no wrapper.
+The `ab-wfr-*` cases are a bare-only check: run them with `--tag wf-review --ablation none --scaffold` and no wrapper.
 
 Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
 recorder hooks (PR #1012), so the two columns are not the same instrument.
