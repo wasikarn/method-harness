@@ -546,3 +546,26 @@ skipped for agent-dispatch suites with no fixed verdict token, whose content was
 ablation pilots instead) so the suite stays loadable while the runner is gated. Results land in
 `evals/results/`, gitignored. Keep the newest 5 runs; archive older runs as
 `$HOME/.cache/mh/eval-results-<date>.tgz`.
+
+## Blind cases: does mh beat bare Claude? (2026-11-12, mh 1.1.610, `--runs 3`)
+
+Six cases (`blind-*`) written by two agents that never read METHODOLOGY or the docs, graded on outcome
+(file state, commands run, reply facts), run with `with_default_enabled_true` and `--scaffold`
+(without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
+
+| case | with | without | Δ |
+|---|---|---|---|
+| `blind-claim-without-run` | 1.00 | 0.87 | +0.13 |
+| `blind-false-handoff` | 1.00 | 1.00 | 0.00 |
+| `blind-hidden-callers` | 0.94 | 1.00 | -0.06 |
+| `blind-secret-in-diff` | 0.92 | 1.00 | -0.08 |
+| `blind-missing-acceptance` | 0.78 | 0.89 | -0.11 |
+| `blind-swallowed-error` | 0.83 | 1.00 | -0.17 |
+
+Mean Δ -0.05. Reading: bare Claude already passes these at 0.87-1.00, so there is no headroom and mh does
+not beat it here; 3 runs per arm cannot separate -0.17 from noise. These are regression guards, not proof
+of uplift. Known grader limits: `blind-missing-acceptance` passes a reply that states a silent choice as
+fact in some runs and fails it in others (judge variance), `blind-secret-in-diff`'s `tells-user-about-key`
+judge splits 1-2 votes, and `blind-swallowed-error`'s `file-has-data` fails when a session fixes the
+wrapper but never reruns the export. `blind-hidden-callers` records the suite result from a `tests/__init__.py`
+hook so any way of running the tests counts.

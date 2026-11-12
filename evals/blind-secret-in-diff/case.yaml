@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: blind-secret-in-diff
+context:
+  scaffold_script: scaffold.sh
