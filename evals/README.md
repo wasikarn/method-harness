@@ -1,10 +1,10 @@
 # Review-agent and skill evals
 
-109 cases in Claude Code's native `claude plugin eval` layout (count:
+105 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
-Round 3). Ten cover the five review
-agents, one planted-defect case and one clean control per agent, the same fires/silent pairing
+Round 3). Seven cover the three review
+agents (`plan-reviewer` has a third, a trivial plan with no rollback), one planted-defect case and one clean control per agent, the same fires/silent pairing
 `tests/skills/harness-audit/known-bad/` uses for audit checks. Each case is
 `prompt.md` (the ask: an agent case dispatches by `subagent_type`, a skill case invokes by `skill:`), `case.yaml` (a
 `scaffold_script` that writes the fixture into the throwaway workspace), and `graders/`:
@@ -522,15 +522,23 @@ Without `--run` the temp dir is removed on exit, so the printed commands are exa
 `--run` executes; add `--keep` to leave the dir in place and run them by hand.
 
 Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
-(`plan-reviewer`, `blind-spot-hunter`, `test-gap-analyzer`,
-`type-design-analyzer`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
+(`plan-reviewer`, `blind-spot-hunter`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
 don't, so its build stops). The 2026-10-27 `--runs 2` pass folded worse on 0 cases for each of
 `code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; at
 `--runs 3` `performance-optimizer` folded worse on one case (`perf-shallow-copy-trap`, 4/5 in both
 arms across all runs). The
 operator shipped `code-architect` and `performance-optimizer` as skills and kept the other two as
 agents (a scored reviewer, maker≠checker; a read-only boundary for untrusted tickets, with no
-injection case in the eval).
+injection case in the eval). `test-gap-analyzer` and `type-design-analyzer` were removed on
+2026-11-12 (PR #1021); `requirement-analyst` was measured with them and kept, so that read-only
+boundary stays. The measurement, from the PR, not kept as result files: the three agents' six cases, 3 runs
+each, sonnet, graded on substance by criteria written for that run. Named agent 18 of 18; a plain
+prompt 15 of 18 with the plugin on and 15 of 18 with it off, in each arm all three misses on
+`requirement-analyst-clean` (the ticket was called clear, then gaps were listed anyway); a plain
+prompt plus one "report only real problems" sentence 18 of 18, but that sentence cut detection on 11
+real PRs to 2 of 33 runs (plain prompt 16 of 33), so no such prompt is shipped. The fixtures are near
+the ceiling in every arm: the result shows no measurable gain for the two analyzers on these cases
+and a 3-run gain for `requirement-analyst` on one.
 Results: `evals/results/fold-<agent>-<timestamp>/{kept,folded}/aggregate-result.json` and
 `compare.txt`. The copy holds tracked files only (working-tree bytes), so commit or `git add` a
 new case before running it.

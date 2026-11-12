@@ -222,10 +222,6 @@ PY
   case "$c" in
     blind-spot-hunter-planted) sample=$'## Verdict\n\n**1 MEDIUM, 2 LOW**' ;;
     blind-spot-hunter-clean)      sample=$'## Verdict\n\n**CLEAN (1 dormant: 1 LOW)**' ;;
-    test-gap-analyzer-planted)    sample=$'**Verdict:** `4 GAPS, highest 6/10`' ;;
-    test-gap-analyzer-clean)      sample=$'**Verdict:** `COVERED`' ;;
-    type-design-analyzer-planted) sample=$'**6 CONCERNS across 4 types, lowest Encapsulation 4/10**' ;;
-    type-design-analyzer-clean)   sample=$'**SOUND**' ;;
     plan-reviewer-planted)        sample='verdict: needs-revision' ;;
     plan-reviewer-clean)          sample=$'findings: []\nverdict: production-ready' ;;
     requirement-analyst-planted)  sample='verdict: needs-clarification' ;;

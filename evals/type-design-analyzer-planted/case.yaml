@@ -1,4 +1,0 @@
-schema_version: "1.1"
-name: type-design-analyzer-planted
-context:
-  scaffold_script: scaffold.sh
