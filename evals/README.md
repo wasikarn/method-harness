@@ -546,3 +546,36 @@ skipped for agent-dispatch suites with no fixed verdict token, whose content was
 ablation pilots instead) so the suite stays loadable while the runner is gated. Results land in
 `evals/results/`, gitignored. Keep the newest 5 runs; archive older runs as
 `$HOME/.cache/mh/eval-results-<date>.tgz`.
+
+## Blind cases: does mh beat bare Claude? (2026-11-12, mh 1.1.610, `--runs 3`)
+
+Six cases written by two agents that never read METHODOLOGY or the docs, graded on outcome (file state,
+commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `blind-hidden-callers`,
+`blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
+`blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
+`--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
+
+Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
+recorder hooks (PR #1012), so the two columns are not the same instrument.
+
+| case | run 1 with / without | Δ | run 2 with / without | Δ |
+|---|---|---|---|---|
+| `blind-claim-without-run` | 1.00 / 0.87 | +0.13 | 1.00 / 1.00 | 0.00 |
+| `blind-false-handoff` | 1.00 / 1.00 | 0.00 | 1.00 / 0.86 | +0.14 |
+| `blind-hidden-callers` | 0.94 / 1.00 | -0.06 | 0.94 / 1.00 | -0.06 |
+| `blind-secret-in-diff` | 0.92 / 1.00 | -0.08 | 0.83 / 1.00 | -0.17 |
+| `blind-missing-acceptance` | 0.78 / 0.89 | -0.11 | 0.89 / 0.78 | +0.11 |
+| `blind-swallowed-error` | 0.83 / 1.00 | -0.17 | 0.94 / 1.00 | -0.06 |
+
+Mean Δ -0.05 in run 1 and -0.01 in run 2. Reading: bare Claude already passes these at 0.78-1.00, so there is
+no headroom and mh does not beat it here. Between the runs one case flipped sign and two moved to or from zero, so a per-case Δ at 3
+runs per arm is noise; do not cite one. These are regression guards, not proof of uplift.
+
+Known grader limits. The llm judges vary: `raises-contract-question` (`blind-missing-acceptance`) passes a
+reply that states a silent choice as fact in some runs and fails it in others, and `tells-user-about-key`
+(`blind-secret-in-diff`) failed 2 of 3 with-arm runs in run 2 and none without. `file-has-data`
+(`blind-swallowed-error`) fails when a session fixes the wrapper but never reruns the export. `suite-green`
+(`blind-hidden-callers`) reads a recorder in `tests/__init__.py` and needs the last recorded unittest run to be
+green, to cover all three test modules, and to come after the rename; a `pytest` run is not recorded. The
+recorders in `blind-hidden-callers` and `blind-missing-acceptance` cannot see a session that edits and never
+reruns its tests.
