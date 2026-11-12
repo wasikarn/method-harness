@@ -174,6 +174,13 @@ out="$(payload Bash "${AWS}abc" "" | bash "$HOOK")"
 res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
 { [[ "$res" == *"[REDACTED:AWS access/session key]"* && "$res" != *"$AWS"* ]]; } || _r=1; check "AWS key followed by lowercase letters is replaced" "$_r"; _r=0
 
+# 6h. the fast path that skips the OpenAI pattern on text without its marker must not skip a real
+# key (the key is built at runtime, like every token here)
+OAI="sk-proj-$(rnd 24 "$ALNUM" 5)T3BlbkFJ$(rnd 24 "$ALNUM" 6)"
+out="$(payload Bash "key=$OAI ok" "" | bash "$HOOK")"
+res="$(field "$out" hookSpecificOutput.updatedToolOutput.stdout)"
+{ [[ "$res" == *"[REDACTED:OpenAI]"* && "$res" != *"$OAI"* && "$res" == *" ok" ]]; } || _r=1; check "an OpenAI key is still replaced" "$_r"; _r=0
+
 # 7. large clean output stays fast and silent. The payload goes through a file: as one argument
 # it is over Linux's per-argument limit, python3 never started, and this row passed on an empty
 # payload (found 2026-11-12).
