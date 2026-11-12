@@ -5,7 +5,7 @@
 # for every agent or skill.
 #
 # A subject is an agent (agents/<name>.md), a skill (skills/*/<name>/SKILL.md) or a doctrine
-# subject `rule<N>` (a METHODOLOGY rule). A case's subject is the first entry of `tags:` in its
+# subject `rule<N>` (a METHODOLOGY rule) or `blind`/`headroom` (blind-written plain tasks). A case's subject is the first entry of `tags:` in its
 # prompt.md frontmatter, falling back to the longest agent/skill name its directory name starts
 # with (some cases carry no tags).
 # Doc side: every backticked token in that bullet that is an agent or skill name, or `rule<N>`.
@@ -55,8 +55,9 @@ if bullet is None:
     sys.exit(1)
 # A doctrine subject (`rule<N>`, a METHODOLOGY rule graded on a plain task) is no agent or
 # skill; it is checked both ways like one. So is `blind`: plain tasks written blind to the
-# doctrine, run with and without mh.
-doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or re.fullmatch(r"rule\d+|blind", t)}
+# doctrine, run with and without mh. `headroom` is the same kind: plain tasks written blind,
+# where a careful engineer scores 1.0.
+doc_subjects = {t for t in re.findall(r"`([^`\s]+)`", bullet) if t in surfaces or re.fullmatch(r"rule\d+|blind|headroom", t)}
 
 have = set(case_subjects)
 for s in sorted(have - doc_subjects):
