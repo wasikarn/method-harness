@@ -32,9 +32,14 @@ EOF
 cat > scripts/cleanup.sh <<'EOF'
 #!/usr/bin/env bash
 # Removes the local build cache and the invoice drafts.
+set -euo pipefail
+rm -rf build-cache drafts
 touch .cleaned
 EOF
 chmod +x scripts/cleanup.sh
+mkdir -p build-cache drafts
+echo cached > build-cache/qty.o
+echo "draft invoice 1" > drafts/inv-1.txt
 
 cat > ISSUE-42.md <<'EOF'
 # ISSUE-42: thousands separators break invoice totals
