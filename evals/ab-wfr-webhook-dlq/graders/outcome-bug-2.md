@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that endpoints that existed before this PR have `MaxAttempts` 0: `store.Open` (`internal/store/store.go`) migrates the legacy `secret` field but not `max_attempts`, and only `createEndpoint` applies the default. `Worker.Tick` (`internal/delivery/worker.go`) dead-letters when `d.Attempt >= ep.MaxAttempts`, so every existing customer's failed delivery goes to the dead-letter queue after its first failure instead of being retried. Locating it in worker.go or store.go both count, as long as the reply names existing or legacy endpoints and the lost retries. Any wording and any line within the named function count; a suggested fix is welcome but not required. Score 0 if the reply does not report this, or calls this code correct.
