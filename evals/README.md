@@ -626,10 +626,12 @@ sandbox. Grader hash `e4cf1aad…`; the rule: a case goes on to an A/B only if i
 | `ab-wfr-class-waitlist` | 0.97 | 5,5,5,4,5 / 5 |
 | `ab-wfr-webhook-dlq` | 0.80 | 2,5,5,4,5 / 3 |
 
-The 0.80 case's decoy grader also counted a real, unplanted issue against it (rotated-out secrets kept without a
-cap, so the signature header grows), so under the rule that case drops and no case qualifies. No workflow was
-built. Without that grader the case scores 0.84, and the whole gap is one unit slip (seconds passed where a
-`time.Duration` is due), found in 2 of 5 runs. $5.71.
+Only `ab-wfr-webhook-dlq` is at or below 0.85. In one of its runs the judge counted a real issue the author did not
+plant (rotated-out secrets kept without a cap, so the signature header grows) against the decoy grader. The rule
+drops a case only when a planted decoy turns out to be a real bug, so that run is rescored instead: 0.80 raw, 0.83
+rescored, 0.84 without the decoy grader. The case qualifies for step 2, an A/B against the workflow, which has not
+been run; no workflow is built yet. Its gap is bug 1 (a seconds value passed where a `time.Duration` is due, missed
+in 3 of 5 runs) and one bug-4 miss. $5.71.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 

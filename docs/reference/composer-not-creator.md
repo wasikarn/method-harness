@@ -23,6 +23,18 @@ without them, the installed plugins are the only source.
 A clone reached via `claude --add-dir` loads none of its own CLAUDE.md by default; set
 `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` if you need its instructions, not just its files.
 
+## Headroom pilot
+
+A new skill, agent or workflow is built only if bare Claude leaves room to beat it. Run the pilot first:
+
+- Cases written by an agent that never saw mh.
+- Bare Claude only: `claude plugin eval --ablation none`, without the `with_default_enabled_true` wrapper.
+- The decision rule written and the graders' hash recorded before the run.
+
+Build only if bare Claude scores 0.85 or lower on a case; otherwise report "no headroom" and stop. A case that
+qualifies then goes to the operator's blind A/B keep-bar. Operator decision of 2026-11-12: bare Claude passed most
+blind cases mh tried, though not all (`evals/README.md`).
+
 ## Which mattpocock skill routes where
 
 `docs/reference/mattpocock-integration-map.md` tracks, per installed `mattpocock-skills` skill,
