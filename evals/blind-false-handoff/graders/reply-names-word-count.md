@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: 'word_?count'
+pattern: 'word[_ ]?count'
 flags: i
 target: last_message
 ---

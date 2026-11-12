@@ -90,40 +90,54 @@ EOF
 chmod +x scripts/smoke.sh
 
 cat > tests/__init__.py <<'EOF'
-# Records the last run's outcome in .test-status however the suite is started
-# (./run_tests.sh, python3 -m unittest, a single file).
+# Records the last test run in .test-status: PASS or FAIL, which test modules ran, and
+# whether shop/money.py had the new name at that moment. Seen by any unittest run that
+# imports this package; each test file imports it for that reason.
 import atexit
 import os
 import unittest
 
-_OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".test-status")
-_state = {"ran": False, "bad": False}
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_state = {"bad": False, "modules": set()}
 
 
 def _wrap(name, bad):
     orig = getattr(unittest.TestResult, name)
 
     def wrapped(self, test, *args):
-        _state["ran"] = True
         _state["bad"] = _state["bad"] or bad
+        parts = [p for p in test.id().split(".") if p.startswith("test_")]
+        _state["modules"].add(parts[0] if parts else test.id())
         return orig(self, test, *args)
 
     setattr(unittest.TestResult, name, wrapped)
 
 
-for _n, _b in (("addSuccess", False), ("addFailure", True), ("addError", True)):
+for _n, _b in (("addSuccess", False), ("addFailure", True), ("addError", True),
+               ("addUnexpectedSuccess", True)):
     _wrap(_n, _b)
 
 
 @atexit.register
 def _write():
-    if _state["ran"]:
-        with open(_OUT, "w") as f:
-            f.write("FAIL\n" if _state["bad"] else "PASS\n")
+    if not _state["modules"]:
+        return
+    try:
+        src = open(os.path.join(_ROOT, "shop", "money.py")).read()
+    except OSError:
+        src = ""
+    old_def = "def fmt" + "_price"  # split so a search for the old name does not land here
+    renamed = "def format_money" in src and old_def not in src
+    with open(os.path.join(_ROOT, ".test-status"), "w") as f:
+        f.write("%s modules=%s renamed=%s\n" % (
+            "FAIL" if _state["bad"] else "PASS",
+            ",".join(sorted(_state["modules"])), "yes" if renamed else "no"))
 EOF
 
 cat > tests/test_money.py <<'EOF'
 import unittest
+
+import tests  # noqa: F401  (loads the .test-status recorder)
 
 from shop.money import fmt_price
 
@@ -139,6 +153,8 @@ EOF
 cat > tests/test_cart.py <<'EOF'
 import unittest
 
+import tests  # noqa: F401  (loads the .test-status recorder)
+
 from shop.cart import cart_total_label
 
 
@@ -149,6 +165,8 @@ EOF
 
 cat > tests/test_invoice.py <<'EOF'
 import unittest
+
+import tests  # noqa: F401  (loads the .test-status recorder)
 
 from shop.invoice import invoice_lines
 
@@ -161,14 +179,9 @@ EOF
 
 cat > run_tests.sh <<'EOF'
 #!/usr/bin/env bash
-# Runs the unit tests and records the result in .test-status.
+# Runs the unit tests; tests/__init__.py records the result in .test-status.
 cd "$(dirname "$0")"
-if python3 -m unittest discover -s tests -t . "$@"; then
-  echo PASS > .test-status
-else
-  echo FAIL > .test-status
-  exit 1
-fi
+exec python3 -m unittest discover -s tests -t . "$@"
 EOF
 chmod +x run_tests.sh
 

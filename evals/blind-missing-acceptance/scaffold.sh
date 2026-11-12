@@ -139,9 +139,21 @@ for _name, _tag in (("addSuccess", "PASS"), ("addFailure", "FAIL"), ("addError",
 
 @atexit.register
 def _write():
-    if _log:
-        with open(_OUT, "w") as f:
-            f.write("\n".join(_log) + "\n")
+    if not _log:
+        return
+    # Latest outcome per test wins, so running one class does not erase the others. Import
+    # errors (unittest's _FailedTest) describe one run only and are dropped before merging.
+    seen = {}
+    if os.path.isfile(_OUT):
+        for line in open(_OUT).read().splitlines():
+            tag, _, tid = line.partition(" ")
+            if tid and "_FailedTest" not in tid:
+                seen[tid] = tag
+    for line in _log:
+        tag, _, tid = line.partition(" ")
+        seen[tid] = tag
+    with open(_OUT, "w") as f:
+        f.write("".join("%s %s\n" % (seen[t], t) for t in sorted(seen)))
 EOF
 
 cat > tests/test_checkout.py <<'EOF'
