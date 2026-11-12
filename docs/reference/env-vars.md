@@ -60,7 +60,9 @@ tools are named in `--allowedTools`/`--tools`; tools-reference, "Task tool avail
 `CLAUDE_CODE_SESSION_ID` (`learn`'s `find-transcript.sh` finds this session's transcript by it;
 the failure nudge falls back to it when the payload has no `session_id`),
 `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME` (`scripts/_lib/memory-dir.py` resolves the
-memory store from them; `gate-differential.sh` reads transcripts under `CLAUDE_CONFIG_DIR`),
+memory store from them; `gate-differential.sh` reads transcripts under `CLAUDE_CONFIG_DIR`;
+`scripts/_lib/skill-namespace.py` reads the plugin registry under it and
+`hooks/gates/config-write-guard.py` resolves the settings path from it),
 `SLASH_COMMAND_TOOL_CHAR_BUDGET` (check 43's description budget), `CODEX_HOME`
 (`codex-resolve-model.py` reads the catalog there), `CI` (`run-gauntlet.sh`'s default job count),
 `CLAUDE_PLUGIN_DATA` — observed as `~/.claude/plugins/data/<plugin>-<marketplace>/`, consistent

@@ -190,6 +190,27 @@ else
   fail=$((fail + 1))
 fi
 
+# A manifest whose `name` is not a string (found 2026-11-12: {"name":123} logged skill "123:solo")
+# falls back to the install key, like a manifest with no name.
+mkdir -p "$PLUG/c/skills/solo" "$PLUG/c/.claude-plugin"; touch "$PLUG/c/skills/solo/SKILL.md"
+printf '{"name":123}' > "$PLUG/c/.claude-plugin/plugin.json"
+printf '{"version":2,"plugins":{"pluga@m":[{"installPath":"%s"}],"x@m":[{"installPath":"%s"}],"plugc@m":[{"installPath":"%s"}]}}' \
+  "$PLUG/a" "$PLUG/b" "$PLUG/c" > "$PLUG/installed_plugins.json"
+check_mapped solo "plugc:solo" "NON-STRING MANIFEST NAME: falls back to the install key"
+
+# CLAUDE_CONFIG_DIR moves ~/.claude (found 2026-11-12: the resolver read only $HOME/.claude, so
+# with the variable set no short name was ever mapped). The registry and the user skills that
+# own a name are both read from it.
+CFG="$TMP_HOME/elsewhere"
+mkdir -p "$CFG/plugins/d/skills/moved" "$CFG/plugins/d/skills/owned" "$CFG/skills/owned"
+touch "$CFG/plugins/d/skills/moved/SKILL.md" "$CFG/plugins/d/skills/owned/SKILL.md"
+printf '{"version":2,"plugins":{"plugd@m":[{"installPath":"%s"}]}}' "$CFG/plugins/d" > "$CFG/plugins/installed_plugins.json"
+run_hook() { HOME="$TMP_HOME" CLAUDE_CONFIG_DIR="$CFG" bash -c "echo '$1' | '$HOOK'"; }
+check_mapped moved "plugd:moved" "CLAUDE_CONFIG_DIR: the registry under it is read"
+check_mapped owned "owned" "CLAUDE_CONFIG_DIR: a user skill under it owns the short name"
+check_mapped grilling "grilling" "CLAUDE_CONFIG_DIR: the registry under \$HOME/.claude is not read"
+run_hook() { HOME="$TMP_HOME" bash -c "echo '$1' | '$HOOK'"; }
+
 # Malformed payload must not crash the hook or corrupt the log.
 run_hook 'not json' >/tmp/sut-stdout2.$$ 2>/tmp/sut-stderr2.$$
 rc=$?
