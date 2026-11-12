@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-106 cases in Claude Code's native `claude plugin eval` layout (count:
+109 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Ten cover the five review
@@ -561,7 +561,7 @@ commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `b
 `blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
-The subject also holds the three `ab-sfh-*` cases (next section), so `--tag blind` runs nine cases.
+The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` runs twelve cases.
 
 Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
 recorder hooks (PR #1012), so the two columns are not the same instrument.
@@ -611,6 +611,25 @@ before each run.
   judge voted FAIL on several replies that met their rubric. Both caveats apply to both arms.
 - Outcome: the agent became `docs/reference/silent-failure-review.md` (PR #1017). The run-2 cases are in
   that PR's history.
+
+## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12, `--runs 5`, bare only)
+
+The first step of a workflow pilot. A deterministic review workflow (find findings, then 3 independent refuters
+per finding) would be built only if bare Claude left room on a large-PR review. An agent that never saw mh wrote
+three cases. Each has a PR of 17-20 changed files in its own language (Python, TypeScript, Go), 5 planted bugs
+(at least 2 need another file to see), and 3 decoys. The PR is in `pr.diff` because git may not run in the
+sandbox. Grader hash `e4cf1aad…`; the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
+
+| case | bare mean | passes: bugs 1-5, no-decoy (of 5) |
+|---|---|---|
+| `ab-wfr-plan-proration` | 0.97 | 4,5,5,5,5 / 5 |
+| `ab-wfr-class-waitlist` | 0.97 | 5,5,5,4,5 / 5 |
+| `ab-wfr-webhook-dlq` | 0.80 | 2,5,5,4,5 / 3 |
+
+The 0.80 case's decoy grader also counted a real, unplanted issue against it (rotated-out secrets kept without a
+cap, so the signature header grows), so under the rule that case drops and no case qualifies. No workflow was
+built. Without that grader the case scores 0.84, and the whole gap is one unit slip (seconds passed where a
+`time.Duration` is due), found in 2 of 5 runs. $5.71.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 

@@ -20,7 +20,9 @@ branch protection requires a PR and the `mh/gauntlet` status on an up-to-date he
 
 Before writing a new skill or agent, check `mattpocock-skills`, then `codex@openai-codex`, then
 the other local harnesses, in the order `docs/reference/composer-not-creator.md` gives. Create a
-native surface only when none fit.
+native surface only when none fit. Then run a bare-only pilot first: blind cases, `--ablation none`,
+graders hashed before the run. Build only if bare Claude scores 0.85 or lower on a case. Since
+2026-11-12, every blind measurement has found bare Claude at 0.8-1.0 (`evals/README.md`).
 
 ## Authoring
 
