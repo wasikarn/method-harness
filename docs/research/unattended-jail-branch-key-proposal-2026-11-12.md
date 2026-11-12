@@ -2,7 +2,8 @@
 
 > **Status (2026-11-12): NO-GO, not built.** This is the working file of an `mh:attack-proposal`
 > run, kept as a record. Three attack lanes found 17 breaks in the first text; three validator
-> rounds then closed all of them but each found 1 or 2 new ones, and the skill stops at three
+> rounds then closed them or accepted them as stated residuals (C3, C5, C10, C14/C15, N1), and each
+> found 1 or 2 new ones, and the skill stops at three
 > rounds. The two breaks open at the end (a rename on `develop` moving an agent edit to another
 > path at sync time, and the owner-login comparison being case-sensitive) have a proposed fix
 > each, named in the last validator's report and **not** written into this file or checked.
@@ -147,7 +148,8 @@ attended flow applies unchanged.
 ## Known facts
 
 Earlier work searched: versions 1 to 3 of this proposal in this session (all failed; version 3's
-file was a session scratchpad file and is not kept; it went through three
+file was a session scratchpad file, kept since as
+`unattended-jail-intake-bundle-proposal-2026-11-12.md`; it went through three
 validator rounds), `docs/adr/` 0001 to 0005, `docs/reference/branching-model.md`,
 `docs/reference/operating-model.md`. No `qmd` collection and no working `gh` in this session, so
 issues and pull requests were not searched beyond the open list: none relevant.

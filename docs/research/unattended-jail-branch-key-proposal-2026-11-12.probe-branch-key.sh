@@ -3,27 +3,29 @@
 # against a THROWAWAY GitHub repository. It answers the facts no paper review could:
 # what a write deploy key can and cannot push under a ruleset, and whether the freeze works.
 #
-# Status (2026-11-12): written for the proposal in the .md file of the same name and dry-run only
+# Status (2026-11-12): written for the proposal in
+# unattended-jail-branch-key-proposal-2026-11-12.md and dry-run only
 # against a local bare repository with stub `gh` and `ssh`. It has NOT been run against GitHub;
 # the ruleset JSON in setup() was written from memory of the REST API and may need correcting.
 #
 # Run it on your own machine, with your own `gh` login. It never touches method-harness:
 # it refuses any repository whose name contains "method-harness".
 #
-#   ./probe-branch-key.sh setup  <owner>/<test-repo>   # creates the repo, ruleset, deploy key
-#   ./probe-branch-key.sh probe  <owner>/<test-repo>   # runs the probes, writes results.md
-#   ./probe-branch-key.sh revoke <owner>/<test-repo>   # deletes the key, checks a push now fails
+#   bash <this file> setup  <owner>/<test-repo>   # creates the repo, ruleset, deploy key
+#   bash <this file> probe  <owner>/<test-repo>   # runs the probes, writes results.md
+#   bash <this file> revoke <owner>/<test-repo>   # deletes the key, checks a push now fails
 #
 # Needs: git 2.29+, ssh, ssh-keygen, gh (logged in as the repo owner), jq.
-# Everything it creates locally lives under ./branch-key-work/ next to this script.
+# Everything it creates locally (the private deploy key, the clones, results.md) lives under
+# $PROBE_BRANCH_KEY_DIR, default ~/.cache/mh/branch-key-probe: outside the repository, so the key
+# cannot be committed. The path must not contain spaces (it goes into GIT_SSH_COMMAND unquoted).
 # Delete the test repository yourself when done (Settings, Danger zone).
 set -uo pipefail
 
 cmd="${1:-}"; repo="${2:-}"
-here="$(cd "$(dirname "$0")" && pwd)"
-work="$here/branch-key-work"
+work="${PROBE_BRANCH_KEY_DIR:-$HOME/.cache/mh/branch-key-probe}"
 key="$work/deploy_key"
-out="$here/results.md"
+out="$work/results.md"
 
 die() { echo "probe-branch-key: $*" >&2; exit 1; }
 case "$repo" in
@@ -32,8 +34,8 @@ case "$repo" in
 esac
 case "$repo" in *method-harness*) die "refusing to run against $repo: use a throwaway repository" ;; esac
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "odd repository name: $repo"
+case "$work" in *[[:space:]]*) die "work dir has a space in it: $work (set PROBE_BRANCH_KEY_DIR)" ;; esac
 for t in git ssh ssh-keygen gh jq; do command -v "$t" >/dev/null || die "$t not found"; done
-owner="${repo%%/*}"
 ssh_url="git@github.com:$repo.git"
 # The deploy key only: no agent, no other identity, no user ssh config.
 export GIT_SSH_COMMAND="ssh -F /dev/null -i $key -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$work/known_hosts"

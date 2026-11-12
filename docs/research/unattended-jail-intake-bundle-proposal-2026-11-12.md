@@ -2,9 +2,11 @@
 
 > **Status (2026-11-12): NO-GO, not built, superseded.** This is the working file of an
 > `mh:attack-proposal` run, kept as a record. Four attack lanes found 26 breaks in the first
-> text; three validator rounds closed them and each found 2 or 3 new ones, every one of them in
-> the owner-side intake script that parses the agent's git bundle. The jail half held from
-> revision 1 on. The two breaks open at the end (the host pushing from a repository a container
+> text (the body numbers 23, B1 to B23; the record does not say how 26 became 23); three validator
+> rounds closed them or left them as accepted residuals (B5, B11) and each found 2 or 3 new ones,
+> every one of them in the owner-side intake script that parses the agent's git bundle. No new
+> break landed in the jail half after revision 1, though revision 2 tightened its forwarding proxy
+> on the validator's notes. Validator round 3's result is not written into this file. The two breaks open at the end (the host pushing from a repository a container
 > wrote, and binary files skipping the hidden-character scan) are not fixed here. The next design,
 > which drops the intake script, is `unattended-jail-branch-key-proposal-2026-11-12.md`.
 > Every attacker and validator was Claude (no Codex in the session, so independence was reduced),
