@@ -44,12 +44,12 @@ def _skill_names(root, entries):
     return names
 
 
-def resolve(short, home, cwd):
-    for base in (os.path.join(home, ".claude"), os.path.join(cwd, ".claude")):
+def resolve(short, config_dir, cwd):
+    for base in (config_dir, os.path.join(cwd, ".claude")):
         if os.path.isdir(os.path.join(base, "skills", short)):
             return short  # a real unnamespaced skill owns the name
     try:
-        with open(os.path.join(home, ".claude", "plugins", "installed_plugins.json")) as f:
+        with open(os.path.join(config_dir, "plugins", "installed_plugins.json")) as f:
             plugins = json.load(f).get("plugins", {})
     except (OSError, ValueError, AttributeError):
         return short
@@ -66,7 +66,9 @@ def resolve(short, home, cwd):
                 manifest = {}
             if not isinstance(manifest, dict):
                 manifest = {}
-            name = manifest.get("name") or key.split("@")[0]
+            name = manifest.get("name")
+            if not isinstance(name, str) or not name:
+                name = key.split("@")[0]  # no usable manifest name: fall back to the install key's plugin name
             entries = manifest.get("skills")
             if isinstance(entries, str):
                 entries = [entries]
@@ -80,4 +82,6 @@ def resolve(short, home, cwd):
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         sys.exit(0)
-    print(resolve(sys.argv[1], os.environ.get("HOME", ""), os.getcwd()))
+    # CLAUDE_CONFIG_DIR moves ~/.claude, registry and user skills included (memory-dir.py reads it too).
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.environ.get("HOME", ""), ".claude")
+    print(resolve(sys.argv[1], config_dir, os.getcwd()))

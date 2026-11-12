@@ -18,9 +18,9 @@ branch protection requires a PR and the `mh/gauntlet` status on an up-to-date he
 
 ## Composer-not-creator
 
-Before writing a new skill or agent, check `mattpocock-skills`, then `codex@openai-codex`, then
+Before writing a new skill, agent or workflow, check `mattpocock-skills`, then `codex@openai-codex`, then
 the other local harnesses, in the order `docs/reference/composer-not-creator.md` gives. Create a
-native surface only when none fit.
+native surface only when none fit, and only after a bare-only pilot shows headroom (same file, § Headroom pilot).
 
 ## Authoring
 

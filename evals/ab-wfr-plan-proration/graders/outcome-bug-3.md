@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that prorated upgrade adjustments are never marked as billed: `build_invoice` in `billing/invoicing.py` adds pending adjustments as invoice lines but never fills `inv.adjustment_ids`, so `Store.save_invoice` (`billing/store.py`) never sets their `invoice_id`, and `pending_adjustments` returns them again on the next monthly run. A one-off upgrade charge is billed again on every later invoice, forever. Locating it in invoicing.py, store.py or `run` in cli.py all count, as long as the reply says the adjustment is re-billed on later invoices or never marked as billed. Any wording and any line within the named function count; a suggested fix is welcome but not required. Score 0 if the reply does not report this, or calls this code correct.

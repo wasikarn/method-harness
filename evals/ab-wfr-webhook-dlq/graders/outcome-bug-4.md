@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that `max_attempts` may now be up to 100 (`createEndpoint` in `internal/api/handlers.go`), but `Backoff` in `internal/delivery/backoff.go` computes `baseDelay << attempt`. From about attempt 34 the `time.Duration` overflows to a negative or wrapped value that the `d > maxDelay` cap does not catch. In the code as written `jitter` then calls `rand.Int63n` with a non-positive argument and panics, which kills the worker and the whole hookd process, and because the delivery is still due after a restart it crash-loops. The reply must name the shift overflow at high attempt counts. Saying it panics or crashes the service is the full answer; saying it yields a negative or broken retry delay also counts. Any wording and any line within the named function count; a suggested fix is welcome but not required. Score 0 if the reply does not report this, or calls this code correct.

@@ -5,6 +5,7 @@
 # with its own rules and two recorder tests (running this repo's test layer here would recurse); only
 # `claude`, check-observer-contract.sh and harness-audit's audit.sh are stubs.
 set -uo pipefail
+unset GAUNTLET_PROGRESS  # a value exported by the caller would change what the rows below see
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$(cd -P "$HERE/../.." && pwd)"
 pass=0; fail=0

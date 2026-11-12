@@ -1,6 +1,6 @@
 # Review-agent and skill evals
 
-106 cases in Claude Code's native `claude plugin eval` layout (count:
+109 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
 Round 3). Ten cover the five review
@@ -561,7 +561,10 @@ commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `b
 `blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
-The subject also holds the three `ab-sfh-*` cases (next section), so `--tag blind` runs nine cases.
+The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` matches twelve cases.
+Do not run the `ab-wfr-*` cases that way: they are a bare-only check, and a wrapped `--tag blind` run gives them an
+mh arm they were never meant to have. Run them with `--tag wf-review --ablation none --scaffold` and no wrapper, and
+run the other nine by name.
 
 Two runs of 3 per arm. Run 1 used the first graders; run 2 followed the review fixes to six graders and two
 recorder hooks (PR #1012), so the two columns are not the same instrument.
@@ -611,6 +614,31 @@ before each run.
   judge voted FAIL on several replies that met their rubric. Both caveats apply to both arms.
 - Outcome: the agent became `docs/reference/silent-failure-review.md` (PR #1017). The run-2 cases are in
   that PR's history.
+
+## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12, `--runs 5`, bare only)
+
+The first step of a workflow pilot. A deterministic review workflow (find findings, then 3 independent refuters
+per finding) would be built only if bare Claude left room on a large-PR review. An agent that never saw mh wrote
+three cases. Each has a PR of 17-20 changed files in its own language (Python, TypeScript, Go), 5 planted bugs
+(at least 2 need another file to see), and 3 decoys. The PR is in `pr.diff` because git may not run in the
+sandbox. Grader hash `e4cf1aad…`
+(`shasum -a 256 evals/ab-wfr-*/graders/*.md | shasum -a 256`); the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
+
+| case | bare mean | passes: bugs 1-5, no-decoy (of 5) |
+|---|---|---|
+| `ab-wfr-plan-proration` | 0.97 | 4,5,5,5,5 / 5 |
+| `ab-wfr-class-waitlist` | 0.97 | 5,5,5,4,5 / 5 |
+| `ab-wfr-webhook-dlq` | 0.80 | 2,5,5,4,5 / 3 |
+
+Only `ab-wfr-webhook-dlq` is at or below 0.85. In one of its runs the judge counted a real issue the author did not
+plant (rotated-out secrets kept without a cap, so the signature header grows) against the decoy grader. The rule
+drops a case only when a planted decoy turns out to be a real bug, so that run is rescored instead: 0.80 raw, 0.83
+rescored, 0.84 without the decoy grader. The case qualifies for step 2, an A/B against the workflow, which has not
+been run; no workflow is built yet. Its gap is bug 1 (a seconds value passed where a `time.Duration` is due, missed
+in 3 of 5 runs) and one bug-4 miss. All three scores are at or below 0.85, so the verdict does not depend on
+the rescore. $5.71. Before step 2, `ab-wfr-webhook-dlq`'s `outcome-no-decoy-flagged` grader needs an exception for
+that unplanted issue, as it already has for two other real bugs; it is left as run here so the hash above still
+reproduces, and a changed grader takes a new hash.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 
