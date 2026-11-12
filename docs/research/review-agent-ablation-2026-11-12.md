@@ -199,7 +199,11 @@ condition also overstated one finding. This is a reading of four cases, not a co
 - `review-agent-ablation-2026-11-12.build-pr.py`: builds the real-pull-request cases of run 3
   from merge commits, with each case's criterion.
 
-Both scripts read the checkout they are pointed at: the `silent-failure-hunter` eval cases and
-agent they use left `develop` in `5b297ee1`, so they build these cases only from a commit before
-it. The commit the runs were built from is not recorded here. Both refuse an output directory
-outside the temp dir, because they delete and rebuild it.
+Both scripts need a checkout at a commit before `5b297ee1`, where the `silent-failure-hunter`
+agent and its eval cases left `develop`. `build-variants.py` reads the eval cases of that
+checkout and stops with `FileNotFoundError` when one is missing. `build-pr.py` takes each case's
+tree from its merge commit, so it needs the full history, and copies the plugin from `HEAD`; it
+refuses a `HEAD` without `agents/silent-failure-hunter.md`, the agent its prompts name (before
+2026-11-13 it built from such a `HEAD` without an error, and the agent condition then named an
+agent the copy did not have). The commit the runs were built from is not recorded here. Both
+refuse an output directory outside the temp dir, because they delete and rebuild it.
