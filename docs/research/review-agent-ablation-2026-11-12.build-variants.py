@@ -2,9 +2,17 @@
 <case>-agent (the original prompt, naming the mh agent) and <case>-plain (the same task with no
 agent named). Both carry one LLM grader that judges substance only, so a bare model is not marked
 down for lacking the agent's report format."""
-import json, os, re, shutil, subprocess, sys
+import glob, os, re, shutil, subprocess, sys
 
 repo, out = sys.argv[1], sys.argv[2]
+
+
+def under_tmp(p):  # these scripts delete their output dirs: only ever under the temp dir
+    import tempfile
+    root = os.path.realpath(tempfile.gettempdir()) + os.sep
+    if not os.path.realpath(p).startswith(root):
+        sys.exit("refusing %r: the output directory must be under %s" % (p, root))
+under_tmp(out)
 SUBSTANCE = {
  'type-design-analyzer-planted': 'Score 1 if the answer names at least two of: public mutable amount/currency, no validation in the constructor (NaN, non-integer, unknown currency), add() combining different currencies, as real design problems. Score 0 otherwise. Extra observations, suggestions or minor notes beyond this never lower the score.',
  'type-design-analyzer-clean': "Score 1 if the answer's overall verdict is that the Money type's design is sound and it claims no correctness bug or broken invariant in the code as written. Suggestions for a larger API or other optional improvements are allowed. Score 0 only if it claims a correctness bug, a broken invariant, or judges the design unsound. Extra observations, suggestions or minor notes beyond this never lower the score.",
@@ -27,7 +35,7 @@ BACKEND = {  # original substance grader kept as written
  "backend-architect-no-idempotency-webhook": "idempotency-quality.md",
 }
 
-shutil.rmtree(out, ignore_errors=True)
+if os.path.isdir(out): shutil.rmtree(out)
 os.makedirs(out)
 tar = subprocess.Popen(["git", "-C", repo, "archive", "HEAD"], stdout=subprocess.PIPE)
 subprocess.check_call(["tar", "-x", "-C", out], stdin=tar.stdout)
@@ -36,7 +44,6 @@ manifest = os.path.join(out, ".claude-plugin", "plugin.json")
 text = open(manifest).read()
 assert text.count('"defaultEnabled": false') == 1
 open(manifest, "w").write(text.replace('"defaultEnabled": false', '"defaultEnabled": true'))
-import glob
 for ag in glob.glob(os.path.join(out, "agents", "*.md")):  # every condition on the session model
     t = open(ag).read(); open(ag, "w").write(re.sub(r"^model: .*$", "model: inherit", t, count=1, flags=re.M))
 src_evals = os.path.join(repo, "evals")

@@ -2,6 +2,14 @@
 bug a later PR fixed. Three variants per case: agent (mh review agents), plain, short."""
 import os, re, shutil, subprocess, sys, glob
 repo, out, tars = sys.argv[1], sys.argv[2], sys.argv[3]
+
+
+def under_tmp(p):  # these scripts delete their output dirs: only ever under the temp dir
+    import tempfile
+    root = os.path.realpath(tempfile.gettempdir()) + os.sep
+    if not os.path.realpath(p).startswith(root):
+        sys.exit("refusing %r: the output directory must be under %s" % (p, root))
+under_tmp(out); under_tmp(tars)
 X = " Finding other issues as well never lowers the score. Judge only whether the named defect is identified; the wording may differ."
 BUG = {
  "pr975-citation-exists": ("4b554241971b345a5960c4c473d22c90347fdd3f", "Score 1 if the review identifies at least one of these in scripts/_lib/citation_exists.py: (a) int() on a cited line number can raise (very long digit strings) and the script crashes instead of exiting 0 as promised; (b) cites inside JSON input that follow an escaped newline/tab (a backslash before the path) are silently dropped by the path regex's lookbehind, so the report undercounts; (c) the SHA/path overlap check is quadratic and slow on large inputs. Score 0 otherwise."),
@@ -36,7 +44,8 @@ SHORT = ("\nReport only problems that are real in the material as written. If th
          "plainly and stop: do not add speculative concerns, optional suggestions or open questions.\n")
 
 def git(*a, **k): return subprocess.run(["git", "-C", repo, *a], check=True, capture_output=True, **k).stdout
-shutil.rmtree(out, ignore_errors=True); os.makedirs(out); os.makedirs(tars, exist_ok=True)
+if os.path.isdir(out): shutil.rmtree(out)
+os.makedirs(out); os.makedirs(tars, exist_ok=True)
 tar = subprocess.Popen(["git", "-C", repo, "archive", "HEAD"], stdout=subprocess.PIPE)
 subprocess.check_call(["tar", "-x", "-C", out], stdin=tar.stdout); tar.wait()
 m = os.path.join(out, ".claude-plugin", "plugin.json"); t = open(m).read()
@@ -47,7 +56,9 @@ for ag in glob.glob(os.path.join(out, "agents", "*.md")):
 shutil.rmtree(os.path.join(out, "evals")); os.makedirs(os.path.join(out, "evals"))
 cases = [(k, v[0], v[1] + X, "bug") for k, v in BUG.items()] + [(k, v, CLEAN_RULE, "ctl") for k, v in CLEAN.items()]
 for name, merge, rule, group in cases:
-    d = os.path.join(tars, name); shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+    d = os.path.join(tars, name)
+    if os.path.isdir(d): shutil.rmtree(d)
+    os.makedirs(d)
     a = subprocess.Popen(["git", "-C", repo, "archive", merge + "^2"], stdout=subprocess.PIPE)
     subprocess.check_call(["tar", "-x", "-C", d], stdin=a.stdout); a.wait()
     for junk in ("CLAUDE.md", "AGENTS.md", ".claude", ".claude-plugin"):

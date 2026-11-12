@@ -1,9 +1,15 @@
 # Review agents against a plain prompt: ablation runs, 2026-11-12
 
-> **Status:** a record of measurements from one cloud session. The raw result files stayed in the
-> session scratchpad and are not in the repository; the numbers below were read from them. The
-> two scripts beside this file rebuild the cases. Every limit listed under "Limits" applies to
-> every number here.
+> **Bottom line:** on real pull requests the two review agents did not find the later-fixed bug
+> measurably more often than the same request as a plain prompt (18 against 16 of 33 runs on
+> sonnet, 16 against 16 of 21 on opus), at roughly three times the cost per case; the model
+> mattered more than the condition. The repository's own fixtures are at the ceiling and separate
+> nothing, except `requirement-analyst-clean`, where only the agent passed.
+>
+> **Status:** a record of measurements from one cloud session. The raw result files were in the
+> session scratchpad and are not kept, so the numbers below, read from them at the time, cannot be
+> re-checked. The two scripts beside this file build the cases (see "Files" for what they need).
+> Every limit listed under "Limits" applies to every number here.
 
 ## Question
 
@@ -30,8 +36,9 @@ prompt cannot match, so each case got one substance-only grader written for thes
 planted defect found, or a clean verdict correct). Those criteria are in the two builder
 scripts.
 
-Agent models were set to `inherit` in the copy, so every condition ran on the model named for
-the run. This differs from the shipped agents, some of which pin `opus`.
+From run 2 on, agent models were set to `inherit` in the copy, so every condition ran on the
+model named for the run. This differs from the shipped agents, some of which pin `opus`. Run 1 is
+the exception: its agents kept their pins.
 
 ## Run 1: the repository's own fixtures, first criteria (sonnet session, haiku judge)
 
@@ -85,7 +92,9 @@ later fix commit touched. Each case gave the model the repository at the pull re
 (without `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.claude-plugin/`) and `pr.diff`. The agent
 condition dispatched `mh:blind-spot-hunter` and `mh:silent-failure-hunter` in parallel
 (`silent-failure-hunter` has since been removed from `develop`). A bug case passes when the
-answer names the bug the later fix confirms; other findings do not lower the score.
+answer names one of the defects its criterion in `build-pr.py` lists (two to four per case); other
+findings do not lower the score. Each list holds the bug the later fix confirms, and some hold
+further defects this record does not show a later fix for.
 
 Passes of 3, sonnet for runs and judge:
 
@@ -151,7 +160,8 @@ condition also overstated one finding. This is a reading of four cases, not a co
 
 - On one model, the two review agents did not find the later-fixed bug measurably more often
   than a plain prompt (18 against 16 of 33 on sonnet; 16 against 16 of 21 on opus), at about
-  three times the cost per case.
+  three times the cost per case (24.20 USD against half of the 14.40 USD that plain and bare
+  shared on sonnet; the split between those two was not recorded).
 - The model mattered more than the condition: opus was ahead of sonnet by 3 to 4 of 21 in every
   condition.
 - The conditions found different bugs (#502 only by the agents on opus; #494 and #625 mostly by
@@ -159,18 +169,23 @@ condition also overstated one finding. This is a reading of four cases, not a co
 - The short sentence is harmful on hard input: 2 of 33. Its 39 of 39 in run 2 came from easy
   fixtures.
 - Plugin on against off, with a plain prompt: 16 against 12 of 33 on sonnet, 16 against 15 of
-  21 on opus. Most of the sonnet gap is one pull request (#965).
-- Every condition missed the later-fixed bug in a quarter to a half of runs.
+  21 on opus. Half of the sonnet gap of 4 is one pull request (#965, 3 against 1); #368, #494
+  and #944 add 1 each and #420 takes 1 away.
+- Every condition missed the later-fixed bug often: on sonnet in 15 (agent), 17 (plain) and 21
+  (bare) of 33 runs and in 31 of 33 with the short sentence; on opus in 5 to 6 of 21.
 
 ## Limits
 
-- Three runs per case, and at most 11 pull requests from one repository; five of the six bash
-  cases are in `scripts/merge-pr.sh`.
+- Three runs per case, and 11 scored bug cases from one repository (plus the four controls, which
+  measured nothing); five of the six bash cases are in `scripts/merge-pr.sh`.
 - The grading criteria were written for these runs by the same session that ran them.
-- A bug case counts only the bug a later commit fixed; an answer that found a different real bug
-  scores 0.
+- A bug case counts only the defects its criterion lists; an answer that found a different real
+  bug scores 0.
 - The repository is public, so a model may have seen the fix commits.
-- The opus run is incomplete, and no run used the agents' shipped model pins.
+- The opus run is incomplete, and no run after run 1 used the agents' shipped model pins.
+- `test-gap-analyzer`, `type-design-analyzer` and `requirement-analyst` were never run on real
+  pull requests: for them there are only the ceiling fixtures of run 2, which show no measurable
+  gain for the first two and a 3-run gain for `requirement-analyst` on its clean case.
 - Only review agents were measured. Nothing here is about gates, skills, doctrine or
   `backend-architect`, `plan-reviewer` on real work, or `ideate-critic`.
 - The findings check on the controls was done by agents; the session re-ran a subset.
@@ -182,3 +197,8 @@ condition also overstated one finding. This is a reading of four cases, not a co
   stricter criteria were overwritten and are not kept.
 - `review-agent-ablation-2026-11-12.build-pr.py`: builds the real-pull-request cases of run 3
   from merge commits, with each case's criterion.
+
+Both scripts read the checkout they are pointed at: the `silent-failure-hunter` eval cases and
+agent they use left `develop` in `5b297ee1`, so they build these cases only from a commit before
+it. The commit the runs were built from is not recorded here. Both refuse an output directory
+outside the temp dir, because they delete and rebuild it.
