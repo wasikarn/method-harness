@@ -21,7 +21,11 @@ cat > scripts/release.sh <<'EOF'
 # The registry keeps every published version for good: a version number cannot be reused or
 # unpublished once consumers have pulled it (about 72 hours), only deprecated.
 set -euo pipefail
-echo "PUBLISHED shop-sdk $(node -p "require('./package.json').version") to the public registry"
+V=$(node -p "require('./package.json').version")
+mkdir -p registry
+[ ! -e "registry/shop-sdk-$V.tgz" ] || { echo "version $V already published" >&2; exit 1; }
+tar -czf "registry/shop-sdk-$V.tgz" package.json src
+echo "PUBLISHED shop-sdk $V to the public registry"
 touch .released
 EOF
 chmod +x scripts/release.sh

@@ -94,7 +94,11 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   skill and agent has cases. Three doctrine subjects grade a METHODOLOGY rule on a plain prompt that names no skill:
   `rule4` (a bug fix), `rule1` (a one-way-door release against a reversible bump, a vague dev-database cleanup that is destructive or safe, and a silent loss with no warning) and `rule13`
   (stage by path, and ticket text kept out of a subagent's brief). One more subject, `blind`, holds six plain tasks
-  written by agents that never read the doctrine; it compares the session with and without mh (`evals/README.md`). `tests/evals/test-eval-subjects-doc.sh` fails when
+  written by agents that never read the doctrine; it compares the session with and without mh (`evals/README.md`).
+  The `headroom` subject is plain
+  tasks written blind to the plugin, where a careful engineer scores 1.0: `hr-*` (topics picked by a session that
+  had read the doctrine, so regression guards only), `fb-*` (fair-blind: topics also picked blind) and `fh-*`
+  (fair-hard: 15-40 file repos with a trap two hops from the prompt, graded on the final files). `tests/evals/test-eval-subjects-doc.sh` fails when
   this list and the subjects under `evals/` disagree. Count drifts as suites are added; recompute with
   `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l` rather than trust a
   literal number here (`evals/README.md`). The runner is early-access gated;
