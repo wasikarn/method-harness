@@ -43,9 +43,12 @@ the agent take, not the number of words.
 | Pilot | Long | Short | Outcome | Cost per with-arm run | Turns |
 |---|---|---|---|---|---|
 | mh `deep-audit`, 2 cases, 3 runs per arm (this session) | 2,412 words | 1,266 words | 5/5 vs 6/6 (one long run timed out and is excluded) | 1.58 vs 1.84 USD | 8-10 vs 13-16 |
-| siang `humanize`, 2 blind cases, 5 runs per arm (reported by the siang session; siang `evals/README.md`) | 2,119 words | 799 words | Thai case 0.82 with skill (long form scored 0.96 and 0.78 earlier), English 1.00 | 0.26-0.29 vs 0.41 USD on the Thai case | 8 vs 11.4 |
+| siang `humanize`, 2 cases, 5 runs per arm (reported by the siang session; siang `evals/README.md`). A rerun on cases that session already knew, not a fresh blind result | 2,119 words | 799 words | Thai case 0.82 with skill (long form scored 0.96 and 0.78 earlier), English 1.00 | 0.26-0.29 vs 0.41 USD on the Thai case | 8 vs 11.4 |
 
-In both, the short form cost more because the agent spent extra turns reading the sibling files. On the same seven
+In both, the short form cost more. In the mh pilot the extra turns are reads of the sibling files. For `humanize`
+that cause is probable, not shown: the siang archive keeps no traces, and on the English case with-arm turns fell
+(6.6 to 6.4). The `humanize` rewrite also shows why a contract is moved and never dropped: siang 0.1.40 lost three
+instructions and inverted one guardrail in the cut, found by an audit afterwards and restored in 0.1.41. On the same seven
 `deep-audit` cases, Claude with no plugin passed the end-state checks 35/35 at about 0.20 USD per run, so the skill's
 text length is not what decides the result there. The mh pilot's decision rule, written before the run, returned
 "no change": the short `deep-audit` in the appendix was not shipped.
