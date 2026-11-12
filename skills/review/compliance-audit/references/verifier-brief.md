@@ -35,11 +35,23 @@ bypass has nowhere to put it except downgrading an otherwise-conforming requirem
 which items are the actual open ones.
 
 **Final output contract.** End your message with exactly one JSON object matching
-`references/verifier-output-schema.json`: `{"contract_version": 1, "requirements": [{"id",
-"verdict", "note", "accepted"}...], "gauntlet": {"command", "sha", "exit_code", "output_tail"},
-"scope_ok", "unexpected_files": [...]}`. `contract_version` is always the integer `1`; the host
-rejects a reply without it. `accepted` is `null` for CONFORMS/MISSING (acceptance isn't a
-question for those) and a real boolean for DEVIATED — leave it `false` unless the plan or
+`references/verifier-output-schema.json`, one `requirements` entry per requirement:
+
+```
+{"contract_version": 1,
+ "requirements": [{"id": "<the requirement's id>",
+                   "verdict": "<CONFORMS|DEVIATED|MISSING|UNVERIFIABLE>",
+                   "note": "<what you found>",
+                   "accepted": <null, or true|false when the verdict is DEVIATED>}],
+ "gauntlet": {"command": "<the gauntlet command you ran>", "sha": "<the SHA you ran it at>",
+              "exit_code": <its exit code>, "output_tail": "<the last lines it printed>"},
+ "scope_ok": <true, or false when you could not verify the pinned tree>,
+ "unexpected_files": [<files the diff touched that the plan never named>]}
+```
+
+`contract_version` is always the integer `1`; the host rejects a reply without it. `accepted` is
+`null` for CONFORMS/MISSING (acceptance isn't a question for those) and a real boolean for
+DEVIATED — leave it `false` unless the plan or
 requirement text itself sanctions this exact deviation, cited as a backticked command or
 `path:line`; you report whether it is sanctioned, you don't decide acceptance. Do not compute or
 include a `pass` field yourself — `scripts/check-verdict.py` computes it from this object. If you

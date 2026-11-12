@@ -3,23 +3,30 @@
 # --output-schema, but a Claude checker only has the brief: a key the brief's example leaves out
 # is a key the agent leaves out, and check-verdict.py then rejects a reply that followed the brief
 # to the letter (idea-audit and compliance-audit both omitted contract_version, 2026-11-12).
-# The examples are sketches, not valid JSON (`bool`, `<...>`, `{"id", "verdict"}`), so they cannot
-# be piped through the checker. This reads the example block itself and fails when it lacks a key
-# the schema requires at any depth, or shows another value where the schema fixes one (const).
+#
+# The examples are sketches on purpose (`bool`, `<what goes here>`): each check-verdict.py rejects
+# a message that holds two valid verdict objects as ambiguous, so a valid example the agent quoted
+# back would sink its real answer. So this test fills each sketch in (placeholders and strings get
+# a value of the type the schema names; numbers, true, false and null written in the sketch stay
+# as written) and pipes the result through the skill's own check-verdict.py. The checker is the
+# judge: a missing, misspelt or extra key at any depth, or a wrong fixed value, is rejected there.
 # Every *brief*.md under a skill's references/ must be listed below, so a new brief cannot skip it.
-# Three planted edits to real briefs prove the scan bites.
+# Planted edits to the real briefs prove the scan bites.
 # Run standalone: bash tests/skills/test-brief-contract-keys.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
-import glob, json, os, re, sys
+import glob, json, os, re, subprocess, sys
 
 ROOT = os.path.abspath(sys.argv[1])
-IDEA = "skills/workflow/idea-audit/references/attacker-output-schema.json"
-DEEP = "skills/review/deep-audit/references/checker-output-schema.json"
-COMPLIANCE = "skills/review/compliance-audit/references/verifier-output-schema.json"
-# brief -> the schema its reply is checked against; None = the brief shows no reply shape.
+IDEA = ("skills/workflow/idea-audit/references/attacker-output-schema.json",
+        "skills/workflow/idea-audit/scripts/check-verdict.py")
+DEEP = ("skills/review/deep-audit/references/checker-output-schema.json",
+        "skills/review/deep-audit/scripts/check-verdict.py")
+COMPLIANCE = ("skills/review/compliance-audit/references/verifier-output-schema.json",
+              "skills/review/compliance-audit/scripts/check-verdict.py")
+# brief -> (schema, checker) its reply goes through; None = the brief shows no reply shape.
 PAIRS = {
     "skills/workflow/idea-audit/references/attacker-brief.md": IDEA,
     "skills/review/compliance-audit/references/verifier-brief.md": COMPLIANCE,
@@ -27,6 +34,8 @@ PAIRS = {
     "skills/review/attack-proposal/references/validator-brief.md": DEEP,
     "skills/review/deep-audit/references/whole-picture-brief.md": None,
 }
+PLACEHOLDER = "\x01"  # marks a value the sketch left open; the text after it is the sketch's own
+STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 passed = failed = 0
 
 
@@ -39,19 +48,6 @@ def check(desc, ok):
 def read(rel):
     with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
         return f.read()
-
-
-def all_required(node):
-    """Every key named by a `required` list anywhere in the schema."""
-    out = []
-    if isinstance(node, dict):
-        out += [k for k in node.get("required", []) if isinstance(k, str)]
-        for v in node.values():
-            out += all_required(v)
-    elif isinstance(node, list):
-        for v in node:
-            out += all_required(v)
-    return out
 
 
 def balanced(text, start):
@@ -75,56 +71,117 @@ def example(text, top):
     return None
 
 
-def problems(text, schema):
+def open_value(m):
+    return json.dumps(PLACEHOLDER + m.group(0))
+
+
+def parse_sketch(block):
+    """The sketch as a tree: an open value (`bool`, `<...>`) becomes a PLACEHOLDER string."""
+    flat = re.sub(r"\s+", " ", block)
+    out, pos = [], 0
+    for m in list(STRING.finditer(flat)) + [None]:
+        gap = flat[pos : m.start() if m else len(flat)]
+        gap = re.sub(r"\[\s*(?:<[^<>]*>|\.\.\.)\s*\]", "[]", gap)
+        gap = re.sub(r"<[^<>]*>|\bbool\b", open_value, gap)
+        out.append(gap.replace("...", ""))
+        if m:
+            out.append(m.group(0))
+            pos = m.end()
+    return json.loads("".join(out))
+
+
+def filled(node, schema):
+    """A value of the type the schema names, wherever the sketch has a string or an open value."""
+    schema = schema or {}
+    if isinstance(node, dict):
+        props = schema.get("properties", {})
+        return {k: filled(v, props.get(k)) for k, v in node.items()}
+    if isinstance(node, list):
+        return [filled(v, schema.get("items")) for v in node]
+    if not isinstance(node, str):
+        return node
+    kinds = schema.get("type", "string")
+    kinds = [kinds] if isinstance(kinds, str) else kinds
+    said = node[1:].lstrip("<") if node.startswith(PLACEHOLDER) else ""
+    if "null" in kinds and said.startswith("null"):
+        return None
+    if "enum" in schema:
+        return schema["enum"][0]
+    if "boolean" in kinds:
+        return True
+    if "integer" in kinds:
+        return 0
+    for candidate in ("README.md:1", "abcdef0"):  # a citation shape, then a short commit SHA
+        if re.search(schema.get("pattern", ""), candidate):
+            return candidate
+    return "README.md:1"
+
+
+def verdict(block, schema, checker):
+    """(accepted, reason): the sketch, filled in, through the skill's own check-verdict.py."""
+    try:
+        reply = json.dumps(filled(parse_sketch(block), schema))
+    except ValueError as e:
+        return False, "the example is not a readable sketch: %s" % e
+    run = subprocess.run([sys.executable, "-B", os.path.join(ROOT, checker)], input=reply,
+                         capture_output=True, text=True)
+    return run.returncode == 0, run.stderr.strip().splitlines()[-1] if run.stderr.strip() else ""
+
+
+def brief_verdict(text, pair):
+    schema = json.loads(read(pair[0]))
     block = example(text, schema["required"])
     if block is None:
-        return ["no JSON example naming two or more of %s" % schema["required"]]
-    out = []
-    missing = [k for k in dict.fromkeys(all_required(schema)) if '"%s"' % k not in block]
-    if missing:
-        out.append("example lacks required key(s): " + " ".join(missing))
-    for key, prop in schema.get("properties", {}).items():
-        if "const" in prop:
-            want = '"%s":\\s*%s(?![\\w.])' % (re.escape(key), re.escape(json.dumps(prop["const"])))
-            if not re.search(want, block):
-                out.append('example does not show "%s": %s' % (key, json.dumps(prop["const"])))
-    return out
+        return False, "no JSON example naming two or more of %s" % schema["required"], None
+    ok, reason = verdict(block, schema, pair[1])
+    return ok, reason, block
 
 
-print("=== each brief's example carries what its schema requires ===")
+print("=== a reply shaped like each brief's example is accepted by its checker ===")
 briefs = glob.glob(os.path.join(ROOT, "skills/*/*/references/*brief*.md"))
 for rel in sorted(os.path.relpath(p, ROOT) for p in briefs):
     check("%s is listed in PAIRS" % rel, rel in PAIRS)
-for rel, schema_rel in PAIRS.items():
+for rel, pair in PAIRS.items():
     if not os.path.isfile(os.path.join(ROOT, rel)):
         check("%s exists" % rel, False)
         continue
     text = read(rel)
-    if schema_rel is None:
-        check("%s shows no reply shape (pair it with a schema if it starts to)" % rel,
+    if pair is None:
+        check("%s shows no reply shape (pair it with a checker if it starts to)" % rel,
               '"contract_version"' not in text)
         continue
-    found_problems = problems(text, json.loads(read(schema_rel)))
-    check("%s matches %s%s" % (rel, schema_rel, "".join("; " + p for p in found_problems)),
-          not found_problems)
+    ok, reason, block = brief_verdict(text, pair)
+    why = "" if ok else " -- " + reason
+    check("%s: %s accepts the example's shape%s" % (rel, pair[1], why), ok)
+    if block is not None:
+        raw = subprocess.run([sys.executable, "-B", os.path.join(ROOT, pair[1])], input=block,
+                             capture_output=True, text=True)
+        check("%s: the example as written is a sketch, not a second valid verdict" % rel,
+              raw.returncode == 1)
 
 print("=== planted edits are caught ===")
-idea_text = read("skills/workflow/idea-audit/references/attacker-brief.md")
-idea_schema = json.loads(read(IDEA))
-block = example(idea_text, idea_schema["required"]) or ""
-dropped = block.replace('"contract_version": 1, ', "")
-planted = idea_text.replace(block, dropped) + '\nThe host requires "contract_version".\n'
-check("a key dropped from the example is caught even when prose still names it",
-      dropped != block and bool(problems(planted, idea_schema)))
-wrong = block.replace('"contract_version": 1', '"contract_version": 2')
-check("a value the schema fixes is caught when the example shows another",
-      wrong != block and bool(problems(idea_text.replace(block, wrong), idea_schema)))
-ver_text = read("skills/review/compliance-audit/references/verifier-brief.md")
-ver_schema = json.loads(read(COMPLIANCE))
-block = example(ver_text, ver_schema["required"]) or ""
-dropped = block.replace(', "output_tail"', "")
-check("a nested required key dropped from the example is caught",
-      dropped != block and bool(problems(ver_text.replace(block, dropped), ver_schema)))
+
+
+def planted(rel, desc, old, new, extra=""):
+    pair, text = PAIRS[rel], read(rel)
+    block = example(text, json.loads(read(pair[0]))["required"]) or ""
+    edited = block.replace(old, new)
+    ok, _, _ = brief_verdict(text.replace(block, edited) + extra, pair)
+    check(desc, edited != block and not ok)
+
+
+IDEA_BRIEF = "skills/workflow/idea-audit/references/attacker-brief.md"
+VERIFIER = "skills/review/compliance-audit/references/verifier-brief.md"
+planted(IDEA_BRIEF, "a key dropped from the example is caught even when prose still names it",
+        '"contract_version": 1, ', "", '\nThe host requires "contract_version".\n')
+planted(IDEA_BRIEF, "a fixed value shown wrong is caught",
+        '"contract_version": 1', '"contract_version": 2')
+planted(IDEA_BRIEF, "a key the checker does not know is caught",
+        '"pass":', '"confidence": "<high|low>", "pass":')
+planted(VERIFIER, "a nested key dropped from the example is caught",
+        '"output_tail": "<the last lines it printed>"', '"sha2": "<x>"')
+planted("skills/review/attack-proposal/references/validator-brief.md",
+        "a misspelt key is caught", '"unexpected_files"', '"unexpected_file"')
 
 print("%d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)
