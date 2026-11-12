@@ -26,8 +26,9 @@ tool call — see its own row below for what that means in practice:
 
 Everything not in that table is advice: METHODOLOGY.md text, skill prose, agent guardrails.
 `sensor:bash:output-redact` is advice too, not a gate: a `PostToolUse` hook that replaces
-vendor-shaped credential tokens (`secret-scan.py`'s patterns, with the leading word boundary
-dropped and whole PEM blocks taken) in Bash stdout/stderr (`updatedToolOutput`) and in the
+vendor-shaped credential tokens (`secret-scan.py`'s patterns, with the word boundary dropped
+at both ends, and whole PEM blocks: a header with a key body under it, through the END line
+or the last body line) in Bash stdout/stderr (`updatedToolOutput`) and in the
 text blocks of an MCP tool's result, including an embedded resource's text
 (`updatedMCPToolOutput`, matcher `mcp__.*`), with `[REDACTED:<kind>]`. It is best-effort: a
 token outside those shapes, one split across stdout and stderr, Read output, a
@@ -93,7 +94,8 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   skill and agent has cases. Three doctrine subjects grade a METHODOLOGY rule on a plain prompt that names no skill:
   `rule4` (a bug fix), `rule1` (a one-way-door release against a reversible bump, a vague dev-database cleanup that is destructive or safe, and a silent loss with no warning) and `rule13`
   (stage by path, and ticket text kept out of a subagent's brief). One more subject, `blind`, holds plain tasks
-  written by agents that never read the doctrine; it compares the session with and without mh (`evals/README.md`).
+  written by agents that never read the doctrine; most compare the session with and without mh, while the three
+  `ab-wfr-*` cases run bare only, as a headroom check (`evals/README.md`).
   Its three `ab-sfh-*` cases are the blind A/B that turned the former `silent-failure-hunter` agent into
   `docs/reference/silent-failure-review.md`.
   The `headroom` subject is plain

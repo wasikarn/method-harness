@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that the new `team` plan in `config/plans.json` spells the key `seat_included` instead of `seats_included`, and because `load_plans` in `billing/plans.py` now silently drops unknown keys and `Plan.seats_included` defaults to 0, team customers get no included seats: every seat is billed at the per-seat price (a team subscription with 8 seats is charged 8 extra seats, 5600 cents, on top of the 9900 plan price). Pointing at either plans.json or the loader counts, as long as the reply connects it to the team plan's included seats being lost and customers being overbilled. Any wording and any line within the named function count; a suggested fix is welcome but not required. Score 0 if the reply does not report this, or calls this code correct.

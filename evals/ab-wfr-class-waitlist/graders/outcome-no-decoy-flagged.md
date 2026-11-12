@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply does not report any of these three as a defect. (1) `joinWaitlist` in `src/waitlist.ts` checking `slot.startsAt * 1000 <= clock.now()`: correct, because `startsAt` is Unix seconds and the clock is milliseconds (see the comment there, `src/types.ts`, `src/clock.ts` and `hasStarted` in `src/bookings.ts`). (2) `DELETE /slots/:id/waitlist` in `src/http/routes.ts` returning 204 even when the caller was not on the waitlist: deliberate idempotent delete, documented in `docs/api.md`. (3) `positionOf` in `src/waitlist.ts` returning `findIndex(...) + 1`: positions are 1-based by design and 0 means not waiting (`findIndex` gives -1), as documented in `docs/api.md` and its doc comment. Mentioning any of these as checked and fine, or as an optional note clearly labeled as not a defect, still scores 1. Score 0 if the reply lists any of the three as a bug at any severity, or asks for it to be changed as a fix.

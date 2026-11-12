@@ -10,6 +10,7 @@
 # PR branch whose pre-push hook and committed scripts/run-gauntlet.sh are recorders. Only gh and uptime
 # are stubbed; never touches GitHub.
 set -uo pipefail
+unset GAUNTLET_PROGRESS  # a value exported by the caller would change what the rows below see
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 . "$HERE/../../scripts/_lib/tmp-delete.sh"
 SCRIPT="$HERE/../../scripts/merge-pr.sh"
