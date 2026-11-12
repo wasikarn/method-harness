@@ -84,8 +84,7 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   pairs; check 43 varies the budget env against the clean fleet, with the ceiling pinned);
   a full run WARNs when a top-level surface dir (`agents/`, `skills/`, `hooks/`) is missing. An
   empty surface dir still passes its checks vacuously; the guard names only the missing dir.
-- The five review agents (`plan-reviewer`, `blind-spot-hunter`,
-  `requirement-analyst`, `test-gap-analyzer`, `type-design-analyzer`) have a planted-defect case and a clean control each
+- The two review agents (`plan-reviewer`, `blind-spot-hunter`) have a planted-defect case and a clean control each
   under `evals/`, in `claude plugin eval`'s native layout, graded on their own Output Format
   (`evals/README.md`). The other agents with cases are `backend-architect`
   and `ideate-critic`; the skills are `code-architect`, `performance-optimizer`, `ste-lint`,

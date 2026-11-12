@@ -1,4 +1,0 @@
-schema_version: "1.1"
-name: test-gap-analyzer-planted
-context:
-  scaffold_script: scaffold.sh

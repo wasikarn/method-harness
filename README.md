@@ -82,15 +82,16 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
   `mh:gate-report`, `mh:learn`, `mh:model-bench`, `mh:compliance-audit`, `mh:deep-audit`,
   `mh:attack-proposal`, `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
   and is tested, but `.claude-plugin/plugin.json`'s skills list deliberately excludes it.
-- **Agents (7):** backend-architect, blind-spot-hunter, ideate-critic,
-  plan-reviewer, requirement-analyst,
-  test-gap-analyzer, type-design-analyzer (the last two adapted from Anthropic's
-  `pr-review-toolkit`, Apache-2.0; three of its other agents duplicate native `/code-review`,
-  `/simplify`, and the silent-failure checklist (`docs/reference/silent-failure-review.md`, an agent until it failed a blind A/B), and `comment-analyzer` was skipped as low value here). Generic TS review and security review go to
+- **Agents (4):** backend-architect, blind-spot-hunter, ideate-critic,
+  plan-reviewer. Removed: the silent-failure agent (now a checklist,
+  `docs/reference/silent-failure-review.md`, after it failed a blind A/B), and on 2026-11-12
+  requirement-analyst, test-gap-analyzer and type-design-analyzer (no skill dispatched them, and
+  on their own eval fixtures a plain prompt with one added sentence scored the same; history in
+  `NOTICE` for the two adapted from Anthropic's `pr-review-toolkit`). Generic TS review and security review go to
   `mattpocock-skills:code-review` and native `/security-review` instead — reviewers here are
   read-only and never grant `Agent`.
 - **Evals:** `evals/` holds cases in `claude plugin eval`'s native layout: a planted case and a
-  clean control for each of the five review agents and for `harness-audit`, `memory-lint`, `deep-audit`,
+  clean control for each of the two review agents (`plan-reviewer`, `blind-spot-hunter`) and for `harness-audit`, `memory-lint`, `deep-audit`,
   `post-mortem`, and `cost-report`; a run and an abort case for `ideate`.
   Recompute the count with `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`
   rather than trust a stale literal here. `tests/evals/test-eval-cases.sh` keeps them loadable
