@@ -127,7 +127,9 @@ def _record(name, tag):
     orig = getattr(unittest.TestResult, name)
 
     def wrapped(self, test, *args):
-        _log.append(f"{tag} {test.id()}")
+        # same id whether the run started at the repo root or inside tests/
+        tid = test.id()
+        _log.append(f"{tag} {tid[6:] if tid.startswith('tests.') else tid}")
         return orig(self, test, *args)
 
     setattr(unittest.TestResult, name, wrapped)
@@ -158,6 +160,8 @@ EOF
 
 cat > tests/test_checkout.py <<'EOF'
 import unittest
+
+import tests  # noqa: F401  (loads the .test-results.txt recorder)
 
 from shop.cart import Cart, Item
 from shop.checkout import checkout

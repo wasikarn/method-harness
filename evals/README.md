@@ -567,8 +567,8 @@ recorder hooks (PR #1012), so the two columns are not the same instrument.
 | `blind-missing-acceptance` | 0.78 / 0.89 | -0.11 | 0.89 / 0.78 | +0.11 |
 | `blind-swallowed-error` | 0.83 / 1.00 | -0.17 | 0.94 / 1.00 | -0.06 |
 
-Mean Δ -0.05 in run 1 and 0.00 in run 2. Reading: bare Claude already passes these at 0.78-1.00, so there is
-no headroom and mh does not beat it here. Three cases changed sign between the runs, so a per-case Δ at 3
+Mean Δ -0.05 in run 1 and -0.01 in run 2. Reading: bare Claude already passes these at 0.78-1.00, so there is
+no headroom and mh does not beat it here. Between the runs one case flipped sign and two moved to or from zero, so a per-case Δ at 3
 runs per arm is noise; do not cite one. These are regression guards, not proof of uplift.
 
 Known grader limits. The llm judges vary: `raises-contract-question` (`blind-missing-acceptance`) passes a
