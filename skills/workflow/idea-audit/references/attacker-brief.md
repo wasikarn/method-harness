@@ -71,10 +71,10 @@ un-backticked command reads as prose and gets rejected the same as no citation a
 
 ## Output
 Return ONLY JSON matching `references/attacker-output-schema.json`:
-`{"pass": bool, "findings": [{"summary": "...", "evidence": "path:line, a backticked command, or a
-grep result — never a restated claim with no independent check"}], "checked": [{"claim": "...",
-"evidence": "path:line, a backticked command, or a grep result"}]}`
-`checked` is REQUIRED and must have at least 1 entry, whether or not `pass` is true and whether or
+`{"contract_version": 1, "pass": bool, "findings": [{"summary": "...", "evidence": "path:line, a
+backticked command, or a grep result — never a restated claim with no independent check"}],
+"checked": [{"claim": "...", "evidence": "path:line, a backticked command, or a grep result"}]}`
+`contract_version` is always the integer `1`; the host rejects a reply without it. `checked` is REQUIRED and must have at least 1 entry, whether or not `pass` is true and whether or
 not `findings` is empty — it is your receipts, not your conclusion. A clean, well-evidenced
 zero-findings pass (`pass: true, findings: []`) is still a legitimate result, but only when
 `checked` shows what you actually verified to reach it; `pass: true` with an empty or
