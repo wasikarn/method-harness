@@ -224,6 +224,8 @@ PY
     blind-spot-hunter-clean)      sample=$'## Verdict\n\n**CLEAN (1 dormant: 1 LOW)**' ;;
     plan-reviewer-planted)        sample='verdict: needs-revision' ;;
     plan-reviewer-clean)          sample=$'findings: []\nverdict: production-ready' ;;
+    requirement-analyst-planted)  sample='verdict: needs-clarification' ;;
+    requirement-analyst-clean)    sample='verdict: ready' ;;
     harness-audit-*)              sample=$'=== Summary ===\nCritical: 0\nWarnings: 1\nInfo:     4\n' ;;
     post-mortem-complete)         sample=$'## 1. Summary\n\n## 2. Symptom\n\n## 3. Root Cause (Mechanism)\n\n## 4. Symptom Linkage\n\n## 5. Fix\n\n## 6. Discovery Method\n\n## 7. Escape Reason\n\n## 8. Failure class\n\n## 9. Validation Proof\n\n## 10. Follow-Ups\n\n## 11. Assumption Trace' ;;
     post-mortem-missing-input)    sample='Before drafting I need the fourth input: passing validation.' ;;

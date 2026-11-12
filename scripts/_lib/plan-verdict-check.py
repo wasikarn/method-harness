@@ -2,7 +2,8 @@
 """Structural self-consistency check for agents/plan-reviewer.md's fatal-weakness-floor gate.
 
 Found by mh:deep-audit 2026-09-19: plan-reviewer is an adversarial surface in this repo with no
-schema and no script -- Critical/High/Medium/Low severity and the resulting verdict are
+schema and no script (requirement-analyst.md has the identical gap and no sibling script of its
+own -- confirmed 2026-09-20, not fixed here) -- Critical/High/Medium/Low severity and the resulting verdict are
 both model-assigned in prose, with the exact self-contradiction the agent's own Anti-Patterns
 list names ("verdict: production-ready alongside a non-empty top_blockers list") caught only if
 the same model that made the mistake also happens to notice it.

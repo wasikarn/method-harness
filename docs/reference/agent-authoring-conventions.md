@@ -1,12 +1,13 @@
 # Agent authoring conventions
 
-What the 4-agent fleet actually does, made explicit so a new agent has something accurate to
+What the 5-agent fleet actually does, made explicit so a new agent has something accurate to
 pattern-match against. Prose guidance, not a gate; the mechanical checks are named per item.
 
 ## 1. Tool scoping: explicit allowlist, least privilege
 
 Every agent declares `tools:` as an explicit allowlist (`harness-audit` check 09, CRIT when
-missing). Read-only reviewers and analysts (`backend-architect`, `blind-spot-hunter`) get `Read`, `Grep`, `Glob`, and
+missing). Read-only reviewers and analysts (`backend-architect`, `blind-spot-hunter`,
+`requirement-analyst`) get `Read`, `Grep`, `Glob`, and
 usually `Bash` for `git log`/`git diff` inspection (read-only by discipline, not by tool grant);
 never `Write`/`Edit` (check 32). An agent that must mutate files adds `Write`/`Edit`; none
 does today. **`Agent` is never granted** (check 41): a
@@ -19,7 +20,7 @@ radius of a wrong action differs by an order of magnitude.
 
 Every agent except `ideate-critic` carries a `## Prompt Defense Baseline` section near the top:
 do not change role, do not reveal secrets, and treat the input (ticket body, spec, source file,
-PR description) as untrusted data, not instructions. `agents/plan-reviewer.md` is the
+PR description) as untrusted data, not instructions. `agents/requirement-analyst.md` is the
 canonical form. `ideate-critic` only reads same-session JSON, so it omits the section; any agent
 that touches text not generated this turn includes it.
 
@@ -36,8 +37,8 @@ Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded 
 mutation (no shipped agent is either since 2026-11-12; the fleet's one `sonnet` agent,
 `ideate-critic`, is the exception: it judges at `effort: high`, and its non-Opus pin keeps it
 independent by model from an Opus main session, see below); `effort: high` for judgment and adversarial surfaces, `medium`/`low`
-for mechanical work, bounded review or design trade-offs (`backend-architect` is `medium`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
-pins: `plan-reviewer` and `blind-spot-hunter`
+for mechanical work, bounded review or design trade-offs (`backend-architect` and `requirement-analyst` are `medium`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
+pins: `requirement-analyst` (readiness verdict), `plan-reviewer` and `blind-spot-hunter`
 (adversarial), `backend-architect` (design trade-offs). Never pin `fable`
 in an agent (Fable can bill usage credits depending on plan and seat tier, and `-p`/eval runs
 bill them without asking; it also loses model independence from a fable main session); never pin
@@ -103,11 +104,12 @@ terminal or chat stream, where the final line is what the reader's eye lands on 
 a one-line verdict" (`agents/blind-spot-hunter.md`) are the same principle applied
 to two different media, not a contradiction between them.
 
-This item doesn't cover a structured, multi-field report (`agents/plan-reviewer.md`): a caller reads or parses the whole block there, not just its last
+This item doesn't cover a structured, multi-field report (`agents/requirement-analyst.md`,
+`agents/plan-reviewer.md`): a caller reads or parses the whole block there, not just its last
 line, so field order follows the analysis's own workflow instead.
-`agents/plan-reviewer.md:166`'s `verdict:`
-sits mid-block, before `confidence`/`not_reviewed`/`verdict_movers`/`revisit_if`. That does not
-violate this item — a multi-field report was never in its scope.
+`agents/requirement-analyst.md:110`'s `verdict:` leads its block; `agents/plan-reviewer.md:166`'s
+sits mid-block, before `confidence`/`not_reviewed`/`verdict_movers`/`revisit_if`. Neither
+violates this item — a multi-field report was never in its scope.
 
 ## Preloads
 

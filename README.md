@@ -82,17 +82,17 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
   `mh:gate-report`, `mh:learn`, `mh:model-bench`, `mh:compliance-audit`, `mh:deep-audit`,
   `mh:attack-proposal`, `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
   and is tested, but `.claude-plugin/plugin.json`'s skills list deliberately excludes it.
-- **Agents (4):** backend-architect, blind-spot-hunter, ideate-critic,
-  plan-reviewer. Removed: the silent-failure agent (now a checklist,
+- **Agents (5):** backend-architect, blind-spot-hunter, ideate-critic,
+  plan-reviewer, requirement-analyst. Removed: the silent-failure agent (now a checklist,
   `docs/reference/silent-failure-review.md`, after it failed a blind A/B), and on 2026-11-12
-  requirement-analyst, test-gap-analyzer and type-design-analyzer (no skill dispatched them; on
-  their own eval fixtures a plain prompt matched the last two, and missed requirement-analyst's
-  clean case in 3 of 3 runs, see `evals/README.md`; history in `NOTICE` for the two adapted from
-  Anthropic's `pr-review-toolkit`). Generic TS review and security review go to
+  test-gap-analyzer and type-design-analyzer (no skill dispatched them, and on their own eval
+  fixtures a plain prompt matched them, see `evals/README.md`; history in `NOTICE`, both were
+  adapted from Anthropic's `pr-review-toolkit`). requirement-analyst was measured in the same
+  run and kept: a plain prompt missed its clean case in 3 of 3 runs. Generic TS review and security review go to
   `mattpocock-skills:code-review` and native `/security-review` instead — reviewers here are
   read-only and never grant `Agent`.
 - **Evals:** `evals/` holds cases in `claude plugin eval`'s native layout: a planted case and a
-  clean control for each of the two review agents (`plan-reviewer`, `blind-spot-hunter`) and for `harness-audit`, `memory-lint`, `deep-audit`,
+  clean control for each of the three review agents (`plan-reviewer`, `blind-spot-hunter`, `requirement-analyst`) and for `harness-audit`, `memory-lint`, `deep-audit`,
   `post-mortem`, and `cost-report`; a run and an abort case for `ideate`.
   Recompute the count with `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`
   rather than trust a stale literal here. `tests/evals/test-eval-cases.sh` keeps them loadable
