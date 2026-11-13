@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that a quantity below 1 can reach `Reserve` through `POST /carts/{cart}/reservations` (`reserveCart` in `internal/api/handlers.go`): the PR removed the `qty <= 0` check from `Reserve` (`internal/reserve/service.go`) and added it only to the single-line `create` handler, so a cart line with a negative (or zero) qty is accepted, and with a negative qty `TakeUpTo` in `internal/store/memory.go` adds units instead of taking them, inflating stock that does not exist (overselling), or at least creating bogus reservations. Placing it at `reserveCart`, `Reserve` or `TakeUpTo` all count, as long as the reply says the bulk/cart path lets a zero or negative quantity through and states a concrete bad outcome. Score 0 if the reply does not mention this, or only says validation "moved" without seeing that the bulk path lacks it.

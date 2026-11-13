@@ -8,7 +8,8 @@ carry this notice under Apache License 2.0 section 4:
   Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Both files were substantially
   modified on 2026-09-06 (mh v1.1.18): new descriptions, read-only tool allowlist, Prompt
   Defense Baseline, evidence gate, scope-vs-neighbors section, and a closed-vocabulary verdict
-  line. The analysis process and rating axes follow the originals.
+  line. The analysis process and rating axes follow the originals. Both files were removed
+  from the tree on 2026-11-12; this notice stays for the commits that carry them.
 
 ---
 

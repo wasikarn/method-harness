@@ -1,4 +1,4 @@
 schema_version: "1.1"
-name: type-design-analyzer-planted
+name: ab-wfr-account-deletion
 context:
   scaffold_script: scaffold.sh

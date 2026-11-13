@@ -1,10 +1,10 @@
 # Review-agent and skill evals
 
-109 cases in Claude Code's native `claude plugin eval` layout (count:
+107 cases in Claude Code's native `claude plugin eval` layout (count:
 `find evals -mindepth 1 -maxdepth 1 -type d ! -name results | wc -l`; re-run rather than trust
 this number, it has drifted before — see `docs/research/ai-native-sdlc-playbook-audit-2026-08-28.md`
-Round 3). Ten cover the five review
-agents, one planted-defect case and one clean control per agent, the same fires/silent pairing
+Round 3). Seven cover the three review
+agents (`plan-reviewer` has a third, a trivial plan with no rollback), one planted-defect case and one clean control per agent, the same fires/silent pairing
 `tests/skills/harness-audit/known-bad/` uses for audit checks. Each case is
 `prompt.md` (the ask: an agent case dispatches by `subagent_type`, a skill case invokes by `skill:`), `case.yaml` (a
 `scaffold_script` that writes the fixture into the throwaway workspace), and `graders/`:
@@ -522,15 +522,23 @@ Without `--run` the temp dir is removed on exit, so the printed commands are exa
 `--run` executes; add `--keep` to leave the dir in place and run them by hand.
 
 Agent names: any agent with tagged cases whose fire prompts use the standard dispatch sentence
-(`plan-reviewer`, `blind-spot-hunter`, `test-gap-analyzer`,
-`type-design-analyzer`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
+(`plan-reviewer`, `blind-spot-hunter`, `backend-architect`, `requirement-analyst`; `ideate-critic`'s prompts
 don't, so its build stops). The 2026-10-27 `--runs 2` pass folded worse on 0 cases for each of
 `code-architect`, `backend-architect`, `requirement-analyst` and `performance-optimizer`; at
 `--runs 3` `performance-optimizer` folded worse on one case (`perf-shallow-copy-trap`, 4/5 in both
 arms across all runs). The
 operator shipped `code-architect` and `performance-optimizer` as skills and kept the other two as
 agents (a scored reviewer, maker≠checker; a read-only boundary for untrusted tickets, with no
-injection case in the eval).
+injection case in the eval). `test-gap-analyzer` and `type-design-analyzer` were removed on
+2026-11-12 (PR #1021); `requirement-analyst` was measured with them and kept, so that read-only
+boundary stays. The measurement, from the PR, not kept as result files: the three agents' six cases, 3 runs
+each, sonnet, graded on substance by criteria written for that run. Named agent 18 of 18; a plain
+prompt 15 of 18 with the plugin on and 15 of 18 with it off, in each arm all three misses on
+`requirement-analyst-clean` (the ticket was called clear, then gaps were listed anyway); a plain
+prompt plus one "report only real problems" sentence 18 of 18, but that sentence cut detection on 11
+real PRs to 2 of 33 runs (plain prompt 16 of 33), so no such prompt is shipped. The fixtures are near
+the ceiling in every arm: the result shows no measurable gain for the two analyzers on these cases
+and a 3-run gain for `requirement-analyst` on one.
 Results: `evals/results/fold-<agent>-<timestamp>/{kept,folded}/aggregate-result.json` and
 `compare.txt`. The copy holds tracked files only (working-tree bytes), so commit or `git add` a
 new case before running it.
@@ -561,7 +569,7 @@ commands run, reply facts): `blind-claim-without-run`, `blind-false-handoff`, `b
 `blind-missing-acceptance`, `blind-secret-in-diff`, `blind-swallowed-error`. Run each by name: the glob
 `blind-*` also matches the two `blind-spot-hunter-*` cases. Run with `with_default_enabled_true` and
 `--scaffold` (without the wrapper the with arm runs without mh; without `--scaffold` every grader scores 0).
-The subject also holds the three `ab-sfh-*` and three `ab-wfr-*` cases (next sections), so `--tag blind` matches twelve cases.
+The subject also holds the three `ab-sfh-*` and five `ab-wfr-*` cases (next sections), so `--tag blind` matches fourteen cases.
 Do not run the `ab-wfr-*` cases that way: they are a bare-only check, and a wrapped `--tag blind` run gives them an
 mh arm they were never meant to have. Run them with `--tag wf-review --ablation none --scaffold` and no wrapper, and
 run the other nine by name.
@@ -589,7 +597,12 @@ reply that states a silent choice as fact in some runs and fails it in others, a
 (`blind-hidden-callers`) reads a recorder in `tests/__init__.py` and needs the last recorded unittest run to be
 green, to cover all three test modules, and to come after the rename; a `pytest` run is not recorded. The
 recorders in `blind-hidden-callers` and `blind-missing-acceptance` cannot see a session that edits and never
-reruns its tests.
+reruns its tests. Two false passes were found on 2026-11-13 and are left as run, so the recorded numbers still
+match these files: `ran-full-suite` (`blind-claim-without-run`) matches any `unittest discover`, so
+`unittest discover -s tests -p test_money.py`, which skips `test_report`, counts as the whole suite; and the
+`blind-missing-acceptance` recorder drops an import error (`_FailedTest`) from the file on the next run of any
+test, so a session that breaks the import of `tests/test_checkout.py` and then runs only another test module
+keeps the baseline PASS lines and passes `contract-tests-pass`.
 
 ## Blind A/B: silent-failure-hunter (`ab-sfh-*`; 2026-11-12, mh 1.1.612, `--runs 5`)
 
@@ -615,14 +628,14 @@ before each run.
 - Outcome: the agent became `docs/reference/silent-failure-review.md` (PR #1017). The run-2 cases are in
   that PR's history.
 
-## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12, `--runs 5`, bare only)
+## Large-PR review headroom check (`ab-wfr-*`; 2026-11-12 and 11-13, `--runs 5`, bare only)
 
 The first step of a workflow pilot. A deterministic review workflow (find findings, then 3 independent refuters
 per finding) would be built only if bare Claude left room on a large-PR review. An agent that never saw mh wrote
 three cases. Each has a PR of 17-20 changed files in its own language (Python, TypeScript, Go), 5 planted bugs
 (at least 2 need another file to see), and 3 decoys. The PR is in `pr.diff` because git may not run in the
 sandbox. Grader hash `e4cf1aad…`
-(`shasum -a 256 evals/ab-wfr-*/graders/*.md | shasum -a 256`); the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
+(`shasum -a 256 evals/ab-wfr-{class-waitlist,plan-proration,webhook-dlq}/graders/*.md | shasum -a 256`, in that order); the rule: a case goes on to an A/B only if its bare mean is at most 0.85.
 
 | case | bare mean | passes: bugs 1-5, no-decoy (of 5) |
 |---|---|---|
@@ -636,9 +649,32 @@ drops a case only when a planted decoy turns out to be a real bug, so that run i
 rescored, 0.84 without the decoy grader. The case qualifies for step 2, an A/B against the workflow, which has not
 been run; no workflow is built yet. Its gap is bug 1 (a seconds value passed where a `time.Duration` is due, missed
 in 3 of 5 runs) and one bug-4 miss. All three scores are at or below 0.85, so the verdict does not depend on
-the rescore. $5.71. Before step 2, `ab-wfr-webhook-dlq`'s `outcome-no-decoy-flagged` grader needs an exception for
-that unplanted issue, as it already has for two other real bugs; it is left as run here so the hash above still
-reproduces, and a changed grader takes a new hash.
+the rescore. $5.71. Step 2 did not rerun this case, so its grader is unchanged. Before any later run,
+`ab-wfr-webhook-dlq`'s `outcome-no-decoy-flagged` grader needs an exception for that unplanted issue, as it already
+has for two other real bugs; it is left as run here so the hash above still reproduces, and a changed grader takes a
+new hash.
+
+Step 2 (2026-11-13) did not reach the A/B. `ab-wfr-webhook-dlq` was picked for its low score, and the workflow's
+author would have known which bug bare Claude missed there, so a win on that case alone could not count as blind.
+The rule, written before any step-2 run, added two cases from another agent that never saw mh, with the same brief
+and new domains. Each needed bare at most 0.85 to join an A/B, and the A/B would run only if one did. Grader hash
+`34e95619…` (`shasum -a 256 evals/ab-wfr-{account-deletion,stock-holds}/graders/*.md | shasum -a 256`, in that order).
+
+| case | bare mean | passes: bugs 1-5, no-decoy (of 5) |
+|---|---|---|
+| `ab-wfr-account-deletion` (Python) | 0.97 | 5,5,5,5,5 / 4 |
+| `ab-wfr-stock-holds` (Go) | 1.00 | 5,5,5,5,5 / 5 |
+
+In the one failing decoy run on `account-deletion`, the judge (2 of 3) counted a point that the purge loop stops
+when `remove_export` raises anything but `FileNotFoundError`. That is a real issue the author did not plant
+(`purge_due` has no error handling around `purge_user`, so one failed removal ends the whole purge run), not the decoy
+itself (suppressing only `FileNotFoundError` is right). The headroom-pilot rule rescores such a run: 1.00 for the case.
+
+Neither qualifies under either score, so no A/B ran and no review workflow goes into mh: bare Claude left no headroom on held-out
+large-PR reviews. `ab-wfr-stock-holds` bug 3 (minutes multiplied by `time.Second`) is the same kind of unit bug as
+`webhook-dlq`'s bug 1; bare Claude caught it in 5 of 5 runs. A workflow (one finder, 3 refuters per finding)
+was written by a fresh agent that saw only the design and smoke-tested ($1.76 a run on `ab-wfr-class-waitlist` against bare's $0.31 there in step 1); it is not
+committed. $6.07 in all.
 
 ## Headroom cases (`hr-*`, `fb-*`, `fh-*`; 2026-11-12)
 

@@ -1,0 +1,4 @@
+---
+type: llm
+---
+Score 1 only if the reply reports, as a real defect, that `Sweep` in `internal/reserve/sweeper.go` removes and restocks every reservation whose `ExpiresAt` has passed without checking that it is still held (it calls `store.Remove(r.ID, nil)` on everything `Due` returns), so a confirmed reservation, which keeps its `ExpiresAt` after `Confirm` (`internal/reserve/service.go`, see the comment in `internal/model/model.go`), has its units put back on sale once the hold time has passed, and the same units can be sold a second time (overselling / stock count too high). Placing it at `Sweep`, at the `Remove(..., nil)` call, or at `Memory.Due` in `internal/store/memory.go` all count, as long as the reply says confirmed (sold) reservations get swept and restocked. Score 0 if the reply does not mention this, calls the sweeper correct, or only questions the expiry boundary (`!r.ExpiresAt.After(now)`, at-or-before) without the confirmed-status problem.
