@@ -58,7 +58,7 @@ each, picked from the proposal's own risk: bypass, over-block, damage, a race be
 use, or two readers that disagree (the shell and the gate, a permission rule and a hook). Each lane
 is its own dispatch: same brief, its own focus line.
 
-**Dispatch** one `general-purpose` agent per lane with the brief, its raw final message through
+**Dispatch** one `general-purpose` agent per lane with the brief, and pipe its raw final message through
 the two checkers below. Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input
 files: it runs under the gates, which match raw command text. It has no sandbox: capture
 `git status --porcelain` before and after; any difference is a violation.
