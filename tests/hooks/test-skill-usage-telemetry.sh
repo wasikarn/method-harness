@@ -222,7 +222,7 @@ check_mapped offskill "offskill" "LOCAL SETTINGS WIN over project settings"
 run_hook() { HOME="$TMP_HOME" bash -c "echo '$1' | '$HOOK'"; }
 printf 'not json' > "$TMP_HOME/.claude/settings.json"
 check_mapped offskill "pluge:offskill" "UNREADABLE SETTINGS: treated as no entry, never a crash"
-trash "$TMP_HOME/.claude/settings.json" 2>/dev/null || tmp_delete "$TMP_HOME/.claude/settings.json"
+tmp_delete "$TMP_HOME/.claude/settings.json"
 
 # A typed slash command is a skill row only when a skill of that name exists (found 2026-11-12:
 # every typed command, /init included, was logged as a skill, and a typed short name was never

@@ -127,8 +127,8 @@ push and before the merge. `plugin.json` can carry inline hooks and MCP servers,
 counts as code. So merging `develop` and bumping the version keep the review; any other change (an edit made
 inside a merge, or a conflict resolved in code, included), a rebase, or a force-push needs a new one. The
 check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
-still caught. Post the reviewer's result as that comment. It proves a verdict was posted, not who wrote it
-or that the reviewer had fresh context. There
+still caught. Post the reviewer's result as that comment. It proves the owner's account posted a verdict, not
+that the reviewer had fresh context. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
 **A gate change needs a replay record (GH #891).** When the tree that merges changes the closure of

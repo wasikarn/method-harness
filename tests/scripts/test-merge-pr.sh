@@ -885,6 +885,14 @@ GH=1 STUB_STATUS_FAIL=1 vrun "$tip" develop "$F/comments.json"
 vrefuses "--verify with gh: a failed status post exits non-zero, no sha on stdout" "could not post the mh/gauntlet status"
 PASS_CACHE=0 GH=1 vrun "$tip" develop "$F/comments.json"
 if [ "$rc" -ne 0 ] && [ ! -s "$F/calls.log" ]; then ok "--verify with gh posts nothing without a cached pass"; else bad "--verify no pass posted: $(cat "$F/calls.log")"; fi
+# 16j2 on this path: the comments file is an MCP listing, so only the owner's comment is a verdict here too.
+setup; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); outsider "MERGE @ $tip" NONE >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify ignores a MERGE from an account that is not the owner" "no \"Fresh-context review"
+outsider "MERGE @ $tip" "" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify ignores a MERGE comment with no author_association" "no \"Fresh-context review"
 # a version bump commit after the reviewed sha keeps the review.
 setup; on feat/x "bump" set_ver 1.1.2
 tip=$(remote_tip feat/x); verdict "MERGE @ $FEATURE" >"$F/comments.json"
