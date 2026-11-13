@@ -23,7 +23,8 @@
 # merge-pr.sh --verify <PR> <head sha> <base branch> <comments.json> — the same checks without gh, for a
 # session that has none (a Claude Code cloud session) and merges through the GitHub MCP tools. The caller
 # passes what those tools return: the head sha, the base branch, and the PR's issue comments as a JSON
-# array of objects with a "body" (read by the same verdict parser). It runs the base, review, ancestry
+# array of objects with a "body" and an "author_association" (read by the same verdict parser, which
+# counts the owner's comments only). It runs the base, review, ancestry
 # and version checks and never takes the lock, syncs, pushes or merges: a head that lacks origin/develop
 # or a version above it is refused with the scripts/sync-pr-head.sh command to run first, and so is a
 # head whose tree has no cached full-gauntlet pass (GH #735; GAUNTLET_PASS_CACHE=0 always refuses). On a pass it
@@ -295,10 +296,13 @@ check_version() {
 # (GH #629: an edit made inside a merge, or a conflict resolved in code, needs a new review). A line inside a ``` or ~~~
 # fence does not count (a fence closes only on the same character, at least as long, as CommonMark has
 # it), and the last verdict line in a comment wins. Only issue comments are read (not PR reviews or the
-# body). This proves a verdict was posted, not who wrote it or that the reviewer had fresh context
-# (CLAUDE.md asks for that). There is no opt-out: an operator who must merge without a verdict does it on
+# body), and only the repository owner's: a comment counts when its author_association, which GitHub
+# sets, is OWNER (on a public repository any account can comment, and an outsider's MERGE once counted).
+# This proves the owner's account posted a verdict, not that the reviewer had fresh context
+# (CLAUDE.md asks for that). In --verify mode the comments come from the caller's file, so the caller's
+# word is all there is. There is no opt-out: an operator who must merge without a verdict does it on
 # GitHub.
-REVIEW_JQ='.[] | (.body | split("\n") | reduce .[] as $l ({f: null, m: null};
+REVIEW_JQ='.[] | select(.author_association == "OWNER") | (.body | split("\n") | reduce .[] as $l ({f: null, m: null};
     (($l | capture("^\\s*(?<c>`{3,}|~{3,})(?<t>.*)$")) // null) as $fc
     | if .f == null and $fc != null then .f = $fc.c
     elif .f != null then (if $fc != null and ($fc.t | test("^\\s*$")) and ($fc.c[0:1] == .f[0:1]) and ($fc.c | length) >= (.f | length) then .f = null else . end)
@@ -334,7 +338,7 @@ check_review() {
   local verdicts last word sha revs c f files merges parents p1 p2 tree conflicts rc
   if [ "$verify" = 1 ]; then
     verdicts=$(jq -r "$REVIEW_JQ" <"$comments_file") ||
-      { echo "merge-pr: could not read PR $pr's comments from '$comments_file' (a JSON array of comments with a \"body\") to find its review verdict." >&2; exit 1; }
+      { echo "merge-pr: could not read PR $pr's comments from '$comments_file' (a JSON array of comments with a \"body\" and an \"author_association\") to find its review verdict." >&2; exit 1; }
   else
     verdicts=$(gh api --paginate "repos/{owner}/{repo}/issues/$pr/comments" --jq "$REVIEW_JQ") ||
       { echo "merge-pr: could not read the comments of PR $pr to find its review verdict; not merging." >&2; exit 1; }
@@ -342,7 +346,7 @@ check_review() {
   last=$(printf '%s\n' "$verdicts" | awk 'NF == 2 { l = $0 } END { print l }')
   word=${last%% *}; sha=${last#* }
   if [ -z "$last" ]; then
-    echo "merge-pr: PR $pr has no \"Fresh-context review: MERGE @ <sha>\" comment; get a fresh-context review and post its verdict on the PR first." >&2
+    echo "merge-pr: PR $pr has no \"Fresh-context review: MERGE @ <sha>\" comment from the repository owner; get a fresh-context review and post its verdict on the PR first." >&2
     exit 1
   fi
   if [ "$word" != "MERGE" ]; then
