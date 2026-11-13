@@ -23,8 +23,7 @@ exists; this audits the diff after.
 
 - **Maker ≠ checker.** The agent that implemented the plan cannot be the sole grader of its own
   work — `docs/reference/operating-model.md`'s "The maker never grades its own work". Phase 2 dispatches a fresh-context
-  verifier with no memory of the implementation session, primary on Codex — a different model
-  family, not just a fresh context window.
+  verifier with no memory of the implementation session.
 - **Ground truth is the plan's text and the actual diff at a pinned commit** — not a summary of
   what you remember doing.
 - **Falsify, don't rubber-stamp.** Deviations you already know about get pre-declared (Phase 2)
@@ -77,17 +76,19 @@ verifier budget.
 
 ---
 
-## Phase 2: Pre-Declare, Then One Codex-Primary Verifier
+## Phase 2: Pre-Declare, Then One Fresh Verifier
 
 **Goal**: separate "I already know this differs from the plan, here's why" from what the audit
-must discover independently, then get an independent answer from a different model family.
+must discover independently, then get an answer from a verifier that did not do the work.
 
 **Actions**:
 1. If you already know of deviations, list each with its reason — this is a lightweight
    paragraph, not a gate of its own. Carry it forward unopened; step 3 is where it gets checked,
    not asserted. Starts empty if you have no first-hand deviation knowledge — step 3 still
    catches anything real.
-2. Dispatch **one** verifier at the pinned worktree from step 1.4. Primary: `codex exec --sandbox workspace-write
+2. Dispatch **one** verifier at the pinned worktree from step 1.4: a Claude `general-purpose`
+   subagent (no new bespoke agent type). Only when `codex@openai-codex` is installed and the
+   operator asked for it, use Codex instead: `codex exec --sandbox workspace-write
    --cd <worktree> --model <selected-model> -c model_reasoning_effort=<selected-effort>
    --output-last-message <file> --output-schema <schema-file>` (sandbox and cwd explicit, not the
    config-dependent default). `<schema-file>` is `references/verifier-output-schema.json` (this
@@ -98,12 +99,11 @@ must discover independently, then get an independent answer from a different mod
    type one: `python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/codex-resolve-model.py" <tier> --effort medium`
    with `<tier>` = `terra` for explicit requirements, `sol` when interpretation is material
    (non-zero exit: follow the map's substitution rule and say so); name the resolved slug in the
-   report. Check availability and quota first.
-   On rate-limit or Codex's absence, fall back to a Claude `general-purpose` subagent (no new
-   bespoke agent type) — note "independence reduced for this pass" in the final report.
+   report. Check availability and quota first; on a rate limit or any failure, run the Claude
+   subagent. Name the verifier that ran in the final report.
    - **Validate before trusting, on both paths.** Pipe the verifier's raw output (the
      `--output-last-message` file's contents on the Codex path; the agent's final message text on
-     the Claude-fallback path) through `scripts/check-verdict.py <pinned-sha>` — the pinned SHA
+     the Claude path) through `scripts/check-verdict.py <pinned-sha>` — the pinned SHA
      generated in step 1.4 is the script's *only* source of truth for cross-checking
      `gauntlet.sha` (the script never derives one; it runs on the host tree, where `HEAD` is the
      wrong ref). A verifier reporting a different SHA is rejected even if its object is

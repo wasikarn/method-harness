@@ -450,7 +450,8 @@ History, so a mixed-judge comparison reads right:
 A break in these paths does not show up in an eval run.
 
 - **The Codex path of `attack-proposal`, `idea-audit` and `deep-audit`.** The eval sandbox has no
-  Codex login and limited network, so every run takes the Claude fallback (2026-11-06 replies:
+  Codex login and limited network, so every run takes the Claude agent, which since 2026-11-13 is
+  the default path anyway (2026-11-06 replies:
   `codex login status` reports "Not logged in"; "Codex couldn't reach the network"). Only the
   dispatch itself is untested: the verdict a Codex lane returns goes through `check-verdict.py`
   (`tests/skills/test-idea-audit-check-verdict.sh`, `tests/skills/test-deep-audit-check-verdict.sh`),
