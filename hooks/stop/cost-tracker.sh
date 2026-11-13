@@ -586,7 +586,7 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
       sub_typemap=$(build_type_map "$parent_map" "$verify_map" "${sub_files[@]}")
       # One jq read of every subagent file prints the usage records.
       # jq's stderr is not silenced: an uncaught error prints its own text there.
-      both=$(jq -nRc --argjson typemap "$sub_typemap" --argjson seen "$adv_seen" "$adv_def$usage_def"'
+      sub_out=$(jq -nRc --argjson typemap "$sub_typemap" --argjson seen "$adv_seen" "$adv_def$usage_def"'
         ($seen | map({(.): true}) | add // {}) as $s
         | [ inputs | try fromjson | select(.type == "assistant") | . + {__f: input_filename} ] as $a
         | try ( [ $a[] | select((.message // {}).usage != null)
@@ -600,7 +600,7 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
             | map(select(.adv != true or ($s[.id // ""] | not))) ) catch {__error: true, msg: .}
       ' "${sub_files[@]}")
       both_rc=$?
-      IFS= read -r sub_records <<< "$both"
+      IFS= read -r sub_records <<< "$sub_out"
       # Records are an array; an object is the catch marker above.
       if [[ $both_rc -ne 0 || "$sub_records" == "{"* ]]; then
         sub_msg=$(printf '%s' "$sub_records" | jq -r 'objects | .msg // empty' 2>/dev/null)

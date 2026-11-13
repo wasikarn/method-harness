@@ -695,7 +695,7 @@ tmp_delete "$fake_home" "$transcript" "$decoy"
 # Before the fix, cost-tracker.sh re-scanned the main transcript with a
 # separate full-file jq invocation 3-5 times per Stop call (build_verify_map
 # for the orchestrator typemap, emit_rows' own orchestrator extraction,
-# emit_codex_invocations, and -- when subagents exist -- build_type_map's own
+# the since-removed codex tally, and -- when subagents exist -- build_type_map's own
 # parent_map extraction PLUS its own internal build_verify_map re-scan of the
 # identical input). Measured 9.5s/Stop-call against a real 158MB/42,838-line
 # transcript on disk. This wraps jq with a shim that logs every invocation's

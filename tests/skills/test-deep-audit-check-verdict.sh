@@ -49,7 +49,7 @@ assert_exit "non-citation checked.evidence rejected" 1 '{"contract_version": 1, 
 assert_exit "non-citation findings.evidence rejected" 1 '{"contract_version": 1, "pass": false, "findings": [{"summary": "s", "evidence": "looks wrong to me"}], "checked": '"$checked"', "scope_ok": true, "unexpected_files": []}'
 assert_exit "numeric ratio is not a citation" 1 '{"contract_version": 1, "pass": true, "findings": [], "checked": [{"claim": "c", "evidence": "ratio 2.5:1"}], "scope_ok": true, "unexpected_files": []}'
 
-# #439: the Codex primary path's acceptance paragraph must pipe its output through
+# #439: the acceptance paragraph must pipe its output through
 # check-verdict.py too, not accept on schema validity alone.
 codex_accept=$(awk '/^\*\*Accept the result only if/{on=1} /^\*\*On any other outcome/{on=0} on' \
   "$ROOT/skills/review/deep-audit/SKILL.md")
@@ -57,7 +57,7 @@ if /usr/bin/grep -q 'check-verdict\.py' <<<"$codex_accept"; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
-  echo "FAIL: deep-audit Codex acceptance paragraph does not name check-verdict.py"
+  echo "FAIL: deep-audit acceptance paragraph does not name check-verdict.py"
 fi
 
 report_verdict "test-deep-audit-check-verdict"

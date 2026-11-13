@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a dispatched attacker/fallback's verdict on the Claude fallback path.
+"""Validate a dispatched attacker's verdict (Claude agent path).
 
 Added 2026-09-20 (harness gap-audit M2) — mirrors mh:deep-audit's
 scripts/check-verdict.py (same NEEDS-DECISION escape hatch, same

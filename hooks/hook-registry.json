@@ -1,5 +1,5 @@
 {
-  "_about": "id/description for each hooks.json hook-group entry, keyed by event + array position, with a command fingerprint so a reorder or same-count replacement can't silently mismatch. hooks.json's own schema (code.claude.com/docs/en/hooks) only recognizes matcher/hooks at that level -- CC warns and drops id/description if left inline (2026-09-10). This is the canonical source for the id vocabulary docs/ cites by name. Hand-maintained, no generator, same stance as docs/reference/codex-integration-map.md:69.",
+  "_about": "id/description for each hooks.json hook-group entry, keyed by event + array position, with a command fingerprint so a reorder or same-count replacement can't silently mismatch. hooks.json's own schema (code.claude.com/docs/en/hooks) only recognizes matcher/hooks at that level -- CC warns and drops id/description if left inline (2026-09-10). This is the canonical source for the id vocabulary docs/ cites by name. Hand-maintained, no generator, same stance as the other hand-maintained registries here.",
   "version": 1,
   "hooks": {
     "SessionStart": [
