@@ -196,10 +196,10 @@ Two for `attack-proposal` (tag `attack-proposal`, model-invocable; the fire prom
 writes with `abspath(...).startswith(UPLOAD_ROOT)`, which blocks `..` traversal and absolute paths but
 lets the sibling `var/uploads-archive/` (and a symlink inside the root) through. The report must name
 that break with a concrete input, close or drop it before any GO, and leave `src/storage.py`
-byte-identical: the skill vets a proposal, it does not build it. With no Codex login in the sandbox the
-attacker runs on the `general-purpose` fallback; `attacker-dispatched.md` (Agent, min 1) is
+byte-identical: the skill vets a proposal, it does not build it. The
+attacker runs on a `general-purpose` agent; `attacker-dispatched.md` (Agent, min 1) is
 `arm: with-only`. Plus one should-NOT-fire case: a security fix that is already committed goes to
-`/codex:adversarial-review` or `mh:deep-audit` per the skill's own scope line, so the review must not
+`mh:deep-audit` per the skill's own scope line, so the review must not
 invoke the skill and must still find that `startswith("/")` lets `//evil.example` through
 (`built-diff-misroute`). Needs `--allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write`.
 
@@ -449,13 +449,6 @@ History, so a mixed-judge comparison reads right:
 
 A break in these paths does not show up in an eval run.
 
-- **The Codex path of `attack-proposal`, `idea-audit` and `deep-audit`.** The eval sandbox has no
-  Codex login and limited network, so every run takes the Claude fallback (2026-11-06 replies:
-  `codex login status` reports "Not logged in"; "Codex couldn't reach the network"). Only the
-  dispatch itself is untested: the verdict a Codex lane returns goes through `check-verdict.py`
-  (`tests/skills/test-idea-audit-check-verdict.sh`, `tests/skills/test-deep-audit-check-verdict.sh`),
-  and the model resolver has `tests/scripts/test-codex-resolve-model.sh`.
-  `docs/reference/codex-integration-map.md` documents the lanes.
 - **`model-bench`'s paid path.** Cases run `--diff-only`, since a nested `claude plugin eval` must
   never start inside an eval. `tests/scripts/test-model-bench.sh` checks `model-bench.sh`'s argv and
   env against a stub `claude`; a real two-arm run is untested.

@@ -9,10 +9,8 @@ Before writing a new skill or agent from scratch, check sources in this order:
    matt's own repo gets the priority backwards. If the clone exists, `git fetch` it before
    trusting it: the installed plugin can be newer than the clone (it silently lagged
    `origin/main` by a full minor release once).
-2. If installed: `codex@openai-codex`, for anything the task needs from a second, independent
-   coding agent rather than a new mh surface — `docs/reference/codex-integration-map.md`.
-3. If present: `~/Codes/Personals/ECC` and `~/Codes/Personals/superpowers`.
-4. If present: sibling harnesses under `~/Codes/Personals/` for structural patterns.
+2. If present: `~/Codes/Personals/ECC` and `~/Codes/Personals/superpowers`.
+3. If present: sibling harnesses under `~/Codes/Personals/` for structural patterns.
 
 Cherry-pick and adapt from whichever fits; create a native surface only when none do. Skipping
 step 1 has collided with matt's own work before (2026-07-17: a `code-implementer` agent built

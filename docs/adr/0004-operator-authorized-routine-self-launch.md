@@ -424,7 +424,7 @@ must include, not built now — Phase C is explicitly ADR-drafting and review-sc
 Routines are recurring, paid, cloud-hosted sessions — a different cost shape from an interactive
 session's usage. This repo has an existing, closely analogous precedent: the earlier decision to
 skip `claude-code-action` automated PR review in CI specifically because it needs a paid Anthropic
-API secret this repo doesn't carry (Phase B's B4/B5 notes, `docs/reference/codex-integration-map.md`).
+API secret this repo doesn't carry (Phase B's B4/B5 notes).
 **Left open, deliberately** — this is exactly the kind of criterion the adversarial review in §7
 should weigh with real numbers (expected trigger frequency × per-invocation cost), not something
 this drafting pass pre-decides by assertion.

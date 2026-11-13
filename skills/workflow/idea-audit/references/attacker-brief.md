@@ -1,6 +1,6 @@
 # Attacker dispatch brief
 
-Load before dispatching Phase 2 (Codex primary or the `general-purpose` fallback). Fill the
+Load before dispatching Phase 2. Fill the
 bracketed fields; send the whole thing as the dispatch prompt.
 
 ```
@@ -35,7 +35,7 @@ it cannot be confirmed against the actual source.>
 <paste Agent B's output>
 
 ## FILES YOU OWN
-<none — read-only pass. If running as the Claude fallback: no tool grant restricts you, so this
+<none — read-only pass. If running as a Claude agent: no tool grant restricts you, so this
 line is the constraint. You write nothing — no Write, Edit, NotebookEdit, or shell redirect;
 report findings only in your final message.>
 

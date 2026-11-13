@@ -192,7 +192,7 @@ already set alone.
   skill, since moved to the `siang` plugin).
 - **Which mh copy runs after a restart.** `$MH_PLUGIN_ROOT` is a SessionStart snapshot, not proof.
   Read `mh_version` in this session's last row of `~/.local/share/kbg/metrics/costs.jsonl` that has
-  one (a Codex row has none), or the version in the hook path Claude Code prints around a gate deny. `~/.claude/metrics/costs.jsonl` is a stale
+  one (a legacy `codex_invocations` row has none), or the version in the hook path Claude Code prints around a gate deny. `~/.claude/metrics/costs.jsonl` is a stale
   file with no `mh_version`. A wrong probe gave a wrong answer twice: the env var (2026-09-21) and the
   stale file (2026-09-30). In an mh checkout with modules on, the hooks module's status line and
   stale-skill toast say it too (`docs/reference/cost-ledger-module.md`, GH #442).

@@ -19,8 +19,6 @@ HERE="$(cd -P "$(dirname "$0")" && pwd)"
 . "$HERE/../../../scripts/_lib/tmp-delete.sh"
 AUDIT="$HERE/../../../skills/meta/harness-audit/scripts/audit.sh"
 FIX="$HERE/known-bad"
-# shellcheck source=../../../scripts/_lib/codex-state-path.sh
-. "$HERE/../../../scripts/_lib/codex-state-path.sh"
 
 pass=0
 fail=0
@@ -164,11 +162,7 @@ else bad "check-29 good not silent (crit=$CRIT_FOUND warn=$WARN_FOUND info=$INFO
 expect_warn   70 check-70-bad-stray-entry
 expect_silent 70 check-70-good-clean-root
 
-# Check 71: paired Codex plugin's review-gate state. The state file's path is
-# content-addressed by the fixture's own absolute path (sha256 of its
-# realpath), so it can't be pre-committed to git -- written fresh here with
-# the same helper the check itself uses, under a throwaway MH_CODEX_DATA_DIR
-# so this never touches the real, shared ~/.claude/plugins/data/.
+# A throwaway dir for the stubs and fake homes the checks below need.
 CODEX_TMP=$(mktemp -d)
 trap 'tmp_delete "$CODEX_TMP"' EXIT
 # Check 20 must take its temp file from $TMPDIR. On macOS a bare `mktemp` writes under /var/folders,
@@ -181,22 +175,6 @@ chmod +x "$CODEX_TMP/mktemp-stub/mktemp"
 PATH="$CODEX_TMP/mktemp-stub:$PATH" expect_silent 20 check-20-good-duplicate-distinct
 # A TMPDIR naming a missing dir must not crash check 20 either: the bare `mktemp` it replaced never read TMPDIR.
 TMPDIR="$CODEX_TMP/no-such-dir" expect_silent 20 check-20-good-duplicate-distinct
-setup_codex_state() {
-  local fixture="$1" gate="$2" path
-  export MH_CODEX_DATA_DIR="$CODEX_TMP/$fixture"
-  path=$(codex_state_path "$FIX/$fixture") || { bad "check-71 $fixture: codex_state_path failed"; return 1; }
-  mkdir -p "$(dirname "$path")"
-  printf '{"config":{"stopReviewGate":%s}}' "$gate" > "$path"
-}
-setup_codex_state check-71-bad-review-gate-on true
-expect_warn   71 check-71-bad-review-gate-on
-setup_codex_state check-71-good-review-gate-off false
-expect_silent 71 check-71-good-review-gate-off
-# A string "false" is not the boolean false: it must read as unknown (info), not ON (warn).
-setup_codex_state check-71-good-review-gate-off '"false"'
-expect_silent 71 check-71-good-review-gate-off
-unset MH_CODEX_DATA_DIR
-
 # Check 21: agent model value. fable is a documented alias but a discouraged pin
 # (agent-authoring-conventions.md) -- must WARN by name, not silently pass as valid.
 # Regex is 'pins fable' (the check's own fixed wording), not bare 'fable' -- the fixture's
@@ -209,34 +187,7 @@ expect_warn_match 21 check-21-bad-fable-pin 'pins fable'
 # earlier claude-* catch-all is independently caught.
 expect_warn_match 21 check-21-bad-fable-full-id-pin 'pins fable'
 
-# Check 72: Codex effort-set drift. A fake plugin cache carries the plugin's
-# VALID_REASONING_EFFORTS line; the fixture doc either matches it or not.
-mkdir -p "$CODEX_TMP/cache/scripts"
-printf 'const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);\n' > "$CODEX_TMP/cache/scripts/codex-companion.mjs"
-export MH_CODEX_CACHE_DIR="$CODEX_TMP/cache"
 expect_warn   54 check-54-bad-effort-max
-expect_warn   72 check-72-bad-effort-drift
-expect_warn   72 check-72-bad-effort-missing
-expect_silent_match 72 check-72-good-effort-set 'matches the installed plugin'
-# Normalisation: doc order and plugin quote style must not read as drift.
-expect_silent_match 72 check-72-good-effort-reordered 'matches the installed plugin'
-printf "const VALID_REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);\n" > "$CODEX_TMP/cache/scripts/codex-companion.mjs"
-expect_silent_match 72 check-72-good-effort-set 'matches the installed plugin'
-# Fail-open branches: plugin layout changed, doc missing, plugin not installed -> INFO only.
-printf 'export const nothing = 1;\n' > "$CODEX_TMP/cache/scripts/codex-companion.mjs"
-expect_info_only 72 check-72-good-effort-set 'VALID_REASONING_EFFORTS not found'
-printf 'const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);\n' > "$CODEX_TMP/cache/scripts/codex-companion.mjs"
-expect_info_only 72 check-72-info-no-doc 'spawn-brief.md missing'
-MH_CODEX_CACHE_DIR="$CODEX_TMP/nonexistent" expect_info_only 72 check-72-good-effort-set 'codex@openai-codex not installed'
-unset MH_CODEX_CACHE_DIR
-# Without the override the check must find the newest versioned cache dir itself (sort -V:
-# 1.0.10 beats 1.0.9); the older dir carries a smaller set so a wrong pick fires a false WARN.
-_c72_home="$CODEX_TMP/home"
-for _v in 1.0.9 1.0.10; do mkdir -p "$_c72_home/.claude/plugins/cache/openai-codex/codex/$_v/scripts"; done
-printf 'const VALID_REASONING_EFFORTS = new Set(["low", "medium", "high"]);\n' > "$_c72_home/.claude/plugins/cache/openai-codex/codex/1.0.9/scripts/codex-companion.mjs"
-cp "$CODEX_TMP/cache/scripts/codex-companion.mjs" "$_c72_home/.claude/plugins/cache/openai-codex/codex/1.0.10/scripts/codex-companion.mjs"
-HOME="$_c72_home" expect_silent_match 72 check-72-good-effort-set 'codex/1\.0\.10/'
-HOME="$_c72_home" expect_warn 72 check-72-bad-effort-drift
 
 # 73: hooks.json <-> hook-registry.json id/description drift. Five distinct bad fixtures,
 # not one, because count-mismatch and stray-key alone leave the command-fingerprint and

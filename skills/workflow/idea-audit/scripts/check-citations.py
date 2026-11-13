@@ -5,7 +5,7 @@ Found by the 2026-09-19 criteria-quality audit: SKILL.md and attacker-brief.md
 both described this as something "the host checks" by eye -- schema validity
 alone only proves `evidence` is a non-empty string, not a real citation. This
 script makes that check mechanical. Run it AFTER schema/pass/checked-presence
-validation (already enforced by --output-schema or a manual parse) -- it does
+validation (already enforced by check-verdict.py) -- it does
 not re-validate the envelope, only the citation shape inside each `evidence`.
 
 stdin: the attacker's already schema-valid JSON (see attacker-output-schema.json).

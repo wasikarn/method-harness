@@ -61,7 +61,6 @@ One clause per gate; full scope and exceptions: `docs/reference/operating-model.
 | `gate:write:test-integrity` | asks before a write that weakens a test |
 | `gate:write:config-guard` | asks before a write to Claude Code settings `hooks`/`enabledPlugins` |
 | `gate:write:secret-scan` | asks when a Write/Edit adds a live-credential-shaped token |
-| `gate:skill:codex-setup-guard` | asks before a model-invoked `/codex:setup --enable-review-gate` |
 | `gate:tool:routine-trigger-guard` | asks before `RemoteTrigger` creates, modifies, or fires a Routine (ADR 0004) |
 | `gate:agent:subagent-verdict-check` | `SubagentStop` (plus a `SubagentHandback` twin): re-prompts once on a vacuous or self-contradictory Rule 13 verdict |
 
@@ -105,8 +104,6 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 - **Hooks module:** `hooks/mod/cost-ledger.ts` records Claude Code's own cost ledger per turn so
   `/mh:cost-report` can cross-check its transcript total (CLI 2.1.287+; observer only, no gate) —
   `docs/reference/cost-ledger-module.md`.
-- **Optional pairing:** `codex@openai-codex`, installed separately and routed to by name for a
-  second opinion from a different model family — see below.
 - **Fragments pointer capture:** invoking upstream's `writing-fragments` skill (in-progress,
   not in the mattpocock-skills plugin's skills list) and then writing to the chosen file records
   a path pointer (never the content) at `$HOME/.claude/state/mh-fragments/`,
@@ -125,14 +122,6 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 | 6 Trace + recovery | Claude Code's own transcript is the run trace (tool calls, context loaded, changes made) — mh doesn't duplicate it. `hooks/stop/cost-tracker.sh` adds cost/token accounting on top; `skills/workflow/post-mortem` is the recovery loop, classifying each fix into the article's own four failure classes |
 
 Source: "Harness Engineering: Build a Reliable AI Agent in 6 Layers" (2026-08-30).
-
-## Optional: pairing with Codex
-
-`codex@openai-codex` (Apache-2.0) pairs as a second, independent coding agent — a different
-model family, routed to by name, never wrapped or orchestrated. Install separately
-(`/plugin marketplace add openai/codex-plugin-cc`, `/plugin install codex@openai-codex`,
-`/codex:setup`); mh works unchanged without it. Routing, the gate gap, and the `AGENTS.md`
-pointer: `docs/reference/codex-integration-map.md`.
 
 ## Development
 

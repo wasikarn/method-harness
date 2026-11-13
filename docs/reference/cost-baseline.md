@@ -34,7 +34,6 @@ and `post-mortem` carry `disable-model-invocation: true`.
 | `sensors/failure-diagnose-nudge` | a Bash call fails, including one a PreToolUse gate denied before it ran; once per distinct command per session (and per subagent) | 325 for the first in a session or subagent, 134 after |
 | `session/memory-health-nudge` | memory-lint reports `findings: [1-9]`, or the store's auto-commit failed | ~200 B fixed + the lint output (estimate from source) |
 | `session/fragments-surface` (startup/resume/clear) | fragment files recorded for this project | roughly 400-650 B fixed + one line per file (estimate from source) |
-| `sensors/codex-quota-advisory` | a Codex CLI call is about to run and a usage-limit failure was recorded within the TTL (24 h) | 388 with a 30 B recorded message (measured), so ~358 + message |
 
 Not context: the `hooks/mod/cost-ledger.ts` module writes ledger rows and may show a status line or
 toast; Stop hooks write files only.
@@ -54,7 +53,6 @@ time is roughly the figure minus 30.
 | `session/fragments-surface.sh --reinject` | 98 |
 | `sensors/fragments-arm.sh` (UserPromptSubmit, every prompt) | 38 |
 | `sensors/failure-diagnose-nudge.sh` (firing) | 62 |
-| `sensors/codex-quota-sensor.sh` | 62 |
 
 SessionStart sum, net of overhead: ~155 ms (summed serially; Claude Code may run them in parallel).
 
@@ -87,8 +85,4 @@ jq spawns per Stop on a 3-subagent fixture: 20 before, 13 after.
 3. Timing: wall time per call from Python `time.time()` around the pipe, three runs, median,
    with a no-op script through the same path as the overhead row.
 4. Conditional rows: the worktree probe had no fragment files, memory-lint found nothing in the
-   shared store (a linked worktree resolves to the main checkout's store), and no quota failure
-   was recorded. The codex advisory was measured by writing
-   `{"recorded_at": <now>, "message": "You have hit your usage limit."}` to a temp file, pointing
-   `MH_CODEX_QUOTA_STATE_FILE` at it, and sending a PreToolUse Bash payload whose command is
-   `codex exec --sandbox read-only hi`. The rest are estimates from each script's fixed text.
+   shared store (a linked worktree resolves to the main checkout's store). The rest are estimates from each script's fixed text.

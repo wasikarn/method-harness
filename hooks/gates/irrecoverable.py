@@ -4,7 +4,7 @@ import bisect, itertools  # its own line: tests/hooks/test-gate-canary.sh inject
 
 # GH #156: raise the int-string digit limit before parsing so an oversized
 # unquoted int literal doesn't crash json.load() into this gate's fail-open
-# except below (full rationale: codex-setup-guard.py). hasattr-guarded: the
+# except below (full rationale: secret-scan.py). hasattr-guarded: the
 # method doesn't exist before Python 3.11.
 if hasattr(sys, "set_int_max_str_digits"):
     sys.set_int_max_str_digits(0)
@@ -2191,8 +2191,8 @@ _ASKED = []
 def ask(reason, rule=None):
     # Unlike deny(), doesn't exit immediately -- a later, more severe check in
     # the same run can still escalate to deny() (which does exit right away),
-    # same "ask now, a worse finding can still override" shape config-write-guard.py
-    # and codex-setup-guard.py's own emit_ask() already use. Emits at most once: a
+    # same "ask now, a worse finding can still override" shape config-write-guard.py's
+    # own emit_ask() already uses. Emits at most once: a
     # window can be checked in several copies (compacted, brace-joined), and two
     # JSON objects on stdout are not valid JSON (GH #254 validator).
     # A shadowed ask is checked first and never touches _ASKED, so a later real ask still emits.

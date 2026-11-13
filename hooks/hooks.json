@@ -145,16 +145,6 @@
         ]
       },
       {
-        "matcher": "Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/codex-setup-guard.sh\"",
-            "timeout": 8
-          }
-        ]
-      },
-      {
         "matcher": "SubagentHandback",
         "hooks": [
           {
@@ -170,16 +160,6 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/routine-trigger-guard.sh\"",
-            "timeout": 8
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/codex-quota-advisory.sh\"",
             "timeout": 8
           }
         ]
@@ -224,16 +204,6 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/failure-diagnose-nudge.sh\"",
-            "timeout": 8
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/codex-quota-sensor.sh\"",
             "timeout": 8
           }
         ]

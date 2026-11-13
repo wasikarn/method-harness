@@ -40,7 +40,6 @@ Quote the script's numbers as printed. Add only what a reader needs:
 - **`(rate unverified)` means guessed** (priced at the Sonnet rate). Rank those by `tok`, not dollars.
 - **Non-Claude models are history** (proxy models only appear before 2026-08-07).
 - **Subagent spend starts 2026-08-07.** A difference across that date is a schema change.
-- **Codex invocations are counts**, never dollars; the section is absent until `codex:*` ran.
 - **`ledger cross-check:` compares, it does not replace.** Quote `total`. The gap is spend with no
   transcript line. `no ledger data` means mh's hooks module was not running, not zero spend;
   `module loaded: N of M sessions` is its load rate.

@@ -7,8 +7,7 @@
 # Storage: $HOME/.claude/state/mh-fragments/<slug>-<hash>/documents/
 #          <sha256(path)[:16]>.json
 # <slug>-<hash> from slug_hash() (scripts/_lib/slug-hash.sh), scoped to the
-# git repo root -- identical derivation to codex-state-path.sh, so two
-# different repos never collide. (The now-removed mh:handoff skill's
+# git repo root, so two different repos never collide. (The now-removed mh:handoff skill's
 # handoff-path.sh used the same derivation too; see git history.)
 #
 # The durable state tree gets the same symlink+ownership defense the

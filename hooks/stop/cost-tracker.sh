@@ -76,7 +76,7 @@ sonnet_rate='{"i":2.0,"o":10.0,"cw":2.50,"cw1h":4.00,"cr":0.20}'
 # fix, see scan_transcript below) instead of re-deriving them from the parent
 # transcript here — this function used to jq-scan the (potentially huge) main
 # transcript twice on its own (once for parent_map, once via build_verify_map),
-# on top of the two more full scans emit_rows and emit_codex_invocations did
+# on top of the further full scans emit_rows and a since-removed tally did
 # independently. Measured 9.5s/Stop-call against a real 158MB/42,838-line
 # transcript before this fix (docs/research/cost-tracker-single-scan-perf-2026-09-22.md).
 #
@@ -392,20 +392,20 @@ group_and_price() {
 # separate full-file jq scans per Stop call (build_verify_map for the
 # orchestrator typemap, build_type_map's own parent_map extraction PLUS its
 # own internal build_verify_map re-scan when subagents exist, emit_rows'
-# orchestrator extraction, emit_codex_invocations' main-transcript half) --
+# orchestrator extraction, a since-removed tally's main-transcript half) --
 # each one an independent `jq -nR 'inputs | ...'` re-read of the same file.
 # Measured 9.5s/Stop-call against a real 158MB/42,838-line transcript before
 # this fix; a session's cumulative re-parse cost across T turns was O(T) work
 # per Stop, i.e. O(T^2) total bytes parsed over the session
 # (docs/research/cost-tracker-single-scan-perf-2026-09-22.md).
 #
-# All four sub-computations are wrapped in their own try/catch, matching each
-# original function's own independent fallback ({} for verify_map/parent_map/
-# codex, the {__error:true} marker for usages -- the caller's signal to emit
+# All three sub-computations are wrapped in their own try/catch, matching each
+# original function's own independent fallback ({} for verify_map/parent_map,
+# the {__error:true} marker for usages -- the caller's signal to emit
 # the same jq_failed sentinel the subagent read does). This preserves the
 # original code's independent-failure-domain behavior: one malformed line
 # breaks only the sub-computation that actually touches the field it's
-# malformed on, never the other three. Getting this wrong is not
+# malformed on, never the other two. Getting this wrong is not
 # hypothetical: an earlier draft left verify_map unwrapped on the assumption
 # that only `usages` ever indexes .message.usage.<field> -- wrong, verify_map
 # does the same arithmetic inside its own reduce once a verify-window is
@@ -462,19 +462,7 @@ scan_transcript() {
               if $x.id == null then .out += [$x]
               else .byid[$x.id] = $x end)
           | .out + (.byid | [.[]])
-        ) catch {__error: true, msg: .} ),
-        codex: ( try (
-          [$lines[] | select(.type == "assistant") |
-            { c: (.message.content // []), id: (.message.id // null) }]
-          | reduce .[] as $x ({byid: {}, out: []};
-              if $x.id == null then .out += [$x]
-              else .byid[$x.id] = $x end)
-          | (.out + (.byid | [.[]])) | map(.c[]?) | map(select(.type == "tool_use")) |
-            map(if .name == "Skill" and ((.input.skill // "") | startswith("codex:")) then .input.skill
-                elif .name == "Agent" and ((.input.subagent_type // "") | startswith("codex:")) then .input.subagent_type
-                else empty end)
-          | group_by(.) | map({(.[0]): length}) | add // {}
-        ) catch {} )
+        ) catch {__error: true, msg: .} )
       }
   ' "$1"
 }
@@ -554,8 +542,8 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
     [[ "$(tsize)" == "$transcript_size" ]] && break
   done
   # Here-string, not `< <(...)`: bash `read` on a pipe is byte-at-a-time, 5x slower.
-  { IFS= read -r verify_map; IFS= read -r parent_map; IFS= read -r main_usages; IFS= read -r main_codex; IFS= read -r orch_typemap; IFS= read -r adv_seen_pre; IFS= read -r usages_is_obj; } <<< "$(printf '%s' "$scan" | jq -c --arg f "$transcript" '.verify_map, .parent_map, .usages, .codex, {($f): {v: ([.verify_map[]?] | add // [])}}, (.usages | if type == "array" then [.[] | select(.adv == true and .id != null) | .id] else [] end), (.usages | type == "object")' 2>/dev/null)"
-  [[ -z "$verify_map" ]] && verify_map='{}'; [[ -z "$parent_map" ]] && parent_map='{}'; [[ -z "$main_codex" ]] && main_codex='{}'; [[ -z "$orch_typemap" ]] && orch_typemap='{}'
+  { IFS= read -r verify_map; IFS= read -r parent_map; IFS= read -r main_usages; IFS= read -r orch_typemap; IFS= read -r adv_seen_pre; IFS= read -r usages_is_obj; } <<< "$(printf '%s' "$scan" | jq -c --arg f "$transcript" '.verify_map, .parent_map, .usages, {($f): {v: ([.verify_map[]?] | add // [])}}, (.usages | if type == "array" then [.[] | select(.adv == true and .id != null) | .id] else [] end), (.usages | type == "object")' 2>/dev/null)"
+  [[ -z "$verify_map" ]] && verify_map='{}'; [[ -z "$parent_map" ]] && parent_map='{}'; [[ -z "$orch_typemap" ]] && orch_typemap='{}'
 
   # Orchestrator row: every return window in the whole session, so its
   # verify_tokens is the session total handoff-verification cost.
@@ -596,12 +584,9 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
       adv_seen=${adv_seen_pre:-}
       [[ -z "$adv_seen" ]] && adv_seen='[]'
       sub_typemap=$(build_type_map "$parent_map" "$verify_map" "${sub_files[@]}")
-      # One jq read of every subagent file prints two lines: the usage records
-      # and the codex tally. Subagent transcripts are not small (p90 24 MB), so
-      # a second pass over them doubled the cost. Each half has its own try, so a
-      # usage error (H7) still leaves the codex tally, as the separate pass did.
+      # One jq read of every subagent file prints the usage records.
       # jq's stderr is not silenced: an uncaught error prints its own text there.
-      both=$(jq -nRc --argjson typemap "$sub_typemap" --argjson seen "$adv_seen" "$adv_def$usage_def"'
+      sub_out=$(jq -nRc --argjson typemap "$sub_typemap" --argjson seen "$adv_seen" "$adv_def$usage_def"'
         ($seen | map({(.): true}) | add // {}) as $s
         | [ inputs | try fromjson | select(.type == "assistant") | . + {__f: input_filename} ] as $a
         | try ( [ $a[] | select((.message // {}).usage != null)
@@ -612,43 +597,20 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
                 elif $x.adv then .byid[$x.id] = $x
                 else .byid[$x.f + "\u0000" + $x.id] = $x end)
             | .out + (.byid | [.[]])
-            | map(select(.adv != true or ($s[.id // ""] | not))) ) catch {__error: true, msg: .},
-          ( try ( [ $a[] | { c: (.message.content // []), id: (.message.id // null), f: .__f } ]
-            | reduce .[] as $x ({byid: {}, out: []};
-                if $x.id == null then .out += [$x] else .byid[$x.f + "::" + $x.id] = $x end)
-            | (.out + (.byid | [.[]])) | map(.c[]?) | map(select(.type == "tool_use")) |
-              map(if .name == "Skill" and ((.input.skill // "") | startswith("codex:")) then .input.skill
-                  elif .name == "Agent" and ((.input.subagent_type // "") | startswith("codex:")) then .input.subagent_type
-                  else empty end)
-            | group_by(.) | map({(.[0]): length}) | add // {} ) catch {} )
+            | map(select(.adv != true or ($s[.id // ""] | not))) ) catch {__error: true, msg: .}
       ' "${sub_files[@]}")
-      both_rc=$?
-      { IFS= read -r sub_records; IFS= read -r sub_codex_pre; } <<< "$both"
+      sub_rc=$?
+      IFS= read -r sub_records <<< "$sub_out"
       # Records are an array; an object is the catch marker above.
-      if [[ $both_rc -ne 0 || "$sub_records" == "{"* ]]; then
-        (( both_rc )) && sub_codex_pre=''
+      if [[ $sub_rc -ne 0 || "$sub_records" == "{"* ]]; then
         sub_msg=$(printf '%s' "$sub_records" | jq -r 'objects | .msg // empty' 2>/dev/null)
-        echo "[mh:cost-tracker] emit_rows(subagent): jq failed rc=$both_rc on: ${sub_files[*]}${sub_msg:+ -- $sub_msg}" >&2
+        echo "[mh:cost-tracker] emit_rows(subagent): jq failed rc=$sub_rc on: ${sub_files[*]}${sub_msg:+ -- $sub_msg}" >&2
         sub_rows=$(jq_failed_row subagent "${sub_files[*]}")
       else
         sub_rows=$(group_and_price "$sub_typemap" subagent "$sub_records")
       fi
       [[ -n "$sub_rows" ]] && rows="${rows:+$rows$'\n'}$sub_rows"
     fi
-  fi
-
-  # Codex tally: main transcript's contribution comes from the single scan
-  # above, the subagent files' from the same jq read as their usage rows. The two are summed per-key, not overwritten — the
-  # original single combined call effectively did the same summation by
-  # tallying tool_use blocks across every file's lines together.
-  sub_codex=${sub_codex_pre:-}; [[ -z "$sub_codex" ]] && sub_codex='{}'
-  codex_counts=$(jq -nc --argjson a "$main_codex" --argjson b "$sub_codex" \
-    'reduce (($b | keys_unsorted)[]) as $k ($a; .[$k] = ((.[$k] // 0) + $b[$k]))' 2>/dev/null)
-  [[ "$codex_counts" == "{}" ]] && codex_counts=''
-  if [[ -n "$codex_counts" ]]; then
-    codex_row=$(jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sid "$session_id" \
-      --argjson c "$codex_counts" '{timestamp: $ts, session_id: $sid, codex_invocations: $c}')
-    [[ -n "$codex_row" ]] && rows="${rows:+$rows$'\n'}$codex_row"
   fi
 
   metrics_file="$metrics_dir/costs.jsonl"

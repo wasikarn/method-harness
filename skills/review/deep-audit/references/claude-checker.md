@@ -1,7 +1,6 @@
-# deep-audit: step 3 Claude fallback path
+# deep-audit: step 3 Claude checker
 
-Load when step 3's Codex result fails its acceptance check and the checker falls back to a Claude
-`Explore`/review agent (same brief).
+Load before dispatching step 3's Claude `Explore`/review agent.
 
 ## Return contract
 
@@ -9,9 +8,9 @@ Its return contract is the full 6-key `{contract_version, pass, findings[], chec
 unexpected_files[]}`, **not** `docs/reference/spawn-brief.md`'s bare 4-field
 `Validator/re-validator:` line, which `check-verdict.py` rejects.
 
-## Validating the fallback verdict
+## Validating the verdict
 
-On this fallback path there is no `--output-last-message` file and no `--output-schema`; pipe the
+Pipe the
 agent's raw final message (never a fence-stripped copy) to the same script:
 ```
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"

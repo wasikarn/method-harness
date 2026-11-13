@@ -1,6 +1,6 @@
 ---
 name: attack-proposal
-description: "Research, a different-model attacker, then a fresh validator break a proposed fix before code. Use when a security, sandbox or gate fix is proposed."
+description: "Research, a fresh attacker, then a fresh validator break a proposed fix before code. Use when a security, sandbox or gate fix is proposed."
 model: inherit
 effort: xhigh
 argument-hint: "[proposal file or topic]"
@@ -9,7 +9,7 @@ argument-hint: "[proposal file or topic]"
 # Attack a proposal
 
 Break a proposed fix before anyone builds it. Research what the fix must get right, have an
-attacker from a different model family hunt for **breaks**, revise, then have a fresh validator
+attacker with no part in the proposal hunt for **breaks**, revise, then have a fresh validator
 confirm each break is closed. The output is a vetted proposal, not code; the build follows
 test-first (`mattpocock-skills:tdd`). GO means safe to build, not safe to merge: step 7 checks the
 built code.
@@ -22,8 +22,7 @@ A **break** is one concrete input or state that makes the fix do the wrong thing
 
 A worry with no concrete input is not a break.
 
-Other surfaces own the neighbours: a diff that already exists goes to `/codex:adversarial-review`
-or `mh:deep-audit`, a plan's general quality to `mh:plan-reviewer`, an external source to adopt
+Other surfaces own the neighbours: a diff that already exists goes to `mh:deep-audit`, a plan's general quality to `mh:plan-reviewer`, an external source to adopt
 to `mh:idea-audit`.
 
 ## 1. Pin the proposal
@@ -58,26 +57,17 @@ each, picked from the proposal's own risk: bypass, over-block, damage, a race be
 use, or two readers that disagree (the shell and the gate, a permission rule and a hook). Each lane
 is its own dispatch: same brief, its own focus line.
 
-**Dispatch, Codex primary** for model-family independence:
-
-```
-codex exec --sandbox read-only --model <selected-model> -c model_reasoning_effort=<selected-effort> --cd <repo-root> \
-  --output-last-message <file> --output-schema <idea-audit-dir>/references/attacker-output-schema.json
-```
-
-`<idea-audit-dir>` is the absolute form of `${CLAUDE_SKILL_DIR}/../../workflow/idea-audit`; this
-skill reuses idea-audit's attacker contract and its two checkers. Model and effort follow
-`docs/reference/codex-integration-map.md`, normally Sol/medium; resolve the slug with
-`python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/codex-resolve-model.py" sol --effort medium`
-(non-zero exit: follow the map's substitution rule and say so). Check Codex availability and quota
-first, and name the resolved slug in the report.
+**Dispatch** one `general-purpose` agent per lane with the brief, and pipe its raw final message through
+the two checkers below (this skill reuses idea-audit's attacker contract and its two checkers). Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input
+files: it runs under the gates, which match raw command text. It has no sandbox: capture
+`git status --porcelain` before and after; any difference is a violation.
 
 **Brief:** `references/attacker-brief.md`. **Load it before dispatching.**
 
 **Check** each lane's output with both checkers, in order:
 
 ```
-python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-verdict.py" < <output-last-message file>
+python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
 python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-citations.py" <<< "<check-verdict stdout>"
 ```
 
@@ -85,27 +75,16 @@ python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-citations.p
 `NEEDS-DECISION`, surfaced to the operator as an open question (as in `mh:deep-audit`).
 `check-citations.py` exit 1 names each `findings[]` or `checked[]` item whose evidence has no
 `path:line` or backticked command: such a break is unproven, and such a `checked` entry does not
-count. **Accept** the lane when `codex exec` exits 0, `check-verdict.py` exits 0, and at least one
+count. **Accept** the lane when `check-verdict.py` exits 0 and at least one
 `checked` entry carries a citation. A `pass: false` with evidenced breaks is a successful run.
 
-**Fallback** on any other outcome except an exit 2 (non-zero exit, empty or malformed output,
-timeout, auth or quota failure, no cited `checked` entry, a refusal in prose): one
-`general-purpose` agent with the same brief, its raw final message through the same two checkers,
-and "independence reduced" noted for that lane. Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input files: it runs
-under the gates, which match raw command text. It has no sandbox: capture `git status --porcelain`
-before and after; any difference is a violation.
+**A classifier stop is a signal, not an obstacle.** Gate and sandbox briefs, which quote
+destructive commands, draw it (GH #911). Run the lane once more with fewer, smaller inputs to
+execute, keeping the proposal file and its Must-stop list; a second stop there fails the lane.
 
-**A classifier stop is a signal, not an obstacle.** On Codex it is an exit 1, so Fallback above
-already runs the lane's attack on the full brief; gate and sandbox briefs, which quote destructive
-commands, draw it (GH #911). Also run Codex once on a narrowed brief (fewer, smaller inputs,
-measured against existing files) as an extra review: same two checkers, findings triaged with the
-rest, the lane's verdict still the fallback's, since a narrowed brief reviews rather than attacks.
-On the fallback, run it once more with fewer, smaller inputs to execute, keeping the proposal file
-and its Must-stop list; a second stop there fails the fallback.
-
-Done when every lane has an accepted verdict, is marked INCOMPLETE (its fallback failed: a checker
+Done when every lane has an accepted verdict, is marked INCOMPLETE (its agent run failed: a checker
 rejected it, or a classifier stopped it twice), or waits on the operator's answer to its
-`NEEDS-DECISION`, and every extra Codex review has finished.
+`NEEDS-DECISION`.
 
 ## 4. Triage and revise
 
@@ -155,17 +134,16 @@ waits on the operator.
 
 - **Verdict:** GO (validator passed, every lane accepted; step 7 is still owed on the built code,
   so say so in the report), NO-GO (round 3 failed, or a confirmed
-  break is neither closed nor dropped), or INCOMPLETE (a lane's fallback failed, or
+  break is neither closed nor dropped), or INCOMPLETE (a lane's agent run failed, or
   validation is INCOMPLETE: name which; the operator decides, as Rule 14 does for
   insufficient data). NO-GO wins when both apply: a known open break outweighs a missing check.
-- **Confidence:** high (every lane on Codex, validator passed in round 1), medium (a lane ran on
-  the fallback, or the validator needed more than one round), low (anything INCOMPLETE).
+- **Confidence:** high (every lane accepted, validator passed in round 1), medium (the validator
+  needed more than one round), low (anything INCOMPLETE).
 - The proposal file's full absolute path and its last revision number.
 - Each confirmed break in one line, closed how or dropped; each dismissed break with its reason,
   the strongest dismissed one first.
 - Residual risks the design cannot close, stated plainly (a window between check and use, a
   reader the fix cannot see).
-- Independence: the Codex slug per lane, or "independence reduced".
 - The build's first tests: each closed break becomes a failing test row before its fix (Rule 4),
   and a row counts only if reverting its fix turns it red. Build them one row per red-green cycle,
   as `tdd` does; writing every row first is the horizontal slicing it warns against.

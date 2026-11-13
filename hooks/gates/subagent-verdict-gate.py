@@ -43,7 +43,7 @@ from typing import NoReturn
 
 # GH #156: raise the int-string digit limit before parsing so an oversized
 # unquoted int literal doesn't crash json.load() (full rationale:
-# codex-setup-guard.py). hasattr-guarded: absent before Python 3.11.
+# secret-scan.py). hasattr-guarded: absent before Python 3.11.
 if hasattr(sys, "set_int_max_str_digits"):
     sys.set_int_max_str_digits(0)
 

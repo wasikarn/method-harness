@@ -71,7 +71,7 @@ never as license to fall back to computing the total by hand.
 Claim accuracy is scored on whether the claim was true when made; later evidence that makes it
 true is separate current-state work.
 
-## 3. Hunt gaps with a Codex-primary fresh-context checker
+## 3. Hunt gaps with a fresh-context checker
 
 The maker never grades its own work (`docs/reference/operating-model.md`). Build the checker's
 brief in the `docs/reference/spawn-brief.md` shape, with **only step 1's scope list** (the
@@ -101,42 +101,28 @@ printf '%s\n' <scope paths> | python3 "${CLAUDE_SKILL_DIR}/scripts/scope-fingerp
 ```
 `$MANIFEST` is a file outside the repo (a fresh `mktemp`), so it never lands in scope itself.
 
-**Dispatch, Codex primary:**
-```
-codex exec --sandbox read-only --model <selected-model> -c model_reasoning_effort=<selected-effort> --cd <repo-root> \
-  --output-last-message <file> --output-schema <schema-file>
-```
-Choose `<selected-model>` and `<selected-effort>` using
-`docs/reference/codex-integration-map.md`'s task/account-cost policy; normally Sol/medium
-for this adversarial checker. Resolve the tier to a slug, never type one:
-`python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/codex-resolve-model.py" sol --effort medium`
-(non-zero exit: follow the map's substitution rule and say so); name the resolved slug in the
-report. Check availability and remaining quota before a substantial run.
-Raise effort only for a concrete reasoning need; acceptance criteria below never weaken.
-`<schema-file>` is `references/checker-output-schema.json` (this skill's own JSON Schema for
-`{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}`). The sandbox plus
-the brief's no-mutation line is not an unqualified "read-only, guaranteed".
+**Dispatch** a Claude `Explore`/review agent with the brief; contract and validation:
+`references/claude-checker.md`, **loaded first**. The brief's no-mutation line is not an
+unqualified "read-only, guaranteed".
 
-**Accept the result only if all of:** `codex exec` exits 0; the output-last-message file's raw
-text validates through the same `scripts/check-verdict.py` the fallback path uses (all six fields,
+**Accept the result only if all of:** the agent's raw final message validates through
+`scripts/check-verdict.py` (the six fields `{contract_version, pass, findings[], checked[], scope_ok,
+unexpected_files[]}`,
 **`checked[]` non-empty**, citation-shaped `evidence`):
 ```
-python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" < <output-last-message file>
+python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
 ```
-Exit 0 = accept; exit 1 = reject, a fallback trigger below; exit 2 = a `NEEDS-DECISION`
+Exit 0 = accept; exit 1 = reject; exit 2 = a `NEEDS-DECISION`
 escalation, surfaced to the operator as an open question (its meaning:
-`references/codex-fallback.md`). Schema validity alone is not enough: `--output-schema` cannot enforce citation shape.
+`references/claude-checker.md`).
 The result also shows real review evidence — findings that each cite one checkable fact, or an explicit, legitimate
 zero-findings pass (see below) — and does not state or imply it couldn't or didn't complete the
 review. Schema-valid JSON that still refuses in prose is not review evidence. A `pass:
 false` result **with real, evidenced findings is a successful run that found problems** — never
-a failure, never a fallback trigger.
+a failure.
 
-**On any other outcome** — non-zero exit, empty or malformed output, a schema mismatch, timeout,
-auth failure, or a semantic refusal — fall back to a Claude `Explore`/review agent (same brief)
-and note "independence reduced for this pass" in the final report. Its return contract and how
-`check-verdict.py` validates it: `references/codex-fallback.md`. **Load before dispatching the
-fallback.**
+**On any other outcome** (a reject, an empty or malformed message, a refusal in prose), dispatch
+the agent once more with the same brief.
 
 **Re-fingerprint after the checker returns:**
 ```
@@ -146,7 +132,7 @@ Exit 0 means scope is stable; exit 1 prints a `changed:`/`appeared:`/`disappeare
 path; exit 2 (manifest missing, unreadable or empty) counts as unstable. Any drift means a concurrent
 session touched scope mid-check: rebuild scope from git and re-run the checker once.
 
-**If the fallback also fails to produce a valid result, or the manifest is still unstable after
+**If the checker fails to produce a valid result, or the manifest is still unstable after
 that retry**, this is not a soft note: it hard-forces the Final Verdict below to **fail,
 reason "verification incomplete"** — overriding whatever step 2's rubric total would otherwise
 say. Say plainly this means the audit

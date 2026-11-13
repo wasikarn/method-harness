@@ -169,21 +169,3 @@ if(withVerify.length){
 console.log("\n=== Last 7 days ===");
 const days=new Map();for(const r of latest){const k=day(r);days.set(k,(days.get(k)||0)+cost(r));}
 [...days.entries()].sort((a,b)=>b[0]<a[0]?-1:1).slice(0,7).forEach(([k,v])=>console.log(k+"  "+f4(v)));
-
-// Codex invocations: a count, not a cost (Codex exposes no local per-call price).
-// cost-tracker re-derives cumulative counts from the full transcript on every stop,
-// so only the latest such row per session matters -- same "latest wins" rule as the
-// cost rows above, summed independently since these rows carry no model to key by.
-const codexBySession=new Map();
-for(const r of rows){
-  if(!r.codex_invocations)continue;
-  const k=r.session_id||r.transcript_path||r.timestamp;
-  const p=codexBySession.get(k);
-  if(!p||String(r.timestamp)>String(p.timestamp))codexBySession.set(k,r);
-}
-const codexTotals=new Map();
-for(const r of codexBySession.values())for(const [name,n] of Object.entries(r.codex_invocations||{}))codexTotals.set(name,(codexTotals.get(name)||0)+(Number(n)||0));
-if(codexTotals.size){
-  console.log("\n=== Codex invocations ===");
-  for(const [k,v] of [...codexTotals.entries()].sort((a,b)=>b[1]-a[1]))console.log(String(v).padStart(6)+"  "+k);
-}

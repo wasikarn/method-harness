@@ -62,27 +62,14 @@ not bare `gh pr merge`, and do not bump the version in the PR: the script cuts i
 from the PR's checkout in the background (`branching-model.md`, "Merging").
 ```
 
-When the brief goes to Codex (`/codex:rescue`), name the reasoning effort as an invocation flag,
-`--effort <none|minimal|low|medium|high|xhigh>` (the set `codex@openai-codex` 1.0.6 validates;
-`none` and `minimal` pass the plugin, but no model in the live catalog lists them, so pick from
-`low` to `xhigh`), never as a line inside the task text: the rescue agent strips runtime flags from the prompt and a
-prose `REASONING:` line reaches nothing. Omitting the flag runs the operator's configured default;
-say so when you relay the result. Model and effort are the dispatcher's call, never the lane's.
-Select both using `docs/reference/codex-integration-map.md`'s task/account-cost table. This
-operator-authorized policy permits explicit `--model <selected-model> --effort <selected-effort>`
-on rescue dispatches; bounded verification starts at Terra/medium, adversarial judgment at
-Sol/medium. Escalate effort for a concrete reasoning need, not merely the word "audit".
-The live Codex catalog also lists `max` and `ultra`, but this plugin rejects both.
-Empty-diff handling: `docs/reference/codex-integration-map.md`, "Silent-refusal gotcha".
-
 Dispatching a Claude subagent (`Agent`): default is no `model:` override, running the agent's own
 frontmatter pin. Override only for **independence** (a verifier/reviewer pinned to the same model
 as the live main session gets a different one — `agent-authoring-conventions.md` item 4) or
 **stakes** (a Rule 1 one-way-door review escalates a sonnet-pinned reviewer to `opus`). The
 `model` parameter takes only `sonnet`, `opus`, `haiku` or `fable`, and a same-family alias
 resolves to the main session's exact model, so an opus-pinned verifier under an Opus main session
-has no independent override here; use the Codex lane. Never override to `fable` (same reason
-check 21 WARNs on a `fable` agent pin) and never downgrade a pin to save cost. Unlike Codex, the
+has no independent override here. Never override to `fable` (same reason
+check 21 WARNs on a `fable` agent pin) and never downgrade a pin to save cost. The
 Agent tool has no per-dispatch effort. A subagent runs its frontmatter `effort:` when it has one
 (every mh agent does, check 54), unless `CLAUDE_CODE_EFFORT_LEVEL` is set, which outranks it;
 `maxEffortLevel` or an org cap still clamps it. An agent without `effort:` (a built-in
@@ -111,7 +98,7 @@ A subagent normally shares its parent session's live worktree (`docs/reference/b
 dispatch, not filesystem isolation. For a **builder** dispatch that already trips Rule 13's
 validator requirement (2+ files, or adds a test), the dispatcher may instead give it its own
 worktree, reusing `skills/review/compliance-audit`'s existing disposable-worktree pattern
-(`docs/reference/codex-integration-map.md`'s compliance-audit row) rather than inventing a new
+(`skills/review/compliance-audit/SKILL.md`) rather than inventing a new
 mechanism — the difference is this pilot merges its result back; compliance-audit's verifier
 worktree is always discarded.
 
