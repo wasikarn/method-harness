@@ -61,7 +61,8 @@ tools are named in `--allowedTools`/`--tools`; tools-reference, "Task tool avail
 the failure nudge falls back to it when the payload has no `session_id`),
 `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME` (`scripts/_lib/memory-dir.py` resolves the
 memory store from them; `gate-differential.sh` reads transcripts under `CLAUDE_CONFIG_DIR`;
-`scripts/_lib/skill-namespace.py` reads the plugin registry under it and
+`scripts/_lib/skill-namespace.py` reads the plugin registry and the user `settings.json` under it,
+and the project's settings under `CLAUDE_PROJECT_DIR` when a hook sets that, else the cwd; and
 `hooks/gates/config-write-guard.py` resolves the settings path from it),
 `SLASH_COMMAND_TOOL_CHAR_BUDGET` (check 43's description budget), `CODEX_HOME`
 (`codex-resolve-model.py` reads the catalog there), `CI` (`run-gauntlet.sh`'s default job count),
