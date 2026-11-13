@@ -132,7 +132,7 @@ Exit 0 means scope is stable; exit 1 prints a `changed:`/`appeared:`/`disappeare
 path; exit 2 (manifest missing, unreadable or empty) counts as unstable. Any drift means a concurrent
 session touched scope mid-check: rebuild scope from git and re-run the checker once.
 
-**If the Claude agent also fails to produce a valid result, or the manifest is still unstable after
+**If the checker fails to produce a valid result, or the manifest is still unstable after
 that retry**, this is not a soft note: it hard-forces the Final Verdict below to **fail,
 reason "verification incomplete"** — overriding whatever step 2's rubric total would otherwise
 say. Say plainly this means the audit

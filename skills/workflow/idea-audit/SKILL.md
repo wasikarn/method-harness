@@ -9,8 +9,8 @@ argument-hint: "[source]"
 # Idea audit
 
 Evaluate an external source — article, repo, competing tool, engineering practice — for adoption
-into this repo. Two isolated analysts read it in parallel; one adversarial attacker, ideally from
-a different model family, independently re-checks their claims against primary evidence; the host
+into this repo. Two isolated analysts read it in parallel; one adversarial attacker with no part in
+the analysis independently re-checks their claims against primary evidence; the host
 reconciles and ships a scored adopt/defer/reject decision. Converges on an already-formed external
 idea, the reverse of `mh:ideate` (which diverges new ideas from an open problem). Why each rule
 exists: `references/rationale.md` (not needed to run).
@@ -123,7 +123,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE
 
 Exit 0 = exactly one schema-valid verdict on stdout; exit 1 = malformed, rejected, or ambiguous
 (including a missing/empty `checked[]` or a blank `summary`/`evidence`/`claim`); exit 2 = a
-genuine `NEEDS-DECISION` escalation. After
+genuine `NEEDS-DECISION` escalation, surfaced to the operator as an open question; Phase 3 waits on the answer. After
 exit 0, pipe its stdout through `scripts/check-citations.py`, which checks every `evidence` value
 (in `findings[]` and `checked[]`) for a citation shape (`path:line`, a backticked command, or a
 grep-result excerpt). Exit 0 = every citation is real; exit 1 = stderr names each failing item,
@@ -133,7 +133,7 @@ with a real citation **regardless of `pass`/`findings`**.
 **On a reject** (exit 1, an empty or malformed message, a refusal in prose), dispatch the agent
 once more with the same brief.
 
-**If the `general-purpose` agent also fails, or every finding fails the citation-shape check**, Phase 3 marks the
+**If the attacker fails to return a valid verdict, or every finding fails the citation-shape check**, Phase 3 marks the
 adversarial criterion `insufficient evidence` (never scores it as a passed check silently).
 
 **Mandate** (in the brief): verify claims from both Phase 1 reports against primary evidence

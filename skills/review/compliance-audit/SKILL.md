@@ -100,9 +100,12 @@ must discover independently, then get an answer from a verifier that did not do 
      SHA-mismatched output; retry the dispatch once before treating it as "cannot verify"
      (`scope_ok: false`) — a rejected verdict must never reach Phase 3's report as if it were
      ground truth.
-   - **Sandbox contract**: `workspace-write`, scoped *only* to the disposable worktree — never
-     the session's own worktree it was pinned from (the gauntlet writes `__pycache__` and logs, so
-     `read-only` is wrong). Before/after the run, diff the worktree's tracked files against the pinned SHA;
+   - **Host-tree guard**: the agent has no sandbox. Capture `git status --porcelain` on the
+     session's own tree before and after the dispatch; any difference is a violation ("verifier
+     modified the host tree"), never a silent pass.
+   - **Worktree contract**: the verifier writes *only* in the disposable worktree — never
+     the session's own worktree it was pinned from (the gauntlet writes `__pycache__` and logs
+     there). Before/after the run, diff the worktree's tracked files against the pinned SHA;
      any tracked-file change beyond expected build artifacts is itself a finding ("verifier
      modified source"), never a silent pass. The worktree is discarded after, so leftover
      untracked artifacts don't matter.
