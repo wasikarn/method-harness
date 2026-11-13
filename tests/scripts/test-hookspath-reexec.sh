@@ -94,7 +94,9 @@ check '[ "$rc" -eq 0 ] && [ ! -s "$T/foreign" ]' "foreign repo: its own git-hook
 check '[ ! -s "$T/ran" ]' "foreign repo: this hook's body does not run on it either"
 check '/usr/bin/grep -q "not an mh checkout" "$T/err" && /usr/bin/grep -q "unset core.hooksPath" "$T/err" && ! /usr/bin/grep -q "git config core.hooksPath git-hooks" "$T/err"' "foreign repo: the warning says no hook ran and gives the fix for that repo"
 : > "$T/ran"; : > "$T/foreign"
-(cd "$C" && printf '%s\n' "$refs" | "$A/git-hooks/pre-push" origin url 2> "$T/err"); rc=$?
+(cd "$C" && printf '%s\n' "$refs" | "$A/git-hooks/pre-push" origin url 2> "$T/err")
+# shellcheck disable=SC2034 # read inside check's eval strings
+rc=$?
 check '[ "$rc" -eq 0 ] && [ ! -s "$T/foreign" ] && [ ! -s "$T/ran" ] && /usr/bin/grep -q "not an mh checkout" "$T/err"' "foreign repo: pre-push runs nothing and says so"
 
 echo "  $pass passed, $fail failed"
