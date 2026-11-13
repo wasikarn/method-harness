@@ -131,7 +131,9 @@ Source: "Harness Engineering: Build a Reliable AI Agent in 6 Layers" (2026-08-30
 `codex@openai-codex` (Apache-2.0) pairs as a second, independent coding agent — a different
 model family, routed to by name, never wrapped or orchestrated. Install separately
 (`/plugin marketplace add openai/codex-plugin-cc`, `/plugin install codex@openai-codex`,
-`/codex:setup`); mh works unchanged without it. Routing, the gate gap, and the `AGENTS.md`
+`/codex:setup`); mh works unchanged without it: `deep-audit`, `compliance-audit`, `idea-audit` and
+`attack-proposal` run their checker on a Claude agent by default and use Codex only when it is
+installed and the operator asks for it. Routing, the gate gap, and the `AGENTS.md`
 pointer: `docs/reference/codex-integration-map.md`.
 
 ## Development

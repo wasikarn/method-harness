@@ -1,6 +1,6 @@
 ---
 name: idea-audit
-description: "Two isolated analysts plus a different-model attacker check an external source against evidence, then ship a scored adoption decision. Use after finding something worth adopting."
+description: "Two isolated analysts plus a fresh attacker check an external source against evidence, then ship a scored adoption decision. Use after finding something worth adopting."
 model: inherit
 effort: xhigh
 argument-hint: "[source]"
@@ -9,8 +9,8 @@ argument-hint: "[source]"
 # Idea audit
 
 Evaluate an external source — article, repo, competing tool, engineering practice — for adoption
-into this repo. Two isolated analysts read it in parallel; one adversarial attacker, ideally from
-a different model family, independently re-checks their claims against primary evidence; the host
+into this repo. Two isolated analysts read it in parallel; one adversarial attacker with no part in
+the analysis (Codex on request), independently re-checks their claims against primary evidence; the host
 reconciles and ships a scored adopt/defer/reject decision. Converges on an already-formed external
 idea, the reverse of `mh:ideate` (which diverges new ideas from an open problem). Why each rule
 exists: `references/rationale.md` (not needed to run).
@@ -104,7 +104,13 @@ before Phase 2 sees the reports.
 
 ## Phase 2: One adversarial attacker
 
-**Primary**, matching `mh:deep-audit`'s dispatch shape:
+Dispatch one `general-purpose` agent, carrying `references/attacker-brief.md` as its full prompt —
+**not** `mh:plan-reviewer`. It has no sandbox: capture `git status --porcelain` before and after,
+and any diff is a violation. Name the attacker that ran in the report. Validation steps:
+`references/claude-attacker.md`; **load it before dispatching.**
+
+Only when `codex@openai-codex` is installed and the operator asked for it, use Codex instead,
+in `mh:deep-audit`'s dispatch shape:
 
 ```bash
 codex exec --sandbox read-only --model <selected-model> -c model_reasoning_effort=<selected-effort> --cd <repo-root> \
@@ -126,32 +132,28 @@ The brief is `references/attacker-brief.md`. It gives the attacker the scratchpa
 reaches the Phase 4 artifact, uses the relative filename alone (`idea-audit-source-<slug>.md:N`),
 never the absolute path.
 
-**Accept the result only if:** `codex exec` exits 0 and the `--output-last-message` file's raw
-text validates through `scripts/check-verdict.py` (the 4-key `{contract_version, pass,
+**Accept the result only if:** on Codex, `codex exec` exits 0; and the attacker's raw text (the
+agent's final message, or the `--output-last-message` file) validates through `scripts/check-verdict.py` (the 4-key `{contract_version, pass,
 findings[], checked[]}` contract):
 
 ```
-python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" < <output-last-message file>
+python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" < <file holding that raw text>
 ```
 
 Exit 0 = exactly one schema-valid verdict on stdout; exit 1 = malformed, rejected, or ambiguous
 (including a missing/empty `checked[]` or a blank `summary`/`evidence`/`claim`); exit 2 = a
-genuine `NEEDS-DECISION` escalation. Exits 1 and 2 route to the fallback triggers below. After
+genuine `NEEDS-DECISION` escalation, surfaced to the operator as an open question; Phase 3 waits on the answer. After
 exit 0, pipe its stdout through `scripts/check-citations.py`, which checks every `evidence` value
 (in `findings[]` and `checked[]`) for a citation shape (`path:line`, a backticked command, or a
 grep-result excerpt). Exit 0 = every citation is real; exit 1 = stderr names each failing item,
 treated as a missing citation. `checked[]` must hold at least one independently verified claim
 with a real citation **regardless of `pass`/`findings`**.
 
-**Fallback triggers (all seven — not just rate-limit):** non-zero exit, empty/malformed output, a
-schema mismatch, timeout, auth failure, a missing/empty `checked[]` (`check-verdict.py` exit 1),
-or any other semantic refusal. On any of these: fall back to `general-purpose`, carrying
-`references/attacker-brief.md` as its full prompt — **not** `mh:plan-reviewer`. Note
-"independence reduced for this pass". The fallback has no sandbox: capture `git status --porcelain`
-before and after, and any diff is a violation. Validation steps: `references/codex-fallback.md`;
-**load it before dispatching the fallback.**
+**A Codex run that fails goes back to the `general-purpose` agent** (all seven triggers, not just
+rate-limit): non-zero exit, empty/malformed output, a schema mismatch, timeout, auth failure, a
+missing/empty `checked[]` (`check-verdict.py` exit 1), or any other semantic refusal.
 
-**If the fallback also fails, or every finding fails the citation-shape check**, Phase 3 marks the
+**If the attacker fails to return a valid verdict, or every finding fails the citation-shape check**, Phase 3 marks the
 adversarial criterion `insufficient evidence` (never scores it as a passed check silently).
 
 **Mandate** (in the brief): verify claims from both Phase 1 reports against primary evidence
@@ -246,7 +248,7 @@ a non-empty-path check, or Python `os.remove`).
   `--output-schema <skill-dir>/references/attacker-output-schema.json` (absolute path).**
 - `scripts/check-verdict.py` — validates both paths' output before `check-citations.py`.
 - `references/phase-0-locate-source.md` — Phase 0 search order. **Load before Phase 0.**
-- `references/codex-fallback.md` — Phase 2 fallback validation and no-sandbox guard. **Load
-  before dispatching the fallback.**
+- `references/claude-attacker.md` — Phase 2 validation and no-sandbox guard. **Load before
+  dispatching the attacker.**
 - `references/rationale.md` — why each rule exists, plus the agent count and failure modes.
   **Load its Failure modes section before reporting**; the rest is background.

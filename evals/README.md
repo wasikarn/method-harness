@@ -197,7 +197,7 @@ writes with `abspath(...).startswith(UPLOAD_ROOT)`, which blocks `..` traversal 
 lets the sibling `var/uploads-archive/` (and a symlink inside the root) through. The report must name
 that break with a concrete input, close or drop it before any GO, and leave `src/storage.py`
 byte-identical: the skill vets a proposal, it does not build it. With no Codex login in the sandbox the
-attacker runs on the `general-purpose` fallback; `attacker-dispatched.md` (Agent, min 1) is
+attacker runs on the `general-purpose` agent; `attacker-dispatched.md` (Agent, min 1) is
 `arm: with-only`. Plus one should-NOT-fire case: a security fix that is already committed goes to
 `/codex:adversarial-review` or `mh:deep-audit` per the skill's own scope line, so the review must not
 invoke the skill and must still find that `startswith("/")` lets `//evil.example` through
@@ -450,7 +450,8 @@ History, so a mixed-judge comparison reads right:
 A break in these paths does not show up in an eval run.
 
 - **The Codex path of `attack-proposal`, `idea-audit` and `deep-audit`.** The eval sandbox has no
-  Codex login and limited network, so every run takes the Claude fallback (2026-11-06 replies:
+  Codex login and limited network, so every run takes the Claude agent, which since 2026-11-13 is
+  the default path anyway (2026-11-06 replies:
   `codex login status` reports "Not logged in"; "Codex couldn't reach the network"). Only the
   dispatch itself is untested: the verdict a Codex lane returns goes through `check-verdict.py`
   (`tests/skills/test-idea-audit-check-verdict.sh`, `tests/skills/test-deep-audit-check-verdict.sh`),

@@ -30,18 +30,18 @@ turns "checked and cleared" and "never looked" into different, citable strings.
 (`codex exec --help`'s own wording); with the brief's no-mutation line that is not an unqualified
 "read-only, guaranteed", since neither layer alone covers every tool an environment might load.
 
-## Step 3: why the fallback contract has six keys
+## Step 3: why the Claude checker contract has six keys
 
 `docs/reference/spawn-brief.md`'s generic `Validator/re-validator:` shape has four fields and is
 intentionally left unchanged: it backs many unrelated Rule-13 validator dispatches. This skill's
-`check-verdict.py` validates both paths against the unconditional 6-key contract, so a fallback
+`check-verdict.py` validates both paths against the unconditional 6-key contract, so a Claude checker
 agent following the 4-field shape is rejected:
 `echo '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}' | python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py"`
 exits 1 on `missing=['checked', 'contract_version']`.
 
 ## Step 3: how check-verdict.py parses a raw message
 
-A live run of the fallback path (2026-09-18) returned a schema-valid object followed by
+A live run of the Claude checker path (2026-09-18) returned a schema-valid object followed by
 unrequested prose after the closing code fence, so "strip a leading/trailing fence" does not
 survive. The script therefore:
 

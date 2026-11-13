@@ -144,7 +144,7 @@ def main(argv):
                     "permissionDecisionReason": (
                         f"Codex usage limit is closed until {format_reset(reset_at)} "
                         f"(recorded {format_age(age)}: \"{state.get('message', '')}\"). "
-                        "Wait, or fall back to Claude and note \"independence reduced for this pass\". "
+                        "Wait, or run the Claude agent instead. "
                         f"Switched account or limit already reset: delete {state_path}, "
                         "or set MH_CODEX_QUOTA_DENY=0 to get the advisory only."
                     ),
@@ -156,8 +156,7 @@ def main(argv):
         "<mh-codex-quota-advisory>\n"
         f"A Codex CLI call recorded a usage-limit/rate-limit failure {format_age(age)}: "
         f"\"{state.get('message', '')}\". This dispatch may fail again for the same reason -- "
-        "check whether the limit has reset before retrying, or fall back to Claude directly and note \"independence reduced for this pass\" "
-        "(model independence lost, context independence kept).\n"
+        "check whether the limit has reset before retrying, or run the Claude agent instead.\n"
         "</mh-codex-quota-advisory>"
     )
     print(json.dumps({
