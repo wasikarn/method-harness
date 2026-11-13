@@ -2,7 +2,7 @@
 
 > **Status:** a record of measurements from one cloud session, the follow-up to
 > `review-agent-ablation-2026-11-12.md`. The raw result files stayed in the session scratchpad;
-> the numbers below were read from them. The script beside this file rebuilds the cases, except
+> the numbers below were read from them. The script beside this file rebuilds the cases from `develop` at `c5995ee2`, except
 > that the three plan texts it reads were scratchpad files. All three are kept beside this file
 > with a status note added on top: version 1 as `unattended-agents-human-out-proposal-2026-11-12.md`,
 > versions 3 and 4 as the `unattended-jail-*-proposal-2026-11-12.md` files, those two with later
@@ -89,12 +89,16 @@ Cost: real pull requests, agent 8.56 USD and plain 6.03 USD; fixtures, agent 4.4
 
 ## What the runs support
 
-- **plan-reviewer found more of the confirmed breaks than a plain prompt on all three plans**
-  (50 against 42 of 72), at about twice the cost. Most of the gap is version 1 (20 against 15).
-  This is the first measurement in this series where a named agent was ahead on hard input.
+- **plan-reviewer found more of the confirmed breaks than a plain prompt** (50 against 42 of 72),
+  at about twice the cost. It led on all three plans, but versions 3 and 4 (14 against 13, 16
+  against 14) are within the noise of three runs; most of the gap is version 1 (20 against 15).
+  The earlier report counted 18 against 16 of 33 as "not measurably more often", and neither
+  report says what gap counts, so this is a lead worth a rerun, not a settled difference. The
+  two series also differ in setup: this one runs on the agents' opus pin and its two prompts ask
+  for different output.
 - **Neither found the breaks the attackers had found by running code**: a tag that shadows the
   base, a merge base that hides a change, and (once in six runs) a file name read as a git
-  option. A plan review reads; those breaks came from building a hostile input and executing it.
+  option. Those breaks came from building a hostile input and executing it, which a plan review does not do (an untested guess, not a measured cause).
 - **backend-architect was not ahead**: equal on its own fixtures, which are at the ceiling, and
   behind on the real pull requests (6 against 8 of 12), where the difference is one case (#368).
 - Even the better condition missed about a third of the chosen breaks on the plans.

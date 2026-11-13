@@ -1,6 +1,6 @@
 """Cases for measuring mh:plan-reviewer and mh:backend-architect against a plain prompt.
 argv: <repo> <out plugin copy> <tar dir> <scratchpad holding the proposal files>."""
-import glob, os, re, shutil, subprocess, sys, tempfile
+import os, re, shutil, subprocess, sys, tempfile
 repo, out, tars, pad = (os.path.abspath(a) for a in sys.argv[1:5])
 for d in (out, tars):
     assert d.startswith(os.path.realpath(tempfile.gettempdir()) + os.sep) or "/scratchpad/" in d, d
@@ -65,7 +65,7 @@ def case(name, tags, prompt, scaffold, graders, max_turns=40, timeout=1500):
     for g, text in graders.items(): open(os.path.join(c, "graders", g + ".md"), "w").write("---\ntype: llm\n---\n%s\n" % text)
 
 shutil.rmtree(out, ignore_errors=True); os.makedirs(out); os.makedirs(tars, exist_ok=True)
-a = subprocess.Popen(["git", "-C", repo, "archive", "origin/develop"], stdout=subprocess.PIPE)
+a = subprocess.Popen(["git", "-C", repo, "archive", "c5995ee2"], stdout=subprocess.PIPE)
 subprocess.check_call(["tar", "-x", "-C", out], stdin=a.stdout); a.wait()
 m = os.path.join(out, ".claude-plugin", "plugin.json"); t = open(m).read()
 assert t.count('"defaultEnabled": false') == 1
