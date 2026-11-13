@@ -3,8 +3,10 @@
 > **Status:** a record of measurements from one cloud session, the follow-up to
 > `review-agent-ablation-2026-11-12.md`. The raw result files stayed in the session scratchpad;
 > the numbers below were read from them. The script beside this file rebuilds the cases, except
-> that the three plan texts it reads were scratchpad files (two are kept, with later revisions
-> appended, as the `unattended-jail-*-proposal-2026-11-12.md` files). Every limit under "Limits"
+> that the three plan texts it reads were scratchpad files. All three are kept beside this file
+> with a status note added on top: version 1 as `unattended-agents-human-out-proposal-2026-11-12.md`,
+> versions 3 and 4 as the `unattended-jail-*-proposal-2026-11-12.md` files, those two with later
+> revisions appended. Every limit under "Limits"
 > applies to every number here.
 
 ## Question
@@ -116,4 +118,7 @@ Cost: real pull requests, agent 8.56 USD and plain 6.03 USD; fixtures, agent 4.4
 
 - `plan-reviewer-backend-architect-ablation-2026-11-13.build-cases.py`: builds all 22 cases
   (three plans, four pull requests and four fixtures, each as agent and plain) with the graders.
-  Its fourth argument is a directory holding the three plan files under their scratchpad names.
+  Its fourth argument is a directory holding the three plan files under their scratchpad names
+  (`attack-proposal-human-out-of-loop.md`, `attack-proposal-option-a-no-write-access.md`,
+  `attack-proposal-v4-jail-with-branch-key.md`), each as it was measured: the kept files minus
+  their status note and, for versions 3 and 4, minus everything from `## Revision 1` on.
