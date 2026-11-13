@@ -51,9 +51,9 @@ assert_exit "numeric ratio is not a citation" 1 '{"contract_version": 1, "pass":
 
 # #439: the acceptance paragraph must pipe its output through
 # check-verdict.py too, not accept on schema validity alone.
-codex_accept=$(awk '/^\*\*Accept the result only if/{on=1} /^\*\*On any other outcome/{on=0} on' \
+accept_para=$(awk '/^\*\*Accept the result only if/{on=1} /^\*\*On any other outcome/{on=0} on' \
   "$ROOT/skills/review/deep-audit/SKILL.md")
-if /usr/bin/grep -q 'check-verdict\.py' <<<"$codex_accept"; then
+if /usr/bin/grep -q 'check-verdict\.py' <<<"$accept_para"; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))

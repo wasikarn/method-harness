@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# A checker brief shows the JSON shape its agent must return. Codex is held to the schema by
-# --output-schema, but a Claude checker only has the brief: a key the brief's example leaves out
+# A checker brief shows the JSON shape its agent must return. A Claude checker only has the
+# brief, not a schema: a key the brief's example leaves out
 # is a key the agent leaves out, and check-verdict.py then rejects a reply that followed the brief
 # to the letter (idea-audit and compliance-audit both omitted contract_version, 2026-11-12).
 #

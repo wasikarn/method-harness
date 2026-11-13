@@ -599,12 +599,12 @@ if [[ -n "$transcript" && -f "$transcript" ]]; then
             | .out + (.byid | [.[]])
             | map(select(.adv != true or ($s[.id // ""] | not))) ) catch {__error: true, msg: .}
       ' "${sub_files[@]}")
-      both_rc=$?
+      sub_rc=$?
       IFS= read -r sub_records <<< "$sub_out"
       # Records are an array; an object is the catch marker above.
-      if [[ $both_rc -ne 0 || "$sub_records" == "{"* ]]; then
+      if [[ $sub_rc -ne 0 || "$sub_records" == "{"* ]]; then
         sub_msg=$(printf '%s' "$sub_records" | jq -r 'objects | .msg // empty' 2>/dev/null)
-        echo "[mh:cost-tracker] emit_rows(subagent): jq failed rc=$both_rc on: ${sub_files[*]}${sub_msg:+ -- $sub_msg}" >&2
+        echo "[mh:cost-tracker] emit_rows(subagent): jq failed rc=$sub_rc on: ${sub_files[*]}${sub_msg:+ -- $sub_msg}" >&2
         sub_rows=$(jq_failed_row subagent "${sub_files[*]}")
       else
         sub_rows=$(group_and_price "$sub_typemap" subagent "$sub_records")
