@@ -555,8 +555,8 @@ if [[ "$got" == "$want" ]] && /usr/bin/grep -q 'emit_rows(subagent): jq failed' 
 else
   fail6=$((fail6 + 1)); echo "FAIL: sentinel rows were:"$'\n'"$got"$'\n'"expected:"$'\n'"$want"$'\n'"stderr: $(cat "$sd_dir/bad.err")" >&2
 fi
-# A subagent usage jq cannot read must not cost the codex tally: the usage and codex
-# halves share one jq read, so an error in one must not take the other down.
+# A subagent usage jq cannot read gives the subagent stream a jq_failed row and prints jq's own
+# error. The codex:* tally the tracker once kept is gone: no codex_invocations row is written.
 mkdir -p "$sd_dir/cx/subagents"
 python3 - "$sd_dir" <<'PY'
 import json, sys
@@ -575,14 +575,13 @@ open(d + "/cx/subagents/agent-a1.jsonl", "w").write(
 open(d + "/cx/subagents/agent-a1.meta.json", "w").write('{"agentType":"Explore"}')
 PY
 got=$(sd_rows cx | jq -c 'select(.codex_invocations) | .codex_invocations')
-want='{"codex:codex-rescue":1,"codex:rescue":1,"codex:review":2}'
 got_sub=$(jq -c 'select(.stream == "subagent") | .error' <<< "$(sd_rows cx)")
-if [[ $(jq -cS . <<< "$got") == "$want" && "$got_sub" == '"jq_failed"' ]] \
+if [[ -z "$got" && "$got_sub" == '"jq_failed"' ]] \
    && /usr/bin/grep -q 'emit_rows(subagent): jq failed' "$sd_dir/cx.err" \
    && /usr/bin/grep -q 'Cannot index string' "$sd_dir/cx.err"; then
-  pass6=$((pass6 + 1)); echo "PASS: a subagent usage jq cannot read keeps the full codex tally and prints jq's own error"
+  pass6=$((pass6 + 1)); echo "PASS: a subagent usage jq cannot read gives a jq_failed row, prints jq's own error, and writes no codex tally"
 else
-  fail6=$((fail6 + 1)); echo "FAIL: codex tally ${got:-<none>} (want $want), subagent error ${got_sub:-<none>}, stderr: $(cat "$sd_dir/cx.err")" >&2
+  fail6=$((fail6 + 1)); echo "FAIL: codex tally ${got:-<none>} (want none), subagent error ${got_sub:-<none>}, stderr: $(cat "$sd_dir/cx.err")" >&2
 fi
 echo "$pass6 passed, $fail6 failed (phase 6)"
 
