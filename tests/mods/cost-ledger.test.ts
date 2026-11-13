@@ -88,7 +88,7 @@ test('load marker: written once, by the first hook call, with the CLI and mh ver
   await turn('t1')
   await turn('t2')
   expect(h.markers.map(r => [r.session_id, r.loaded, r.cli, r.mh])).toEqual([['s1', true, '2.1.289', '1.1.173']])
-  expect(typeof h.markers[0].t).toBe('string')
+  expect(typeof h.markers[0]!.t).toBe('string')
   expect(h.rows.map(r => r.turn_id)).toEqual(['t1', 't2'])
 })
 
@@ -100,7 +100,7 @@ test('append: sh -c with the HOME guard, appending to the ledger file', async ($
   expect(h.argv.length).toBeGreaterThan(0)
   for (const [sh, c, script, name] of h.argv) {
     expect([sh, c, name]).toEqual(['sh', '-c', 'sh'])
-    expect(script.startsWith(': "${HOME:?')).toBe(true)
+    expect(script!.startsWith(': "${HOME:?')).toBe(true)
     expect(script).toContain('d="$HOME/.local/share/kbg/metrics"')
     expect(script).toContain('>> "$d/cost-ledger.jsonl"')
   }
@@ -143,9 +143,9 @@ test('load marker: failed CLI-version and manifest reads still write the marker,
   h.noVersion = true
   await turn('t1')
   expect(h.markers.length).toBe(1)
-  expect(h.markers[0].session_id).toBe('s1')
-  expect(h.markers[0].mh).toBeUndefined()
-  expect(h.markers[0].cli).toBeUndefined()
+  expect(h.markers[0]!.session_id).toBe('s1')
+  expect(h.markers[0]!.mh).toBeUndefined()
+  expect(h.markers[0]!.cli).toBeUndefined()
   expect(h.completes).toBe(1)
 })
 
@@ -263,7 +263,7 @@ test('records the cumulative ledger and the per-turn delta, main loop only', asy
     ['s1', 't3', 0.1, 0.1, true],
   ])
   expect(h.completes).toBe(4)
-  expect(typeof h.rows[0].t).toBe('string')
+  expect(typeof h.rows[0]!.t).toBe('string')
 })
 
 test('no cost on the usage: no row, core still runs', async ($, on) => {
@@ -279,14 +279,14 @@ test('a throwing usage read becomes an error row, core still runs', async ($, on
   h.usage = 'throw'
   expect(await turn('t1')).toEqual({ text: 'core' })
   expect(h.rows.length).toBe(1)
-  expect(h.rows[0].session_id).toBe('s1')
+  expect(h.rows[0]!.session_id).toBe('s1')
   // The kit turns the throw beneath into "no implementation for session.usage".
-  expect(String(h.rows[0].error)).toContain('session.usage')
-  expect(h.rows[0].usd).toBeUndefined()
+  expect(String(h.rows[0]!.error)).toContain('session.usage')
+  expect(h.rows[0]!.usd).toBeUndefined()
   // The failed read leaves the baseline alone: the next reading is still a first turn.
   h.usage = { cost: { usd: 0.4 } }
   await turn('t2')
-  expect([h.rows[1].usd, h.rows[1].delta]).toEqual([0.4, 0.4])
+  expect([h.rows[1]!.usd, h.rows[1]!.delta]).toEqual([0.4, 0.4])
   expect(h.completes).toBe(2)
 })
 
@@ -307,8 +307,8 @@ test('a non-finite reading becomes an error row and leaves the baseline alone', 
     ['t3', undefined, undefined, undefined],
     ['t4', 1.5, 0.5, false],
   ])
-  expect(String(h.rows[1].error)).toContain('non-finite')
-  expect(String(h.rows[2].error)).toContain('non-finite')
+  expect(String(h.rows[1]!.error)).toContain('non-finite')
+  expect(String(h.rows[2]!.error)).toContain('non-finite')
   expect(h.completes).toBe(4)
 })
 
