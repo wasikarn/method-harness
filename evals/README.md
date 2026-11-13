@@ -197,7 +197,7 @@ writes with `abspath(...).startswith(UPLOAD_ROOT)`, which blocks `..` traversal 
 lets the sibling `var/uploads-archive/` (and a symlink inside the root) through. The report must name
 that break with a concrete input, close or drop it before any GO, and leave `src/storage.py`
 byte-identical: the skill vets a proposal, it does not build it. With no Codex login in the sandbox the
-attacker runs on the `general-purpose` fallback; `attacker-dispatched.md` (Agent, min 1) is
+attacker runs on the `general-purpose` agent; `attacker-dispatched.md` (Agent, min 1) is
 `arm: with-only`. Plus one should-NOT-fire case: a security fix that is already committed goes to
 `/codex:adversarial-review` or `mh:deep-audit` per the skill's own scope line, so the review must not
 invoke the skill and must still find that `startswith("/")` lets `//evil.example` through
