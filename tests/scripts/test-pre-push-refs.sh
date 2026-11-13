@@ -15,6 +15,8 @@ unset MH_PREPUSH_FULL
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
 HOOK="$ROOT/git-hooks/pre-push"
+# The fixture repository has no git-hooks/ of its own; the marker makes the hook run its body there.
+export MH_HOOK_REEXEC=1
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  PASS: $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $1" >&2; }

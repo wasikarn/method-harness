@@ -243,6 +243,23 @@ check_typed init "" "TYPED NON-SKILL: /init, which no skill is named, appends no
 check_typed mine "mine" "TYPED USER SKILL: a ~/.claude/skills name is logged as typed"
 check_typed doctor "doctor" "TYPED AMBIGUOUS: two enabled plugins ship it -> logged short"
 check_typed "pluga:grilling" "pluga:grilling" "TYPED NAMESPACED: kept as typed"
+# Claude Code names where a typed command came from in command_source. A probe on 2026-11-13
+# (CLI print mode, a blocking hook, no model call) got "bundled" for /code-review; the hooks doc
+# shows "plugin". Neither kind is in the resolver's reach when it is a built-in skill or a plugin
+# enabled only by managed settings or --plugin-dir, and such a typed name wrote no row.
+typed_src() { run_hook "{\"session_id\":\"sess-4\",\"hook_event_name\":\"UserPromptExpansion\",\"expansion_type\":\"slash_command\",\"command_name\":\"$1\",\"command_source\":\"$2\"}" >/dev/null 2>&1; }
+check_typed_src() { # check_typed_src <command_name> <command_source> <expected skill, or ""> <label>
+  local before after rc
+  before=$(wc -l <"$LOG_FILE" | tr -d ' '); typed_src "$1" "$2"; rc=$?; after=$(wc -l <"$LOG_FILE" | tr -d ' ')
+  if [ -z "$3" ]; then
+    if [ "$after" = "$before" ] && [ "$rc" -eq 0 ]; then echo "  ✅ $4"; pass=$((pass + 1)); else echo "  ❌ $4: expected no row and exit 0, got rc=$rc, last row $(tail -1 "$LOG_FILE")" >&2; fail=$((fail + 1)); fi
+  elif [ "$after" = "$((before + 1))" ] && tail -1 "$LOG_FILE" | jq -e --arg w "$3" '.skill == $w and .source == "typed" and .plugin == "unnamespaced"' >/dev/null 2>&1; then
+    echo "  ✅ $4"; pass=$((pass + 1))
+  else echo "  ❌ $4: expected skill=$3, got $(tail -1 "$LOG_FILE")" >&2; fail=$((fail + 1)); fi
+}
+check_typed_src code-review bundled "code-review" "TYPED BUILT-IN SKILL: command_source bundled, no plugin ships it -> logged short"
+check_typed_src viamanaged plugin "viamanaged" "TYPED PLUGIN SKILL the resolver cannot see: command_source plugin -> logged short"
+check_typed_src init builtin "" "TYPED NON-SKILL with another command_source: still no row"
 
 # CLAUDE_CONFIG_DIR moves ~/.claude (found 2026-11-12: the resolver read only $HOME/.claude, so
 # with the variable set no short name was ever mapped). The registry and the user skills that
