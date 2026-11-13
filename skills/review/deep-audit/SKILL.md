@@ -101,7 +101,8 @@ printf '%s\n' <scope paths> | python3 "${CLAUDE_SKILL_DIR}/scripts/scope-fingerp
 ```
 `$MANIFEST` is a file outside the repo (a fresh `mktemp`), so it never lands in scope itself.
 
-**Dispatch** a Claude `Explore`/review agent with the brief; contract and validation:
+**Dispatch** a Claude `Explore`/review agent with the brief (name the checker that ran in the final
+report); contract and validation:
 `references/claude-checker.md`, **loaded first**.
 
 Only when `codex@openai-codex` is installed and the operator asked for it, use Codex instead:
@@ -136,8 +137,7 @@ false` result **with real, evidenced findings is a successful run that found pro
 a failure.
 
 **On any other outcome** on Codex — non-zero exit, empty or malformed output, a schema mismatch,
-timeout, auth failure, or a semantic refusal — run the Claude agent with the same brief. Name the
-checker that ran in the final report.
+timeout, auth failure, or a semantic refusal — run the Claude agent with the same brief.
 
 **Re-fingerprint after the checker returns:**
 ```
@@ -147,7 +147,7 @@ Exit 0 means scope is stable; exit 1 prints a `changed:`/`appeared:`/`disappeare
 path; exit 2 (manifest missing, unreadable or empty) counts as unstable. Any drift means a concurrent
 session touched scope mid-check: rebuild scope from git and re-run the checker once.
 
-**If the Claude agent also fails to produce a valid result, or the manifest is still unstable after
+**If the checker fails to produce a valid result, or the manifest is still unstable after
 that retry**, this is not a soft note: it hard-forces the Final Verdict below to **fail,
 reason "verification incomplete"** — overriding whatever step 2's rubric total would otherwise
 say. Say plainly this means the audit

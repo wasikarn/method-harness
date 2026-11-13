@@ -66,7 +66,7 @@ except its Failure modes section, which `SKILL.md` loads before reporting.
 - The attacker gets the source's absolute path because `codex exec --help` documents `--sandbox`
   as governing writes and `--add-dir` as adding writable dirs, with no flag for read access;
   nothing documents `read-only` as confining reads to `--cd` (inferred from the flag semantics, not
-  live-tested). The Claude fallback's `Read` is unaffected by cwd.
+  live-tested). The Claude agent's `Read` is unaffected by cwd.
 - Citations use the relative filename because the absolute path embeds the operator's home
   directory, and `docs/research/` is the one directory the repo's home-path scans
   (`git-hooks/pre-commit`, `scripts/run-gauntlet.sh`) skip.
@@ -77,10 +77,10 @@ except its Failure modes section, which `SKILL.md` loads before reporting.
 - `checked[]` closes the vacuous-pass gap: `{"pass": true, "findings": []}` is schema-valid and
   indistinguishable from an attacker told (by injected source content or otherwise) to skip
   verification.
-- The fallback is `general-purpose`, not `mh:plan-reviewer`, which hard-stops when handed a summary
+- The default attacker is `general-purpose`, not `mh:plan-reviewer`, which hard-stops when handed a summary
   rather than a plan artifact (`agents/plan-reviewer.md`).
 - The Agent tool has no per-invocation `disallowedTools` (that field exists only in agent
-  frontmatter), so the fallback keeps `Bash` and has no sandbox; the `git status --porcelain`
+  frontmatter), so the agent keeps `Bash` and has no sandbox; the `git status --porcelain`
   diff is the behavioral backstop.
 
 ## Phase 3: scoring
@@ -132,4 +132,4 @@ Moved from `SKILL.md` unchanged.
 - **A blended percentage instead of per-claim verdicts.** Report `MATCH/PARTIAL/GAP/N-A` per claim
   and a scored decision.
 - **Phase 0 auto-fetching the top search hit without confirmation.**
-- **`pass: true` with an empty `checked[]` accepted as-is.** That is a fallback trigger, not a result.
+- **`pass: true` with an empty `checked[]` accepted as-is.** That is a rejection (a failed Codex run reruns on the agent), not a result.
