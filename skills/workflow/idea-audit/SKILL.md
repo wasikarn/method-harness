@@ -142,7 +142,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" < <file holding that raw 
 
 Exit 0 = exactly one schema-valid verdict on stdout; exit 1 = malformed, rejected, or ambiguous
 (including a missing/empty `checked[]` or a blank `summary`/`evidence`/`claim`); exit 2 = a
-genuine `NEEDS-DECISION` escalation, surfaced to the operator as an open question, never rerun. After
+genuine `NEEDS-DECISION` escalation, surfaced to the operator as an open question; Phase 3 waits on the answer. After
 exit 0, pipe its stdout through `scripts/check-citations.py`, which checks every `evidence` value
 (in `findings[]` and `checked[]`) for a citation shape (`path:line`, a backticked command, or a
 grep-result excerpt). Exit 0 = every citation is real; exit 1 = stderr names each failing item,
