@@ -37,7 +37,8 @@ only when typed), each with its last-use date. A missing log prints `Skill usage
 - **Zero use is not broken.** A rare skill and a never-matching description look the same here.
   List them; a human decides keep, trim or fix.
 - **N counts sessions that used an mh skill**; a session with no skill use leaves no row.
-- **Typed uses are logged** (`source: typed`), so manual-only skills do show up.
+- **Typed uses are logged** (`source: typed`), so manual-only skills do show up. A typed command
+  that is not a skill (`/init`, a custom command) writes no row.
 
 ## Read back
 

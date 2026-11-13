@@ -225,7 +225,7 @@ work() {
 }
 remote_tip() { git --git-dir="$F/origin.git" rev-parse "refs/heads/$1"; }
 # verdict <text>: one PR comment whose body carries the line "## Fresh-context review: <text>".
-verdict() { jq -nc --arg v "$1" '[{created_at: "2026-10-25T00:00:00Z", body: ("Some text.\n## Fresh-context review: " + $v + "\nmore")}]'; }
+verdict() { jq -nc --arg v "$1" '[{created_at: "2026-10-25T00:00:00Z", author_association: "OWNER", body: ("Some text.\n## Fresh-context review: " + $v + "\nmore")}]'; }
 comments() { jq -sc 'add' <<<"$*"; }
 
 # run: merge-pr.sh 451 from the work clone; sets out, rc. The default review is MERGE @ origin's feat/x.
@@ -685,7 +685,7 @@ merges "manifest mismatch"
 if [ "$(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")" = "1.1.2 1.1.2" ]; then ok "mismatched manifests cut to one number"; else bad "mismatch: $(ver_of "$F/work/$PLUGIN") $(ver_of "$F/work/$MARKET")"; fi
 
 # 16. review verdict (2026-10-25). No verdict comment at all: refuse before the load wait or any write.
-setup; STUB_LOAD=7.25 STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","body":"A fresh-context review of this PR is in progress."}]' run
+setup; STUB_LOAD=7.25 STUB_COMMENTS_JSON='[{"created_at":"2026-10-25T00:00:00Z","author_association":"OWNER","body":"A fresh-context review of this PR is in progress."}]' run
 refuses "no review verdict" "no \"Fresh-context review: MERGE @ <sha>\""
 if /usr/bin/grep -q 'load' <<<"$out"; then bad "no verdict refused only after the load wait: $out"; else ok "no verdict is refused before the load wait"; fi
 untouched "no review verdict"
@@ -709,7 +709,7 @@ STUB_COMMENTS_JSON=$(verdict "MERGE @ $FEATURE") run
 merges "a version bump after the review"
 
 # 16f. a lower-case, bold verdict with a backticked sha and trailing words reads as MERGE; CLOSE refuses.
-setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## **Fresh-context review: merge** @ \`${FEATURE:0:7}\` after re-sync\"}]" run
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"author_association\":\"OWNER\",\"body\":\"## **Fresh-context review: merge** @ \`${FEATURE:0:7}\` after re-sync\"}]" run
 merges "a styled MERGE verdict"
 setup; STUB_COMMENTS_JSON=$(verdict 'CLOSE') run
 refuses "CLOSE verdict" "is CLOSE"
@@ -730,10 +730,26 @@ setup; STUB_COMMENTS_JSON=$(verdict 'MERGE @ deadbeef1') run
 refuses "reviewed sha not an ancestor" "not in the head's history"
 
 # 16j. a verdict line inside a code fence does not count.
-setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"\`\`\`\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\n## Fresh-context review: FIX FIRST\"}]" run
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"author_association\":\"OWNER\",\"body\":\"\`\`\`\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\n## Fresh-context review: FIX FIRST\"}]" run
 refuses "fenced MERGE before a real FIX FIRST" "is FIX FIRST"
-setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"~~~\nFresh-context review: MERGE @ $FEATURE\n~~~\"}]" run
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"author_association\":\"OWNER\",\"body\":\"~~~\nFresh-context review: MERGE @ $FEATURE\n~~~\"}]" run
 refuses "only a fenced MERGE" "no \"Fresh-context review"
+
+# 16j2. only the repository owner's verdict counts (found 2026-11-12: on a public repository any
+# GitHub account can comment, and an outsider's "MERGE" after the reviewer's "FIX FIRST" was the
+# last verdict and merged). The comment's author_association, which GitHub sets, must be OWNER;
+# a comment with another value or with none is not a verdict at all.
+outsider() { jq -nc --arg v "$1" --arg a "$2" '[{created_at: "2026-10-26T00:00:00Z", body: ("Fresh-context review: " + $v)} + (if $a == "" then {} else {author_association: $a} end)]'; }
+setup; STUB_COMMENTS_JSON=$(comments "$(verdict 'FIX FIRST')" "$(outsider "MERGE @ $FEATURE" NONE)") run
+refuses "an outsider's MERGE after the owner's FIX FIRST" "is FIX FIRST"
+setup; STUB_COMMENTS_JSON=$(outsider "MERGE @ $FEATURE" CONTRIBUTOR) run
+refuses "only a contributor's MERGE" "no \"Fresh-context review"
+setup; STUB_COMMENTS_JSON=$(outsider "MERGE @ $FEATURE" COLLABORATOR) run
+refuses "only a collaborator's MERGE" "no \"Fresh-context review"
+setup; STUB_COMMENTS_JSON=$(outsider "MERGE @ $FEATURE" "") run
+refuses "a MERGE comment with no author_association" "no \"Fresh-context review"
+setup; STUB_COMMENTS_JSON=$(comments "$(verdict "MERGE @ $FEATURE")" "$(outsider 'FIX FIRST' NONE)") run
+merges "an outsider's FIX FIRST after the owner's MERGE does not block"
 
 # 16k. GH #629: a merge commit after the reviewed sha must be the plain merge of its parents, manifests aside.
 # An edit made inside a develop merge, or a conflict resolved in code there, needs a new review.
@@ -804,13 +820,13 @@ merges "a version-only conflict resolution after the review"
 
 # 16l. GH #629 fences: a ~~~ fence is not closed by ```, a longer fence not by a shorter one, a closer
 # carries no text, and an indented fence (a list item) still hides what it holds.
-setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"Fresh-context review: MERGE @ ${FEATURE:0:7}\n~~~\n\`\`\`\n~~~\nFresh-context review: FIX FIRST @ ${FEATURE:0:7}\"}]" run
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"author_association\":\"OWNER\",\"body\":\"Fresh-context review: MERGE @ ${FEATURE:0:7}\n~~~\n\`\`\`\n~~~\nFresh-context review: FIX FIRST @ ${FEATURE:0:7}\"}]" run
 refuses "mixed fences hiding a later FIX FIRST" "is FIX FIRST"
-setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\`\n\`\`\`\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\n\`\`\`\`\"}]" run
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"author_association\":\"OWNER\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\`\n\`\`\`\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\n\`\`\`\`\"}]" run
 refuses "a MERGE inside a longer fence" "is FIX FIRST"
-setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\n\`\`\` x\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\"}]" run
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"author_association\":\"OWNER\",\"body\":\"## Fresh-context review: FIX FIRST\n\`\`\`\n\`\`\` x\nFresh-context review: MERGE @ $FEATURE\n\`\`\`\"}]" run
 refuses "a MERGE after a closer with text" "is FIX FIRST"
-setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"body\":\"## Fresh-context review: FIX FIRST\n- item\n\n      \`\`\`\n      Fresh-context review: MERGE @ $FEATURE\n      \`\`\`\"}]" run
+setup; STUB_COMMENTS_JSON="[{\"created_at\":\"2026-10-25T00:00:00Z\",\"author_association\":\"OWNER\",\"body\":\"## Fresh-context review: FIX FIRST\n- item\n\n      \`\`\`\n      Fresh-context review: MERGE @ $FEATURE\n      \`\`\`\"}]" run
 refuses "a MERGE in an indented fence" "is FIX FIRST"
 
 # 18. --verify, for a session without gh: the same checks from what the MCP tools return, never a gh call,
@@ -869,6 +885,14 @@ GH=1 STUB_STATUS_FAIL=1 vrun "$tip" develop "$F/comments.json"
 vrefuses "--verify with gh: a failed status post exits non-zero, no sha on stdout" "could not post the mh/gauntlet status"
 PASS_CACHE=0 GH=1 vrun "$tip" develop "$F/comments.json"
 if [ "$rc" -ne 0 ] && [ ! -s "$F/calls.log" ]; then ok "--verify with gh posts nothing without a cached pass"; else bad "--verify no pass posted: $(cat "$F/calls.log")"; fi
+# 16j2 on this path: the comments file is an MCP listing, so only the owner's comment is a verdict here too.
+setup; on feat/x "bump" set_ver 1.1.2
+tip=$(remote_tip feat/x); outsider "MERGE @ $tip" NONE >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify ignores a MERGE from an account that is not the owner" "no \"Fresh-context review"
+outsider "MERGE @ $tip" "" >"$F/comments.json"
+vrun "$tip" develop "$F/comments.json"
+vrefuses "--verify ignores a MERGE comment with no author_association" "no \"Fresh-context review"
 # a version bump commit after the reviewed sha keeps the review.
 setup; on feat/x "bump" set_ver 1.1.2
 tip=$(remote_tip feat/x); verdict "MERGE @ $FEATURE" >"$F/comments.json"

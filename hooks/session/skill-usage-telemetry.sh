@@ -45,12 +45,14 @@ mkdir -p "$log_dir"
 # empty into null and the value is bound once, never re-indexed.
 #
 # GH #330: a user-typed /skill never makes a Skill tool call, so this hook is
-# also registered on UserPromptExpansion (source "typed"), whose command_name
-# is the resolved, namespaced name. Only slash_command expansions are skills;
-# mcp_prompt ones are skipped. A model call (source "tool") can pass a short
+# also registered on UserPromptExpansion (source "typed"). Its command_name
+# was namespaced when probed, but the hooks doc shows a short one, so a
+# colon-free typed name goes through the resolver too, and a typed name no
+# skill carries (/init, a custom command) writes no row. Only slash_command
+# expansions can be skills; mcp_prompt ones are skipped. A model call (source "tool") can pass a short
 # name ("grilling") that the tool result keeps short too, so a colon-free
 # name is mapped by scripts/_lib/skill-namespace.py when exactly one
-# installed plugin ships it; an ambiguous or unknown name stays as-is.
+# installed and enabled plugin ships it; an ambiguous or unknown name stays as-is.
 # One jq pass for event, expansion type and short name (was three spawns),
 # NUL-separated so a name with a newline or tab can't shift the fields.
 event="" exptype="" short=""
@@ -61,7 +63,7 @@ event="" exptype="" short=""
 } < <(jq -j '
   (.hook_event_name // "" | tostring) + "\u0000" +
   (.expansion_type // "" | tostring) + "\u0000" +
-  ((if .hook_event_name == "UserPromptExpansion" then "" else (.tool_input.skill? // "") end | if type == "string" then . else "" end) // "") + "\u0000"
+  ((if .hook_event_name == "UserPromptExpansion" then (.command_name? // "") else (.tool_input.skill? // "") end | if type == "string" then . else "" end) // "") + "\u0000"
 ' <<<"$payload" 2>/dev/null)
 case "$event" in
   UserPromptExpansion)
@@ -72,7 +74,15 @@ esac
 mapped=""
 resolver="$(dirname "$0")/../../scripts/_lib/skill-namespace.py"
 if [ -n "$short" ] && [[ "$short" != *:* ]] && command -v python3 >/dev/null 2>&1 && [ -r "$resolver" ]; then
-  mapped=$(python3 "$resolver" "$short" 2>/dev/null) || mapped=""
+  if [ "$source" = typed ]; then
+    # A typed slash command is a skill row only when a skill carries that name: /init or a custom
+    # command is not one (the resolver exits 3 and prints nothing). Any other failure keeps the row.
+    mapped=$(python3 "$resolver" --known "$short" 2>/dev/null); rc=$?
+    [ "$rc" -ne 3 ] || exit 0
+    [ "$rc" -eq 0 ] || mapped=""
+  else
+    mapped=$(python3 "$resolver" "$short" 2>/dev/null) || mapped=""
+  fi
 fi
 jq -c --arg src "$source" --arg mapped "$mapped" '
   (now | strftime("%Y-%m-%dT%H:%M:%SZ")) as $ts |

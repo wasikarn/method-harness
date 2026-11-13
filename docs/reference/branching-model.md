@@ -114,7 +114,9 @@ On a wrong-base refusal, retarget the PR with `gh pr edit <PR> --base develop`.
 It also refuses a PR without a current review verdict (2026-10-25: #569–#576 and #611 merged while
 their reviews still said FIX FIRST, and #570 opened a hole that took #602 to close). The verdict is a line
 `Fresh-context review: MERGE @ <sha>` (or `FIX FIRST` / `CLOSE`; case and markdown emphasis ignored) in a
-PR **comment**, `<sha>` being the head the reviewer read; a GitHub PR review or the PR body does not count,
+PR **comment** by the repository owner (GitHub's `author_association` on the comment is `OWNER`; anyone
+can comment on a public repository, so another account's verdict is ignored), `<sha>` being the head the
+reviewer read; a GitHub PR review or the PR body does not count,
 nor does a line inside a ``` or ~~~ fence at any indentation (closed only by a bare line of the same
 character, at least as long), and the last verdict line in a comment wins. The last verdict on
 the PR must be `MERGE`, its `<sha>` must be in the head's history, and every commit after it must change only
@@ -125,8 +127,8 @@ push and before the merge. `plugin.json` can carry inline hooks and MCP servers,
 counts as code. So merging `develop` and bumping the version keep the review; any other change (an edit made
 inside a merge, or a conflict resolved in code, included), a rebase, or a force-push needs a new one. The
 check is bound to the sha, not to timestamps, so a commit made before the review but pushed after it is
-still caught. Post the reviewer's result as that comment. It proves a verdict was posted, not who wrote it
-or that the reviewer had fresh context. There
+still caught. Post the reviewer's result as that comment. It proves the owner's account posted a verdict, not
+that the reviewer had fresh context. There
 is no opt-out variable; an operator who must merge without a verdict does it on GitHub.
 
 **A gate change needs a replay record (GH #891).** When the tree that merges changes the closure of
@@ -149,7 +151,8 @@ in `scripts/_lib/replay-check.sh`, shared by both scripts.
 cloud session lacks; it has the GitHub MCP tools instead. Do not retype the checks by hand (that was
 done for #633, #644 and #648, with nothing to say a check was skipped). Instead:
 1. read the PR's head sha, base branch and issue comments with the MCP tools, and save the comments
-   to a file. The comments come a page at a time, oldest first: request `perPage` 100 and keep
+   to a file as returned (the script reads each comment's `body` and `author_association`; a comment
+   saved without the latter is not counted). The comments come a page at a time, oldest first: request `perPage` 100 and keep
    reading pages until one comes back short, appending each page's array to the file in order (`jq`
    reads arrays saved one after another, like `gh --paginate` output), and check the total against
    the PR's comment count. A page left out can hide the latest verdict: a FIX FIRST on page 2 after a

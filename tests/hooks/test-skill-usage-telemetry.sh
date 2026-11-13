@@ -198,6 +198,52 @@ printf '{"version":2,"plugins":{"pluga@m":[{"installPath":"%s"}],"x@m":[{"instal
   "$PLUG/a" "$PLUG/b" "$PLUG/c" > "$PLUG/installed_plugins.json"
 check_mapped solo "plugc:solo" "NON-STRING MANIFEST NAME: falls back to the install key"
 
+# A plugin that is installed but not enabled ships nothing the session can call, so it must not
+# claim a short name (found 2026-11-12: a disabled plugin's skill mapped a name to it, and a
+# disabled second shipper kept a name ambiguous). enabledPlugins is read from the user, project
+# and local settings, the later file winning per plugin; with no entry the manifest's
+# defaultEnabled decides (true when absent).
+mkdir -p "$PLUG/e/skills/offskill" "$PLUG/f/skills/defoff" "$PLUG/f/.claude-plugin" "$TMP_HOME/proj/.claude"
+touch "$PLUG/e/skills/offskill/SKILL.md" "$PLUG/f/skills/defoff/SKILL.md"
+printf '{"name":"plugf","defaultEnabled":false}' > "$PLUG/f/.claude-plugin/plugin.json"
+jq -c --arg e "$PLUG/e" --arg f "$PLUG/f" '.plugins["pluge@m"] = [{installPath: $e}] | .plugins["plugf@m"] = [{installPath: $f}]' \
+  "$PLUG/installed_plugins.json" > "$PLUG/installed_plugins.json.new" && mv "$PLUG/installed_plugins.json.new" "$PLUG/installed_plugins.json"
+check_mapped offskill "pluge:offskill" "ENABLED BY DEFAULT: no enabledPlugins entry and no defaultEnabled -> mapped"
+check_mapped defoff "defoff" "DEFAULT-DISABLED PLUGIN: defaultEnabled false and no entry -> not mapped"
+printf '{"enabledPlugins":{"pluge@m":false,"plugf@m":true,"x@m":false}}' > "$TMP_HOME/.claude/settings.json"
+check_mapped offskill "offskill" "DISABLED PLUGIN: enabledPlugins false -> not mapped"
+check_mapped defoff "plugf:defoff" "ENABLED ENTRY BEATS defaultEnabled false -> mapped"
+check_mapped doctor "pluga:doctor" "DISABLED SECOND SHIPPER: the name is no longer ambiguous"
+printf '{"enabledPlugins":{"pluge@m":true}}' > "$TMP_HOME/proj/.claude/settings.json"
+run_hook() { HOME="$TMP_HOME" CLAUDE_PROJECT_DIR="$TMP_HOME/proj" bash -c "echo '$1' | '$HOOK'"; }
+check_mapped offskill "pluge:offskill" "PROJECT SETTINGS WIN over user settings for the same plugin"
+printf '{"enabledPlugins":{"pluge@m":false}}' > "$TMP_HOME/proj/.claude/settings.local.json"
+check_mapped offskill "offskill" "LOCAL SETTINGS WIN over project settings"
+run_hook() { HOME="$TMP_HOME" bash -c "echo '$1' | '$HOOK'"; }
+printf 'not json' > "$TMP_HOME/.claude/settings.json"
+check_mapped offskill "pluge:offskill" "UNREADABLE SETTINGS: treated as no entry, never a crash"
+tmp_delete "$TMP_HOME/.claude/settings.json"
+
+# A typed slash command is a skill row only when a skill of that name exists (found 2026-11-12:
+# every typed command, /init included, was logged as a skill, and a typed short name was never
+# mapped). A name with a colon is kept as typed; a short name goes through the same resolver.
+typed() { run_hook "{\"session_id\":\"sess-4\",\"hook_event_name\":\"UserPromptExpansion\",\"expansion_type\":\"slash_command\",\"command_name\":\"$1\"}" >/dev/null 2>&1; }
+check_typed() { # check_typed <command_name> <expected skill, or "" for no row> <label>
+  local before after rc
+  before=$(wc -l <"$LOG_FILE" | tr -d ' '); typed "$1"; rc=$?; after=$(wc -l <"$LOG_FILE" | tr -d ' ')
+  if [ -z "$2" ]; then
+    # exit 0 too: a hook that crashed would also leave no row
+    if [ "$after" = "$before" ] && [ "$rc" -eq 0 ]; then echo "  ✅ $3"; pass=$((pass + 1)); else echo "  ❌ $3: expected no row and exit 0, got rc=$rc, last row $(tail -1 "$LOG_FILE")" >&2; fail=$((fail + 1)); fi
+  elif [ "$after" = "$((before + 1))" ] && tail -1 "$LOG_FILE" | jq -e --arg w "$2" '.skill == $w and .source == "typed"' >/dev/null 2>&1; then
+    echo "  ✅ $3"; pass=$((pass + 1))
+  else echo "  ❌ $3: expected skill=$2, got $(tail -1 "$LOG_FILE")" >&2; fail=$((fail + 1)); fi
+}
+check_typed grilling "pluga:grilling" "TYPED SHORT NAME: mapped like a tool call"
+check_typed init "" "TYPED NON-SKILL: /init, which no skill is named, appends no row"
+check_typed mine "mine" "TYPED USER SKILL: a ~/.claude/skills name is logged as typed"
+check_typed doctor "doctor" "TYPED AMBIGUOUS: two enabled plugins ship it -> logged short"
+check_typed "pluga:grilling" "pluga:grilling" "TYPED NAMESPACED: kept as typed"
+
 # CLAUDE_CONFIG_DIR moves ~/.claude (found 2026-11-12: the resolver read only $HOME/.claude, so
 # with the variable set no short name was ever mapped). The registry and the user skills that
 # own a name are both read from it.
