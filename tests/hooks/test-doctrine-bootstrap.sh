@@ -3,7 +3,7 @@
 # hooks/gates/*.sh, derived at run time -- not a hand-maintained list (LOW,
 # harness gap-audit 2026-09-20: the old hardcoded string named 5 of the 7
 # real gate wrappers, silently missing subagent-spawn-guard and
-# codex-setup-guard). This test proves the list tracks the fleet: it builds a
+# a since-removed setup gate). This test proves the list tracks the fleet: it builds a
 # fixture gates/ dir, runs the script with python3 hidden from PATH, and
 # checks a newly-added fixture gate shows up in the message without any
 # script edit.

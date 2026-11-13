@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a dispatched attacker/fallback's verdict on the Claude fallback path.
+"""Validate a dispatched attacker's verdict.
 
 Added 2026-09-20 (harness gap-audit M2) — mirrors mh:deep-audit's
 scripts/check-verdict.py (same NEEDS-DECISION escape hatch, same
@@ -10,13 +10,10 @@ attacker never touches the repo, so there is no scope to report on). Not a
 copy of deep-audit's script verbatim -- that script's REQUIRED_KEYS include
 two keys this schema doesn't have and would reject every real object outright.
 
-Used on both paths: pipe Codex's --output-last-message file through this
-too, not just the Claude-fallback path, since --output-schema only
-guarantees shape, not that findings/checked carry a real citation (that is
-scripts/check-citations.py's separate job, run after this one passes).
+This checks shape only, not that findings/checked carry a real citation
+(that is scripts/check-citations.py's separate job, run after this one passes).
 
-stdin: the attacker's raw final message text (Codex --output-last-message
-file contents, or the Claude-fallback agent's final message).
+stdin: the attacker agent's raw final message text.
 
 Behavior: identical to deep-audit's check-verdict.py -- NEEDS-DECISION
 outside any JSON span wins over nearby JSON; every '{' in the text is a

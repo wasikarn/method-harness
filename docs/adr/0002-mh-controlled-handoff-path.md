@@ -78,7 +78,7 @@ digest, TOCTOU-guard, and dedup machinery the detection design had accumulated.
   entire mechanism — no lock file, no digest index, no JSON state. Consumed files are kept, not
   reaped, doubling as handoff history.
 - **Scoped per project, keyed on git repo root** (falling back to physical cwd outside a repo),
-  hashed the same way `scripts/_lib/codex-state-path.sh` scopes the paired Codex plugin's state —
+  hashed (`scripts/_lib/slug-hash.sh`) —
   a bare directory-name slug can collide (`.../a-b` and `.../a/b` under a naive `/`→`-` replace).
 - **Multiple pending documents: budget allocation and display order are separate axes.**
   Aggregate budget — bytes *and* lines, both 3× the per-file cap — is allocated **oldest-first**

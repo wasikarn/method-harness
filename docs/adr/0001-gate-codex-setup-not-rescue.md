@@ -1,6 +1,9 @@
 ---
-status: accepted
+status: deprecated
 ---
+
+> Deprecated 2026-11-13: mh no longer ships any Codex surface. The gate this record describes
+> (`gate:skill:codex-setup-guard`), the quota sensors and the integration map were removed.
 
 # Gate `codex:setup`'s review-gate toggle; leave `codex:rescue` ungated
 
@@ -15,7 +18,7 @@ writes code outside mh's gates — stays ungated.
 The asymmetry is precedent, not risk-ranking. The setup gate reuses `gate:write:config-guard`'s
 existing shape: a tool matcher plus a literal flag. Gating an Agent-tool dispatch by
 `subagent_type` has no precedent in this plugin and is real new hook engineering, deferred
-rather than accepted as safe. See `docs/reference/codex-integration-map.md`'s gate-gap section
+rather than accepted as safe. See the (since-removed) integration map's gate-gap section
 for the vendor-agnostic-floor fallback while this gap stands.
 
 ## Considered options

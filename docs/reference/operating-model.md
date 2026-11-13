@@ -20,7 +20,6 @@ tool call — see its own row below for what that means in practice:
 | `gate:write:test-integrity` | asks before a write that weakens a test |
 | `gate:write:config-guard` | asks before a write to Claude Code settings `hooks`/`enabledPlugins` |
 | `gate:write:secret-scan` | asks when a Write/Edit introduces a new vendor-specific live-credential-shaped token (AWS, Anthropic, OpenAI, GitHub, GitLab, HuggingFace, Slack, Stripe, Google, npm, PyPI, PEM) that isn't a canonical placeholder or same-line-suppressed — the only mechanism catching a pasted secret today; `MultiEdit`, Bash-mediated writes, and Codex-rescue writes bypass it with no other backstop (`git-hooks/pre-commit`/`pre-push` have zero secret-content scanning) |
-| `gate:skill:codex-setup-guard` | asks before a model-invoked `Skill(codex:setup)` call carrying `--enable-review-gate` |
 | `gate:tool:routine-trigger-guard` | asks before `RemoteTrigger`'s `create`/`update`/`run`/`create_webhook_trigger` actions create, modify, or fire a Routine (a cloud session) — not its `list`/`get`/`list_runs`/`get_run_log` reads. `CronCreate` is out of scope: it only re-enqueues a prompt in the same, already-attended session (session-only, no new credential), found misclassified as a Routine trigger by `mh:deep-audit` 2026-09-28. Interactive-session-only, same posture as `gate:bash:irrecoverable`'s `gh pr merge` ask rule; cannot constrain a Routine already running outside this session (`docs/adr/0004-operator-authorized-routine-self-launch.md` §4) |
 | `gate:agent:subagent-verdict-check` | `SubagentStop`, plus a `PreToolUse` twin (`gate:agent:subagent-verdict-check-handback`, matcher `SubagentHandback`) that runs the same check on `tool_input.message` for the auto-mode delivery path on CC >= 2.1.271 (GH #160; the deny is a re-prompt with no counter, bounded by Claude Code's own turn budget): blocks a subagent's Stop and re-prompts it once when its final message contains a Rule 13 `{pass, findings[], checked[], scope_ok, unexpected_files[]}`-shaped object that is vacuous (`pass:true` with both `findings[]` and `checked[]` empty) or self-contradictory (`pass:true` with `scope_ok:false` or a non-empty `unexpected_files[]`); allows on `stop_hook_active:true`, `NEEDS-DECISION`, ambiguous multi-candidate output, or no verdict-shaped output at all |
 
@@ -51,8 +50,7 @@ delete, which denies (GH #771); a missing sibling script denies (exit 2) for `ir
 but allows (same stderr-note posture) for the four subagent-scoped gates (`subagent-git-guard`,
 `task-complete-separation`, `subagent-spawn-guard`, `subagent-verdict-check`), for
 `routine-trigger-guard` (tool-scoped, not subagent-scoped, same allow-on-missing-sibling
-posture), for the three ask-only write gates (`test-integrity`, `config-write-guard`,
-`codex-setup-guard`), and for `secret-scan.py` — its verdict is advisory on a write already happening, and it
+posture), for the two ask-only write gates (`test-integrity`, `config-write-guard`), and for `secret-scan.py` — its verdict is advisory on a write already happening, and it
 runs on every Write/Edit in every host project loading this plugin, so an internal exception
 there also allows rather than asking. `scripts/gate-canary.sh` proves
 every staged gate still allows benign payloads. The table is the contract; the hook type is
@@ -108,7 +106,7 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   `tests/evals/test-eval-cases.sh` keeps the cases loadable until it opens and proves every
   regex grader against its fixture or verdict sample.
 - `gate:task:complete-separation` makes the rule mechanical for task state.
-- A finding from a reviewer/checker (Codex adversarial pass, `blind-spot-hunter`, any Rule-13
+- A finding from a reviewer/checker (`blind-spot-hunter`, any Rule-13
   validator) is not self-authorizing: applying its fix still needs the human's own
   confirm-then-fix gate, even when the finding is clearly real and the same session already ran
   one such gate earlier in the same audit. This has lapsed under task momentum twice

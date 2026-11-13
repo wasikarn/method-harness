@@ -87,23 +87,10 @@ must discover independently, then get an answer from a verifier that did not do 
    not asserted. Starts empty if you have no first-hand deviation knowledge — step 3 still
    catches anything real.
 2. Dispatch **one** verifier at the pinned worktree from step 1.4: a Claude `general-purpose`
-   subagent (no new bespoke agent type). Only when `codex@openai-codex` is installed and the
-   operator asked for it, use Codex instead: `codex exec --sandbox workspace-write
-   --cd <worktree> --model <selected-model> -c model_reasoning_effort=<selected-effort>
-   --output-last-message <file> --output-schema <schema-file>` (sandbox and cwd explicit, not the
-   config-dependent default). `<schema-file>` is `references/verifier-output-schema.json` (this
-   skill's own JSON Schema for `{contract_version, requirements[], gauntlet, scope_ok, unexpected_files[]}` —
-   `mh:deep-audit`'s `checker-output-schema.json` is the pattern this copies). Select the
-   model/effort through `docs/reference/codex-integration-map.md`: Terra/medium for explicit
-   requirements, Sol/medium when interpretation is material. Resolve the tier to a slug, never
-   type one: `python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/codex-resolve-model.py" <tier> --effort medium`
-   with `<tier>` = `terra` for explicit requirements, `sol` when interpretation is material
-   (non-zero exit: follow the map's substitution rule and say so); name the resolved slug in the
-   report. Check availability and quota first; on a rate limit or any failure, run the Claude
-   subagent. Name the verifier that ran in the final report.
-   - **Validate before trusting, on both paths.** Pipe the verifier's raw output (the
-     `--output-last-message` file's contents on the Codex path; the agent's final message text on
-     the Claude path) through `scripts/check-verdict.py <pinned-sha>` — the pinned SHA
+   subagent (no new bespoke agent type). Its output contract is
+   `references/verifier-output-schema.json`: `{contract_version, requirements[], gauntlet, scope_ok,
+   unexpected_files[]}`.
+   - **Validate before trusting.** Pipe the verifier's raw final message through `scripts/check-verdict.py <pinned-sha>` — the pinned SHA
      generated in step 1.4 is the script's *only* source of truth for cross-checking
      `gauntlet.sha` (the script never derives one; it runs on the host tree, where `HEAD` is the
      wrong ref). A verifier reporting a different SHA is rejected even if its object is
@@ -113,12 +100,12 @@ must discover independently, then get an answer from a verifier that did not do 
      SHA-mismatched output; retry the dispatch once before treating it as "cannot verify"
      (`scope_ok: false`) — a rejected verdict must never reach Phase 3's report as if it were
      ground truth.
-   - **Claude path guard**: the agent has no sandbox. Capture `git status --porcelain` on the
+   - **Host-tree guard**: the agent has no sandbox. Capture `git status --porcelain` on the
      session's own tree before and after the dispatch; any difference is a violation ("verifier
      modified the host tree"), never a silent pass.
-   - **Sandbox contract (Codex path)**: `workspace-write`, scoped *only* to the disposable worktree — never
-     the session's own worktree it was pinned from (the gauntlet writes `__pycache__` and logs, so
-     `read-only` is wrong). Before/after the run, diff the worktree's tracked files against the pinned SHA;
+   - **Worktree contract**: the verifier writes *only* in the disposable worktree — never
+     the session's own worktree it was pinned from (the gauntlet writes `__pycache__` and logs
+     there). Before/after the run, diff the worktree's tracked files against the pinned SHA;
      any tracked-file change beyond expected build artifacts is itself a finding ("verifier
      modified source"), never a silent pass. The worktree is discarded after, so leftover
      untracked artifacts don't matter.

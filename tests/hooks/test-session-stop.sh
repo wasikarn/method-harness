@@ -61,11 +61,9 @@ row=$(tail -1 "$metrics_file" 2>/dev/null)
 assert "echoes payload through + appends one compact JSONL cost row for a valid transcript" "$ok"
 tmp_delete "$fake_home" "$transcript"
 
-# Codex pairing (docs/plans/codex-pairing-2026-09-06.md item F): a Skill call
-# to a codex:* skill and an Agent dispatch to a codex:* subagent_type are
-# tallied into a separate codex_invocations row -- a count, not a cost. No
-# .message.usage on this line, so no usage row is written; the only row
-# written is the codex tally, keeping the assertion single-line.
+# The tracker once tallied codex:* Skill and Agent calls into a codex_invocations
+# row. That tally was removed with mh's other Codex surfaces: a transcript whose
+# only content is such a call (no .message.usage) must write no row at all.
 fake_home=$(mktemp -d)
 transcript=$(mktemp)
 python3 -c '
@@ -76,48 +74,13 @@ line = {"type": "assistant", "message": {"content": [
 ]}}
 print(json.dumps(line))
 ' > "$transcript"
-payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "test-codex"}))' "$transcript")
+payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "test-no-tally"}))' "$transcript")
 out=$(printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" 2>/dev/null)
 rc=$?
 metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
-row=$(tail -1 "$metrics_file" 2>/dev/null)
-[[ "$rc" == "0" && "$out" == "$payload" && -f "$metrics_file" ]] \
-  && [[ "$(wc -l < "$metrics_file" | tr -d ' ')" == "1" ]] \
-  && printf '%s' "$row" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-c = d.get("codex_invocations", {})
-sys.exit(0 if c.get("codex:review") == 1 and c.get("codex:codex-rescue") == 1 else 1)
-' 2>/dev/null && ok=1 || ok=0
-assert "tallies codex:* Skill and Agent tool_use calls into one codex_invocations row" "$ok"
-tmp_delete "$fake_home" "$transcript"
-
-# Regression: one API response spans several JSONL lines sharing one message.id
-# (the usage extraction's 2026-09-04 finding, applies here too) -- 3 duplicate lines
-# with the same id, each carrying a codex:review tool_use, must count as ONE
-# call, not three.
-fake_home=$(mktemp -d)
-transcript=$(mktemp)
-python3 -c '
-import json
-line = {"type": "assistant", "message": {"id": "msg_dup1", "content": [
-    {"type": "tool_use", "name": "Skill", "input": {"skill": "codex:review", "args": None}}
-]}}
-for _ in range(3):
-    print(json.dumps(line))
-' > "$transcript"
-payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "test-codex-dup"}))' "$transcript")
-out=$(printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" 2>/dev/null)
-rc=$?
-metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
-row=$(tail -1 "$metrics_file" 2>/dev/null)
-[[ "$rc" == "0" && "$out" == "$payload" && -f "$metrics_file" ]] \
-  && printf '%s' "$row" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-sys.exit(0 if d.get("codex_invocations", {}).get("codex:review") == 1 else 1)
-' 2>/dev/null && ok=1 || ok=0
-assert "3 duplicate JSONL lines sharing one message.id count as 1 codex call, not 3" "$ok"
+[[ "$rc" == "0" && "$out" == "$payload" ]] \
+  && ! /usr/bin/grep -qs 'codex_invocations' "$metrics_file" && ok=1 || ok=0
+assert "a codex:* Skill or Agent tool_use writes no codex_invocations row" "$ok"
 tmp_delete "$fake_home" "$transcript"
 
 fake_home=$(mktemp -d)
@@ -553,7 +516,7 @@ tmp_delete "$fake_home" "$transcript"
 # usage:"not-an-object" line now sits INSIDE an open verify-window (after a
 # real agent dispatch + its <task-notification>, before the closing Agent
 # tool_use) instead of alone in an otherwise-empty transcript. Before
-# scan_transcript's verify_map/parent_map/codex sub-expressions were
+# scan_transcript's verify_map/parent_map sub-expressions were
 # individually try/caught, this exact shape threw inside the *combined*
 # single-pass jq call and was silently swallowed: no jq_failed sentinel row,
 # no orchestrator row at all -- exactly the "no row" H7 exists to distinguish
@@ -732,7 +695,7 @@ tmp_delete "$fake_home" "$transcript" "$decoy"
 # Before the fix, cost-tracker.sh re-scanned the main transcript with a
 # separate full-file jq invocation 3-5 times per Stop call (build_verify_map
 # for the orchestrator typemap, emit_rows' own orchestrator extraction,
-# emit_codex_invocations, and -- when subagents exist -- build_type_map's own
+# the since-removed codex tally, and -- when subagents exist -- build_type_map's own
 # parent_map extraction PLUS its own internal build_verify_map re-scan of the
 # identical input). Measured 9.5s/Stop-call against a real 158MB/42,838-line
 # transcript on disk. This wraps jq with a shim that logs every invocation's
@@ -783,37 +746,10 @@ hits=$(/usr/bin/grep -c '^hit$' "$jq_log")
 sub_hits=$(/usr/bin/grep -c '^sub$' "$jq_log")
 [[ "$rc" == "0" && "$hits" == "1" ]] && ok=1 || ok=0
 assert "cost-tracker.sh scans the main transcript with jq exactly once per Stop call (was 3-5x before the single-pass consolidation)" "$ok"
-# 2026-10-22 lane-3 fold: usage rows and codex tallies come from one jq read of each subagent file (was 2).
+# 2026-10-22 lane-3 fold: usage rows come from one jq read of each subagent file (was 2).
 [[ "$rc" == "0" && "$sub_hits" == "1" ]] && ok=1 || ok=0
 assert "cost-tracker.sh reads each subagent transcript with jq exactly once per Stop call (got $sub_hits)" "$ok"
 tmp_delete "$fake_home" "$sess_dir" "$jq_shim_dir" "$jq_log"
-
-# Regression risk specific to the single-scan refactor: codex tool_use tallies
-# from the main transcript and from a subagent file must be SUMMED per key,
-# not have one overwrite the other. The original code tallied every file's
-# lines together in one combined jq call; the refactor computes the main
-# transcript's contribution separately (via scan_transcript) and merges it
-# additively with the subagent files' contribution (from the subagent jq read)
-# -- an overwrite-instead-of-add merge bug would silently undercount.
-fake_home=$(mktemp -d)
-sess_dir=$(mktemp -d)
-transcript="$sess_dir/codexmerge.jsonl"
-mkdir -p "$sess_dir/codexmerge/subagents"
-printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"codex:review","args":null}}]}}\n' > "$transcript"
-printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"codex:review","args":null}}]}}\n' > "$sess_dir/codexmerge/subagents/agent-zzz.jsonl"
-payload=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "codexmerge"}))' "$transcript")
-out=$(printf '%s' "$payload" | HOME="$fake_home" bash "$COST_TRACKER" 2>/dev/null)
-rc=$?
-metrics_file="$fake_home/.local/share/kbg/metrics/costs.jsonl"
-row=$(tail -1 "$metrics_file" 2>/dev/null)
-[[ "$rc" == "0" && -f "$metrics_file" ]] \
-  && printf '%s' "$row" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-sys.exit(0 if d.get("codex_invocations", {}).get("codex:review") == 2 else 1)
-' 2>/dev/null && ok=1 || ok=0
-assert "codex:review called once in the main transcript and once in a subagent file sums to 2, not 1 (additive merge, not overwrite)" "$ok"
-tmp_delete "$fake_home" "$sess_dir"
 
 echo ""
 echo "=== memory-audit-commit hook (Stop) ==="

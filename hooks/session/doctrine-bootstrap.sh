@@ -25,7 +25,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   # Gate list derived from hooks/gates/*.sh (LOW, harness gap-audit
   # 2026-09-20) instead of a hand-maintained string -- the previous
   # hardcoded list named 5 of the 7 real gate wrappers, silently missing
-  # subagent-spawn-guard and codex-setup-guard whenever a new gate shipped.
+  # subagent-spawn-guard and others whenever a new gate shipped.
   _gate_list=""
   for _g in "${CLAUDE_PLUGIN_ROOT:-}"/hooks/gates/*.sh; do
     [ -f "$_g" ] || continue

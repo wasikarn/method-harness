@@ -17,8 +17,8 @@ user's actual creative work — mh must never touch, copy, or duplicate it, only
 
 ## Rejected: `PreToolUse:Skill`
 
-The original design mirrored `gate:skill:codex-setup-guard` (this repo's only existing
-`Skill`-matcher hook, matching `tool_input.skill == "codex:setup"`). Checked against three live
+The original design mirrored `gate:skill:codex-setup-guard` (then this repo's only
+`Skill`-matcher hook, since removed, matching `tool_input.skill == "codex:setup"`). Checked against three live
 transcripts (`/mattpocock-skills:implement`, `/mattpocock-skills:grilling`, `/mh:learn`) and found
 dead: a **user-typed** slash command never produces a `Skill` tool_use event at all — it lands as
 a plain user message carrying literal `<command-name>`/`<command-args>` tags, with zero tool call

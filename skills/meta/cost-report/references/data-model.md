@@ -37,8 +37,8 @@ so the latest row per key is the session's current total, not an increment.
   `agent_type`. It adds tokens and cost but not `turns`, and `cache_read_per_turn` uses the
   executor's cache reads only. Counted once per (message id, iteration) across all of a
   session's files; a zeroed background-session copy adds nothing.
-- A separate row shape `{ timestamp, session_id, codex_invocations: {name: count} }` counts
-  `codex:*` Skill and Agent calls; it has no model and is summed on its own.
+- Ledgers written before 2026-11-13 can hold `{ timestamp, session_id, codex_invocations }` rows.
+  The tracker no longer writes them and the report skips them.
 - Older rows carry fields from retired schemas; unknown keys are ignored.
 - `cost-report-dedup.js`'s `csv` mode's header and column order must be kept in sync with any
   spend field added here (the CSV is a spend export: the handoff fields below, `rate_verified`,

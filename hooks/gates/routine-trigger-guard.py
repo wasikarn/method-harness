@@ -3,7 +3,7 @@ import json, sys
 
 # GH-adjacent to #156: raise the int-string digit limit before parsing so an
 # oversized unquoted int literal doesn't crash json.load() into this gate's
-# fail-open except below (full rationale: codex-setup-guard.py).
+# fail-open except below (full rationale: secret-scan.py).
 if hasattr(sys, "set_int_max_str_digits"):
     sys.set_int_max_str_digits(0)
 
