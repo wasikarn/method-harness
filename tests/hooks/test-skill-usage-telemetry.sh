@@ -229,10 +229,11 @@ tmp_delete "$TMP_HOME/.claude/settings.json"
 # mapped). A name with a colon is kept as typed; a short name goes through the same resolver.
 typed() { run_hook "{\"session_id\":\"sess-4\",\"hook_event_name\":\"UserPromptExpansion\",\"expansion_type\":\"slash_command\",\"command_name\":\"$1\"}" >/dev/null 2>&1; }
 check_typed() { # check_typed <command_name> <expected skill, or "" for no row> <label>
-  local before after
-  before=$(wc -l <"$LOG_FILE" | tr -d ' '); typed "$1"; after=$(wc -l <"$LOG_FILE" | tr -d ' ')
+  local before after rc
+  before=$(wc -l <"$LOG_FILE" | tr -d ' '); typed "$1"; rc=$?; after=$(wc -l <"$LOG_FILE" | tr -d ' ')
   if [ -z "$2" ]; then
-    if [ "$after" = "$before" ]; then echo "  ✅ $3"; pass=$((pass + 1)); else echo "  ❌ $3: expected no row, got $(tail -1 "$LOG_FILE")" >&2; fail=$((fail + 1)); fi
+    # exit 0 too: a hook that crashed would also leave no row
+    if [ "$after" = "$before" ] && [ "$rc" -eq 0 ]; then echo "  ✅ $3"; pass=$((pass + 1)); else echo "  ❌ $3: expected no row and exit 0, got rc=$rc, last row $(tail -1 "$LOG_FILE")" >&2; fail=$((fail + 1)); fi
   elif [ "$after" = "$((before + 1))" ] && tail -1 "$LOG_FILE" | jq -e --arg w "$2" '.skill == $w and .source == "typed"' >/dev/null 2>&1; then
     echo "  ✅ $3"; pass=$((pass + 1))
   else echo "  ❌ $3: expected skill=$2, got $(tail -1 "$LOG_FILE")" >&2; fail=$((fail + 1)); fi
