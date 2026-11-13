@@ -76,5 +76,26 @@ g "$A" config core.hooksPath "$A/git-hooks"
 MH_HOOK_REEXEC=1 g "$B" commit -q --allow-empty -m w 2> "$T/err" < /dev/null
 check 'eval "$guard" && [ "$(wc -l < "$T/ran")" -eq 1 ] && [ ! -s "$T/err" ]' "re-exec marker set: no second exec"
 
+# Row 5: a repository that is NOT an mh checkout has core.hooksPath pointing at A's git-hooks
+# (a global setting, say) and carries a git-hooks/pre-commit of its own (found 2026-11-12: the
+# block exec'd that file, so another project's script ran under this hook's name and the printed
+# fix was wrong for it). Its own hook lacks the re-exec marker, so it is not run: one warning that
+# says so, exit 0, and the stub's body does not run either.
+C="$T/c"
+mkdir -p "$C/git-hooks"
+g "$C" init -q .
+printf '#!/usr/bin/env bash\necho FOREIGN-HOOK-RAN >> "%s/foreign"\n' "$T" > "$C/git-hooks/pre-commit"
+cp "$C/git-hooks/pre-commit" "$C/git-hooks/pre-push"
+chmod +x "$C/git-hooks/pre-commit" "$C/git-hooks/pre-push"
+g "$C" config core.hooksPath "$A/git-hooks"
+: > "$T/ran"; : > "$T/foreign"
+g "$C" commit -q --allow-empty -m foreign 2> "$T/err" < /dev/null; rc=$?
+check '[ "$rc" -eq 0 ] && [ ! -s "$T/foreign" ]' "foreign repo: its own git-hooks/pre-commit is not run, commit goes through"
+check '[ ! -s "$T/ran" ]' "foreign repo: this hook's body does not run on it either"
+check '/usr/bin/grep -q "not an mh checkout" "$T/err" && /usr/bin/grep -q "unset core.hooksPath" "$T/err" && ! /usr/bin/grep -q "git config core.hooksPath git-hooks" "$T/err"' "foreign repo: the warning says no hook ran and gives the fix for that repo"
+: > "$T/ran"; : > "$T/foreign"
+(cd "$C" && printf '%s\n' "$refs" | "$A/git-hooks/pre-push" origin url 2> "$T/err"); rc=$?
+check '[ "$rc" -eq 0 ] && [ ! -s "$T/foreign" ] && [ ! -s "$T/ran" ] && /usr/bin/grep -q "not an mh checkout" "$T/err"' "foreign repo: pre-push runs nothing and says so"
+
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -5,8 +5,14 @@ if [ -z "${MH_HOOK_REEXEC:-}" ] && _mh_top=$(git rev-parse --show-toplevel) \
   && [ -x "$_mh_top/git-hooks/${0##*/}" ]; then
   _mh_here=$(CDPATH='' cd -P "$(dirname "$0")" && pwd -P); _mh_own=$(cd -P "$_mh_top/git-hooks" && pwd -P)
   if [ "$_mh_here" != "$_mh_own" ]; then
-    echo "${0##*/}: core.hooksPath is '$(git config core.hooksPath)', not this work tree's; running $_mh_own/${0##*/}. Fix: git config core.hooksPath git-hooks" >&2
-    MH_HOOK_REEXEC=1 exec "$_mh_own/${0##*/}" "$@"
+    # Only another mh checkout's hook carries this block. A repository of some other project whose
+    # core.hooksPath points here keeps its own git-hooks/: that file is not run under this name.
+    if /usr/bin/grep -q MH_HOOK_REEXEC "$_mh_own/${0##*/}" 2>/dev/null; then
+      echo "${0##*/}: core.hooksPath is '$(git config core.hooksPath)', not this work tree's; running $_mh_own/${0##*/}. Fix: git config core.hooksPath git-hooks" >&2
+      MH_HOOK_REEXEC=1 exec "$_mh_own/${0##*/}" "$@"
+    fi
+    echo "${0##*/}: core.hooksPath is '$(git config core.hooksPath)', mh's hooks, but this work tree is not an mh checkout; no hook was run. Fix: git config --unset core.hooksPath (or point it at this repository's own hooks)" >&2
+    exit 0
   fi
 fi
 # pre-push — refuse a direct push to refs/heads/develop (PR-only, branch
