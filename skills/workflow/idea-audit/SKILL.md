@@ -109,35 +109,16 @@ Dispatch one `general-purpose` agent, carrying `references/attacker-brief.md` as
 and any diff is a violation. Validation steps: `references/claude-attacker.md`; **load it before
 dispatching.**
 
-Only when `codex@openai-codex` is installed and the operator asked for it, use Codex instead,
-in `mh:deep-audit`'s dispatch shape:
-
-```bash
-codex exec --sandbox read-only --model <selected-model> -c model_reasoning_effort=<selected-effort> --cd <repo-root> \
-  --output-last-message <file> --output-schema <skill-dir>/references/attacker-output-schema.json
-```
-
-`<skill-dir>` is this skill's own absolute directory, substituted at dispatch time; never pass the
-schema path bare.
-
-Select model and effort through `docs/reference/codex-integration-map.md`'s task/account-cost
-policy; normally Sol/medium for this adversarial attacker. Resolve the tier to a slug, never type
-one: `python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/codex-resolve-model.py" sol --effort medium`
-(non-zero exit: follow the map's substitution rule and say so); name the resolved slug in the
-report. Check availability and quota first; escalate effort for concrete reasoning needs without
-weakening the acceptance criteria.
-
 The brief is `references/attacker-brief.md`. It gives the attacker the scratchpad source's
 **absolute path, for reading only**. Every citation in the attacker's output, and anything that
 reaches the Phase 4 artifact, uses the relative filename alone (`idea-audit-source-<slug>.md:N`),
 never the absolute path.
 
-**Accept the result only if:** on Codex, `codex exec` exits 0; and the attacker's raw text (the
-agent's final message, or the `--output-last-message` file) validates through `scripts/check-verdict.py` (the 4-key `{contract_version, pass,
+**Accept the result only if** the agent's raw final message validates through `scripts/check-verdict.py` (the 4-key `{contract_version, pass,
 findings[], checked[]}` contract):
 
 ```
-python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" < <file holding that raw text>
+python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
 ```
 
 Exit 0 = exactly one schema-valid verdict on stdout; exit 1 = malformed, rejected, or ambiguous
@@ -149,10 +130,8 @@ grep-result excerpt). Exit 0 = every citation is real; exit 1 = stderr names eac
 treated as a missing citation. `checked[]` must hold at least one independently verified claim
 with a real citation **regardless of `pass`/`findings`**.
 
-**A Codex run that fails goes back to the `general-purpose` agent** (all seven triggers, not just
-rate-limit): non-zero exit, empty/malformed output, a schema mismatch, timeout, auth failure, a
-missing/empty `checked[]` (`check-verdict.py` exit 1), or any other semantic refusal. Name the
-attacker that ran in the report.
+**On a reject** (exit 1, an empty or malformed message, a refusal in prose), dispatch the agent
+once more with the same brief.
 
 **If the `general-purpose` agent also fails, or every finding fails the citation-shape check**, Phase 3 marks the
 adversarial criterion `insufficient evidence` (never scores it as a passed check silently).
@@ -245,9 +224,8 @@ a non-empty-path check, or Python `os.remove`).
 - `references/doc-template.md` — Phase 4 artifact skeleton. **Load before writing the artifact.**
 - `references/attacker-brief.md` — the Phase 2 brief. **Load before dispatching Phase 2.**
 - `references/attacker-output-schema.json` — the 4-key contract, `additionalProperties: false`
-  at all three object levels; `checked[]` required and non-empty. **Pass as
-  `--output-schema <skill-dir>/references/attacker-output-schema.json` (absolute path).**
-- `scripts/check-verdict.py` — validates both paths' output before `check-citations.py`.
+  at all three object levels; `checked[]` required and non-empty.
+- `scripts/check-verdict.py` — validates the attacker's output before `check-citations.py`.
 - `references/phase-0-locate-source.md` — Phase 0 search order. **Load before Phase 0.**
 - `references/claude-attacker.md` — Phase 2 validation and no-sandbox guard. **Load before
   dispatching the attacker.**

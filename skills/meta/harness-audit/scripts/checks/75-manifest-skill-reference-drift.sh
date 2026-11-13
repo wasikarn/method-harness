@@ -4,7 +4,7 @@
 # actually ships -- a directory-prefix glob per entry, sometimes a whole
 # bucket (`./skills/meta/`), sometimes one specific skill inside a bucket
 # (`./skills/workflow/ideate/`, which covers only that one skill). README.md
-# and docs/reference/codex-integration-map.md both once presented
+# and a since-removed reference doc both once presented
 # `mh:idea-audit` as shipped while this list excluded it (re-shipped in
 # 1.1.132). This makes that cross-check mechanical instead of relying on
 # remembering the manifest's exact prefixes by hand.
@@ -30,8 +30,7 @@
 # shipping -- flagging every mention of these as a fresh "drift" finding
 # would just re-punish the correctly-caveated documentation this same audit
 # pass wrote. Only reverse an exclusion here if the manifest itself changes;
-# see this file's own docs/reference/codex-integration-map.md entries for
-# the caveat wording each mention should carry.
+# keep the caveat wording each such mention carries.
 _MANIFEST_JSON="$CLAUDE_DIR/.claude-plugin/plugin.json"
 if [ ! -f "$_MANIFEST_JSON" ]; then
   warn "no .claude-plugin/plugin.json -- can't cross-check shipped skill ids against doc/eval/test references"

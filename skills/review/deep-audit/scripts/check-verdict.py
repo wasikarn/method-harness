@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Validate a dispatched validator/checker's verdict on the Claude fallback path.
+"""Validate a dispatched validator/checker's verdict.
 
-Used when mh:deep-audit's Codex checker is unavailable and SKILL.md dispatches
-a Claude Explore/review agent instead (see SKILL.md step 3, "On any other
-outcome"). That agent has no --output-schema enforcement, so this script is
-the only shape check its return value gets.
+mh:deep-audit's step 3 dispatches a Claude Explore/review agent. Nothing
+enforces a schema on that agent, so this script is the only shape check its
+return value gets.
 
 stdin: the dispatched agent's raw final message text.
 

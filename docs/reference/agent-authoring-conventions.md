@@ -47,8 +47,7 @@ check 54 WARNs). Pinning a fresh-context verifier to a different model than the 
 makes it independent by model as well as by context, a stronger form of item 4. A family alias
 gives no such independence when the main session is in that family: `model: opus` runs the main
 session's exact Opus (sub-agents reference, "Choose a model"), so `plan-reviewer` and
-`blind-spot-hunter` dispatched from an Opus main session run the same model. Use the Codex lane
-there when model independence matters. Evidence:
+`blind-spot-hunter` dispatched from an Opus main session run the same model. Evidence:
 `docs/research/claude-code-codex-models-efforts-2026-09-07.md`,
 `docs/research/auto-model-auto-effort-2026-09-26.md`.
 

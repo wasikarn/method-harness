@@ -3,15 +3,11 @@
 
 Mirrors mh:deep-audit's scripts/check-verdict.py (same NEEDS-DECISION escape hatch,
 same brace-scanning, same ambiguity handling) for compliance-audit's own contract:
-references/verifier-output-schema.json. Used on both paths — pipe Codex's
---output-last-message file through this too, not just the Claude-fallback path,
-because Codex's --output-schema only guarantees the verifier's JSON matches the
-schema; it does not compute `pass`. This script is the only place `pass` is ever
+references/verifier-output-schema.json. This script is the only place `pass` is ever
 computed: SKILL.md's own rule ("`pass` is never true on requirements alone") is
 transcribed here so no hand-eyeballed reconciliation ever reaches the report.
 
-stdin: the verifier's raw final message text (Codex --output-last-message file
-contents, or the Claude-fallback agent's final message).
+stdin: the verifier agent's raw final message text.
 
 Behavior:
   - A literal `NEEDS-DECISION` anywhere OUTSIDE a parsed JSON span wins over any

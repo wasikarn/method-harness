@@ -102,42 +102,27 @@ printf '%s\n' <scope paths> | python3 "${CLAUDE_SKILL_DIR}/scripts/scope-fingerp
 `$MANIFEST` is a file outside the repo (a fresh `mktemp`), so it never lands in scope itself.
 
 **Dispatch** a Claude `Explore`/review agent with the brief; contract and validation:
-`references/claude-checker.md`, **loaded first**.
+`references/claude-checker.md`, **loaded first**. The brief's no-mutation line is not an
+unqualified "read-only, guaranteed".
 
-Only when `codex@openai-codex` is installed and the operator asked for it, use Codex instead:
-```
-codex exec --sandbox read-only --model <selected-model> -c model_reasoning_effort=<selected-effort> --cd <repo-root> \
-  --output-last-message <file> --output-schema <schema-file>
-```
-Choose `<selected-model>` and `<selected-effort>` using
-`docs/reference/codex-integration-map.md`'s task/account-cost policy; normally Sol/medium
-for this adversarial checker. Resolve the tier to a slug, never type one:
-`python3 "${CLAUDE_SKILL_DIR}/../../../scripts/_lib/codex-resolve-model.py" sol --effort medium`
-(non-zero exit: follow the map's substitution rule and say so); name the resolved slug in the
-report. Check availability and remaining quota before a substantial run.
-Raise effort only for a concrete reasoning need; acceptance criteria below never weaken.
-`<schema-file>` is `references/checker-output-schema.json` (this skill's own JSON Schema for
-`{contract_version, pass, findings[], checked[], scope_ok, unexpected_files[]}`). The sandbox plus
-the brief's no-mutation line is not an unqualified "read-only, guaranteed".
-
-**Accept the result only if all of:** on Codex, `codex exec` exits 0; the checker's raw text (the
-agent's final message, or the output-last-message file) validates through `scripts/check-verdict.py` (all six fields,
+**Accept the result only if all of:** the agent's raw final message validates through
+`scripts/check-verdict.py` (the six fields `{contract_version, pass, findings[], checked[], scope_ok,
+unexpected_files[]}`,
 **`checked[]` non-empty**, citation-shaped `evidence`):
 ```
-python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" < <file holding that raw text>
+python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
 ```
 Exit 0 = accept; exit 1 = reject; exit 2 = a `NEEDS-DECISION`
 escalation, surfaced to the operator as an open question (its meaning:
-`references/claude-checker.md`). Schema validity alone is not enough: `--output-schema` cannot enforce citation shape.
+`references/claude-checker.md`).
 The result also shows real review evidence — findings that each cite one checkable fact, or an explicit, legitimate
 zero-findings pass (see below) — and does not state or imply it couldn't or didn't complete the
 review. Schema-valid JSON that still refuses in prose is not review evidence. A `pass:
 false` result **with real, evidenced findings is a successful run that found problems** — never
 a failure.
 
-**On any other outcome** on Codex — non-zero exit, empty or malformed output, a schema mismatch,
-timeout, auth failure, or a semantic refusal — run the Claude agent with the same brief. Name the
-checker that ran in the final report.
+**On any other outcome** (a reject, an empty or malformed message, a refusal in prose), dispatch
+the agent once more with the same brief.
 
 **Re-fingerprint after the checker returns:**
 ```

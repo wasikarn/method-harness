@@ -27,7 +27,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/audit.sh" --only 22  # one check by number
 | Bundled files | 17 python compiles, 18 shell parses, 19 JSON parses |
 | Descriptions | 20 <= 1536 chars each, 29 no imperative injection words, 43 cumulative listing budget, 77 <= 25 words + third-person voice |
 | Doc rot | 35 script pointers in prose resolve, 42 reference files carry no leaking frontmatter, 79 pinned prose facts (gate/skill/agent counts, README gate table, this check table, manifest versions) match the tree, 80 `mh:`/`mattpocock-skills:`/`codex:` skill references in prose resolve, 81 reference files over 100 lines carry a Contents heading, 83 `SKILL.md` is at most 16,000 bytes, headroom below the ~5,000 tokens re-attached after compaction |
-| Working tree | 70 stray top-level entries (gitignored clutter), 71 paired Codex plugin's review-gate state, 72 spawn-brief's Codex `--effort` set vs the installed plugin |
+| Working tree | 70 stray top-level entries (gitignored clutter) |
 | Gates and manifests | 74 subagent-scoped gates keep their `agent_id` presence check, 75 `mh:<skill>` references match `plugin.json`'s shipped skills, 76 measurement-coverage status freshness, 78 every nested skill is covered by a `plugin.json` skills entry and no `marketplace.json` entry declares `skills` |
 
 Vendor-validated limits (1536-char descriptions, hook event set, model aliases, name format) are

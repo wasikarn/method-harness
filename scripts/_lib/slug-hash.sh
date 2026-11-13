@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # slug-hash.sh: shared <slug>-<hash> derivation for a per-project state dir,
-# used by scripts/_lib/codex-state-path.sh and scripts/_lib/fragments-state.sh
+# used by scripts/_lib/fragments-state.sh
 # so every consumer lands on the same collision-free naming scheme. (The
 # now-removed mh:handoff skill's own helper used this same derivation too;
 # see git history.)

@@ -80,11 +80,6 @@
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/secret-scan.sh\""
       },
       {
-        "id": "gate:skill:codex-setup-guard",
-        "description": "Ask before a model-invoked Skill(codex:setup) call carrying --enable-review-gate; the paired Codex plugin's review gate stays off by design.",
-        "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/codex-setup-guard.sh\""
-      },
-      {
         "id": "gate:agent:subagent-verdict-check-handback",
         "description": "Deny (re-prompt) a SubagentHandback call whose report (tool_input.message) carries a vacuous or self-contradictory Rule 13 verdict object -- the auto-mode delivery path SubagentStop cannot see (GH #160).",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/subagent-verdict-gate.sh\""
@@ -93,11 +88,6 @@
         "id": "gate:tool:routine-trigger-guard",
         "description": "Ask before RemoteTrigger creates, updates, runs, or wires a webhook onto a Routine (mutating/firing actions only, not list/get/list_runs/get_run_log) -- interactive-session-only, cannot constrain a Routine already running outside this session (ADR 0004). CronCreate is out of scope: session-only, no new credential.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/routine-trigger-guard.sh\""
-      },
-      {
-        "id": "sensor:bash:codex-quota-advisory",
-        "description": "Before a Codex CLI Bash command runs, warn via additionalContext if codex-quota-sensor recently recorded a usage-limit/rate-limit failure; deny while the recorded reset time is still in the future (MH_CODEX_QUOTA_DENY=0 keeps it advisory). Stale records past the TTL, and records whose reset has passed, self-clear.",
-        "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/codex-quota-advisory.sh\""
       }
     ],
     "PostToolUse": [
@@ -122,11 +112,6 @@
         "id": "sensor:bash:failure-diagnose-nudge",
         "description": "Advisory only, never blocks: on a non-zero exit, nudge diagnose-before-retry via additionalContext. Capped at 1 per distinct failing command per session, and per subagent within it (a subagent shares its parent's session_id, so the counter also keys on agent_id). Registered on PostToolUseFailure (not PostToolUse): that is where a nonzero Bash exit dispatches, and its output schema declares additionalContext; provenance in the sensor's docstring.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/failure-diagnose-nudge.sh\""
-      },
-      {
-        "id": "sensor:bash:codex-quota-sensor",
-        "description": "Never blocks: on a Codex CLI Bash command failing with a usage-limit/rate-limit-shaped error, record the failure and any try-again-at reset time (persisted, not session-scoped) so codex-quota-advisory can warn or deny before the next Codex dispatch.",
-        "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/codex-quota-sensor.sh\""
       }
     ],
     "Stop": [

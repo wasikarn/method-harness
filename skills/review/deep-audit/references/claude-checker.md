@@ -1,7 +1,6 @@
 # deep-audit: step 3 Claude checker
 
-Load before dispatching step 3's Claude `Explore`/review agent, the default checker (and the one a
-failed Codex run goes back to, with the same brief).
+Load before dispatching step 3's Claude `Explore`/review agent.
 
 ## Return contract
 
@@ -11,7 +10,7 @@ unexpected_files[]}`, **not** `docs/reference/spawn-brief.md`'s bare 4-field
 
 ## Validating the verdict
 
-On this path there is no `--output-last-message` file and no `--output-schema`; pipe the
+Pipe the
 agent's raw final message (never a fence-stripped copy) to the same script:
 ```
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"

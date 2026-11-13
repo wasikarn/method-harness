@@ -1,6 +1,6 @@
 # Attacker dispatch brief
 
-Load before dispatching Phase 2 (the `general-purpose` agent, or Codex when the operator asked). Fill the
+Load before dispatching Phase 2. Fill the
 bracketed fields; send the whole thing as the dispatch prompt.
 
 ```

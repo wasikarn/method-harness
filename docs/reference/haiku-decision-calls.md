@@ -67,8 +67,8 @@ input context.
 ## When not to use this
 
 For an adversarial audit, multi-page brief, or anything needing `findings[]`-shaped output, use
-the existing `codex exec --output-schema` / Claude-fallback contract pattern instead
-(`docs/reference/codex-integration-map.md`, `docs/reference/spawn-brief.md`) — this pattern is for
+the existing checker-agent contract pattern instead
+(`skills/review/deep-audit/SKILL.md`, `docs/reference/spawn-brief.md`) — this pattern is for
 a single cheap in-flow decision, not a review pass.
 
 ## Sources
