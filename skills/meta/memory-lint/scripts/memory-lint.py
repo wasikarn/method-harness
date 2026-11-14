@@ -711,7 +711,7 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
 
     live_text = {}  # file -> its code-masked text, the text apply_action_plan rewrites
 
-    def entry(f, t, new_target, reason):
+    def rewrite_entry(f, t, new_target, reason):
         # The plan names the link as [[t]]; a link written [x](t.md), [[t|alias]] or [[t.md]] has no such
         # text, so apply would find nothing. Say manual (new: None) up front instead (GH #967).
         if f not in live_text:
@@ -732,18 +732,18 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
             # Dangling: target resolves to nothing
             if t not in archive_stems:
                 # No clear ledger: record as a candidate; agent decides rewrite target
-                plan.append(entry(f, t, _pick_ledger_target(state, removed_files, source=f), "dangling-target"))
+                plan.append(rewrite_entry(f, t, _pick_ledger_target(state, removed_files, source=f), "dangling-target"))
                 continue
             # Archived target: find replacement
             replacement = super_targets.get(t)
             if replacement and replacement + ".md" == f:
                 # f is the successor of the file it links to: a ledger would hide that, so leave it manual
-                plan.append(entry(f, t, None, "archived-supersedence-is-source"))
+                plan.append(rewrite_entry(f, t, None, "archived-supersedence-is-source"))
             elif replacement and replacement in state["stems"] and replacement + ".md" not in removed_files:
-                plan.append(entry(f, t, replacement, "archived-with-supersedence"))
+                plan.append(rewrite_entry(f, t, replacement, "archived-with-supersedence"))
             else:
                 # Archived but no clear supersedence: point to nearest ledger
-                plan.append(entry(f, t, _pick_ledger_target(state, removed_files, source=f), "archived-no-supersedence"))
+                plan.append(rewrite_entry(f, t, _pick_ledger_target(state, removed_files, source=f), "archived-no-supersedence"))
     return plan
 
 

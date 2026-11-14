@@ -873,7 +873,10 @@ def test_class_c_ledger_fallback_matches_a_ledger_word_not_a_substring():
         state = _ledger_store(d, ["reference_pledger_api.md"])
         plan = memory_lint.class_c_dangling_link_rewrite(state)
         assert [e["new"] for e in plan] == [None], plan
-        state = _ledger_store(d, ["reference_pledger_api.md", "proj-ledger.md", "ledger_notes.md"])
+        state = _ledger_store(d, ["reference_pledger_api.md", "proj-ledger.md"])
+        plan = memory_lint.class_c_dangling_link_rewrite(state)
+        assert [e["new"] for e in plan] == ["[[proj-ledger]]"], plan   # a hyphen is a word boundary too
+        state = _ledger_store(d, ["reference_pledger_api.md", "ledger_notes.md"])
         plan = memory_lint.class_c_dangling_link_rewrite(state)
         assert [e["new"] for e in plan] == ["[[ledger_notes]]"], plan
 
