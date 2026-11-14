@@ -77,9 +77,9 @@ score not feel. `git-hooks/pre-commit` refuses a `docs/METHODOLOGY.md` over 4096
 
 ## What it ships
 
-- **Skills (14):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
+- **Skills (13):** `mh:harness-audit` (structural checks), `mh:memory-lint`, `mh:cost-report`,
   `mh:gate-report`, `mh:learn`, `mh:model-bench`, `mh:compliance-audit`, `mh:deep-audit`,
-  `mh:attack-proposal`, `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
+  `mh:idea-audit`, `mh:ideate`, `mh:post-mortem`, `mh:code-architect`, `mh:performance-optimizer`. `ste-lint` exists in the repo
   and is tested, but `.claude-plugin/plugin.json`'s skills list deliberately excludes it.
 - **Agents (5):** backend-architect, blind-spot-hunter, ideate-critic,
   plan-reviewer, requirement-analyst. Removed: the silent-failure agent (now a checklist,

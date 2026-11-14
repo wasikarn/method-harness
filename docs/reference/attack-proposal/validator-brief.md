@@ -1,6 +1,6 @@
 # attack-proposal: validator brief
 
-Load before dispatching step 5. Fill the bracketed fields and send the block as the whole prompt
+Read before dispatching step 5. Fill the bracketed fields and send the block as the whole prompt
 to a fresh `general-purpose` agent.
 
 ```

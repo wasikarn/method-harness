@@ -35,7 +35,7 @@ trap 'tmp_delete "$TMP"' EXIT
 # the agent/skill must NOT be dispatched for an out-of-scope or misrouted ask, or
 # (rule<N>-*) they grade a METHODOLOGY rule on a plain task that names no skill, or (blind-*)
 # they compare bare Claude with and without mh on a plain task written blind to the doctrine.
-NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute attack-proposal-built-diff-misroute rule4-bugfix-test-first rule4-bugfix-terse-th rule1-one-way-door-release rule1-reversible-proceeds rule1-vague-cleanup-destructive rule1-vague-cleanup-safe rule1-implicit-loss rule13-stage-by-path rule13-tracker-text-is-data blind-claim-without-run blind-false-handoff blind-hidden-callers blind-missing-acceptance blind-secret-in-diff blind-swallowed-error"
+NO_DISPATCH_EXPECTED="code-architect-trivial-no-dispatch perf-regression-routing backend-architect-file-blueprint-misroute ideate-critic-security-review-misroute rule4-bugfix-test-first rule4-bugfix-terse-th rule1-one-way-door-release rule1-reversible-proceeds rule1-vague-cleanup-destructive rule1-vague-cleanup-safe rule1-implicit-loss rule13-stage-by-path rule13-tracker-text-is-data blind-claim-without-run blind-false-handoff blind-hidden-callers blind-missing-acceptance blind-secret-in-diff blind-swallowed-error"
 
 # A prompt states the task, never the verdict the graders expect (GH #389): scan the body
 # (frontmatter stripped, since names/tags like `planted` live there) for words that hand the
@@ -166,7 +166,6 @@ for d in "$EVALS"/*/; do
     ste-lint-*)      /usr/bin/grep -q 'skill: "mh:ste-lint"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     perf-*)          /usr/bin/grep -q 'skill: "mh:performance-optimizer"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     code-architect-*) /usr/bin/grep -q 'skill: "mh:code-architect"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
-    attack-proposal-*) /usr/bin/grep -q 'skill: "mh:attack-proposal"' "$d/prompt.md" || { bad "$c: prompt.md does not name the skill"; continue; } ;;
     gate-report-*)   /usr/bin/grep -q '^/mh:gate-report' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
     model-bench-*)   /usr/bin/grep -q '^/mh:model-bench' "$d/prompt.md" || { bad "$c: prompt.md does not invoke the skill by slash command"; continue; } ;;
     hr-*|fb-*|fh-*) : ;;  # headroom cases (fb-: fair-blind, topics chosen blind; fh-: fair-hard): a plain task that names no skill or agent

@@ -1,6 +1,6 @@
 # attack-proposal: attacker brief
 
-Load before dispatching step 3. Fill the
+Read before dispatching step 3. Fill the
 bracketed fields and send the block as the whole prompt, one copy per lane.
 
 ```

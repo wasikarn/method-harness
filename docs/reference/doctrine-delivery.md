@@ -2,7 +2,7 @@
 
 `docs/METHODOLOGY.md` reaches a session through `hooks/session/doctrine-bootstrap.sh`. It was weighed against
 native Claude Code rules (`~/.claude/rules/*.md`) filled by a setup skill that copies rule files out of the plugin.
-The hook stays. Decision of 2026-11-10, from an `mh:attack-proposal` pass (two attacker lanes, two validator rounds).
+The hook stays. Decision of 2026-11-10, from an attack-proposal pass (now `docs/reference/attack-proposal.md`) (two attacker lanes, two validator rounds).
 
 ## Why not rules
 

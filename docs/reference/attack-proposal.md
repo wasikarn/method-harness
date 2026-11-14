@@ -1,12 +1,6 @@
----
-name: attack-proposal
-description: "Research, a fresh attacker, then a fresh validator break a proposed fix before code. Use when a security, sandbox or gate fix is proposed."
-model: inherit
-effort: xhigh
-argument-hint: "[proposal file or topic]"
----
-
 # Attack a proposal
+
+A procedure, not a skill: it did not earn its place in a blind A/B (2026-11-14, 3 runs per arm: `attack-proposal-prefix-bypass` with it 0.75, runs 1.00, 1.00 and 0.25 where the 0.25 is a 3600 s timeout; bare Claude 0.67; the bar is 0.90 at 5 runs, and about 17 USD for the 3-run eval). Unproven, so it is a doc, not a skill. Read it when a security, sandbox or gate fix is proposed, and run the steps yourself.
 
 Break a proposed fix before anyone builds it. Research what the fix must get right, have an
 attacker with no part in the proposal hunt for **breaks**, revise, then have a fresh validator
@@ -58,17 +52,17 @@ use, or two readers that disagree (the shell and the gate, a permission rule and
 is its own dispatch: same brief, its own focus line.
 
 **Dispatch** one `general-purpose` agent per lane with the brief, and pipe its raw final message through
-the two checkers below (this skill reuses idea-audit's attacker contract and its two checkers). Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input
+the two checkers below (this procedure reuses idea-audit's attacker contract and its two checkers). Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input
 files: it runs under the gates, which match raw command text. It has no sandbox: capture
 `git status --porcelain` before and after; any difference is a violation.
 
-**Brief:** `references/attacker-brief.md`. **Load it before dispatching.**
+**Brief:** `docs/reference/attack-proposal/attacker-brief.md`. **Read it before dispatching.**
 
 **Check** each lane's output with both checkers, in order:
 
 ```
-python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
-python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-citations.py" <<< "<check-verdict stdout>"
+python3 "${MH_PLUGIN_ROOT:?}/skills/workflow/idea-audit/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
+python3 "${MH_PLUGIN_ROOT:?}/skills/workflow/idea-audit/scripts/check-citations.py" <<< "<check-verdict stdout>"
 ```
 
 `check-verdict.py` exit 0 prints the one valid verdict; exit 1 rejects it; exit 2 is a
@@ -107,13 +101,13 @@ Done when every confirmed break has its closed or dropped line.
 ## 5. Validate
 
 Dispatch one fresh `general-purpose` agent (it may need a scratch copy to run things, which
-`Explore` refuses) with `references/validator-brief.md`. It gets the revised proposal and the
+`Explore` refuses) with `docs/reference/attack-proposal/validator-brief.md`. It gets the revised proposal and the
 confirmed-break list only: the attacker's reasoning and the triage notes stay with you.
 
 Validate its raw final message with deep-audit's 6-key checker:
 
 ```
-python3 "${CLAUDE_SKILL_DIR}/../deep-audit/scripts/check-verdict.py" <<< "$VALIDATOR_FINAL_MESSAGE"
+python3 "${MH_PLUGIN_ROOT:?}/skills/review/deep-audit/scripts/check-verdict.py" <<< "$VALIDATOR_FINAL_MESSAGE"
 ```
 
 Exit 0 accepts; exit 1 rejects; exit 2 is a `NEEDS-DECISION` for the operator. Capture
