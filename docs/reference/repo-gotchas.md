@@ -266,7 +266,8 @@ relation depth" (always one query), and a CWE-1333/CWE-400 pairing that contradi
 a real false deny, a real miss (an incident), the replay speed-up plan (#895), or promoting a shadow
 rule whose real hits show no false positive. A deny that held only by accident and is lost by such a
 fix is named in the PR and parked. Any other gap, an agent-mistake shape or a disguised one, is
-filed `parked` (`docs/adr/0005-gate-scope-agent-mistakes-not-disguised-commands.md`).
+filed `parked` (`docs/adr/0005-gate-scope-agent-mistakes-not-disguised-commands.md`). A synthetic payload check
+is not a real miss: it needs a transcript, a journal row or a replay row.
 
 Any change to how `hooks/gates/*.py` decides deny versus allow (a tokenizer step, a substitution
 or redirect strip, a shell-syntax rule) needs a differential fuzz against current `develop` before
