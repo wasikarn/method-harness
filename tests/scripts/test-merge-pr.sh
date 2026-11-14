@@ -974,7 +974,7 @@ setup_gates() {
 }
 closure_at() { (cd "$F/origin.git" && python3 "$CLOSURE" --rev "$1" "$2"); }
 # record <gate> <closure> [jq edit]: a record file named for <closure>; the edit spoils its content.
-record() { mkdir -p "$F/replay"; jq -nc --arg g "$1" --arg c "$2" '{gate: $g, closure: $c, full: true, pool: 9, replay: 9, corpus: 9, diffs: 0, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}'" | ${3:-.}" >"$F/replay/$1-$2.json"; }
+record() { mkdir -p "$F/replay"; jq -nc --arg g "$1" --arg c "$2" '{gate: $g, closure: $c, full: true, shapes: 2, pool: 9, replay: 9, corpus: 9, diffs: 0, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}'" | ${3:-.}" >"$F/replay/$1-$2.json"; }
 
 setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
 run
@@ -998,7 +998,7 @@ if /usr/bin/grep -q 'replay record for subagent-git-guard (closure .*3 diffs, 1 
 else bad "no counts for the accepted record: $out"; fi
 
 # A file with the right name but the wrong content is no record: a sampled run, a cached run, another closure.
-for spoil in '.full = false' '.cache = true' '.closure = "0000"' '.gate = "irrecoverable"'; do
+for spoil in '.full = false' '.cache = true' '.closure = "0000"' '.gate = "irrecoverable"' 'del(.shapes)' '.shapes = 1'; do
   setup_gates; on feat/x "touch sgg" append hooks/gates/subagent-git-guard.py 'print(3)'
   record subagent-git-guard "$(closure_at feat/x subagent-git-guard)" "$spoil"
   run
