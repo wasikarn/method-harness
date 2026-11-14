@@ -189,6 +189,13 @@ python3 "$SCRIPT" --root "$T/root" "$T/win2.json" > "$T/w2.out" 2>&1
 printf '["src/app.py:1-3\\\\nsrc/nope.py:9"]\n' > "$T/range.json"
 python3 "$SCRIPT" --root "$T/root" "$T/range.json" > "$T/r.out" 2>&1
 /usr/bin/grep -q "citations exist: 1 of 2 resolved" "$T/r.out" && ok "JSON input: a double-escaped newline after a line range does not hide the next cite" || bad "double escape after a range: $(head -1 "$T/r.out")"
+# GH #982: a double-escaped \r\n, or punctuation between the line number and the escape, must not hide the next cite.
+printf '["src/app.py:3\\\\r\\\\nsrc/nope.py:9"]\n' > "$T/crlf.json"
+python3 "$SCRIPT" --root "$T/root" "$T/crlf.json" > "$T/c1.out" 2>&1
+/usr/bin/grep -q "citations exist: 1 of 2 resolved" "$T/c1.out" && ok "JSON input: a double-escaped \\r\\n after a cite does not hide the next cite" || bad "double-escaped CRLF: $(head -1 "$T/c1.out")"
+printf '["`src/app.py:3`\\\\nsrc/nope.py:9", "(src/app.py:3)\\\\nsrc/nope.py:9"]\n' > "$T/punct.json"
+python3 "$SCRIPT" --root "$T/root" "$T/punct.json" > "$T/c2.out" 2>&1
+/usr/bin/grep -q "citations exist: 2 of 4 resolved" "$T/c2.out" && ok "JSON input: backtick or bracket before the escape does not hide the next cite" || bad "punctuation before escape: $(head -1 "$T/c2.out")"
 # A JSON number of thousands of digits must not make the parse fall back to raw text.
 python3 -c "print('{\"n\": ' + '9' * 5000 + ', \"e\": \"src/app.py:1\\\\nsrc/nope.py:9\"}')" > "$T/bigint.json"
 python3 "$SCRIPT" --root "$T/root" "$T/bigint.json" > "$T/b.out" 2>&1
