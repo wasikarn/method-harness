@@ -70,7 +70,9 @@ python3 "${MH_PLUGIN_ROOT:?}/skills/workflow/idea-audit/scripts/check-citations.
 `check-citations.py` exit 1 names each `findings[]` or `checked[]` item whose evidence has no
 `path:line` or backticked command: such a break is unproven, and such a `checked` entry does not
 count. **Accept** the lane when `check-verdict.py` exits 0 and at least one
-`checked` entry carries a citation. A `pass: false` with evidenced breaks is a successful run.
+`checked` entry carries a citation. A `pass: false` with evidenced breaks is a successful run. On a reject (exit 1, an empty or
+malformed message, a refusal in prose) dispatch the lane once more with the same brief, as
+`mh:idea-audit` does; a second reject marks the lane INCOMPLETE.
 
 **A classifier stop is a signal, not an obstacle.** Gate and sandbox briefs, which quote
 destructive commands, draw it (GH #911). Run the lane once more with fewer, smaller inputs to
