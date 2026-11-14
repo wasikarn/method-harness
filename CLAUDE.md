@@ -53,7 +53,7 @@ vars: `docs/reference/env-vars.md`; the one hooks module: `docs/reference/cost-l
 - **Home paths:** `$HOME` or `~` in every committed file, never `/Users/<name>` or the bare account name; frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`, `CHANGELOG.md`) skip style sweeps, never this.
 - **Use `trash` (a test's own temp dir: `scripts/_lib/tmp_delete.py`) and stage by name;** `gate:bash:irrecoverable` denies `rm -rf`, `--no-verify`, and `git add -A`/`.` outside a merge.
 - **Same-version edits are no-ops:** `claude plugin update` copies nothing until the version changes, which `merge-pr.sh` does on every merge (a local test install needs its own uncommitted bump); re-verify a same-session edit by `Read`ing the repo path, never `Skill(<name>)`.
-- **Gates are frozen (ADR 0005):** before picking, recommending or building any `hooks/gates/` change, name which of its four allowed reasons applies (a real false deny, a real miss, the #895 replay plan, a shadow-rule promotion) with its evidence; with none, park the issue. A synthetic payload check is not a real miss.
+- **Gates are frozen (ADR 0005):** before picking, recommending or building any `hooks/gates/` change, name an allowed reason with real evidence (`repo-gotchas.md` § Changing a deny heuristic in a gate), or park the issue; any other change needs the operator's decision first.
 - **Bare `grep` is Claude Code's shell-snapshot shim** (it reformats output): use `/usr/bin/grep` or `awk` for counts.
 
 ## Repeated mistake -> doctrine
