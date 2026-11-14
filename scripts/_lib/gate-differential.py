@@ -591,9 +591,11 @@ def is_slower(old_secs, new_secs, deadline):
     return new_secs >= SLOWER_RATIO * old_secs and new_secs >= SLOWER_MIN_SECS
 
 
-FAST_SAMPLE = 5000  # GH #894: the random part of the fast tier
-HEAVY_SECS = 1.0  # GH #894: an old-side command this slow joins the heavy set. The 25%-of-work-budget rule waits
-STORE_CAP = 5000  # for a gate that exposes its count, like is_slower's work criterion; entries kept per list
+# GH #894 fast tier. The 25%-of-work-budget rule of the issue waits for a gate that exposes its work count, like
+# is_slower's work criterion, so the heavy set uses the 1 s rule only.
+FAST_SAMPLE = 5000  # the random part of the fast tier
+HEAVY_SECS = 1.0  # an old-side command at least this slow joins the heavy set
+STORE_CAP = 5000  # digests kept per list in the store
 
 
 def digest(data):
@@ -605,35 +607,30 @@ def fast_store_path(gate):
     return os.path.join(d, gate + ".json")
 
 
-def load_fast_store(gate):
-    """-> (heavy digests, diff digests) from earlier runs. Digests and seconds only, never command text.
-    An unreadable or malformed file reads as empty, with a note: the fast tier then runs its sample alone."""
+def read_fast_store(gate):
+    """-> (heavy digests, diff digests) as lists, oldest first: digests only, never command text.
+    A missing file is empty; an unreadable or malformed one is empty too, with a note on stderr."""
     path = fast_store_path(gate)
     try:
         with open(path) as f:
             doc = json.load(f)
-        heavy = {k for k in doc["heavy"] if isinstance(k, str)}
-        diff = {k for k in doc["diff"] if isinstance(k, str)}
-        return heavy, diff
+        return ([k for k in doc["heavy"] if isinstance(k, str)], [k for k in doc["diff"] if isinstance(k, str)])
     except FileNotFoundError:
-        return set(), set()
+        return [], []
     except (OSError, ValueError, KeyError, TypeError) as e:
-        print("gate-differential: --fast: ignoring the unreadable store %s (%s)" % (path, e), file=sys.stderr)
-        return set(), set()
+        print("gate-differential: --fast store %s is unreadable (%s); starting from this run's digests" % (path, e),
+              file=sys.stderr)
+        return [], []
 
 
 def save_fast_store(gate, heavy_new, diff_new):
-    """Merge this run's heavy and diff digests into the store (newest kept, STORE_CAP each). Returns a note."""
+    """Merge this run's heavy and diff digests into the store, newest kept, STORE_CAP each. -> a note."""
     path = fast_store_path(gate)
-    heavy, diff = [], []
-    try:
-        with open(path) as f:
-            doc = json.load(f)
-        heavy = [k for k in doc["heavy"] if isinstance(k, str)]
-        diff = [k for k in doc["diff"] if isinstance(k, str)]
-    except (OSError, ValueError, KeyError, TypeError):
-        pass  # a missing or damaged store restarts from this run's digests; the next run rebuilds the rest
-    merge = lambda old, new: list(dict.fromkeys([k for k in old if k not in new] + sorted(new)))[-STORE_CAP:]
+    heavy, diff = read_fast_store(gate)
+
+    def merge(old, new):
+        return list(dict.fromkeys([k for k in old if k not in new] + sorted(new)))[-STORE_CAP:]
+
     doc = {"gate": gate, "heavy": merge(heavy, heavy_new), "diff": merge(diff, diff_new)}
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -724,8 +721,8 @@ def main():
         pool, ndirs, bad = replay_cases(a.projects, a.own_slug, a.slug, a.gate)
         if a.fast:
             sample = random.Random(a.fast_seed or 0).sample(pool, min(want, len(pool)))
-            heavy_d, diff_d = load_fast_store(a.gate)
-            known = heavy_d | diff_d
+            heavy_d, diff_d = read_fast_store(a.gate)
+            known = set(heavy_d) | set(diff_d)
             extra = [t for t in pool if digest(json.dumps(payload(a.gate, t)).encode()) in known]
             replay = list(dict.fromkeys(sample + extra))
             fast_note = "fast tier: sample %d of pool %d, plus %d from earlier heavy/diff runs (%d heavy, %d diff digests known)" % (
