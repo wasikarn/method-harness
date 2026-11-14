@@ -436,7 +436,7 @@ check_replay() {
   fi
   for m in $missing; do
     g=${m%%:*} c=${m#*:}
-    echo "merge-pr: PR $pr changes the $g gate (closure ${c:0:12} in the tree that merges, $head) and $(replay_dir) holds no whole-pool replay record for it (GH #891)." >&2
+    echo "merge-pr: PR $pr changes the $g gate (closure ${c:0:12} in the tree that merges, $head) and $(replay_dir) holds no whole-pool replay record for it (GH #891; a record taken before GH #958, with no \`shapes\`, does not count)." >&2
     if [ "$verify" = 1 ]; then
       echo "  A cloud session has no transcripts to replay: merge a gate change from the operator's machine, after: $(replay_hint origin/develop "$g")" >&2
     else

@@ -289,7 +289,7 @@ else bad "no gh: rc=$rc out='$out' remote=$(remote_head) err=$err"; fi
 CLOSURE="$HERE/../../scripts/_lib/gate_closure.py"
 replay_record() {
   mkdir -p "$STUB_DIR/replay"
-  jq -nc --arg c "$1" '{gate: "subagent-git-guard", closure: $c, full: true, pool: 9, replay: 8, corpus: 7, diffs: 1, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}' \
+  jq -nc --arg c "$1" '{gate: "subagent-git-guard", closure: $c, full: true, shapes: 2, pool: 9, replay: 8, corpus: 7, diffs: 1, slower: 0, cache: false, time: "2026-11-07T00:00:00Z"}' \
     >"$STUB_DIR/replay/subagent-git-guard-$1.json"
 }
 gate_refused() {

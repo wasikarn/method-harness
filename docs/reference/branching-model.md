@@ -136,8 +136,14 @@ is no opt-out variable; an operator who must merge without a verdict does it on 
 shared `_*.py`, `_*.sh` and `*.awk` files it uses, per `scripts/_lib/gate_closure.py`), `merge-pr.sh` refuses unless
 `~/.cache/mh/gate-replay/` holds a whole-pool replay record for that exact closure. Write one from the PR's
 checkout with `bash scripts/gate-differential.sh origin/develop <gate> --replay all --no-cache` (a cached
-run writes no record; review rounds may use `--cache`, GH #893, or `--fast`, GH #894: 5000 sampled commands seeded by the checkout's HEAD plus the ones earlier runs found slow or different, and no record either). The replay feeds only Bash tool_use
-commands from transcripts (Write/Edit text for `secret-scan`), never context-mode `ctx_*` payloads. A develop merge
+run writes no record; review rounds may use `--cache`, GH #893, or `--fast`, GH #894: 5000 sampled commands seeded by the checkout's HEAD plus the ones earlier runs found slow or different, and no record either). The replay feeds Bash, Monitor and context-mode
+`ctx_execute`, `ctx_execute_file`, `ctx_batch_execute` and `ctx_batch` tool_use blocks from transcripts (Write/Edit text for
+`secret-scan`), each in its own tool shape (GH #958). The record carries `shapes: 2` and per-tool counts; `replay-check.sh`
+does not accept a record without `shapes` for `irrecoverable` or `subagent-git-guard`, so a record taken before #958
+is replayed again. A ctx call with a non-shell `language` is in the pool: `irrecoverable` denies an unknown language and lets the
+five known non-shell ones through. A Monitor with no `command` is left out. `--fuzz-seed` mutates Bash commands only. A
+shape no transcript holds (a ctx batch past the time budget, an odd `language`) needs a hand-picked `--cases` line; a
+line is a plain Bash command, or `<US><tool name><US><tool_input as JSON>` with `<US>` the byte 0x1f. A develop merge
 that changes the same gate's files needs a new replay; one that changes only another gate keeps the
 record. A record with diffs still merges: explain its counts on the PR. The emergency override,
 `merge-pr.sh <PR> --skip-replay "<reason>"`, posts the reason on the PR and opens a follow-up issue
