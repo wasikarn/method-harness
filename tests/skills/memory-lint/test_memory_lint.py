@@ -854,6 +854,45 @@ def test_class_c_falls_back_to_a_surviving_ledger_when_the_preferred_one_is_arch
         assert [e["new"] for e in plan["C"]] == ["[[proj_ledger]]"], plan["C"]
 
 
+def test_class_c_leaves_manual_a_link_the_apply_cannot_find_as_wikilink():
+    # GH #967 item 1: [x](t.md), [[t|alias]] and [[t.md]] are planned as [[t]] but written otherwise;
+    # apply would find no [[t]] and skip silently. The plan must say manual (new: None) up front.
+    for body in ("see [x](ghost.md)", "see [[ghost|alias]]", "see [[ghost.md]]"):
+        with tempfile.TemporaryDirectory() as d:
+            _write_memory(d, "src.md", "project", "dangling", body)
+            _write_memory(d, "proj_ledger.md", "project", "a ledger", "n/a")
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("- [src](src.md) — x\n- [proj_ledger](proj_ledger.md) — l\n")
+            plan = memory_lint.class_c_dangling_link_rewrite(memory_lint.collect_state(d))
+            assert [(e["file"], e["new"]) for e in plan] == [("src.md", None)], (body, plan)
+
+
+def test_class_c_ledger_fallback_matches_a_ledger_word_not_a_substring():
+    # GH #967 item 2: reference_pledger_api contains "ledger" but is not a ledger.
+    with tempfile.TemporaryDirectory() as d:
+        state = _ledger_store(d, ["reference_pledger_api.md"])
+        plan = memory_lint.class_c_dangling_link_rewrite(state)
+        assert [e["new"] for e in plan] == [None], plan
+        state = _ledger_store(d, ["reference_pledger_api.md", "proj-ledger.md", "ledger_notes.md"])
+        plan = memory_lint.class_c_dangling_link_rewrite(state)
+        assert [e["new"] for e in plan] == ["[[ledger_notes]]"], plan
+
+
+def test_class_c_supersedence_target_that_is_the_source_stays_manual():
+    # GH #967 item 3: src is the successor of the archived target it links to. Pointing the link at
+    # another ledger would hide a self-supersedence; the entry stays manual.
+    with tempfile.TemporaryDirectory() as d:
+        _write_memory(d, "src.md", "project", "successor", "see [[old]]")
+        _write_memory(d, "other_ledger.md", "project", "a ledger", "n/a")
+        os.makedirs(os.path.join(d, "_archive", "2026-01-01"))
+        _write_memory(os.path.join(d, "_archive", "2026-01-01"), "old.md", "project", "old", "n/a")
+        with open(os.path.join(d, "MEMORY.md"), "w") as f:
+            f.write("- [src](src.md) — x\n- [other_ledger](other_ledger.md) — l\n"
+                    "- [old](old.md) — **SUPERSEDED** by [[src]]\n")
+        plan = memory_lint.class_c_dangling_link_rewrite(memory_lint.collect_state(d))
+        assert [(e["file"], e["old"], e["new"]) for e in plan] == [("src.md", "[[old]]", None)], plan
+
+
 def test_class_c_never_rewrites_a_link_to_point_at_its_own_file():
     # A ledger holding the dangling link must not be "fixed" into a self-link: the detector would go
     # quiet while the link stays broken. With no other ledger the entry stays manual (new: None).
@@ -2443,6 +2482,9 @@ if __name__ == "__main__":
     test_class_c_fallback_picks_any_surviving_ledger_stem()
     test_class_c_never_targets_a_ledger_class_a_archives_in_the_same_plan()
     test_class_c_falls_back_to_a_surviving_ledger_when_the_preferred_one_is_archived()
+    test_class_c_leaves_manual_a_link_the_apply_cannot_find_as_wikilink()
+    test_class_c_ledger_fallback_matches_a_ledger_word_not_a_substring()
+    test_class_c_supersedence_target_that_is_the_source_stays_manual()
     test_class_c_never_rewrites_a_link_to_point_at_its_own_file()
     test_every_test_in_this_file_is_registered_in_the_main_runner()
     test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan()
