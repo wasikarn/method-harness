@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# _quotemask.py unit + drift tests. Both subagent-git-guard.py and
+# _quotemask.py unit tests, and the missing-module behaviour of its two consumers. Both subagent-git-guard.py and
 # test-integrity.py import mask_quotes from this shared module (2026-09-20,
 # deferred finding #10 follow-up, after the two files' own copies drifted
 # into byte-identical duplicates that each independently missed the same
 # "#"-comment bug). This test proves: (1) the shared module itself handles
-# the known bug classes, and (2) both consumers actually import it rather
-# than silently falling back to a stale inline copy.
+# the known bug classes, and (2) both consumers import it and, without it, allow with a stderr note (GH #892).
 # Run standalone: bash tests/hooks/test-quotemask.sh
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-QM="$ROOT/hooks/gates/_quotemask.py"
 
 pass=0
 fail=0
@@ -220,7 +218,7 @@ ok=1; [[ "$OUT" == *"; git stash" ]] && ok=0
 check "\$\$\$'a\\'' is \$\$ then a real ANSI-C span: 'git stash' after it survives" "$ok"
 
 echo ""
-echo "=== drift check: both consumers actually import the shared module ==="
+echo "=== both consumers import the shared module, and allow with a note when it is missing (GH #892) ==="
 echo ""
 
 ok=1; command grep -q "from _quotemask import mask_quotes" "$ROOT/hooks/gates/subagent-git-guard.py" && ok=0
@@ -229,20 +227,25 @@ check "subagent-git-guard.py imports mask_quotes from _quotemask" "$ok"
 ok=1; command grep -q "from _quotemask import mask_quotes" "$ROOT/hooks/gates/test-integrity.py" && ok=0
 check "test-integrity.py imports mask_quotes from _quotemask" "$ok"
 
-DRIFT_OUT=$(python3 "$ROOT/tests/hooks/quotemask_drift.py" 2>&1)
-ok=1; [ "$DRIFT_OUT" = "OK" ] && ok=0
-check "inline fallback copies agree with the shared mask on the corpus${DRIFT_OUT:+ ($DRIFT_OUT)}" "$ok"
+# A copy of the gates dir without _quotemask.py: each gate runs on a payload it would otherwise judge, and must
+# exit 0 with a stderr note naming the module. The real hooks/gates dir is never touched.
+TMPG=$(mktemp -d)
+cleanup() { [ -n "${TMPG:-}" ] && python3 "$ROOT/scripts/_lib/tmp_delete.py" "$TMPG"; }
+trap cleanup EXIT
+cp -R "$ROOT/hooks/gates/." "$TMPG/"
+python3 "$ROOT/scripts/_lib/tmp_delete.py" "$TMPG/_quotemask.py"
+ERR=$(printf '%s' '{"tool_name":"Bash","agent_id":"x","tool_input":{"command":"git reset --hard"}}' | MH_GATE_JOURNAL_PATH=/dev/null python3 "$TMPG/subagent-git-guard.py" 2>&1 >/dev/null); RC=$?
+ok=1; [ "$RC" -eq 0 ] && [[ "$ERR" == *"_quotemask not importable"* ]] && ok=0
+check "subagent-git-guard.py without _quotemask.py: exit 0 and a stderr note naming the module (rc=$RC)" "$ok"
 
-echo ""
-echo "=== fallback: gates keep working if _quotemask.py is ever unavailable ==="
-echo ""
+ERR=$(printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"tests/hooks/test-x.sh","old_string":"[ \"$fail\" -eq 0 ]","new_string":"true"}}' | MH_GATE_JOURNAL_PATH=/dev/null python3 "$TMPG/test-integrity.py" 2>&1 >/dev/null); RC=$?
+ok=1; [ "$RC" -eq 0 ] && [[ "$ERR" == *"_quotemask not importable"* ]] && ok=0
+check "test-integrity.py without _quotemask.py: exit 0 and a stderr note naming the module (rc=$RC)" "$ok"
 
-trap 'mv "$QM.disabled-test" "$QM" 2>/dev/null || true' EXIT
-mv "$QM" "$QM.disabled-test"
-OUT=$(printf '%s' '{"tool_name":"Bash","agent_id":"x","tool_input":{"command":"git reset --hard"}}' | MH_GATE_JOURNAL_PATH=/dev/null python3 "$ROOT/hooks/gates/subagent-git-guard.py" 2>/dev/null; echo "rc=$?")
-mv "$QM.disabled-test" "$QM"
-ok=1; [[ "$OUT" == *"rc=2"* ]] && ok=0
-check "subagent-git-guard.py still denies via its inline fallback when _quotemask.py is missing" "$ok"
+# Control: with the module present the same subagent payload is denied, so the exit 0 above is the new path.
+ERR=$(printf '%s' '{"tool_name":"Bash","agent_id":"x","tool_input":{"command":"git reset --hard"}}' | MH_GATE_JOURNAL_PATH=/dev/null python3 "$ROOT/hooks/gates/subagent-git-guard.py" 2>&1 >/dev/null); RC=$?
+ok=1; [ "$RC" -eq 2 ] && ok=0
+check "control: the same payload with _quotemask.py present is denied (rc=$RC)" "$ok"
 
 echo ""
 total=$((pass + fail))

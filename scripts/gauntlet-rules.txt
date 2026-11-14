@@ -80,7 +80,6 @@ tests/evals/test*.sh              medium SELF
 tests/skills/harness-audit/*      medium tests/skills/harness-audit/test*.sh
 tests/skills/learn/*              medium tests/skills/learn/test*.sh
 tests/skills/memory-lint/*        medium tests/skills/memory-lint/test_*.py
-tests/hooks/quotemask_drift.py    medium tests/hooks/test-quotemask.sh
 tests/hooks/fixtures/irrecoverable-*      medium tests/hooks/test-gates-other.sh tests/hooks/test-gates*.sh
 tests/hooks/fixtures/subagent-git-guard-* medium tests/hooks/test-subagent-git-guard.sh
 tests/scripts/fixtures/model-bench/*        medium tests/scripts/test-model-bench.sh
