@@ -6,6 +6,8 @@
 # the caller's env and cwd never reach the gates (GH #888); fork mode matches bash mode and drops
 # fork-only diffs (GH #889); a slower new side lands in `slower` (GH #890); the opt-in cache of the old
 # side keys on the gate's closure, never stores load artifacts and never writes a replay record (GH #893).
+# The fast tier (GH #894) never writes a replay record, stores digests of heavy and different commands only, and
+# replays them again with a sample of 0.
 # Run standalone: bash tests/scripts/test-gate-differential.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -309,6 +311,58 @@ out=$(GATE_REPLAY_RECORD_DIR="$T/rec-num" bash "$SCRIPT" --cases "$T/empty.txt" 
 if [ "$rc" -eq 0 ] && [ -f "$T/rec-num/irrecoverable-$closure.json" ]; then
   ok "--replay 50 over a 2-command pool writes the record"
 else bad "--replay 50 full pool (rc=$rc, records $(records "$T/rec-num")): $out"; fi
+
+echo "=== GH #894: --fast tier ==="
+# The pool is 2 commands, so a 5000-sample covers it whole: only the explicit rule keeps --fast from writing a record.
+out=$(GATE_REPLAY_RECORD_DIR="$T/rec-fast" GATE_REPLAY_FAST_DIR="$T/fast0" bash "$SCRIPT" --cases "$T/empty.txt" --fast "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(records "$T/rec-fast")" = 0 ] && /usr/bin/grep -q 'replay record: none (--fast' <<<"$out" \
+   && /usr/bin/grep -q 'fast tier: sample 2 of pool 2' <<<"$out"; then
+  ok "--fast over a pool smaller than its sample writes no record and says so"
+else bad "--fast record (rc=$rc, records $(records "$T/rec-fast")): $out"; fi
+for extra in "--replay 5" "--replay all" "--slug $slug"; do
+  # shellcheck disable=SC2086
+  out=$(bash "$SCRIPT" --fast $extra "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+  if [ "$rc" -eq 2 ] && /usr/bin/grep -q -e '--fast takes no' <<<"$out"; then ok "--fast with '$extra' is refused (exit 2)"
+  else bad "--fast $extra (rc=$rc): $out"; fi
+done
+# A planted allow-all gate differs on 'rm -rf build' only. A full replay stores that command's digest; a later fast run
+# with a sample of 0 replays exactly the stored commands, so it finds the diff without the sample reaching it.
+cp -R "$GATES" "$T/allow"
+printf 'import sys\nsys.exit(0)\n' > "$T/allow/irrecoverable.py"
+out=$(GATE_REPLAY_FAST_DIR="$T/fast1" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --runner bash "$T/old" "$T/allow" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" && /usr/bin/grep -q 'fast store: updated' <<<"$out" && [ -f "$T/fast1/irrecoverable.json" ]; then
+  ok "a replay run stores the digest of the command that showed a diff"
+else bad "diff run (rc=$rc): $out"; fi
+if ! /usr/bin/grep -q -e 'rm -rf' -e 'ls -la' "$T/fast1/irrecoverable.json" 2>/dev/null; then ok "the fast store holds digests only, no command text"
+else bad "the fast store leaked a command: $(cat "$T/fast1/irrecoverable.json")"; fi
+out=$(GATE_REPLAY_FAST_SAMPLE=0 GATE_REPLAY_FAST_DIR="$T/fast1" bash "$SCRIPT" --cases "$T/empty.txt" --fast --runner bash "$T/old" "$T/allow" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && /usr/bin/grep -q 'diffs=1 ' <<<"$out" && /usr/bin/grep -q 'fast tier: sample 0 of pool 2, plus 1 from earlier' <<<"$out"; then
+  ok "--fast replays a command an earlier run found different, with a sample of 0"
+else bad "--fast stored diff (rc=$rc): $out"; fi
+out=$(GATE_REPLAY_FAST_SAMPLE=0 GATE_REPLAY_FAST_DIR="$T/fast2" bash "$SCRIPT" --cases "$T/empty.txt" --fast --runner bash "$T/old" "$T/allow" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'diffs=0 ' <<<"$out" && /usr/bin/grep -q 'plus 0 from earlier' <<<"$out"; then
+  ok "--fast with an empty store and a sample of 0 replays nothing (control: the diff above came from the store)"
+else bad "--fast empty store (rc=$rc): $out"; fi
+# A slow old side (1 s per command) puts every pool command in the heavy set; a later --fast replays them with a sample of 0.
+cp -R "$GATES" "$T/slowold"
+python3 - "$T/slowold/irrecoverable.sh" <<'PY'
+import sys
+p = sys.argv[1]
+lines = open(p).read().split("\n", 1)
+open(p, "w").write(lines[0] + "\nsleep 1.2\n" + lines[1])
+PY
+out=$(GATE_REPLAY_FAST_DIR="$T/fast4" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --runner bash "$T/slowold" "$T/same" irrecoverable 2>&1); rc=$?
+if /usr/bin/grep -q 'fast store: updated .* (2 heavy, 0 diff digests)' <<<"$out"; then ok "a replay run stores the commands its old side ran in 1 s or more as heavy"
+else bad "heavy store (rc=$rc): $out"; fi
+out=$(GATE_REPLAY_FAST_SAMPLE=0 GATE_REPLAY_FAST_DIR="$T/fast4" bash "$SCRIPT" --cases "$T/empty.txt" --fast --runner bash "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if /usr/bin/grep -q 'sample 0 of pool 2, plus 2 from earlier heavy/diff runs (2 heavy, 0 diff digests known)' <<<"$out"; then
+  ok "--fast replays the stored heavy commands with a sample of 0"
+else bad "--fast heavy (rc=$rc): $out"; fi
+# A damaged store reads as empty, with a note on stderr.
+mkdir -p "$T/fast3" && printf 'not json' > "$T/fast3/irrecoverable.json"
+out=$(GATE_REPLAY_FAST_SAMPLE=0 GATE_REPLAY_FAST_DIR="$T/fast3" bash "$SCRIPT" --cases "$T/empty.txt" --fast "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'is unreadable' <<<"$out"; then ok "a damaged fast store is ignored with a note"
+else bad "damaged store (rc=$rc): $out"; fi
 
 echo "=== slug traversal out of a worktree prefix ==="
 out=$(bash "$SCRIPT" --replay 3 --slug "$slug--claude-worktrees-probe/../foreign" "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
