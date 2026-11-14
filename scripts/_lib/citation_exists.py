@@ -62,7 +62,8 @@ BEYOND_ANY_FILE = 10 ** 9  # a line number of more than 9 digits is past the end
 # A checker that double-escapes writes a literal backslash and n/t/r after a cite's line number; PATH_RE would
 # take that backslash for a Windows path and drop the next cite. Only right after a `:line` or `:line-line` number,
 # so a Windows folder that ends in a digit (`C:\dir1\new.py`) stays whole.
-LITERAL_ESCAPE = re.compile(r"(:\d+(?:-\d+)?)\\[nrt]")
+# Also a run of escapes (`\r\n`) and a closing quote, backtick or bracket before them (GH #982).
+LITERAL_ESCAPE = re.compile(r"(:\d+(?:-\d+)?[)\]}\"'`]*)(?:\\[nrt])+")
 
 
 def _line_number(digits):
