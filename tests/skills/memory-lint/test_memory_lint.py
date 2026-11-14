@@ -912,6 +912,122 @@ def test_class_c_never_rewrites_a_link_to_point_at_its_own_file():
         assert [(e["file"], e["new"]) for e in plan] == [("proj_ledger.md", "[[other_ledger]]")], plan
 
 
+# --- GH #967 item 5: plan-then-apply oracle that also sees self-links and the archived-supersedence branch ---
+# A seeded random store, then build_plan + apply_action_plan, then a check that does not use memory-lint's own
+# link parsing. The old scratch oracle counted only new DANGLING pairs and so could not see a link rewritten into a
+# self-link, or the archived-supersedence branch (which must leave the link manual).
+FUZZ_SEEDS = range(150)
+
+
+def _fuzz_links(text):
+    """-> set of link targets in a file's text outside backtick spans: [[t]], [[t|a]], [[t.md]], [x](t.md)."""
+    import re
+    text = re.sub(r"`[^`]*`", "", text)
+    out = {m.group(1) for m in re.finditer(r"\[\[([^\]|#]+?)(?:\.md)?(?:[|#][^\]]*)?\]\]", text)}
+    return out | {m.group(1) for m in re.finditer(r"\]\(([^)\s]+?)\.md\)", text)}
+
+
+def _fuzz_store(d, rng):
+    live = [f"n{i}" for i in range(rng.randint(2, 5))]
+    ledgers = rng.choice([[], ["x_ledger"], ["x_ledger", "y_ledger"], ["project_external_evals_ledger"]])
+    arch = [f"a{i}" for i in range(rng.randint(0, 3))]
+    ghosts = ["g0", "g1"]
+    stems = live + ledgers
+    pool = stems + arch + ghosts
+    texts = {}
+    for s in stems:
+        parts = []
+        for _ in range(rng.randint(0, 3)):
+            t = rng.choice(pool)
+            parts.append(rng.choice([f"[[{t}]]", f"[[{t}|alias]]", f"[[{t}.md]]", f"[x]({t}.md)", f"`[[{t}]]`"]))
+        texts[s] = "see " + " ".join(parts)
+        _write_memory(d, s + ".md", "project", "fuzz", texts[s])
+    sub = os.path.join(d, "_archive", "2026-01-01")
+    os.makedirs(sub)
+    for a in arch:
+        _write_memory(sub, a + ".md", "project", "old", "n/a")
+    lines = []
+    for s in stems:
+        if rng.random() < 0.8:
+            sup = f" — **SUPERSEDED** by [[{rng.choice(stems)}]]" if rng.random() < 0.2 else " — x"
+            lines.append(f"- [{s}]({s}.md){sup}")
+    for a in arch:
+        if rng.random() < 0.7:
+            lines.append(f"- [{a}]({a}.md) — **SUPERSEDED** by [[{rng.choice(stems)}]]")
+    with open(os.path.join(d, "MEMORY.md"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _fuzz_snapshot(d):
+    top = {n[:-3]: open(os.path.join(d, n)).read() for n in os.listdir(d) if n.endswith(".md") and n != "MEMORY.md"}
+    pairs = {(f, t) for f, txt in top.items() for t in _fuzz_links(txt)}
+    return top, {p for p in pairs if p[1] not in top}, {p for p in pairs if p[0] == p[1]}
+
+
+def _fuzz_run(seeds, seen=None):
+    """-> violations, as strings. `seen` (a set) collects the Class C reasons and manual entries the seeds reached."""
+    bad = []
+    for seed in seeds:
+        with tempfile.TemporaryDirectory() as d:
+            _fuzz_store(d, __import__("random").Random(seed))
+            before, dangling0, self0 = _fuzz_snapshot(d)
+            state = memory_lint.collect_state(d)
+            plan = memory_lint.build_plan(state)
+            with contextlib.redirect_stdout(io.StringIO()):
+                memory_lint.apply_action_plan(state, plan)
+            after, dangling1, self1 = _fuzz_snapshot(d)
+            if dangling1 - dangling0:
+                bad.append(f"seed {seed}: new dangling {sorted(dangling1 - dangling0)}")
+            if self1 - self0:
+                bad.append(f"seed {seed}: new self-link {sorted(self1 - self0)}")
+            for e in plan["C"]:
+                f = e["file"][:-3]
+                if seen is not None:
+                    seen.add(e["reason"])
+                    seen.add("manual" if e["new"] is None else "rewrite")
+                if f not in after or f not in before:
+                    continue  # Class A moved the file
+                if e["reason"] == "archived-supersedence-is-source" and e["new"] is not None:
+                    bad.append(f"seed {seed}: supersedence-is-source entry got a target {e}")
+                if e["new"] is None and e["old"] not in after[f] and e["old"] in before[f]:
+                    bad.append(f"seed {seed}: a manual entry's link was changed {e}")
+                if e["new"] is not None and e["new"] not in after[f]:
+                    bad.append(f"seed {seed}: planned rewrite never applied {e}")
+    return bad
+
+
+def test_class_c_plan_then_apply_fuzz_oracle_holds_on_150_stores():
+    seen = set()
+    bad = _fuzz_run(FUZZ_SEEDS, seen)
+    assert not bad, bad[:5]
+    # not vacuous: the stores reach every Class C branch and both outcomes
+    want = {"dangling-target", "archived-with-supersedence", "archived-no-supersedence",
+            "archived-supersedence-is-source", "manual", "rewrite"}
+    assert want <= seen, sorted(want - seen)
+
+
+def test_class_c_fuzz_oracle_catches_a_self_link_a_manual_rewrite_and_a_supersedence_rewrite():
+    real_pick, real_c = memory_lint._pick_ledger_target, memory_lint.class_c_dangling_link_rewrite
+    try:
+        # a ledger target that ignores the source file: a ledger holding the dangling link points at itself
+        memory_lint._pick_ledger_target = lambda state, removed_files=frozenset(), source=None: real_pick(state, removed_files)
+        assert any("self-link" in b for b in _fuzz_run(FUZZ_SEEDS)), "self-link mutant survived"
+        memory_lint._pick_ledger_target = real_pick
+
+        def give_every_entry_a_target(state, removed_files=frozenset()):
+            plan = real_c(state, removed_files)
+            for e in plan:
+                if e["new"] is None:
+                    e["new"] = "[[x_ledger]]"
+            return plan
+        memory_lint.class_c_dangling_link_rewrite = give_every_entry_a_target
+        bad = _fuzz_run(FUZZ_SEEDS)
+        assert any("supersedence-is-source entry got a target" in b for b in bad), "supersedence mutant survived"
+        assert any("planned rewrite never applied" in b for b in bad), "unapplied-rewrite mutant survived"
+    finally:
+        memory_lint._pick_ledger_target, memory_lint.class_c_dangling_link_rewrite = real_pick, real_c
+
+
 def test_every_test_in_this_file_is_registered_in_the_main_runner():
     # run-gauntlet.sh executes this file with python3, not pytest: a test missing from the __main__
     # block below never runs there (10 tests were missing once, 5 of them GH #960's).
@@ -2489,6 +2605,8 @@ if __name__ == "__main__":
     test_class_c_ledger_fallback_matches_a_ledger_word_not_a_substring()
     test_class_c_supersedence_target_that_is_the_source_stays_manual()
     test_class_c_never_rewrites_a_link_to_point_at_its_own_file()
+    test_class_c_plan_then_apply_fuzz_oracle_holds_on_150_stores()
+    test_class_c_fuzz_oracle_catches_a_self_link_a_manual_rewrite_and_a_supersedence_rewrite()
     test_every_test_in_this_file_is_registered_in_the_main_runner()
     test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan()
     test_class_c_does_not_use_a_supersedence_target_class_a_archives_in_the_same_plan()
