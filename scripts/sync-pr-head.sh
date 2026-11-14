@@ -112,7 +112,7 @@ require_replay() {
   missing=$(replay_missing sync-pr-head "$1" origin/develop) || exit 1
   [ -n "$missing" ] || return 0
   for m in $missing; do
-    echo "sync-pr-head: $1 changes the ${m%%:*} gate and $(replay_dir) holds no whole-pool replay record for its closure ${m#*:} (GH #891), so nothing is pushed and no mh/gauntlet status is posted." >&2
+    echo "sync-pr-head: $1 changes the ${m%%:*} gate and $(replay_dir) holds no whole-pool replay record for its closure ${m#*:} (GH #891; a record taken before GH #958, with no \`shapes\`, does not count), so nothing is pushed and no mh/gauntlet status is posted." >&2
     echo "  Merge a gate change from the operator's machine, after: $(replay_hint origin/develop "${m%%:*}")" >&2
   done
   exit 1

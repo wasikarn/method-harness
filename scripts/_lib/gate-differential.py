@@ -128,7 +128,7 @@ CTX_TOOLS = ("__ctx_execute", "__ctx_execute_file", "__ctx_batch_execute", "__ct
 
 
 def shape_case(name, inp):
-    if not isinstance(name, str) or not isinstance(inp, dict):
+    if not isinstance(name, str) or not isinstance(inp, dict) or TAG in name:
         return None
     if name == "Bash":
         return inp.get("command")
@@ -141,18 +141,25 @@ def shape_case(name, inp):
 
 def case_tool(text):
     """-> (tool name, tool_input) of a case."""
-    if text.startswith(TAG):
+    if text.startswith(TAG) and text.count(TAG) >= 2:
         _, name, rest = text.split(TAG, 2)
-        return name, json.loads(rest)
-    return "Bash", {"command": text}
+        try:
+            ti = json.loads(rest)
+        except ValueError:
+            ti = None
+        if name and isinstance(ti, dict):
+            return name, ti
+    return "Bash", {"command": text}  # a plain command, even one that happens to start with the tag byte
 
 
 def show(text):
     return text.replace(TAG, " ", 2).lstrip() if text.startswith(TAG) else text
 
 
-def tool_counts(cases):
-    c = collections.Counter(case_tool(t)[0].rsplit("__", 1)[-1] if t.startswith(TAG) else "Bash" for t in cases)
+def tool_counts(cases, gate):
+    if gate == "secret-scan":  # its pool is Write/Edit text, not commands
+        return {"Write/Edit": len(cases)} if cases else {}
+    c = collections.Counter(case_tool(t)[0].rsplit("__", 1)[-1] for t in cases)
     return dict(sorted(c.items()))
 
 
@@ -696,7 +703,7 @@ def replay_record(a, pool, replay, corpus, diffs, slower, cached):
     d = os.environ.get("GATE_REPLAY_RECORD_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "mh", "gate-replay")
     path = os.path.join(d, "%s-%s.json" % (a.gate, c))
     rec = {"gate": a.gate, "closure": c, "full": True, "pool": len(pool), "replay": len(replay), "corpus": len(corpus),
-           "diffs": diffs, "slower": slower, "cache": False, "shapes": 2, "tools": tool_counts(pool), "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+           "diffs": diffs, "slower": slower, "cache": False, "shapes": 2, "tools": tool_counts(pool, a.gate), "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     try:
         os.makedirs(d, exist_ok=True)
         tmp = path + ".tmp"
@@ -899,7 +906,7 @@ def main():
         print("  " + fast_note)
     if replaying:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
-        print("  pool by tool: " + ", ".join("%s %d" % kv for kv in tool_counts(pool).items()))
+        print("  pool by tool: " + ", ".join("%s %d" % kv for kv in tool_counts(pool, a.gate).items()))
         # GH #894: every replay run feeds the fast tier's heavy and diff sets (digests and numbers only)
         print("  fast store: " + save_fast_store(a.gate, heavy_new, diff_new))
         print("  replay record: " + replay_record(a, pool, replay, corpus, total, len(slower), bool(cache)))

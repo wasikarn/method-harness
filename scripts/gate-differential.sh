@@ -8,7 +8,8 @@
 #   NEW   a gates dir; default: this checkout's hooks/gates
 #   GATE  irrecoverable | subagent-git-guard | secret-scan
 # Options:
-#   --cases FILE    one command per line, replacing the committed fixtures
+#   --cases FILE    one case per line, replacing the committed fixtures: a Bash command, or 0x1f, a tool name,
+#                   0x1f and the tool_input JSON (GH #958)
 #   --replay N      add N commands sampled from THIS project's transcripts (Bash commands; for
 #                   secret-scan, Write/Edit text) under ${CLAUDE_CONFIG_DIR:-~/.claude}/projects;
 #                   `--replay all` takes the whole pool. A whole-pool run with no --slug writes a

@@ -1129,18 +1129,34 @@ ok = ok and any(r["tool_name"].endswith("ctx_batch_execute") and r["tool_input"]
 sys.exit(0 if ok else 1)
 PY6
 then ok "each case reaches the gate with its real tool_name and tool_input"; else bad "gate stdin: $(cat "$T/stdin.log")"; fi
-# merge-proof: a record without shapes 2 does not count for a command gate; secret-scan needs no such marker.
+# merge-proof, through the real replay_missing (closures stubbed: "new" differs from "base" for every gate): a record
+# without shapes 2 does not count for a command gate; secret-scan needs no such marker.
 RC=$(mktemp -d "$T/rc.XXXX")
 python3 - "$RC" <<'PY7'
 import json, sys
 d = sys.argv[1]
-for gate in ("irrecoverable", "secret-scan"):
-    json.dump({"gate": gate, "closure": "c", "full": True, "cache": False}, open("%s/%s-c.json" % (d, gate), "w"))
+for gate in ("irrecoverable", "subagent-git-guard", "secret-scan"):
+    json.dump({"gate": gate, "closure": "cn", "full": True, "cache": False, "pool": 1, "replay": 1, "corpus": 1,
+               "diffs": 0, "slower": 0, "time": "t"}, open("%s/%s-cn.json" % (d, gate), "w"))
 PY7
-chk() { jq -e --arg g "$1" --arg c c '.gate == $g and .closure == $c and .full == true and .cache == false and ($g == "secret-scan" or (.shapes // 0) >= 2)' "$RC/$1-c.json" >/dev/null && echo yes || echo no; }
-expr_in_lib=$(/usr/bin/grep -c '(.shapes // 0) >= 2' "$ROOT/scripts/_lib/replay-check.sh")
-if [ "$expr_in_lib" = 1 ] && [ "$(chk irrecoverable)" = no ] && [ "$(chk secret-scan)" = yes ]; then ok "replay-check.sh requires shapes 2 for the command gates only"
-else bad "shapes rule: lib=$expr_in_lib irr=$(chk irrecoverable) ss=$(chk secret-scan)"; fi
+missing() { GATE_REPLAY_RECORD_DIR="$RC" bash -c '. "$1"; closure_of() { if [ "$1" = new ]; then echo cn; else echo cb; fi; }; replay_missing t new base' _ "$ROOT/scripts/_lib/replay-check.sh" 2>/dev/null | tr '\n' ' '; }
+if [ "$(missing)" = "irrecoverable:cn subagent-git-guard:cn " ]; then ok "a record with no shapes is missing for both command gates, and secret-scan's is accepted"
+else bad "shapes rule: missing='$(missing)'"; fi
+for g in irrecoverable subagent-git-guard secret-scan; do python3 - "$RC/$g-cn.json" <<'PY8'
+import json, sys
+r = json.load(open(sys.argv[1])); r["shapes"] = 2; json.dump(r, open(sys.argv[1], "w"))
+PY8
+done
+if [ -z "$(missing)" ]; then ok "with shapes 2 all three records are accepted"; else bad "shapes 2 records: missing='$(missing)'"; fi
+# Odd cases do not crash the run: a Bash command that starts with the tag byte stays a plain command; secret-scan's pool
+# is counted as Write/Edit text, not as Bash.
+printf '\037weird command\n\037Monitor\037not json\n' > "$T/odd.txt"
+out=$(bash "$SCRIPT" --cases "$T/odd.txt" "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'corpus=2 ' <<<"$out"; then ok "a case that starts with the tag byte is a plain command, not a crash"; else bad "tag-byte cases (rc=$rc): $out"; fi
+mkdir -p "$T/cc958s/projects/$slug"
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"f","content":"hello"}}]}}' > "$T/cc958s/projects/$slug/w.jsonl"
+out=$(CLAUDE_CONFIG_DIR="$T/cc958s" GATE_REPLAY_RECORD_DIR="$T/rec-958s" bash "$SCRIPT" --cases "$T/empty.txt" --replay all "$T/old" "$T/same" secret-scan 2>&1)
+if /usr/bin/grep -q 'pool by tool: Write/Edit 1' <<<"$out" && ! /usr/bin/grep -q 'pool by tool: Bash' <<<"$out"; then ok "secret-scan's pool is counted as Write/Edit"; else bad "secret-scan tool count: $out"; fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"
