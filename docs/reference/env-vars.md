@@ -5,7 +5,7 @@ under `env`, never in a committed file.
 
 | Variable | Read by | Purpose |
 |---|---|---|
-| `MH_PLUGIN_ROOT` | `agents/ideate-critic.md` (runs `skills/workflow/ideate/scripts/rank.py`), `skills/workflow/ideate/references/provenance.md` (doc reads), `docs/reference/attack-proposal.md` (its checker calls) | Exported at SessionStart by `hooks/session/command-root-anchor.sh` from `CLAUDE_PLUGIN_ROOT`. One live script call goes through it: the ideate critic's `rank.py` step; an eval sandbox may not run the hook. Not a user knob. |
+| `MH_PLUGIN_ROOT` | `agents/ideate-critic.md` (runs `skills/workflow/ideate/scripts/rank.py`), `skills/workflow/ideate/references/provenance.md` (doc reads), `docs/reference/attack-proposal.md` (its checker calls) | Exported at SessionStart by `hooks/session/command-root-anchor.sh` from `CLAUDE_PLUGIN_ROOT`. Live script calls go through it: the ideate critic's `rank.py` step and the `attack-proposal` doc's checker calls; an eval sandbox may not run the hook. Not a user knob. |
 | `MH_COSTS_FILE` | `skills/meta/cost-report/scripts/cost-report-dedup.js` | Overrides the cost log path (default `~/.local/share/kbg/metrics/costs.jsonl`); tests and evals plant a fixture through it. |
 | `MH_COST_TRACKER_SETTLE_S` | `hooks/stop/cost-tracker.sh` | Seconds the Stop hook waits for the transcript to stop growing before it reads it (default `1`, GH #329). Tests set `0` so fixtures written up front cost no wait. |
 | `MH_GATE_NO_FASTPATH` | `hooks/gates/_silent_fastpath.sh` | Set to `1` only by `scripts/gate-canary.sh` so the Write/Edit gates run their python on benign payloads. Test-only, never a user knob; `run-gauntlet.sh` unsets it. |

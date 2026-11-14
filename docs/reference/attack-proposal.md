@@ -1,6 +1,6 @@
 # Attack a proposal
 
-A procedure, not a skill: it failed its blind A/B (2026-11-14: `attack-proposal-prefix-bypass` scored 0.75 with it and 0.67 with bare Claude, Δ +0.08 against the 0.90 bar; one run timed out at 3600 s). Read it when a security, sandbox or gate fix is proposed, and run the steps yourself.
+A procedure, not a skill: it did not earn its place in a blind A/B (2026-11-14, 3 runs per arm: `attack-proposal-prefix-bypass` with it 0.75, runs 1.00, 1.00 and 0.25 where the 0.25 is a 3600 s timeout; bare Claude 0.67; the bar is 0.90 at 5 runs, and about 17 USD for the 3-run eval). Unproven, so it is a doc, not a skill. Read it when a security, sandbox or gate fix is proposed, and run the steps yourself.
 
 Break a proposed fix before anyone builds it. Research what the fix must get right, have an
 attacker with no part in the proposal hunt for **breaks**, revise, then have a fresh validator
@@ -52,7 +52,7 @@ use, or two readers that disagree (the shell and the gate, a permission rule and
 is its own dispatch: same brief, its own focus line.
 
 **Dispatch** one `general-purpose` agent per lane with the brief, and pipe its raw final message through
-the two checkers below (this skill reuses idea-audit's attacker contract and its two checkers). Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input
+the two checkers below (this procedure reuses idea-audit's attacker contract and its two checkers). Fill the brief's `FILES YOU OWN` with a fresh scratch dir for its input
 files: it runs under the gates, which match raw command text. It has no sandbox: capture
 `git status --porcelain` before and after; any difference is a violation.
 

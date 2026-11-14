@@ -191,7 +191,7 @@ are not dismissed;
 both, `no-paid-run.md` is a must-not Bash check (`max: 0`, `arm: both`) on `claude plugin eval` or a
 `model-bench.sh` call without `--diff-only`. Needs `--allow-tools Bash`.
 
-`attack-proposal` is no longer a skill: it failed its blind A/B (2026-11-14, `attack-proposal-prefix-bypass` with 0.75 vs 0.67 without, Δ +0.08, one run timed out at 3600 s), so it became `docs/reference/attack-proposal.md` and its two cases were removed.
+`attack-proposal` is no longer a skill: it did not earn its place in a blind A/B (2026-11-14, 3 runs per arm, `attack-proposal-prefix-bypass`: with 0.75 (1.00, 1.00 and a 3600 s timeout at 0.25) vs 0.67 without; not rerun at 5), so it became `docs/reference/attack-proposal.md` and its two cases were removed.
 
 Note for future suites (not skill-specific, kept from the removed `handoff` suite):
 `context.scaffold_script` must be a relative path to an external `.sh` file in the case dir (e.g.
