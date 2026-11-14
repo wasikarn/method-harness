@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-skill-dir-paths-resolve.sh — every ${CLAUDE_SKILL_DIR}/<path> named in a skill's markdown
-# resolves to a file or dir, relative to that skill's own directory. attack-proposal reuses
-# idea-audit's and deep-audit's checkers through ../ paths; harness-audit check 35 only checks
+# resolves to a file or dir, relative to that skill's own directory. a skill may reuse
+# another skill's checker through ../ paths; harness-audit check 35 only checks
 # that a script's basename exists somewhere, so a moved checker would leave these pointers dead
 # with every other check green. A planted dead path proves the scan bites.
 set -uo pipefail

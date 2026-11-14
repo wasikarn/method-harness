@@ -30,8 +30,8 @@ COMPLIANCE = ("skills/review/compliance-audit/references/verifier-output-schema.
 PAIRS = {
     "skills/workflow/idea-audit/references/attacker-brief.md": IDEA,
     "skills/review/compliance-audit/references/verifier-brief.md": COMPLIANCE,
-    "skills/review/attack-proposal/references/attacker-brief.md": IDEA,
-    "skills/review/attack-proposal/references/validator-brief.md": DEEP,
+    "docs/reference/attack-proposal/attacker-brief.md": IDEA,
+    "docs/reference/attack-proposal/validator-brief.md": DEEP,
     "skills/review/deep-audit/references/whole-picture-brief.md": None,
 }
 PLACEHOLDER = "\x01"  # marks a value the sketch left open; the text after it is the sketch's own
@@ -180,7 +180,7 @@ planted(IDEA_BRIEF, "a key the checker does not know is caught",
         '"pass":', '"confidence": "<high|low>", "pass":')
 planted(VERIFIER, "a nested key dropped from the example is caught",
         '"output_tail": "<the last lines it printed>"', '"sha2": "<x>"')
-planted("skills/review/attack-proposal/references/validator-brief.md",
+planted("docs/reference/attack-proposal/validator-brief.md",
         "a misspelt key is caught", '"unexpected_files"', '"unexpected_file"')
 
 print("%d passed, %d failed" % (passed, failed))

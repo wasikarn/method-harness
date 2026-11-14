@@ -191,17 +191,7 @@ are not dismissed;
 both, `no-paid-run.md` is a must-not Bash check (`max: 0`, `arm: both`) on `claude plugin eval` or a
 `model-bench.sh` call without `--diff-only`. Needs `--allow-tools Bash`.
 
-Two for `attack-proposal` (tag `attack-proposal`, model-invocable; the fire prompt names
-`skill: "mh:attack-proposal"`). In `attack-proposal-prefix-bypass`, `PROPOSAL.md` confines upload
-writes with `abspath(...).startswith(UPLOAD_ROOT)`, which blocks `..` traversal and absolute paths but
-lets the sibling `var/uploads-archive/` (and a symlink inside the root) through. The report must name
-that break with a concrete input, close or drop it before any GO, and leave `src/storage.py`
-byte-identical: the skill vets a proposal, it does not build it. The
-attacker runs on a `general-purpose` agent; `attacker-dispatched.md` (Agent, min 1) is
-`arm: with-only`. Plus one should-NOT-fire case: a security fix that is already committed goes to
-`mh:deep-audit` per the skill's own scope line, so the review must not
-invoke the skill and must still find that `startswith("/")` lets `//evil.example` through
-(`built-diff-misroute`). Needs `--allow-tools Agent,Bash,Edit,Glob,Grep,Read,Skill,Write`.
+`attack-proposal` is no longer a skill: it failed its blind A/B (2026-11-14, `attack-proposal-prefix-bypass` with 0.75 vs 0.67 without, Δ +0.08, one run timed out at 3600 s), so it became `docs/reference/attack-proposal.md` and its two cases were removed.
 
 Note for future suites (not skill-specific, kept from the removed `handoff` suite):
 `context.scaffold_script` must be a relative path to an external `.sh` file in the case dir (e.g.

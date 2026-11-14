@@ -66,7 +66,7 @@ skills/*/harness-audit/*          medium tests/skills/harness-audit/test*.sh
 skills/*/learn/*                  medium tests/skills/learn/test*.sh tests/scripts/test-transcript-user-turns.sh tests/skills/test-idea-audit-memory-dir.sh
 skills/*/memory-lint/*            medium tests/skills/memory-lint/test_*.py tests/hooks/test-memory-health-nudge.sh
 skills/*/model-bench/*            medium tests/scripts/test-model-bench.sh
-skills/*/attack-proposal/*        medium tests/skills/test-brief-contract-keys.sh
+docs/reference/attack-proposal/*   medium tests/skills/test-brief-contract-keys.sh
 skills/*/compliance-audit/*       medium tests/skills/test-compliance-audit-*.sh tests/skills/test-check-verdict-drift.sh tests/skills/test-brief-contract-keys.sh
 skills/*/deep-audit/*             medium tests/skills/test-deep-audit-*.sh tests/skills/test-check-verdict-drift.sh tests/skills/test-weighted-score.sh tests/scripts/test-citation-exists.sh tests/skills/test-brief-contract-keys.sh
 skills/*/idea-audit/*             medium tests/skills/test-idea-audit-*.sh tests/skills/test-check-verdict-drift.sh tests/skills/test-brief-contract-keys.sh

@@ -1,12 +1,6 @@
----
-name: attack-proposal
-description: "Research, a fresh attacker, then a fresh validator break a proposed fix before code. Use when a security, sandbox or gate fix is proposed."
-model: inherit
-effort: xhigh
-argument-hint: "[proposal file or topic]"
----
-
 # Attack a proposal
+
+A procedure, not a skill: it failed its blind A/B (2026-11-14: `attack-proposal-prefix-bypass` scored 0.75 with it and 0.67 with bare Claude, Δ +0.08 against the 0.90 bar; one run timed out at 3600 s). Read it when a security, sandbox or gate fix is proposed, and run the steps yourself.
 
 Break a proposed fix before anyone builds it. Research what the fix must get right, have an
 attacker with no part in the proposal hunt for **breaks**, revise, then have a fresh validator
@@ -62,13 +56,13 @@ the two checkers below (this skill reuses idea-audit's attacker contract and its
 files: it runs under the gates, which match raw command text. It has no sandbox: capture
 `git status --porcelain` before and after; any difference is a violation.
 
-**Brief:** `references/attacker-brief.md`. **Load it before dispatching.**
+**Brief:** `docs/reference/attack-proposal/attacker-brief.md`. **Read it before dispatching.**
 
 **Check** each lane's output with both checkers, in order:
 
 ```
-python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
-python3 "${CLAUDE_SKILL_DIR}/../../workflow/idea-audit/scripts/check-citations.py" <<< "<check-verdict stdout>"
+python3 "${MH_PLUGIN_ROOT:?}/skills/workflow/idea-audit/scripts/check-verdict.py" <<< "$AGENT_FINAL_MESSAGE"
+python3 "${MH_PLUGIN_ROOT:?}/skills/workflow/idea-audit/scripts/check-citations.py" <<< "<check-verdict stdout>"
 ```
 
 `check-verdict.py` exit 0 prints the one valid verdict; exit 1 rejects it; exit 2 is a
@@ -107,13 +101,13 @@ Done when every confirmed break has its closed or dropped line.
 ## 5. Validate
 
 Dispatch one fresh `general-purpose` agent (it may need a scratch copy to run things, which
-`Explore` refuses) with `references/validator-brief.md`. It gets the revised proposal and the
+`Explore` refuses) with `docs/reference/attack-proposal/validator-brief.md`. It gets the revised proposal and the
 confirmed-break list only: the attacker's reasoning and the triage notes stay with you.
 
 Validate its raw final message with deep-audit's 6-key checker:
 
 ```
-python3 "${CLAUDE_SKILL_DIR}/../deep-audit/scripts/check-verdict.py" <<< "$VALIDATOR_FINAL_MESSAGE"
+python3 "${MH_PLUGIN_ROOT:?}/skills/review/deep-audit/scripts/check-verdict.py" <<< "$VALIDATOR_FINAL_MESSAGE"
 ```
 
 Exit 0 accepts; exit 1 rejects; exit 2 is a `NEEDS-DECISION` for the operator. Capture
