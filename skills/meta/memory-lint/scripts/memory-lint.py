@@ -76,6 +76,7 @@ _memory_dir_resolver = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_memory_dir_resolver)
 import time
 
+LEDGER_WORD = re.compile(r"(?:^|[_-])ledger(?:[_-]|$)")
 WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 NAME_RE = re.compile(r"(?m)^name:\s*(.+)$")
 POINTER_RE = re.compile(r"\]\(([^)]+\.md)\)")  # markdown link ](file.md), not prose "(x.md)"
@@ -680,7 +681,7 @@ def _pick_ledger_target(state, removed_files=frozenset(), source=None):
     ledger = "project_external_evals_ledger"
     if ledger in survivors:
         return ledger
-    ledgers = [s for s in sorted(survivors) if "ledger" in s]
+    ledgers = [s for s in sorted(survivors) if LEDGER_WORD.search(s)]  # a word, so reference_pledger_api is not one
     return ledgers[0] if ledgers else None
 
 
@@ -708,6 +709,19 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
         if old_stem in archive_stems:
             super_targets[old_stem] = m.group(1).split("|", 1)[0].strip()
 
+    live_text = {}  # file -> its code-masked text, the text apply_action_plan rewrites
+
+    def rewrite_entry(f, t, new_target, reason):
+        # The plan names the link as [[t]]; a link written [x](t.md), [[t|alias]] or [[t.md]] has no such
+        # text, so apply would find nothing. Say manual (new: None) up front instead (GH #967).
+        if f not in live_text:
+            with open(os.path.join(state["d"], f), encoding="utf-8") as fh:
+                live_text[f] = strip_code_spans(fh.read())
+        old = f"[[{t}]]"
+        writable = new_target and old in live_text[f]
+        return {"action": "rewrite_wikilink", "file": f, "old": old,
+                "new": f"[[{new_target}]]" if writable else None, "reason": reason}
+
     for f, targets in state["links_out"].items():
         # Only look at surviving top-level files
         if f not in state["files"] or f in removed_files:
@@ -717,37 +731,19 @@ def class_c_dangling_link_rewrite(state, removed_files=frozenset()):
                 continue
             # Dangling: target resolves to nothing
             if t not in archive_stems:
-                # No clear ledger — record as a candidate; agent decides rewrite target
-                new_target = _pick_ledger_target(state, removed_files, source=f)
-                plan.append({
-                    "action": "rewrite_wikilink",
-                    "file": f,
-                    "old": f"[[{t}]]",
-                    "new": f"[[{new_target}]]" if new_target else None,
-                    "reason": "dangling-target",
-                })
+                # No clear ledger: record as a candidate; agent decides rewrite target
+                plan.append(rewrite_entry(f, t, _pick_ledger_target(state, removed_files, source=f), "dangling-target"))
+                continue
+            # Archived target: find replacement
+            replacement = super_targets.get(t)
+            if replacement and replacement + ".md" == f:
+                # f is the successor of the file it links to: a ledger would hide that, so leave it manual
+                plan.append(rewrite_entry(f, t, None, "archived-supersedence-is-source"))
+            elif replacement and replacement in state["stems"] and replacement + ".md" not in removed_files:
+                plan.append(rewrite_entry(f, t, replacement, "archived-with-supersedence"))
             else:
-                # Archived target — find replacement
-                replacement = super_targets.get(t)
-                if (replacement and replacement in state["stems"] and replacement + ".md" not in removed_files
-                        and replacement + ".md" != f):
-                    plan.append({
-                        "action": "rewrite_wikilink",
-                        "file": f,
-                        "old": f"[[{t}]]",
-                        "new": f"[[{replacement}]]",
-                        "reason": "archived-with-supersedence",
-                    })
-                else:
-                    # Archived but no clear supersedence — point to nearest ledger
-                    new_target = _pick_ledger_target(state, removed_files, source=f)
-                    plan.append({
-                        "action": "rewrite_wikilink",
-                        "file": f,
-                        "old": f"[[{t}]]",
-                        "new": f"[[{new_target}]]" if new_target else None,
-                        "reason": "archived-no-supersedence",
-                    })
+                # Archived but no clear supersedence: point to nearest ledger
+                plan.append(rewrite_entry(f, t, _pick_ledger_target(state, removed_files, source=f), "archived-no-supersedence"))
     return plan
 
 
@@ -1008,7 +1004,7 @@ def print_plan(state, plan, estimated_impact):
         if e.get("new"):
             print(f"  [rewrite] {e['file']}: {e['old']} → {e['new']} ({e['reason']})")
         else:
-            print(f"  [manual] {e['file']}: {e['old']} (no ledger target found; needs human resolution)")
+            print(f"  [manual] {e['file']}: {e['old']} (no ledger target, or the link is not written as [[...]]; needs human resolution)")
     print()
     plan_d = plan.get("D", [])
     d_bytes_saved = sum(len(e["old_pointer_line"].encode("utf-8")) + 1 for e in plan_d)
