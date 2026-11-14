@@ -5,11 +5,9 @@
 # missed, then independently fixed, the same "#" comment bug -- the exact
 # same-bug-twice pattern GH #154/#155 already hit once for agent_id truthiness.
 #
-# Import defensively, same posture as _journal.py: every caller does
-# `try: from _quotemask import mask_quotes / except Exception: <inline copy>`,
-# never a bare import -- irrecoverable.sh's wrapper turns any non-{0,2} exit
-# into a hard deny, so an ImportError here must never become a machine-wide
-# Bash lockout on a deny-tier gate.
+# Callers import it in a try (GH #892, operator decision 2026-11-04): a failed import prints a stderr note and
+# exits 0 (allow), like the _bracex import. There is no inline copy; the gate's wrapper passes the exit code
+# through, so a crash would be exit 1, which blocks nothing either.
 #
 # Parsing/masking only, never a verdict or fail-direction -- callers still own
 # what regex/anchor runs against the masked string and their own fail
