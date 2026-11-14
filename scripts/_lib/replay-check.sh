@@ -32,7 +32,8 @@ replay_missing() {
     [ "$c" != "$d" ] || continue
     rec="$(replay_dir)/$g-$c.json"
     # A record that jq cannot read prints jq's error and counts as no record.
-    if [ -f "$rec" ] && jq -e --arg g "$g" --arg c "$c" '.gate == $g and .closure == $c and .full == true and .cache == false' "$rec" >/dev/null; then
+    # GH #958: the two command gates also judge Monitor and ctx_* tools; a record without "shapes": 2 never replayed those.
+    if [ -f "$rec" ] && jq -e --arg g "$g" --arg c "$c" '.gate == $g and .closure == $c and .full == true and .cache == false and ($g == "secret-scan" or (.shapes // 0) >= 2)' "$rec" >/dev/null; then
       jq -r --arg w "$who" '"\($w): replay record for \(.gate) (closure \(.closure[0:12]), \(.time)): pool \(.pool), replayed \(.replay), corpus \(.corpus), \(.diffs) diffs, \(.slower) slower; explain any diff or slower command on the PR."' "$rec" >&2
       continue
     fi

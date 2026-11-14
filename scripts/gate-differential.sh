@@ -13,7 +13,8 @@
 #                   secret-scan, Write/Edit text) under ${CLAUDE_CONFIG_DIR:-~/.claude}/projects;
 #                   `--replay all` takes the whole pool. A whole-pool run with no --slug writes a
 #                   replay record (GH #891) that scripts/merge-pr.sh and sync-pr-head.sh need for a gate change.
-#                   Only Bash tool_use blocks (Write/Edit for secret-scan) are read: no ctx_* payloads
+#                   Read: Bash, Monitor (with a command) and ctx_execute, ctx_execute_file, ctx_batch_execute and
+#                   ctx_batch tool_use blocks, each replayed with its own tool_name and tool_input (GH #958).
 #   --slug S        read only that transcript dir; refused unless it is this project's slug
 #                   or one of its worktrees' (<slug>--claude-worktrees-*)
 #   --fuzz-seed S   add seeded mutations of the corpus

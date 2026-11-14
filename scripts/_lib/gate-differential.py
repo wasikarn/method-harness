@@ -115,10 +115,45 @@ def replay_cases(projects, own_slug, slug, gate):
                             text = inp.get("content") if b.get("name") == "Write" else (
                                 inp.get("new_string") if b.get("name") == "Edit" else None)
                         else:
-                            text = inp.get("command") if b.get("name") == "Bash" else None
+                            text = shape_case(b.get("name"), inp)
                         if isinstance(text, str) and text:
                             seen.add(text)
     return sorted(seen), len(dirs), bad
+
+
+# GH #958: both command gates also judge Monitor and context-mode's ctx_* tools. A case from one of them keeps its
+# real tool name and tool_input, as the tagged string TAG + tool + TAG + sorted-key JSON; a Bash command stays plain text.
+TAG = "\x1f"
+CTX_TOOLS = ("__ctx_execute", "__ctx_execute_file", "__ctx_batch_execute", "__ctx_batch")
+
+
+def shape_case(name, inp):
+    if not isinstance(name, str) or not isinstance(inp, dict):
+        return None
+    if name == "Bash":
+        return inp.get("command")
+    if name == "Monitor":
+        return TAG + name + TAG + json.dumps(inp, sort_keys=True) if isinstance(inp.get("command"), str) and inp["command"] else None
+    if name.startswith("mcp__") and name.endswith(CTX_TOOLS) and (inp.get("code") or inp.get("commands")):
+        return TAG + name + TAG + json.dumps(inp, sort_keys=True)
+    return None
+
+
+def case_tool(text):
+    """-> (tool name, tool_input) of a case."""
+    if text.startswith(TAG):
+        _, name, rest = text.split(TAG, 2)
+        return name, json.loads(rest)
+    return "Bash", {"command": text}
+
+
+def show(text):
+    return text.replace(TAG, " ", 2).lstrip() if text.startswith(TAG) else text
+
+
+def tool_counts(cases):
+    c = collections.Counter(case_tool(t)[0].rsplit("__", 1)[-1] if t.startswith(TAG) else "Bash" for t in cases)
+    return dict(sorted(c.items()))
 
 
 def fuzz(corpus, seed):
@@ -129,6 +164,7 @@ def fuzz(corpus, seed):
            lambda c: c.replace(" ", "${IFS}", 1), lambda c: c.replace(" ", "  \\\n  ", 1),
            lambda c: "''" + c, lambda c: c[:1] + "''" + c[1:], lambda c: "eval '" + c.replace("'", "'\\''") + "'",
            lambda c: "echo \"$(" + c + ")\"", lambda c: "true && " + c, lambda c: c + " # " + c[::-1]]
+    corpus = [c for c in corpus if not c.startswith(TAG)]
     if not corpus:
         return []
     return [rng.choice(ops)(rng.choice(corpus)) for _ in range(200)]
@@ -138,7 +174,8 @@ def payload(gate, text):
     if gate == "secret-scan":
         return {"tool_name": "Write", "tool_input": {"file_path": "differential.txt", "content": text},
                 "session_id": "gate-differential"}
-    d = {"tool_name": "Bash", "tool_input": {"command": text}, "session_id": "gate-differential"}
+    name, ti = case_tool(text)
+    d = {"tool_name": name, "tool_input": ti, "session_id": "gate-differential"}
     if gate == "subagent-git-guard":
         d["agent_id"], d["agent_type"] = "gate-differential", "general-purpose"
     return d
@@ -659,7 +696,7 @@ def replay_record(a, pool, replay, corpus, diffs, slower, cached):
     d = os.environ.get("GATE_REPLAY_RECORD_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "mh", "gate-replay")
     path = os.path.join(d, "%s-%s.json" % (a.gate, c))
     rec = {"gate": a.gate, "closure": c, "full": True, "pool": len(pool), "replay": len(replay), "corpus": len(corpus),
-           "diffs": diffs, "slower": slower, "cache": False, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+           "diffs": diffs, "slower": slower, "cache": False, "shapes": 2, "tools": tool_counts(pool), "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     try:
         os.makedirs(d, exist_ok=True)
         tmp = path + ".tmp"
@@ -853,7 +890,7 @@ def main():
         print("  runner: bash (%s%s)" % (why, "; before that, " + counts if fork_started else ""))
     # A fork-only diff is how a gap in the wrapper's fast-path token list shows: name the first few.
     for t in dropped[:SAMPLES]:
-        print("      - " + redact(t, patterns, real_home))
+        print("      - " + redact(show(t), patterns, real_home))
     if cache:
         print("  cache: %d hits, %d stored, %d not storable (timeouts and time-limit verdicts)%s" % (
             cache.hits, cache.stored, cache.skipped, ", %d unreadable rows ignored" % cache.bad if cache.bad else "") +
@@ -862,18 +899,19 @@ def main():
         print("  " + fast_note)
     if replaying:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
+        print("  pool by tool: " + ", ".join("%s %d" % kv for kv in tool_counts(pool).items()))
         # GH #894: every replay run feeds the fast tier's heavy and diff sets (digests and numbers only)
         print("  fast store: " + save_fast_store(a.gate, heavy_new, diff_new))
         print("  replay record: " + replay_record(a, pool, replay, corpus, total, len(slower), bool(cache)))
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):
         print("  [%d] %s" % (len(texts), name))
         for t in texts[:SAMPLES]:
-            print("      - " + redact(t, patterns, real_home))
+            print("      - " + redact(show(t), patterns, real_home))
     if slower:
         print("  slower: %d (new time over %g%% of the %s s deadline, or %gx the old and %g s or more; re-run once)"
               % (len(slower), NEAR * 100, format(deadline, "g") if deadline else "-", SLOWER_RATIO, SLOWER_MIN_SECS))
         for t, os_, ns in sorted(slower, key=lambda x: -x[2])[:SAMPLES]:
-            print("      - %s (old %.3f s, new %.3f s)" % (redact(t, patterns, real_home), os_, ns))
+            print("      - %s (old %.3f s, new %.3f s)" % (redact(show(t), patterns, real_home), os_, ns))
     return 1 if classes or slower else 0
 
 

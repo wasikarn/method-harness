@@ -1086,6 +1086,62 @@ if [ -n "$b" ]; then
   else bad "a read did not refresh the mtime of $b"; fi
 else bad "no bucket file written by the eviction run"; fi
 
+echo "=== GH #958: Monitor and ctx_* commands replay in their own tool shape ==="
+CC2="$T/cc958"; mkdir -p "$CC2/projects/$slug"
+python3 - "$CC2/projects/$slug/t.jsonl" <<'PY3'
+import json, sys
+def use(name, inp):
+    return json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": inp}]}})
+CTX = "mcp__plugin_context-mode_context-mode__"
+rows = [use("Bash", {"command": "echo plain"}),
+        use("Monitor", {"command": "tail -f log", "description": "d"}),
+        use("Monitor", {"description": "a ws monitor with no command"}),
+        use(CTX + "ctx_execute", {"language": "shell", "code": "echo ctx"}),
+        use(CTX + "ctx_execute_file", {"path": "x", "language": "shell", "code": "wc -l"}),
+        use(CTX + "ctx_batch_execute", {"commands": [{"label": "a", "command": "echo a"}], "queries": ["q"]}),
+        use(CTX + "ctx_batch", {"commands": ["echo b"]}),
+        use(CTX + "ctx_search", {"queries": ["not a command tool"]}),
+        use("Read", {"file_path": "x"})]
+open(sys.argv[1], "w").write("\n".join(rows) + "\n")
+PY3
+out=$(CLAUDE_CONFIG_DIR="$CC2" GATE_REPLAY_RECORD_DIR="$T/rec-958" bash "$SCRIPT" --cases "$T/empty.txt" --replay all "$T/old" "$T/same" irrecoverable 2>&1); rc=$?
+f="$T/rec-958/irrecoverable-$closure.json"
+if [ "$rc" -eq 0 ] && /usr/bin/grep -q 'replay=6 ' <<<"$out" && /usr/bin/grep -q 'pool by tool: Bash 1, Monitor 1, ctx_batch 1, ctx_batch_execute 1, ctx_execute 1, ctx_execute_file 1' <<<"$out"; then
+  ok "the pool holds Monitor and the four ctx tools beside Bash, and skips a command-less Monitor, ctx_search and Read"
+else bad "tool pool (rc=$rc): $out"; fi
+if [ -f "$f" ] && python3 - "$f" <<'PY4'
+import json, sys
+r = json.load(open(sys.argv[1]))
+sys.exit(0 if r.get("shapes") == 2 and r.get("tools", {}).get("Monitor") == 1 and r["tools"].get("ctx_batch") == 1 else 1)
+PY4
+then ok "the record carries shapes 2 and the per-tool counts"; else bad "record tools: $(cat "$f" 2>&1)"; fi
+# The gate really gets the tool name and tool_input: a stub gate that logs its stdin.
+SPY="$T/spy"; mkdir -p "$SPY"; cp -R "$T/same/." "$SPY/"
+printf '#!/usr/bin/env bash\ncat >> "%s/stdin.log"; echo >> "%s/stdin.log"\nexit 0\n' "$T" "$T" > "$SPY/irrecoverable.sh"
+: > "$T/stdin.log"
+CLAUDE_CONFIG_DIR="$CC2" bash "$SCRIPT" --cases "$T/empty.txt" --replay all --runner bash "$SPY" "$SPY" irrecoverable >/dev/null 2>&1
+if python3 - "$T/stdin.log" <<'PY6'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+names = sorted({r["tool_name"].rsplit("__", 1)[-1] for r in rows})  # OLD and NEW both run the spy
+ok = names == ["Bash", "Monitor", "ctx_batch", "ctx_batch_execute", "ctx_execute", "ctx_execute_file"]
+ok = ok and any(r["tool_name"].endswith("ctx_batch_execute") and r["tool_input"]["commands"][0]["command"] == "echo a" for r in rows)
+sys.exit(0 if ok else 1)
+PY6
+then ok "each case reaches the gate with its real tool_name and tool_input"; else bad "gate stdin: $(cat "$T/stdin.log")"; fi
+# merge-proof: a record without shapes 2 does not count for a command gate; secret-scan needs no such marker.
+RC=$(mktemp -d "$T/rc.XXXX")
+python3 - "$RC" <<'PY7'
+import json, sys
+d = sys.argv[1]
+for gate in ("irrecoverable", "secret-scan"):
+    json.dump({"gate": gate, "closure": "c", "full": True, "cache": False}, open("%s/%s-c.json" % (d, gate), "w"))
+PY7
+chk() { jq -e --arg g "$1" --arg c c '.gate == $g and .closure == $c and .full == true and .cache == false and ($g == "secret-scan" or (.shapes // 0) >= 2)' "$RC/$1-c.json" >/dev/null && echo yes || echo no; }
+expr_in_lib=$(/usr/bin/grep -c '(.shapes // 0) >= 2' "$ROOT/scripts/_lib/replay-check.sh")
+if [ "$expr_in_lib" = 1 ] && [ "$(chk irrecoverable)" = no ] && [ "$(chk secret-scan)" = yes ]; then ok "replay-check.sh requires shapes 2 for the command gates only"
+else bad "shapes rule: lib=$expr_in_lib irr=$(chk irrecoverable) ss=$(chk secret-scan)"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"
 exit "$fail"
