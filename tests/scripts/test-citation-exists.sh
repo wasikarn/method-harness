@@ -193,9 +193,14 @@ python3 "$SCRIPT" --root "$T/root" "$T/range.json" > "$T/r.out" 2>&1
 printf '["src/app.py:3\\\\r\\\\nsrc/nope.py:9"]\n' > "$T/crlf.json"
 python3 "$SCRIPT" --root "$T/root" "$T/crlf.json" > "$T/c1.out" 2>&1
 /usr/bin/grep -q "citations exist: 1 of 2 resolved" "$T/c1.out" && ok "JSON input: a double-escaped \\r\\n after a cite does not hide the next cite" || bad "double-escaped CRLF: $(head -1 "$T/c1.out")"
-printf '["`src/app.py:3`\\\\nsrc/nope.py:9", "(src/app.py:3)\\\\nsrc/nope.py:9"]\n' > "$T/punct.json"
-python3 "$SCRIPT" --root "$T/root" "$T/punct.json" > "$T/c2.out" 2>&1
-/usr/bin/grep -q "citations exist: 2 of 4 resolved" "$T/c2.out" && ok "JSON input: backtick or bracket before the escape does not hide the next cite" || bad "punctuation before escape: $(head -1 "$T/c2.out")"
+for pc in '`' ')' ']' '}' '"' "'"; do
+  python3 - "$T/punct.json" "$pc" <<'PY'
+import json, sys
+json.dump(["src/app.py:3" + sys.argv[2] + "\\nsrc/nope.py:9"], open(sys.argv[1], "w"))
+PY
+  python3 "$SCRIPT" --root "$T/root" "$T/punct.json" > "$T/c2.out" 2>&1
+  /usr/bin/grep -q "citations exist: 1 of 2 resolved" "$T/c2.out" && /usr/bin/grep -q "src/nope.py:9" "$T/c2.out" && ok "JSON input: $pc before a double-escaped newline does not hide src/nope.py:9" || bad "'$pc' before the escape: $(head -3 "$T/c2.out" | tr '\n' ' ')"
+done
 # A JSON number of thousands of digits must not make the parse fall back to raw text.
 python3 -c "print('{\"n\": ' + '9' * 5000 + ', \"e\": \"src/app.py:1\\\\nsrc/nope.py:9\"}')" > "$T/bigint.json"
 python3 "$SCRIPT" --root "$T/root" "$T/bigint.json" > "$T/b.out" 2>&1
