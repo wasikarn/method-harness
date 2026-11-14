@@ -305,6 +305,15 @@ builder's self-check ("0 bypasses in 4032") was wrong each time.
   `~/.cache/mh/gate-replay/<gate>-<closure>.json` (`GATE_REPLAY_RECORD_DIR`), counts only, for the NEW
   side's closure. `scripts/merge-pr.sh`, and `scripts/sync-pr-head.sh` before it posts `mh/gauntlet` (PR #947),
   refuse a gate change without the record that matches the tree it merges (both via `scripts/_lib/replay-check.sh`) (`docs/reference/branching-model.md`), so the replay rule here is now enforced at merge time.
+  **The fast tier** (GH #894, `--fast`): for the push and review-round loop. It replays the committed fixtures, a
+  sample of 5000 transcript commands seeded by the checkout's HEAD sha (so each push draws new ones), and every pool
+  command whose payload digest an earlier replay run stored as heavy (old side 1 s or more) or different
+  (`~/.cache/mh/gate-replay-fast/<gate>.json`, `GATE_REPLAY_FAST_DIR`; digests only, 5000 each). It never writes a
+  record (`replay_record` returns first when `a.fast`, since a pool under 5000 would otherwise look whole), so
+  the whole-pool `--replay all --no-cache` run before merge stays the only proof. The 25%-of-work-budget rule of the
+  issue waits for a gate that exposes its count, like `slower`'s work criterion; the heavy set uses the 1 s rule.
+  Known limit: a command cheap on the old side but slow on the new one is in the heavy set only if it was slow
+  once, and the random sample finds a single such command about 9% of the time.
   **The cache** (GH #893, opt-in `--cache`, off by default; `--no-cache` wins): keeps the OLD side's results
   in `~/.cache/mh/gate-replay-cache` (`GATE_REPLAY_CACHE_DIR`) for review-round replays. A cached run never
   writes a record, and the replay before merge runs with `--no-cache` (operator rule, 2026-11-04: the dir is

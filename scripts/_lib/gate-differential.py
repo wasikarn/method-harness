@@ -591,11 +591,68 @@ def is_slower(old_secs, new_secs, deadline):
     return new_secs >= SLOWER_RATIO * old_secs and new_secs >= SLOWER_MIN_SECS
 
 
+FAST_SAMPLE = 5000  # GH #894: the random part of the fast tier
+HEAVY_SECS = 1.0  # GH #894: an old-side command this slow joins the heavy set. The 25%-of-work-budget rule waits
+STORE_CAP = 5000  # for a gate that exposes its count, like is_slower's work criterion; entries kept per list
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def fast_store_path(gate):
+    d = os.environ.get("GATE_REPLAY_FAST_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "mh", "gate-replay-fast")
+    return os.path.join(d, gate + ".json")
+
+
+def load_fast_store(gate):
+    """-> (heavy digests, diff digests) from earlier runs. Digests and seconds only, never command text.
+    An unreadable or malformed file reads as empty, with a note: the fast tier then runs its sample alone."""
+    path = fast_store_path(gate)
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        heavy = {k for k in doc["heavy"] if isinstance(k, str)}
+        diff = {k for k in doc["diff"] if isinstance(k, str)}
+        return heavy, diff
+    except FileNotFoundError:
+        return set(), set()
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print("gate-differential: --fast: ignoring the unreadable store %s (%s)" % (path, e), file=sys.stderr)
+        return set(), set()
+
+
+def save_fast_store(gate, heavy_new, diff_new):
+    """Merge this run's heavy and diff digests into the store (newest kept, STORE_CAP each). Returns a note."""
+    path = fast_store_path(gate)
+    heavy, diff = [], []
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        heavy = [k for k in doc["heavy"] if isinstance(k, str)]
+        diff = [k for k in doc["diff"] if isinstance(k, str)]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass  # a missing or damaged store restarts from this run's digests; the next run rebuilds the rest
+    merge = lambda old, new: list(dict.fromkeys([k for k in old if k not in new] + sorted(new)))[-STORE_CAP:]
+    doc = {"gate": gate, "heavy": merge(heavy, heavy_new), "diff": merge(diff, diff_new)}
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        return "NOT updated (%s)" % e
+    return "updated %s (%d heavy, %d diff digests)" % (path, len(doc["heavy"]), len(doc["diff"]))
+
+
 def replay_record(a, pool, replay, corpus, diffs, slower, cached):
     # GH #891: scripts/merge-pr.sh merges a gate change only with this record for the gate's closure. Only a
     # whole-pool run counts: every command of every transcript dir of this project, so no --slug. A cached
     # run (GH #893, operator rule 2026-11-04) never writes one: the cache dir is writable locally, so only a
     # run that executed the old side proves the replay. Counts only, no command text.
+    if a.fast:
+        return "none (--fast is a partial run; the whole-pool run before merge, --replay all, writes the record)"
     if cached:
         return "none (a cached run never writes a record; run with --no-cache, which is the default)"
     if a.slug or not pool or len(replay) < len(pool):
@@ -628,6 +685,8 @@ def main():
     ap.add_argument("--runner", choices=("auto", "fork", "bash"), default="auto")
     ap.add_argument("--cache", action="store_true")  # GH #893: opt-in; --no-cache wins
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--fast", action="store_true")  # GH #894: iteration tier; never writes a replay record
+    ap.add_argument("--fast-seed")
     a = ap.parse_args()
     use_cache = a.cache and not a.no_cache
     # The runners start in a temp cwd: a relative dir would run nothing (exit 127 on that side) and read as 0 diffs.
@@ -657,9 +716,22 @@ def main():
         base = fixture_cases(a.fixtures, a.gate)
     replay, ndirs, bad, pool = [], 0, 0, []
     want = a.replay if a.replay == "all" else int(a.replay)
-    if want:
+    if a.fast:  # GH #894: a seeded sample, plus what earlier runs found heavy or different
+        want = int(os.environ.get("GATE_REPLAY_FAST_SAMPLE") or FAST_SAMPLE)  # 0 = the earlier runs' commands alone
+    replaying = bool(want) or a.fast
+    fast_note = ""
+    if replaying:
         pool, ndirs, bad = replay_cases(a.projects, a.own_slug, a.slug, a.gate)
-        replay = random.Random(a.fuzz_seed or 0).sample(pool, len(pool) if want == "all" else min(want, len(pool)))
+        if a.fast:
+            sample = random.Random(a.fast_seed or 0).sample(pool, min(want, len(pool)))
+            heavy_d, diff_d = load_fast_store(a.gate)
+            known = heavy_d | diff_d
+            extra = [t for t in pool if digest(json.dumps(payload(a.gate, t)).encode()) in known]
+            replay = list(dict.fromkeys(sample + extra))
+            fast_note = "fast tier: sample %d of pool %d, plus %d from earlier heavy/diff runs (%d heavy, %d diff digests known)" % (
+                len(sample), len(pool), len(replay) - len(sample), len(heavy_d), len(diff_d))
+        else:
+            replay = random.Random(a.fuzz_seed or 0).sample(pool, len(pool) if want == "all" else min(want, len(pool)))
     fz = fuzz(base + replay, a.fuzz_seed) if a.fuzz_seed is not None else []
     corpus = list(dict.fromkeys(base + replay + fz))
 
@@ -751,13 +823,16 @@ def main():
                 return o, n, fork
         return pair(bash, data) + (bash,)
 
-    classes, slower = {}, []
+    classes, slower, heavy_new, diff_new = {}, [], set(), set()
     for text in corpus:
         data = json.dumps(payload(a.gate, text)).encode()
         o, n, runners = measure(text, data)
         name = diff_class(o, n)
         if name:
             classes.setdefault(name, []).append(text)
+            diff_new.add(digest(data))
+        if o.secs >= HEAVY_SECS:
+            heavy_new.add(digest(data))
         if is_slower(o.secs, n.secs, deadline):
             # once more, both sides on one runner: a load spike must not count. A cached old time was measured
             # by an earlier run, so this run bypasses the cache (GH #893).
@@ -786,8 +861,12 @@ def main():
         print("  cache: %d hits, %d stored, %d not storable (timeouts and time-limit verdicts)%s" % (
             cache.hits, cache.stored, cache.skipped, ", %d unreadable rows ignored" % cache.bad if cache.bad else "") +
               (", %d stale cache file(s) removed" % cache.evicted if cache.evicted else ""))
-    if want:
+    if a.fast:
+        print("  " + fast_note)
+    if replaying:
         print("  transcript dirs read: %d, unreadable lines/files skipped: %d" % (ndirs, bad))
+        # GH #894: every replay run feeds the fast tier's heavy and diff sets (digests and numbers only)
+        print("  fast store: " + save_fast_store(a.gate, heavy_new, diff_new))
         print("  replay record: " + replay_record(a, pool, replay, corpus, total, len(slower), bool(cache)))
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):
         print("  [%d] %s" % (len(texts), name))

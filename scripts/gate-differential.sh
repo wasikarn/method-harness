@@ -24,6 +24,12 @@
 #                   ~/.cache/mh/gate-replay-cache) and reuse them (GH #893). For review-round replays
 #                   only: a cached run never writes a replay record. Off by default.
 #   --no-cache      the default, and it beats --cache. The replay before merge runs with it.
+#   --fast          iteration tier (GH #894): 5000 transcript commands sampled with a seed from this checkout's
+#                   HEAD, plus every command an earlier replay run found heavy (old side 1 s or more) or
+#                   different, kept as digests in $GATE_REPLAY_FAST_DIR (default ~/.cache/mh/gate-replay-fast).
+#                   Never writes a replay record; the whole-pool run before merge (--replay all) still does.
+#                   Refused with --replay and --slug. A regression cheap on OLD but slow on NEW can miss it.
+#                   $GATE_REPLAY_FAST_SAMPLE changes the sample size (default 5000; 0 replays only the stored ones).
 # Exit: 0 no diffs, 1 diffs or slower commands (GH #890), 2 usage error or refusal.
 # Replay record (GH #891): $GATE_REPLAY_RECORD_DIR (default ~/.cache/mh/gate-replay)/<gate>-<closure>.json,
 # <closure> being scripts/_lib/gate_closure.py's hash of the NEW side. Counts only, never command text;
@@ -37,14 +43,15 @@
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
-usage() { sed -n '5,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '5,32p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-cases="" replay=0 slug="" seed="" runner=auto cache_flags=()
+cases="" replay=0 slug="" seed="" runner=auto fast=0 replay_given=0 cache_flags=()
 pos=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --cases) [ $# -ge 2 ] || usage; cases="$2"; shift 2 ;;
-    --replay) [ $# -ge 2 ] || usage; replay="$2"; shift 2 ;;
+    --replay) [ $# -ge 2 ] || usage; replay="$2"; replay_given=1; shift 2 ;;
+    --fast) fast=1; shift ;;
     --slug) [ $# -ge 2 ] || usage; slug="$2"; shift 2 ;;
     --fuzz-seed) [ $# -ge 2 ] || usage; seed="$2"; shift 2 ;;
     --runner) [ $# -ge 2 ] || usage; runner="$2"; shift 2 ;;
@@ -61,6 +68,9 @@ case ${#pos[@]} in
 esac
 case "$gate" in irrecoverable|subagent-git-guard|secret-scan) : ;; *) echo "gate-differential: unknown gate $gate" >&2; usage ;; esac
 case "$runner" in auto|fork|bash) : ;; *) echo "gate-differential: --runner takes auto, fork or bash" >&2; exit 2 ;; esac
+if [ "$fast" = 1 ] && { [ "$replay_given" = 1 ] || [ -n "$slug" ]; }; then
+  echo "gate-differential: --fast takes no --replay or --slug (it picks its own corpus; a record needs --replay all)" >&2; exit 2
+fi
 case "$replay" in all) : ;; ''|*[!0-9]*) echo "gate-differential: --replay takes a number or all" >&2; exit 2 ;; esac
 
 # Transcript slug: Claude Code names a project dir after the session cwd with every
@@ -102,4 +112,8 @@ set -- --old "$old" --new "$new" --gate "$gate" --tmp "$tmp" --replay "$replay" 
 [ -n "$slug" ] && set -- "$@" "--slug=$slug"
 [ -n "$seed" ] && set -- "$@" --fuzz-seed "$seed"
 [ ${#cache_flags[@]} -gt 0 ] && set -- "$@" "${cache_flags[@]}"
+if [ "$fast" = 1 ]; then
+  head=$(git -C "$ROOT" rev-parse HEAD) || exit 2
+  set -- "$@" --fast --fast-seed "$head"
+fi
 python3 "$ROOT/scripts/_lib/gate-differential.py" "$@"
