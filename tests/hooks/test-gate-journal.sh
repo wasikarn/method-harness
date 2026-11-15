@@ -301,6 +301,17 @@ for _view in ifs-split var-verb; do
   check "enforced $_view view: denies, and the deny row names $_view" "$ok"
 done
 
+# --- Case 8: a rule-less "confirm with user first" deny (the tokenizer/complexity refusals) journals
+# rule tokenize-fail, so gate-report can count it; a rule-carrying deny keeps its own rule id. ---
+J8="$WORK/case8/tok.jsonl"
+python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"echo " + "a" * 160000},"session_id":"sess-journal-test"}))' \
+  | MH_GATE_JOURNAL_PATH="$J8" bash hooks/gates/irrecoverable.sh >/dev/null 2>&1; rc=$?
+ok=1; [ "$rc" -eq 2 ] && [ "$(rows "$J8" deny tokenize-fail)" = 1 ] && ok=0
+check "over-long command: deny (rc=2) journals rule tokenize-fail" "$ok"
+payload_bash "rm -rf build" | MH_GATE_JOURNAL_PATH="$J8" bash hooks/gates/irrecoverable.sh >/dev/null 2>&1
+ok=1; [ "$(rows "$J8" deny rm-rf)" = 1 ] && [ "$(rows "$J8" deny tokenize-fail)" = 1 ] && ok=0
+check "rm -rf keeps rule rm-rf and does not add a tokenize-fail row" "$ok"
+
 echo ""
 echo "=== $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]

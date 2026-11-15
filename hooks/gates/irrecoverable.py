@@ -2183,8 +2183,10 @@ def deny(reason, rule=None, hint=None):
     _disarm()
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
     # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
+    # A rule-less confirm deny is a tokenizer/complexity refusal: tag it so gate-report can count it.
     journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"),
-            rule=rule if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) else _VIEW[0] or rule)
+            rule=rule if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) else _VIEW[0] or rule
+            or ("tokenize-fail" if "confirm with user first" in reason else None))
     sys.exit(2)
 
 _ASKED = []
