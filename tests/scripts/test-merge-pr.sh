@@ -132,8 +132,12 @@ if [ -n "${STUB_GAUNTLET_FAIL:-}" ]; then
   # STUB_BIG: ~1.3 MB of failing output first, more than one argv string may carry (GH #749).
   [ -z "${STUB_BIG:-}" ] || { head -c 1300000 /dev/zero | tr '\0' x | fold -w 100; echo; } >&2
   [ -z "${STUB_FAILING:-}" ] || echo "failing: $STUB_FAILING" >&2
+  # The real run-gauntlet.sh also writes that line to GAUNTLET_FAILING_FILE (GH #158); the stub keeps the contract.
+  { [ -z "${STUB_FAILING:-}" ] || [ -z "${GAUNTLET_FAILING_FILE:-}" ]; } || echo "failing: $STUB_FAILING" >"$GAUNTLET_FAILING_FILE"
   exit 1
 fi
+# STUB_STALE: a green run that still leaves a failing: line in the file (a stale one); the row must ignore it.
+{ [ -z "${STUB_STALE:-}" ] || [ -z "${GAUNTLET_FAILING_FILE:-}" ]; } || echo "failing: tests/stale.sh" >"$GAUNTLET_FAILING_FILE"
 [ -z "${STUB_GAUNTLET_DIRTY:-}" ] || echo edit >>b.txt
 [ -z "${STUB_GAUNTLET_COMMIT:-}" ] || git commit -q --allow-empty -m "made during the gauntlet"
 if [ -n "${STUB_GAUNTLET_PEER:-}" ] && [ "$n" -eq 1 ]; then
@@ -433,6 +437,41 @@ STUB_GAUNTLET_FAIL=1 run
 refuses "red gauntlet with a timing log" "the gauntlet failed on"
 if [ "$(trows)" = 1 ] && [ "$(trow '[.cached, .rc]')" = '[false,1]' ]; then ok "a red run's row carries the gauntlet's rc 1"
 else bad "red timing row: $(cat "$F/time.jsonl" 2>&1)"; fi
+# GH #158: a red row names the failing test files (names only), so a flake can be told from a regression after
+# the merge lane's worktree and log are gone; a green row, a red run with no failing: list, and a list holding
+# anything but file-name characters all carry null, and the row stays one valid JSON line.
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/a.sh tests/b.sh" run
+refuses "red gauntlet naming its failing files" "the gauntlet failed on"
+if [ "$(trow '[.rc, .failing]')" = '[1,"tests/a.sh tests/b.sh"]' ]; then ok "a red row names the failing test files"
+else bad "red row failing: $(cat "$F/time.jsonl" 2>&1)"; fi
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 run
+refuses "red gauntlet with no failing list" "the gauntlet failed on"
+if [ "$(trow '[.rc, .failing]')" = '[1,null]' ]; then ok "a red run with no failing: list writes failing null"
+else bad "red row without a list: $(cat "$F/time.jsonl" 2>&1)"; fi
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 STUB_FAILING='tests/a"b.sh $(x)' run
+refuses "red gauntlet with an odd failing list" "the gauntlet failed on"
+if [ "$(trows)" = 1 ] && [ "$(trow '[.rc, .failing]')" = '[1,null]' ]; then ok "a failing list with quotes or shell characters is dropped, not written into the row"
+else bad "red row with an odd list: $(cat "$F/time.jsonl" 2>&1)"; fi
+setup
+STUB_STALE=1 run
+merges "green run keeps failing null"
+if [ "$(trow '.failing')" = null ]; then ok "a green row has failing null, even when a stale failing: line is in the file"
+else bad "green row failing: $(cat "$F/time.jsonl" 2>&1)"; fi
+# The cap: 300 characters are written, 301 are dropped.
+long300=$(printf 'a%.0s' $(seq 300))
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="$long300" run
+refuses "red gauntlet with a 300-character list" "the gauntlet failed on"
+if [ "$(trow '.failing | length')" = 300 ]; then ok "a 300-character failing list is written whole"
+else bad "300-character row: $(cat "$F/time.jsonl" 2>&1)"; fi
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="${long300}a" run
+refuses "red gauntlet with a 301-character list" "the gauntlet failed on"
+if [ "$(trow '.failing')" = null ]; then ok "a 301-character failing list is dropped"
+else bad "301-character row: $(cat "$F/time.jsonl" 2>&1)"; fi
 setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
 mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$(remote_tip feat/x)^{tree}")"
 run
