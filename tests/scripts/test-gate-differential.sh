@@ -1158,6 +1158,24 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","nam
 out=$(CLAUDE_CONFIG_DIR="$T/cc958s" GATE_REPLAY_RECORD_DIR="$T/rec-958s" bash "$SCRIPT" --cases "$T/empty.txt" --replay all "$T/old" "$T/same" secret-scan 2>&1)
 if /usr/bin/grep -q 'pool by tool: Write/Edit 1' <<<"$out" && ! /usr/bin/grep -q 'pool by tool: Bash' <<<"$out"; then ok "secret-scan's pool is counted as Write/Edit"; else bad "secret-scan tool count: $out"; fi
 
+# GH #958 audit: a tagged case is redacted per value, before JSON turns a newline into backslash-n (which hides the
+# word boundary of a token that starts its own line). Every case differs: NEW denies where OLD allows.
+echo "=== GH #958 audit: a token on its own line of a Monitor command is redacted ==="
+mkdir -p "$T/denyall"; cp -R "$T/same/." "$T/denyall/"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 2\n' > "$T/denyall/irrecoverable.sh"
+gh_tok="ghp_""$(printf 'Zq8Lm3Xv%.0s' 1 2 3 4)""Zq8L"
+printf '\037Monitor\037{"command":"cat > f <<EOF\\n%s\\nEOF"}\n' "$gh_tok" > "$T/mon-secret.txt"
+out=$(bash "$SCRIPT" --cases "$T/mon-secret.txt" --runner bash "$T/same" "$T/denyall" irrecoverable 2>&1)
+case "$out" in
+  *Zq8Lm3Xv*) bad "a Monitor token on its own line leaked into a sample: $out" ;;
+  *'[REDACTED]'*) ok "a Monitor token on its own line is redacted in the sample" ;;
+  *) bad "no redacted Monitor sample shown: $out" ;;
+esac
+out=$(bash "$SCRIPT" -h 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'GATE_REPLAY_FAST_SAMPLE changes the sample size' <<<"$out" && ! /usr/bin/grep -q '^Exit:' <<<"$out"; then
+  ok "-h prints the whole header up to the Exit line, not a cut"
+else bad "-h output (rc=$rc) is cut or runs past the header: $(tail -3 <<<"$out")"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PASS: test-gate-differential"
 exit "$fail"

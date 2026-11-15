@@ -113,5 +113,22 @@ case "$body" in
   *) bad "run-gauntlet.sh does not write GAUNTLET_FAILING_FILE at the end of its failure branch" ;;
 esac
 
+# GH #158 audit: gauntlet_full's EXIT trap must not splice the library path into a string that is evaluated
+# again when it fires: a `$` in a checkout path would expand a second time (an unbound variable under set -u) and
+# the failing-list temp file would stay. Run it from a directory named with a dollar sign, against a red stub.
+D=$(fresh_tmpdir)
+LIB="$D/dol\$lar"
+mkdir -p "$LIB/scripts/_lib" "$D/tmp"
+cp -R "$ROOT/scripts/_lib/." "$LIB/scripts/_lib/"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$LIB/scripts/run-gauntlet.sh"
+git -C "$LIB" init -q . && git -C "$LIB" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m a
+out=$(cd "$LIB" && env TMPDIR="$D/tmp" HOME="$D/home" GAUNTLET_TIME_LOG="$D/time.jsonl" GAUNTLET_PASS_DIR="$D/pass" GAUNTLET_PASS_CACHE=0 GAUNTLET_LOCK_DIR="$D/lock" \
+  bash -c 'set -euo pipefail; . "$1/gauntlet-lock.sh"; . "$1/gauntlet-pass.sh"; gauntlet_full sim; echo "rc=$?"' _ "$LIB/scripts/_lib" 2>&1) || true
+left=$(find "$D/tmp" -name 'gauntlet-failing.*' | wc -l | tr -d ' ')
+case "$out" in
+  *"unbound variable"*) bad "a dollar sign in the library path broke the EXIT trap: $out" ;;
+  *) if [ "$left" = 0 ]; then ok "a dollar sign in the library path leaves no temp file and no trap error"; else bad "temp file left ($left): $out"; fi ;;
+esac
+
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

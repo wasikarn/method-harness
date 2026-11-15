@@ -9,6 +9,10 @@
 # Source gauntlet-lock.sh first. Env: GAUNTLET_PASS_DIR (default $HOME/.cache/mh/gauntlet-pass);
 # GAUNTLET_PASS_CACHE=0 neither reads nor writes the cache (forces a run). Bash 3.2.
 
+# tmp_delete, with python3 captured now (GH #729): gauntlet_full removes its failing-list temp file with it.
+# shellcheck source=tmp-delete.sh
+. "$(dirname "${BASH_SOURCE[0]}")/tmp-delete.sh"
+
 gauntlet_pass_dir() { printf '%s' "${GAUNTLET_PASS_DIR:-$HOME/.cache/mh/gauntlet-pass}"; }
 
 # gauntlet_pass_start: HEAD's tree when the cwd is the top of a clean checkout, else nothing. A copy that
@@ -66,8 +70,13 @@ gauntlet_time_row() {
   [ -z "$2" ] || tree="\"$2\""
   [ -z "${7-}" ] || timeout="\"$7\""
   # GH #158: the failing test files of a red run, names only. Anything but file-name characters (so no quote,
-  # backslash or shell character can reach the JSON) or more than 300 characters is dropped, never escaped.
-  if [[ "${8-}" =~ ^[A-Za-z0-9_./\ -]+$ && ${#8} -le 300 ]]; then failing="\"$8\""; fi
+  # backslash or shell character can reach the JSON) is dropped, never escaped. A list over 300 characters is cut
+  # at a name boundary and ends in " ...": a regression that breaks many files is the case this field is for.
+  if [[ "${8-}" =~ ^[A-Za-z0-9_./\ -]+$ ]]; then
+    local names=$8
+    if [ "${#names}" -gt 300 ]; then names=${names:0:296}; names="${names% *} ..."; fi
+    failing="\"$names\""
+  fi
   mkdir -p "$(dirname "$log")" && printf '{"time":"%s","who":"%s","tree":%s,"cached":%s,"gauntlet_lock_wait":%s,"run_secs":%s,"rc":%s,"merge_lock_wait":%s,"load_wait":%s,"round":%s,"timeout":%s,"failing":%s}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$tree" "$3" "$(gauntlet_time_num "$4")" "$(gauntlet_time_num "$5")" \
     "$(gauntlet_time_num "$6")" "$(gauntlet_time_num "${GAUNTLET_TIME_MERGE_LOCK_WAIT-}")" \
@@ -101,7 +110,8 @@ gauntlet_full() {
     gauntlet_lock_acquire
     t1=$SECONDS
     # The failing-list temp file goes in the same trap, so a run stopped by INT/TERM/HUP (exit 130) leaves none.
-    trap 'gauntlet_lock_release; [ -z "$ff" ] || python3 "'"$(dirname "${BASH_SOURCE[0]}")"'/tmp_delete.py" "$ff" || echo "'"$who"': could not delete $ff" >&2' EXIT
+    # Single quotes only: nothing is spliced into the trap text, so a `$` or quote in a path cannot break it.
+    trap 'gauntlet_lock_release; [ -z "$ff" ] || tmp_delete "$ff" || echo "$who: could not delete $ff" >&2' EXIT
     trap 'exit 130' INT TERM HUP
     # GH #814: these callers run in the background with no terminal, so progress is on unless the caller set it.
     rc=0

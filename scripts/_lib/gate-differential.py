@@ -156,6 +156,27 @@ def show(text):
     return text.replace(TAG, " ", 2).lstrip() if text.startswith(TAG) else text
 
 
+def redact_case(text, patterns, home):
+    """redact(show(text)) for a sample line. A tagged case is redacted per string value BEFORE it is JSON-encoded:
+    encoding turns a newline into backslash-n, which puts a word character in front of a token that starts its own
+    line and defeats the word boundary of the secret patterns (GH #958 deep-audit)."""
+    name, ti = case_tool(text)
+    if name == "Bash" and ti == {"command": text}:  # a plain command (or a malformed tagged one)
+        return redact(show(text), patterns, home)
+
+    def walk(v):
+        if isinstance(v, str):
+            for p in patterns:
+                v = p.sub("[REDACTED]", v)
+            return v
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        return v
+    return redact(name + " " + json.dumps(walk(ti), sort_keys=True), [], home)
+
+
 def tool_counts(cases, gate):
     if gate == "secret-scan":  # its pool is Write/Edit text, not commands
         return {"Write/Edit": len(cases)} if cases else {}
@@ -897,7 +918,7 @@ def main():
         print("  runner: bash (%s%s)" % (why, "; before that, " + counts if fork_started else ""))
     # A fork-only diff is how a gap in the wrapper's fast-path token list shows: name the first few.
     for t in dropped[:SAMPLES]:
-        print("      - " + redact(show(t), patterns, real_home))
+        print("      - " + redact_case(t, patterns, real_home))
     if cache:
         print("  cache: %d hits, %d stored, %d not storable (timeouts and time-limit verdicts)%s" % (
             cache.hits, cache.stored, cache.skipped, ", %d unreadable rows ignored" % cache.bad if cache.bad else "") +
@@ -913,12 +934,12 @@ def main():
     for name, texts in sorted(classes.items(), key=lambda kv: -len(kv[1])):
         print("  [%d] %s" % (len(texts), name))
         for t in texts[:SAMPLES]:
-            print("      - " + redact(show(t), patterns, real_home))
+            print("      - " + redact_case(t, patterns, real_home))
     if slower:
         print("  slower: %d (new time over %g%% of the %s s deadline, or %gx the old and %g s or more; re-run once)"
               % (len(slower), NEAR * 100, format(deadline, "g") if deadline else "-", SLOWER_RATIO, SLOWER_MIN_SECS))
         for t, os_, ns in sorted(slower, key=lambda x: -x[2])[:SAMPLES]:
-            print("      - %s (old %.3f s, new %.3f s)" % (redact(show(t), patterns, real_home), os_, ns))
+            print("      - %s (old %.3f s, new %.3f s)" % (redact_case(t, patterns, real_home), os_, ns))
     return 1 if classes or slower else 0
 
 

@@ -470,8 +470,29 @@ else bad "300-character row: $(cat "$F/time.jsonl" 2>&1)"; fi
 setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
 STUB_GAUNTLET_FAIL=1 STUB_FAILING="${long300}a" run
 refuses "red gauntlet with a 301-character list" "the gauntlet failed on"
-if [ "$(trow '.failing')" = null ]; then ok "a 301-character failing list is dropped"
+if [ "$(trow '.failing | (length <= 300) and endswith(" ...") and startswith("aaaa")')" = true ]; then ok "a failing list over 300 characters is cut to 300 and ends in ' ...', not dropped"
 else bad "301-character row: $(cat "$F/time.jsonl" 2>&1)"; fi
+# Cut at a name boundary: many 40-character names keep whole names only.
+names=$(for i in 1 2 3 4 5 6 7 8 9 10; do printf 'tests/hooks/test-gates-name-%02d-long.sh ' "$i"; done)
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="${names% }" run
+refuses "red gauntlet with many failing files" "the gauntlet failed on"
+if [ "$(trow '.failing | (length <= 300) and endswith(".sh ...") and startswith("tests/hooks/test-gates-name-01-long.sh tests/")')" = true ]; then ok "a long list keeps whole names from the front and ends in ' ...'"
+else bad "many-files row: $(cat "$F/time.jsonl" 2>&1)"; fi
+# GH #158 audit: the temp file the run hands to run-gauntlet.sh is gone after a red run and after a green one.
+mkdir -p "$F/tmp-red"
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+mkdir -p "$F/tmp"
+TMPDIR="$F/tmp" STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/a.sh" run
+refuses "red gauntlet leaving no temp file" "the gauntlet failed on"
+if [ "$(find "$F/tmp" -name 'gauntlet-failing.*' | wc -l | tr -d ' ')" = 0 ]; then ok "a red run leaves no failing-list temp file"
+else bad "red run left: $(ls -A "$F/tmp")"; fi
+setup
+mkdir -p "$F/tmp"
+TMPDIR="$F/tmp" STUB_STALE=1 run
+merges "green run leaving no temp file"
+if [ "$(find "$F/tmp" -name 'gauntlet-failing.*' | wc -l | tr -d ' ')" = 0 ]; then ok "a green run leaves no failing-list temp file"
+else bad "green run left: $(ls -A "$F/tmp")"; fi
 setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
 mkdir -p "$F/pass"; date >"$F/pass/$(git --git-dir="$F/origin.git" rev-parse "$(remote_tip feat/x)^{tree}")"
 run
