@@ -99,12 +99,17 @@ descendant of the other's, or they name the same file — dispatch them sequenti
 trusting a glance across the wave.
 
 Several reviewers on one change (parallel): each is read-only, role `validator`, and returns the
-validator shape above (a clean result still cites one checkable fact in `checked[]`). One fixer owns
-the writes: the original dispatched builder per Rule 13, or, when no builder was dispatched, one fixer
-the dispatcher names. It gets every reviewer's `findings[]` merged verbatim, and its diff gets a
-fresh-context validator. Run the security reviewer after the fixer, on the cumulative
-`git diff <base-sha>..HEAD` (builder plus fixer), so it reviews what ships. If its findings send the
-fixer back, re-run security on the new patch; Rule 13's 3 rounds count across both loops.
+validator shape above (a clean result still cites one checkable fact in `checked[]`). An agent with its
+own output format keeps it, mapped to those fields as for `mh:plan-reviewer` above, or is not used in
+this role. One fixer owns the writes: the original dispatched builder per Rule 13, or, when no builder
+was dispatched, one fixer the dispatcher names. It gets every reviewer's `findings[]` merged verbatim,
+and its diff gets a fresh-context validator. Run a security reviewer last, whether or not a fixer ran:
+a general-purpose `Agent`, role `validator`, with a security brief (mh has no security agent). It reviews
+the cumulative diff (builder plus fixer), so it sees what ships: `git diff <base-sha>..HEAD` in the
+isolated-checkout pilot below; in a shared tree (staged, not committed) `git diff <base-sha>` with the HEAD
+recorded before the builder started, plus any new file from `git status`. If its findings send the fixer
+back, re-run security and the fresh-context validator on the new patch; Rule 13's 3 rounds count across
+both loops.
 (Source for the comment-then-one-fixer point only: Levi Strauss, GitHub Universe 2026,
 youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents now comment, one helper fixes.)
 
