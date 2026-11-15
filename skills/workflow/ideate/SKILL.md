@@ -78,8 +78,9 @@ one sequential Agent call (`subagent_type: mh:ideate-critic`) with the envelope 
 `agents/ideate-critic.md`; its JSON reply carries every field the output shape renders,
 including the three deepened branches, so Phase 3 is skipped. Score on the host and run Phase 3
 instead only when the user asks for host scoring ("host scoring", "no critic"). The critic is
-pinned to Sonnet (`agents/ideate-critic.md`), so scoring and deepening no longer run on a stronger
-host model: fresh context cuts anchoring, and its output is advisory evidence, not ground truth. Done when: every idea has three scores, a cluster, and a trap or none.
+pinned to Opus (`agents/ideate-critic.md`): fresh context cuts anchoring, and under the default
+Sonnet main session it also scores on a different model than the one that generated the ideas. Its
+output is advisory evidence, not ground truth. Done when: every idea has three scores, a cluster, and a trap or none.
 
 ## Phase 3: Deepen (opt-in host path)
 
