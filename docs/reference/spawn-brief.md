@@ -49,6 +49,9 @@ field. `scope_ok` fails on either an unexpected file or an owned file the diff n
 Scope the validator had no access to goes on one `not_checked:` prose line outside the JSON (the
 `mh:plan-reviewer` `not_reviewed` pattern, which that agent keeps in its own output block), never inside the JSON object; where a brief demands JSON only (a schema-bound checker such as `mh:deep-audit`'s), name it in a `checked[]` claim instead. A Done-when assertion it could not
 verify is never listed there: that is `pass: false` or `NEEDS-DECISION`.
+Several reviewers on one change (parallel): each is read-only and returns findings only, with no edit. One fixer
+owns the writes, so parallel writers never conflict. Run a security reviewer last, so it sees every other
+reviewer's fix. (Levi Strauss's 17-agent SDLC: parallel writers hit merge conflicts; comments plus one fixer solved it.)
 Dispatching `mh:plan-reviewer` specifically: it has no calling skill of its own to embed this in
 as a mandatory step, so the dispatcher must remember it here — pipe
 `{"findings": [{"severity": ...}, ...], "top_blockers_count": <int>, "verdict": "..."}` through
