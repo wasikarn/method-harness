@@ -284,5 +284,7 @@ else
   stray_procs_report  # before the lists: the last line stays the failing: list (GH #387)
   /usr/bin/grep '^failed-at:' "$LOG/tests" >&2
   /usr/bin/grep '^failing:' "$LOG/tests" >&2
+  # GH #158: the same line for gauntlet_full's timing row. No match is fine: a layer other than tests failed.
+  [ -z "${GAUNTLET_FAILING_FILE:-}" ] || /usr/bin/grep '^failing:' "$LOG/tests" >"$GAUNTLET_FAILING_FILE" || :
 fi
 exit "$fail"

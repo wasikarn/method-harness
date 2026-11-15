@@ -46,7 +46,7 @@ gauntlet_pass_record() {
 # gauntlet_time_num <value>: the value when it is a whole number with no leading zero, else null (JSON).
 gauntlet_time_num() { if [[ "${1-}" =~ ^(0|[1-9][0-9]*)$ ]]; then printf '%s' "$1"; else printf null; fi; }
 
-# gauntlet_time_row <who> <tree> <cached> <gauntlet lock wait> <run secs> <rc> [<timeout>]: append one
+# gauntlet_time_row <who> <tree> <cached> <gauntlet lock wait> <run secs> <rc> [<timeout> [<failing>]]: append one
 # JSON row to GAUNTLET_TIME_LOG (default $HOME/.cache/mh/gauntlet-time.jsonl), so a merge's time splits
 # into merge-lock wait, load wait, gauntlet-lock wait and the run. merge-pr.sh sets the plain shell vars
 # GAUNTLET_TIME_MERGE_LOCK_WAIT, GAUNTLET_TIME_LOAD_WAIT and GAUNTLET_TIME_ROUND (null when unset, as on a
@@ -55,7 +55,7 @@ gauntlet_time_num() { if [[ "${1-}" =~ ^(0|[1-9][0-9]*)$ ]]; then printf '%s' "$
 # prints a note and writes nothing; returns 0 either way.
 gauntlet_time_row() {
   # ${HOME:+...}: no HOME under the callers' set -u gives an empty path (the note below), not an abort.
-  local log="${GAUNTLET_TIME_LOG:-${HOME:+$HOME/.cache/mh/gauntlet-time.jsonl}}" tree=null timeout=null
+  local log="${GAUNTLET_TIME_LOG:-${HOME:+$HOME/.cache/mh/gauntlet-time.jsonl}}" tree=null timeout=null failing=null
   # A relative path would land in the checkout the gauntlet ran on, and merge-pr.sh refuses a changed one.
   # shortcut: an absolute path inside the checkout is not caught, upgrade if a caller ever sets the log
   # under a checkout (refuse a path under `git rev-parse --show-toplevel`).
@@ -65,10 +65,13 @@ gauntlet_time_row() {
   esac
   [ -z "$2" ] || tree="\"$2\""
   [ -z "${7-}" ] || timeout="\"$7\""
-  mkdir -p "$(dirname "$log")" && printf '{"time":"%s","who":"%s","tree":%s,"cached":%s,"gauntlet_lock_wait":%s,"run_secs":%s,"rc":%s,"merge_lock_wait":%s,"load_wait":%s,"round":%s,"timeout":%s}\n' \
+  # GH #158: the failing test files of a red run, names only. Anything but file-name characters (so no quote,
+  # backslash or shell character can reach the JSON) or more than 300 characters is dropped, never escaped.
+  if [[ "${8-}" =~ ^[A-Za-z0-9_./\ -]+$ && ${#8} -le 300 ]]; then failing="\"$8\""; fi
+  mkdir -p "$(dirname "$log")" && printf '{"time":"%s","who":"%s","tree":%s,"cached":%s,"gauntlet_lock_wait":%s,"run_secs":%s,"rc":%s,"merge_lock_wait":%s,"load_wait":%s,"round":%s,"timeout":%s,"failing":%s}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$tree" "$3" "$(gauntlet_time_num "$4")" "$(gauntlet_time_num "$5")" \
     "$(gauntlet_time_num "$6")" "$(gauntlet_time_num "${GAUNTLET_TIME_MERGE_LOCK_WAIT-}")" \
-    "$(gauntlet_time_num "${GAUNTLET_TIME_LOAD_WAIT-}")" "$(gauntlet_time_num "${GAUNTLET_TIME_ROUND-}")" "$timeout" >>"$log" ||
+    "$(gauntlet_time_num "${GAUNTLET_TIME_LOAD_WAIT-}")" "$(gauntlet_time_num "${GAUNTLET_TIME_ROUND-}")" "$timeout" "$failing" >>"$log" ||
     echo "$1: could not append the timing row to $log" >&2
   return 0
 }
@@ -100,8 +103,16 @@ gauntlet_full() {
     trap 'exit 130' INT TERM HUP
     # GH #814: these callers run in the background with no terminal, so progress is on unless the caller set it.
     rc=0
-    GAUNTLET_PROGRESS="${GAUNTLET_PROGRESS:-1}" bash "$(git rev-parse --show-toplevel)/scripts/run-gauntlet.sh" >&2 || rc=$?
-    gauntlet_time_row "$who" "$tree" false "$((t1 - t0))" "$((SECONDS - t1))" "$rc"
+    # GH #158: run-gauntlet.sh writes its failing: line here, so the timing row can name the failing files
+    # after the merge lane's worktree and log are gone.
+    ff=$(mktemp "${TMPDIR:-/tmp}/gauntlet-failing.XXXXXX") || ff=
+    GAUNTLET_FAILING_FILE="$ff" GAUNTLET_PROGRESS="${GAUNTLET_PROGRESS:-1}" bash "$(git rev-parse --show-toplevel)/scripts/run-gauntlet.sh" >&2 || rc=$?
+    failing=
+    if [ -n "$ff" ]; then
+      [ "$rc" = 0 ] || failing=$(sed -n 's/^failing: *//p' "$ff" | tail -n 1)
+      python3 "$(dirname "${BASH_SOURCE[0]}")/tmp_delete.py" "$ff" || echo "$who: could not delete $ff" >&2
+    fi
+    gauntlet_time_row "$who" "$tree" false "$((t1 - t0))" "$((SECONDS - t1))" "$rc" "" "$failing"
     exit "$rc"
   )
 }

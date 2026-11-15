@@ -105,5 +105,13 @@ case "$out" in
   *) bad "no HOME: $out" ;;
 esac
 
+# GH #158: a red run hands gauntlet_full its failing: line through GAUNTLET_FAILING_FILE, inside the failure
+# branch and after the console lists; a green run writes nothing there. (Text wiring: the real gauntlet cannot
+# run here.)
+case "$body" in
+  *"  /usr/bin/grep '^failing:' \"\$LOG/tests\" >&2${NL}"*"GAUNTLET_FAILING_FILE"*"\"\$LOG/tests\" >\"\$GAUNTLET_FAILING_FILE\""*"${NL}fi${NL}exit \"\$fail\"") ok "run-gauntlet.sh writes its failing: line to GAUNTLET_FAILING_FILE only in the failure branch" ;;
+  *) bad "run-gauntlet.sh does not write GAUNTLET_FAILING_FILE at the end of its failure branch" ;;
+esac
+
 echo "self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
