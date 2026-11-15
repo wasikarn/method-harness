@@ -39,8 +39,8 @@ Bash command shape (GH #994): Claude Code raises a permission prompt for how a c
 only for what it does. When a brief expects shell work, tell the agent to write the final form: run
 `git -C <dir> ...` as its own command (not `cd <dir> && git ...`), start a command with the program (no
 `VAR=value` first), keep `$(...)` and `${...}` out of a command that would otherwise be plain, and run
-steps as separate commands instead of chaining them. This changes no gate: every deny and every first
-ask stays.
+steps as separate commands instead of chaining them. This changes no gate: every deny and every ask
+still applies.
 
 Validator/re-validator: return `{pass, findings[], checked[], scope_ok, unexpected_files[]}` and
 nothing else (bar the `not_checked:` line below); `checked[]` holds ≥1 `{claim, evidence}` even on a clean pass — this is where
