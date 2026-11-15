@@ -97,21 +97,20 @@ gauntlet_full() {
     # shellcheck disable=SC2034 # read by gauntlet_lock_release
     GAUNTLET_LOCK_HELD=0
     t0=$SECONDS
+    ff=
     gauntlet_lock_acquire
     t1=$SECONDS
-    trap gauntlet_lock_release EXIT
+    # The failing-list temp file goes in the same trap, so a run stopped by INT/TERM/HUP (exit 130) leaves none.
+    trap 'gauntlet_lock_release; [ -z "$ff" ] || python3 "'"$(dirname "${BASH_SOURCE[0]}")"'/tmp_delete.py" "$ff" || echo "'"$who"': could not delete $ff" >&2' EXIT
     trap 'exit 130' INT TERM HUP
     # GH #814: these callers run in the background with no terminal, so progress is on unless the caller set it.
     rc=0
     # GH #158: run-gauntlet.sh writes its failing: line here, so the timing row can name the failing files
     # after the merge lane's worktree and log are gone.
-    ff=$(mktemp "${TMPDIR:-/tmp}/gauntlet-failing.XXXXXX") || ff=
+    ff=$(mktemp "${TMPDIR:-/tmp}/gauntlet-failing.XXXXXX") || { ff=; echo "$who: no temp file for the failing list; the timing row's failing stays null." >&2; }
     GAUNTLET_FAILING_FILE="$ff" GAUNTLET_PROGRESS="${GAUNTLET_PROGRESS:-1}" bash "$(git rev-parse --show-toplevel)/scripts/run-gauntlet.sh" >&2 || rc=$?
     failing=
-    if [ -n "$ff" ]; then
-      [ "$rc" = 0 ] || failing=$(sed -n 's/^failing: *//p' "$ff" | tail -n 1)
-      python3 "$(dirname "${BASH_SOURCE[0]}")/tmp_delete.py" "$ff" || echo "$who: could not delete $ff" >&2
-    fi
+    if [ -n "$ff" ] && [ "$rc" != 0 ]; then failing=$(sed -n 's/^failing: *//p' "$ff" | tail -n 1); fi
     gauntlet_time_row "$who" "$tree" false "$((t1 - t0))" "$((SECONDS - t1))" "$rc" "" "$failing"
     exit "$rc"
   )
