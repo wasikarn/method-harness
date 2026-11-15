@@ -172,9 +172,11 @@ def redact_case(text, patterns, home):
         if isinstance(v, list):
             return [walk(x) for x in v]
         if isinstance(v, dict):
-            return {k: walk(x) for k, x in v.items()}
+            return {walk(k): walk(x) for k, x in v.items()}  # a token can be a key too
         return v
-    return redact(name + " " + json.dumps(walk(ti), sort_keys=True), [], home)
+    # The patterns run once more over the encoded text: a belt for anything the walk did not reach. A secret split
+    # across two values is still missed, as it was before the walk.
+    return redact(name + " " + json.dumps(walk(ti), sort_keys=True), patterns, home)
 
 
 def tool_counts(cases, gate):

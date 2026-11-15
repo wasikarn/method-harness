@@ -123,11 +123,20 @@ cp -R "$ROOT/scripts/_lib/." "$LIB/scripts/_lib/"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$LIB/scripts/run-gauntlet.sh"
 git -C "$LIB" init -q . && git -C "$LIB" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m a
 out=$(cd "$LIB" && env TMPDIR="$D/tmp" HOME="$D/home" GAUNTLET_TIME_LOG="$D/time.jsonl" GAUNTLET_PASS_DIR="$D/pass" GAUNTLET_PASS_CACHE=0 GAUNTLET_LOCK_DIR="$D/lock" \
-  bash -c 'set -euo pipefail; . "$1/gauntlet-lock.sh"; . "$1/gauntlet-pass.sh"; gauntlet_full sim; echo "rc=$?"' _ "$LIB/scripts/_lib" 2>&1) || true
+  bash -c 'set -euo pipefail; . "$1/gauntlet-lock.sh"; . "$1/gauntlet-pass.sh"; gauntlet_full sim; echo "rc=$?"' _ "$LIB/scripts/_lib" 2>&1) || true  # the stub gauntlet is red (rc 1) on purpose; the output and the row are checked below
 left=$(find "$D/tmp" -name 'gauntlet-failing.*' | wc -l | tr -d ' ')
+row=$(jq -c '[.rc, .failing]' "$D/time.jsonl" 2>/dev/null)  # the run really got past mktemp and the gauntlet: a row exists
 case "$out" in
   *"unbound variable"*) bad "a dollar sign in the library path broke the EXIT trap: $out" ;;
-  *) if [ "$left" = 0 ]; then ok "a dollar sign in the library path leaves no temp file and no trap error"; else bad "temp file left ($left): $out"; fi ;;
+  *) if [ "$left" = 0 ] && [ "$row" = '[1,null]' ]; then ok "a dollar sign in the library path leaves no temp file and no trap error, and the run wrote its row"; else bad "temp file left ($left) or no row ($row): $out"; fi ;;
+esac
+# tmp-delete.sh is sourced by gauntlet-pass.sh under the callers' set -euo pipefail: a PATH without python3 must not
+# end the caller there (the :? message at call time is how a missing python3 is reported).
+mkdir -p "$D/nopy"; ln -s "$(command -v dirname)" "$D/nopy/dirname"  # dirname, cd and pwd are all the file needs besides python3
+out=$(env PATH="$D/nopy" /bin/bash -c 'set -euo pipefail; . "$1/tmp-delete.sh"; echo sourced' _ "$ROOT/scripts/_lib" 2>&1)
+case "$out" in
+  *sourced*) ok "sourcing tmp-delete.sh without python3 on PATH does not abort the caller" ;;
+  *) bad "tmp-delete.sh aborted a set -e caller without python3: $out" ;;
 esac
 
 echo "self-test: $pass passed, $fail failed"

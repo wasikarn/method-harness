@@ -10,7 +10,7 @@
 # GAUNTLET_PASS_CACHE=0 neither reads nor writes the cache (forces a run). Bash 3.2.
 
 # tmp_delete, with python3 captured now (GH #729): gauntlet_full removes its failing-list temp file with it.
-# shellcheck source=tmp-delete.sh
+# shellcheck source-path=SCRIPTDIR source=tmp-delete.sh
 . "$(dirname "${BASH_SOURCE[0]}")/tmp-delete.sh"
 
 gauntlet_pass_dir() { printf '%s' "${GAUNTLET_PASS_DIR:-$HOME/.cache/mh/gauntlet-pass}"; }
@@ -73,8 +73,13 @@ gauntlet_time_row() {
   # backslash or shell character can reach the JSON) is dropped, never escaped. A list over 300 characters is cut
   # at a name boundary and ends in " ...": a regression that breaks many files is the case this field is for.
   if [[ "${8-}" =~ ^[A-Za-z0-9_./\ -]+$ ]]; then
-    local names=$8
-    if [ "${#names}" -gt 300 ]; then names=${names:0:296}; names="${names% *} ..."; fi
+    local names=$8 cut
+    if [ "${#names}" -gt 300 ]; then
+      # 297 characters, so a cut that falls right after a whole name (the 297th is the space) keeps that name.
+      cut=${names:0:297}; names=${cut% *}
+      [ "$names" != "$cut" ] || names=${cut:0:296}  # one name with no space in it: cut it mid-name
+      names="$names ..."
+    fi
     failing="\"$names\""
   fi
   mkdir -p "$(dirname "$log")" && printf '{"time":"%s","who":"%s","tree":%s,"cached":%s,"gauntlet_lock_wait":%s,"run_secs":%s,"rc":%s,"merge_lock_wait":%s,"load_wait":%s,"round":%s,"timeout":%s,"failing":%s}\n' \

@@ -126,6 +126,7 @@ n=0; [ ! -f "$STUB_DIR/gauntlet.n" ] || n=$(cat "$STUB_DIR/gauntlet.n"); n=$((n 
   if [ -d "$MERGE_PR_LOCK_DIR" ]; then echo "mergelock=held"; else echo "mergelock=free"; fi
   echo "shard=${GAUNTLET_SHARD-}"
   echo "progress=${GAUNTLET_PROGRESS-unset}"
+  echo "failfile=${GAUNTLET_FAILING_FILE-}"
 } >>"$STUB_DIR/gauntlet.log"
 if [ -n "${STUB_GAUNTLET_FAIL:-}" ]; then
   echo "gauntlet: red" >&2
@@ -479,14 +480,22 @@ STUB_GAUNTLET_FAIL=1 STUB_FAILING="${names% }" run
 refuses "red gauntlet with many failing files" "the gauntlet failed on"
 if [ "$(trow '.failing | (length <= 300) and endswith(".sh ...") and startswith("tests/hooks/test-gates-name-01-long.sh tests/")')" = true ]; then ok "a long list keeps whole names from the front and ends in ' ...'"
 else bad "many-files row: $(cat "$F/time.jsonl" 2>&1)"; fi
-# GH #158 audit: the temp file the run hands to run-gauntlet.sh is gone after a red run and after a green one.
-mkdir -p "$F/tmp-red"
+# A cut that lands exactly after a whole name keeps that name: nine 32-character names fill 296 characters.
+n32=$(printf 'a%.0s' $(seq 32)); nine=$(for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf '%s ' "$n32"; done)
+setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
+STUB_GAUNTLET_FAIL=1 STUB_FAILING="${nine% }" run
+refuses "red gauntlet cut right after a name" "the gauntlet failed on"
+if [ "$(trow '.failing | (length == 300) and (split(" ") | length == 10) and endswith(" ...")')" = true ]; then ok "a cut that lands right after a whole name keeps all nine names"
+else bad "boundary row: $(cat "$F/time.jsonl" 2>&1)"; fi
+# GH #158 audit: the temp file the run hands to run-gauntlet.sh is gone after a red run and after a green one
+# (these guard the deletion: removing tmp_delete from the EXIT trap fails them; they were not red on the old trap).
 setup 1.1.99; on feat/x "self-bump" set_ver 1.1.100
 mkdir -p "$F/tmp"
 TMPDIR="$F/tmp" STUB_GAUNTLET_FAIL=1 STUB_FAILING="tests/a.sh" run
 refuses "red gauntlet leaving no temp file" "the gauntlet failed on"
-if [ "$(find "$F/tmp" -name 'gauntlet-failing.*' | wc -l | tr -d ' ')" = 0 ]; then ok "a red run leaves no failing-list temp file"
-else bad "red run left: $(ls -A "$F/tmp")"; fi
+# The run handed run-gauntlet.sh a file under TMPDIR (so "none left" below is not vacuous), and it is gone after.
+if /usr/bin/grep -q "^failfile=$F/tmp/gauntlet-failing\." "$F/gauntlet.log" && [ "$(find "$F/tmp" -name 'gauntlet-failing.*' | wc -l | tr -d ' ')" = 0 ]; then ok "a red run hands the gauntlet a temp file under TMPDIR and leaves none"
+else bad "red run: log $(/usr/bin/grep failfile "$F/gauntlet.log"); left: $(ls -A "$F/tmp")"; fi
 setup
 mkdir -p "$F/tmp"
 TMPDIR="$F/tmp" STUB_STALE=1 run

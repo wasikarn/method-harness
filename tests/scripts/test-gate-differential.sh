@@ -1171,6 +1171,14 @@ case "$out" in
   *'[REDACTED]'*) ok "a Monitor token on its own line is redacted in the sample" ;;
   *) bad "no redacted Monitor sample shown: $out" ;;
 esac
+# ...also when it is a dict KEY (an env-style map), not a value.
+printf '\037Monitor\037{"command":"env","env":{"%s":"1"}}\n' "$gh_tok" > "$T/mon-key.txt"
+out=$(bash "$SCRIPT" --cases "$T/mon-key.txt" --runner bash "$T/same" "$T/denyall" irrecoverable 2>&1)
+case "$out" in
+  *Zq8Lm3Xv*) bad "a token used as a JSON key leaked into a sample: $out" ;;
+  *'[REDACTED]'*) ok "a token used as a JSON key is redacted in the sample" ;;
+  *) bad "no redacted sample for a token in a key: $out" ;;
+esac
 out=$(bash "$SCRIPT" -h 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && /usr/bin/grep -q 'GATE_REPLAY_FAST_SAMPLE changes the sample size' <<<"$out" && ! /usr/bin/grep -q '^Exit:' <<<"$out"; then
   ok "-h prints the whole header up to the Exit line, not a cut"
