@@ -34,9 +34,9 @@ reference), and a live probe showed it beating `modelSettings.<model>.effortLeve
 `CLAUDE_CODE_EFFORT_LEVEL` outranks it ("overriding the session level but not the environment
 variable"), and `maxEffortLevel` or an org cap still clamps it.
 Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded review or
-mutation (no shipped agent is either since 2026-11-12; the fleet's one `sonnet` agent,
-`ideate-critic`, is the exception: it judges at `effort: high`, and its non-Opus pin keeps it
-independent by model from an Opus main session, see below); `effort: high` for judgment and adversarial surfaces, `medium`/`low`
+mutation (no shipped agent is either: every agent pins `opus`, `ideate-critic` too since
+2026-11-15, GH #886: it grades, and under the default Sonnet main session an Opus pin keeps it
+independent by model, see below); `effort: high` for judgment and adversarial surfaces, `medium`/`low`
 for mechanical work, bounded review or design trade-offs (`backend-architect` and `requirement-analyst` are `medium`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
 pins: `requirement-analyst` (readiness verdict), `plan-reviewer` and `blind-spot-hunter`
 (adversarial), `backend-architect` (design trade-offs). Never pin `fable`
@@ -47,7 +47,10 @@ check 54 WARNs). Pinning a fresh-context verifier to a different model than the 
 makes it independent by model as well as by context, a stronger form of item 4. A family alias
 gives no such independence when the main session is in that family: `model: opus` runs the main
 session's exact Opus (sub-agents reference, "Choose a model"), so `plan-reviewer` and
-`blind-spot-hunter` dispatched from an Opus main session run the same model. Evidence:
+`blind-spot-hunter` dispatched from an Opus main session run the same model. The independence
+argument assumes the operator's default main session, Sonnet (confirmed 2026-11-04): there every
+Opus pin is independent by model; from an Opus main session none is, and a Sonnet pin on a grader
+would lose it under the default Sonnet main. Evidence:
 `docs/research/claude-code-codex-models-efforts-2026-09-07.md`,
 `docs/research/auto-model-auto-effort-2026-09-26.md`.
 

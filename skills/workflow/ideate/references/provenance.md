@@ -58,8 +58,9 @@ Source: upstream `/tmp/adhd-repo/skills/adhd/SKILL.md:84-112` and
   path stays as an opt-in ("host scoring", "no critic"). Routing never infers stakes from prompt wording
   like "critical"/"production"; that lexical-heuristic pattern is exactly what `harness-audit`
   already flags as toothless elsewhere.
-- Trade accepted (model): `ideate-critic` is pinned `model: sonnet`, so scoring and deepening on
-  every run now use Sonnet even when the session model is stronger. Generators still inherit.
+- Trade accepted (model): `ideate-critic` is pinned `model: opus` (it was `sonnet` until 2026-11-15,
+  GH #886): scoring and deepening on every run cost one Opus call, and under the default Sonnet
+  main session the critic grades on a different model than the generators, which still inherit.
 - Trade accepted: on the critic path the three deepen branches run inside one critic context,
   not as three isolated Agent calls, so a deepened idea can anchor on the one deepened before
   it, and `deepened[]` folds the load-bearing risk and first step into the sketch prose instead of

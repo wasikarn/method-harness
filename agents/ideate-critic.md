@@ -3,7 +3,7 @@ name: ideate-critic
 description: "Fresh-context critic: scores, clusters, and deepens mh:ideate ideas as JSON. Use for ideate Phase 2 or when the user says 'critic'; not code/security review."
 bucket: analysis
 tools: Bash
-model: sonnet
+model: opus
 effort: high
 color: purple
 ---
