@@ -2,14 +2,18 @@
 """Self-check for the dangling-link did-you-mean suggestion. Run directly: python3 test_memory_lint.py"""
 import argparse
 import contextlib
+import copy
 import importlib.util
 import io
 import json
 import os
+import random
+import re
 import shutil
 import subprocess
 import tempfile
 import time
+import types
 
 # A git hook exports GIT_DIR; the subprocess `git init` below would then target the real repo
 # (GH #234, tests/scripts/test-git-env-unset-lint.sh).
@@ -910,6 +914,151 @@ def test_class_c_never_rewrites_a_link_to_point_at_its_own_file():
             f.write("- [other_ledger](other_ledger.md) — l\n")
         plan = memory_lint.class_c_dangling_link_rewrite(memory_lint.collect_state(d))
         assert [(e["file"], e["new"]) for e in plan] == [("proj_ledger.md", "[[other_ledger]]")], plan
+
+
+# --- GH #967 item 5: plan-then-apply oracle that also sees self-links and the archived-supersedence branch ---
+# A seeded random store, then build_plan + apply_action_plan, then a check that uses neither memory-lint's link
+# parsing nor the `reason` label it puts on a plan entry: the supersedence rule is read off the index the store
+# itself holds. The old scratch oracle counted only new DANGLING pairs, so it could not see a link rewritten into a
+# self-link, or the archived-supersedence branch (which must leave the link manual).
+FUZZ_SEEDS = range(150)
+FUZZ_LEDGER = re.compile(r"(?:^|[_-])ledger(?:[_-]|$)")  # the oracle's own word rule, not memory-lint's LEDGER_WORD
+
+
+def _fuzz_links(text):
+    """-> set of link targets in a file's text outside backtick spans: [[t]], [[t|a]], [[t.md]], [x](t.md)."""
+    text = re.sub(r"`[^`]*`", "", text)
+    out = {m.group(1) for m in re.finditer(r"\[\[([^\]|#]+?)(?:\.md)?(?:[|#][^\]]*)?\]\]", text)}
+    return out | {m.group(1) for m in re.finditer(r"\]\(([^)\s]+?)\.md\)", text)}
+
+
+def _fuzz_store(d, rng):
+    live = [f"n{i}" for i in range(rng.randint(2, 5))]
+    ledgers = rng.choice([[], ["x_ledger"], ["x_ledger", "y_ledger"], ["project_external_evals_ledger"]])
+    decoy = ["reference_pledger_api"] if rng.random() < 0.4 else []  # has "ledger" inside a word: not a ledger
+    arch = [f"a{i}" for i in range(rng.randint(0, 3))]
+    stems = live + ledgers + decoy
+    pool = stems + arch + ["g0", "g1"]
+    for s in stems:
+        parts = []
+        for _ in range(rng.randint(0, 3)):
+            t = rng.choice(pool)
+            parts.append(rng.choice([f"[[{t}]]", f"[[{t}|alias]]", f"[[{t}.md]]", f"[x]({t}.md)", f"`[[{t}]]`"]))
+        _write_memory(d, s + ".md", "project", "fuzz", "see " + " ".join(parts))
+    sub = os.path.join(d, "_archive", "2026-01-01")
+    os.makedirs(sub)
+    for a in arch:
+        _write_memory(sub, a + ".md", "project", "old", "n/a")
+    lines = []
+    for s in stems:
+        if rng.random() < 0.8:
+            sup = f" — **SUPERSEDED** by [[{rng.choice(stems)}]]" if rng.random() < 0.2 else " — x"
+            lines.append(f"- [{s}]({s}.md){sup}")
+    for a in arch:
+        if rng.random() < 0.7:
+            lines.append(f"- [{a}]({a}.md) — **SUPERSEDED** by [[{rng.choice(stems)}]]")
+    with open(os.path.join(d, "MEMORY.md"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _fuzz_snapshot(d):
+    top = {}
+    for n in os.listdir(d):
+        if n.endswith(".md") and n != "MEMORY.md":
+            with open(os.path.join(d, n)) as fh:
+                top[n[:-3]] = fh.read()
+    pairs = {(f, t) for f, txt in top.items() for t in _fuzz_links(txt)}
+    return top, {p for p in pairs if p[1] not in top}, {p for p in pairs if p[0] == p[1]}
+
+
+def _fuzz_successors(d):
+    """-> {archived stem: the stem its index line says supersedes it}, read from MEMORY.md here, not by memory-lint."""
+    out = {}
+    with open(os.path.join(d, "MEMORY.md")) as fh:
+        for line in fh:
+            m = re.search(r"\]\(([^)\s]+?)\.md\).*\*\*SUPERSEDED\*\*\s*by\s*\[\[([^\]|]+)", line)
+            if m:
+                out.setdefault(m.group(1), m.group(2))
+    return out
+
+
+def _fuzz_run(seeds, lint=memory_lint, seen=None):
+    """-> violations, as strings. `seen` (a set) collects the Class C reasons and outcomes the seeds reached."""
+    bad = []
+    for seed in seeds:
+        with tempfile.TemporaryDirectory() as d:
+            _fuzz_store(d, random.Random(seed))
+            before, dangling0, self0 = _fuzz_snapshot(d)
+            succ = _fuzz_successors(d)
+            state = lint.collect_state(d)
+            plan = lint.build_plan(state)
+            plan_c = copy.deepcopy(plan["C"])  # apply must not be able to change what the plan said
+            with contextlib.redirect_stdout(io.StringIO()):
+                lint.apply_action_plan(state, plan)
+            after, dangling1, self1 = _fuzz_snapshot(d)
+            if dangling1 - dangling0:
+                bad.append(f"seed {seed}: new dangling {sorted(dangling1 - dangling0)}")
+            if self1 - self0:
+                bad.append(f"seed {seed}: new self-link {sorted(self1 - self0)}")
+            # A file that supersedes the archived file it links to keeps that link as it is: any rewrite hides it.
+            for f, a in sorted(dangling0):
+                if succ.get(a) == f and f in after and (f, a) not in dangling1:
+                    bad.append(f"seed {seed}: supersedence: the link from {f} to its archived predecessor {a} was hidden")
+            for e in plan_c:
+                f = e["file"][:-3]
+                if seen is not None:
+                    seen.add(e["reason"])
+                    seen.add("manual" if e["new"] is None else "rewrite")
+                if f not in after or f not in before:
+                    continue  # Class A moved the file
+                if e["new"] is not None:
+                    target, t = e["new"][2:-2], e["old"][2:-2]
+                    if not (FUZZ_LEDGER.search(target) or succ.get(t) == target):
+                        bad.append(f"seed {seed}: rewrite to {target}, which is neither a ledger nor {t}'s successor")
+                    if after[f].count(e["new"]) <= before[f].count(e["new"]):
+                        bad.append(f"seed {seed}: planned rewrite never applied {e}")
+                elif e["old"] not in after[f] and e["old"] in before[f]:
+                    bad.append(f"seed {seed}: a manual entry's link was changed {e}")
+    return bad
+
+
+def test_class_c_plan_then_apply_fuzz_oracle_holds_on_150_stores():
+    seen = set()
+    bad = _fuzz_run(FUZZ_SEEDS, seen=seen)
+    assert not bad, bad[:5]
+    # not vacuous: the stores reach every Class C reason and both outcomes
+    want = {"dangling-target", "archived-with-supersedence", "archived-no-supersedence",
+            "archived-supersedence-is-source", "manual", "rewrite"}
+    assert want <= seen, sorted(want - seen)
+
+
+def _fuzz_mutant(old, new):
+    """memory-lint.py with one exact line changed, run as a module of its own (the real one is untouched)."""
+    path = spec.origin
+    with open(path) as fh:
+        src = fh.read()
+    assert src.count(old) == 1, f"the mutation target changed in memory-lint.py: {old!r}"
+    mod = types.ModuleType("memory_lint_mutant")
+    mod.__file__ = path
+    exec(compile(src.replace(old, new), path, "exec"), mod.__dict__)
+    return mod
+
+
+def test_class_c_fuzz_oracle_catches_each_source_mutant():
+    mutants = [
+        ("a ledger target that ignores the source file", ' and s + ".md" != source', "", "new self-link"),
+        ("the supersedence-is-source branch removed", 'if replacement and replacement + ".md" == f:', "if False:", "supersedence:"),
+        ("the supersedence-is-source branch narrowed", 'if replacement and replacement + ".md" == f:',
+         'if replacement and replacement + ".md" == f and "ledger" in f:', "supersedence:"),
+        ("the ledger match loosened to a substring", "LEDGER_WORD.search(s)", '"ledger" in s', "neither a ledger"),
+        ("an entry marked writable though its text is absent", "writable = new_target and old in live_text[f]",
+         "writable = new_target", "never applied"),
+        ("apply rewriting a manual entry anyway", 'if not entry.get("new"):\n            continue  # manual resolution needed',
+         'if not entry.get("new"):\n            entry["new"] = "[[x_ledger]]"  # manual resolution needed', "manual entry's link was changed"),
+    ]
+    for label, old, new, signal in mutants:
+        bad = _fuzz_run(FUZZ_SEEDS, lint=_fuzz_mutant(old, new))
+        assert any(signal in b for b in bad), f"mutant survived: {label}; got {bad[:3]}"
 
 
 def test_every_test_in_this_file_is_registered_in_the_main_runner():
@@ -2489,6 +2638,8 @@ if __name__ == "__main__":
     test_class_c_ledger_fallback_matches_a_ledger_word_not_a_substring()
     test_class_c_supersedence_target_that_is_the_source_stays_manual()
     test_class_c_never_rewrites_a_link_to_point_at_its_own_file()
+    test_class_c_plan_then_apply_fuzz_oracle_holds_on_150_stores()
+    test_class_c_fuzz_oracle_catches_each_source_mutant()
     test_every_test_in_this_file_is_registered_in_the_main_runner()
     test_class_c_does_not_rewrite_a_file_class_a_archives_in_the_same_plan()
     test_class_c_does_not_use_a_supersedence_target_class_a_archives_in_the_same_plan()
