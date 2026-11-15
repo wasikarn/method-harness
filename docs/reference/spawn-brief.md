@@ -49,12 +49,6 @@ field. `scope_ok` fails on either an unexpected file or an owned file the diff n
 Scope the validator had no access to goes on one `not_checked:` prose line outside the JSON (the
 `mh:plan-reviewer` `not_reviewed` pattern, which that agent keeps in its own output block), never inside the JSON object; where a brief demands JSON only (a schema-bound checker such as `mh:deep-audit`'s), name it in a `checked[]` claim instead. A Done-when assertion it could not
 verify is never listed there: that is `pass: false` or `NEEDS-DECISION`.
-Several reviewers on one change (parallel): each is read-only and returns findings only. One fixer owns the
-writes (the original dispatched builder, per Rule 13) and its diff gets a fresh-context validator per Rule 13.
-Run a security reviewer after the fixer, on the fixer's diff, so it reviews the fixes that ship, not pre-fix
-findings. Its findings go back to the same fixer, then re-validate (Rule 13's round limit applies).
-(Source for the comment-then-one-fixer point only: Levi Strauss, GitHub Universe 2026,
-youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents now comment, one helper fixes.)
 Dispatching `mh:plan-reviewer` specifically: it has no calling skill of its own to embed this in
 as a mandatory step, so the dispatcher must remember it here — pipe
 `{"findings": [{"severity": ...}, ...], "top_blockers_count": <int>, "verdict": "..."}` through
@@ -103,6 +97,21 @@ never launched and either retry them or say so plainly in the report.
 When two leaves' FILES YOU OWN sets aren't disjoint — one owns a path that is an ancestor or
 descendant of the other's, or they name the same file — dispatch them sequentially instead of
 trusting a glance across the wave.
+
+Several reviewers on one change (parallel): each is read-only, role `validator`, and returns the
+validator shape above (a clean result still cites one checkable fact in `checked[]`). An agent with its
+own output format keeps it, mapped to those fields as for `mh:plan-reviewer` above, or is not used in
+this role. One fixer owns the writes: the original dispatched builder per Rule 13, or, when no builder
+was dispatched, one fixer the dispatcher names. It gets every reviewer's `findings[]` merged verbatim,
+and its diff gets a fresh-context validator. Run a security reviewer last, whether or not a fixer ran:
+a general-purpose `Agent`, role `validator`, with a security brief (mh has no security agent). It reviews
+the cumulative diff (builder plus fixer), so it sees what ships: `git -C <path> diff <base-sha>..HEAD` in
+the isolated-checkout pilot below (security runs there before step 4's merge, which waits for it); in a
+shared tree (staged, not committed) `git diff <base-sha>` with the HEAD recorded before the builder
+started, plus any new file from `git status`. If its findings send the fixer back, re-run security and the
+fresh-context validator on the new patch; Rule 13's 3 rounds count across both loops.
+(Source for the comment-then-one-fixer point only: Levi Strauss, GitHub Universe 2026,
+youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents now comment, one helper fixes.)
 
 ## Isolated checkout dispatch (opt-in pilot, 2026-09-28)
 
