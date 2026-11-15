@@ -51,8 +51,9 @@ Scope the validator had no access to goes on one `not_checked:` prose line outsi
 verify is never listed there: that is `pass: false` or `NEEDS-DECISION`.
 Several reviewers on one change (parallel): each is read-only and returns findings only. One fixer owns the
 writes (the original builder, per Rule 13) and its diff gets a fresh-context validator. Run a security
-reviewer after the fixer, on the fixer's diff, so it sees every change. (Source: Levi Strauss, GitHub Universe
-2026, youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents now comment, one helper fixes.)
+reviewer after the fixer, on the fixer's diff, so it reviews the fixes that ship, not pre-fix findings.
+(Source for the comment-then-one-fixer point only: Levi Strauss, GitHub Universe 2026,
+youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents now comment, one helper fixes.)
 Dispatching `mh:plan-reviewer` specifically: it has no calling skill of its own to embed this in
 as a mandatory step, so the dispatcher must remember it here — pipe
 `{"findings": [{"severity": ...}, ...], "top_blockers_count": <int>, "verdict": "..."}` through
