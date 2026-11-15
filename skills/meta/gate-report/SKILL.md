@@ -45,6 +45,9 @@ only when typed), each with its last-use date. A missing log prints `Skill usage
 Quote the script's counts as printed.
 
 - **Ask-count only, never wait-time.** Rows carry no resolution timestamp.
+- **"By rule" splits ask/deny rows by the rule id the gate logged.** `(none)` means no id. `tokenize-fail` is
+  `irrecoverable`'s fail-closed parse refusal (tokenizer, length, depth, ambiguous syntax, scan budget): the count
+  of denies that tell the model to ask the user although a simpler command would usually pass.
 - **`allow-suppressed` isn't a block.** `secret-scan.py` logs it when a suppression marker
   (`gitleaks:allow` etc.) let a match through. Keep it out of an "interruptions" total, or say so.
 - **`would_deny`/`would_ask` rows are not blocks.** They come from a gate's `SHADOW_RULES`, which

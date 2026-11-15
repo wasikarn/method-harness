@@ -2209,7 +2209,11 @@ def ask(reason, rule=None):
                                              "permissionDecision": "ask",
                                              "permissionDecisionReason": reason}}))
     _ASKED.append(reason)
-    journal(GATE_ID, d.get("tool_name"), "ask", d.get("session_id"), rule=_VIEW[0] or rule)
+    # Same tag as deny(): a rule-less confirm ask is a fail-closed parse refusal.
+    _jrule = _VIEW[0] or rule
+    if _jrule is None and "confirm with user first" in reason:
+        _jrule = "tokenize-fail"
+    journal(GATE_ID, d.get("tool_name"), "ask", d.get("session_id"), rule=_jrule)
 
 def delete_hint():
     # trash is not stock on macOS or Linux -- offer whichever CLI exists.

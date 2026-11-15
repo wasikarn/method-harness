@@ -311,6 +311,12 @@ check "over-long command: deny (rc=2) journals rule tokenize-fail" "$ok"
 payload_bash "rm -rf build" | MH_GATE_JOURNAL_PATH="$J8" bash hooks/gates/irrecoverable.sh >/dev/null 2>&1
 ok=1; [ "$(rows "$J8" deny rm-rf)" = 1 ] && [ "$(rows "$J8" deny tokenize-fail)" = 1 ] && ok=0
 check "rm -rf keeps rule rm-rf and does not add a tokenize-fail row" "$ok"
+# The one rule-less confirm ask (a raw copy past its scan budget) journals tokenize-fail too.
+_t787="$(printf 'echo a; %.0s' $(seq 1600))$(printf '(H=1); %.0s' $(seq 400))$(printf 'echo $H; %.0s' $(seq 900))F=-r; rm \$F \$G b; G=-i"
+J8A="$WORK/case8/ask.jsonl"
+payload_bash "$_t787" | MH_IRR_BUDGET_SCALE=0.1 MH_GATE_JOURNAL_PATH="$J8A" bash hooks/gates/irrecoverable.sh >/dev/null 2>&1; rc=$?
+ok=1; [ "$rc" -eq 0 ] && [ "$(rows "$J8A" ask tokenize-fail)" = 1 ] && ok=0
+check "budget-exceeded confirm ask (rc=0) journals rule tokenize-fail" "$ok"
 
 echo ""
 echo "=== $pass passed, $fail failed ==="

@@ -38,6 +38,7 @@ def main():
     skipped = 0
     sessionless = 0     # rows with no session_id: test fixtures / direct gate runs, not live hooks
     oddids = Counter()  # non-UUID session_id -> events (counted, only named in the report)
+    by_rule = Counter()  # (gate, decision, rule or "(none)") -> ask/deny events
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -84,6 +85,7 @@ def main():
             if not str(decision).startswith("would_"):
                 tools[tool_name] += n
                 total += n
+                by_rule[(gate_id, decision, str(row["rule"]) if row.get("rule") else "(none)")] += n
             else:
                 s = shadow.setdefault((gate_id, str(row.get("rule", "(unknown)"))),
                                       {"n": 0, "sessions": set(), "samples": []})
@@ -119,6 +121,10 @@ def main():
     print("is never a wait-time metric):")
     for (gate_id, decision), n in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {n:5d}  {gate_id}  {decision}")
+    print()
+    print("By rule (ask/deny rows; \"(none)\" = the gate logged no rule id):")
+    for (gate_id, decision, rule), n in sorted(by_rule.items(), key=lambda kv: -kv[1]):
+        print(f"  {n:5d}  {gate_id}  {decision}  {rule}")
     print()
     print("By tool:")
     for tool_name, n in sorted(tools.items(), key=lambda kv: -kv[1]):

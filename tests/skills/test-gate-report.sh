@@ -183,6 +183,25 @@ out_bt="$(MH_GATE_JOURNAL_PATH="$BADTYPES" python3 "$REPORT_PY" 2>&1)"; rc_bt=$?
 assert "an object row with wrong-typed fields is counted, not a crash" \
   "$([[ $rc_bt -eq 0 ]] && grep -q '2 ask/deny event' <<<"$out_bt" && echo 1 || echo 0)"
 
+# By rule: ask/deny rows are counted per gate x decision x rule; a row with no rule is "(none)";
+# would_* rows stay out (they have their own Shadow rules section); a wrong-typed rule is printed, not a crash.
+BYRULE="$TMPDIR_TEST/byrule.jsonl"
+printf '%s\n' \
+  '{"ts": "2026-10-01T09:00:00Z", "id": "gate:bash:irrecoverable", "tool_name": "Bash", "decision": "deny", "rule": "tokenize-fail", "session_id": "3ee810d0-aa02-40c6-aea7-e8de710cbe92"}' \
+  '{"ts": "2026-10-01T09:01:00Z", "id": "gate:bash:irrecoverable", "tool_name": "Bash", "decision": "deny", "rule": "tokenize-fail", "session_id": "3ee810d0-aa02-40c6-aea7-e8de710cbe92"}' \
+  '{"ts": "2026-10-01T09:02:00Z", "id": "gate:bash:irrecoverable", "tool_name": "Bash", "decision": "deny", "rule": "rm-rf", "session_id": "3ee810d0-aa02-40c6-aea7-e8de710cbe92"}' \
+  '{"ts": "2026-10-01T09:03:00Z", "id": "gate:bash:irrecoverable", "tool_name": "Bash", "decision": "ask", "session_id": "3ee810d0-aa02-40c6-aea7-e8de710cbe92"}' \
+  '{"ts": "2026-10-01T09:04:00Z", "id": "gate:bash:irrecoverable", "tool_name": "Bash", "decision": "would_deny", "rule": "var-verb", "session_id": "3ee810d0-aa02-40c6-aea7-e8de710cbe92"}' \
+  '{"ts": "2026-10-01T09:05:00Z", "id": "gate:a", "tool_name": "Bash", "decision": "deny", "rule": ["r"], "session_id": "3ee810d0-aa02-40c6-aea7-e8de710cbe92"}' > "$BYRULE"
+out_br="$(MH_GATE_JOURNAL_PATH="$BYRULE" python3 "$REPORT_PY" 2>&1)"; rc_br=$?
+by_rule_section="$(sed -n '/^By rule/,/^$/p' <<<"$out_br")"
+assert "By rule counts tokenize-fail per gate and decision" \
+  "$(grep -Eq '^ +2  gate:bash:irrecoverable  deny  tokenize-fail$' <<<"$by_rule_section" && echo 1 || echo 0)"
+assert "By rule keeps a named rule and buckets a rule-less row as (none)" \
+  "$(grep -Eq '^ +1  gate:bash:irrecoverable  deny  rm-rf$' <<<"$by_rule_section" && grep -Eq '^ +1  gate:bash:irrecoverable  ask  \(none\)$' <<<"$by_rule_section" && echo 1 || echo 0)"
+assert "By rule leaves would_* rows to Shadow rules, and a list-typed rule does not crash" \
+  "$([[ $rc_br -eq 0 ]] && ! grep -q 'var-verb' <<<"$by_rule_section" && grep -q "gate:a  deny  \['r'\]" <<<"$by_rule_section" && echo 1 || echo 0)"
+
 echo
 echo "=== $pass passed, $fail failed ==="
 [[ $fail -eq 0 ]]
