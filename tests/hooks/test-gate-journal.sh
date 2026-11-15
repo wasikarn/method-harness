@@ -302,7 +302,7 @@ for _view in ifs-split var-verb; do
 done
 
 # --- Case 8: a rule-less "confirm with user first" deny (the tokenizer/complexity refusals) journals
-# rule tokenize-fail, so gate-report can count it; a rule-carrying deny keeps its own rule id. ---
+# rule tokenize-fail, so its count can be read from the log; a rule-carrying deny keeps its own rule id. ---
 J8="$WORK/case8/tok.jsonl"
 python3 -c 'import json; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"echo " + "a" * 160000},"session_id":"sess-journal-test"}))' \
   | MH_GATE_JOURNAL_PATH="$J8" bash hooks/gates/irrecoverable.sh >/dev/null 2>&1; rc=$?
