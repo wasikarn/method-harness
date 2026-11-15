@@ -2184,7 +2184,7 @@ def deny(reason, rule=None, hint=None):
     print("[mh:gate] BLOCKED: " + reason, file=sys.stderr)
     # A rule a shadowed view enforces is journaled under its own id, so the view's shadow record stays its own.
     # A rule-less confirm deny is a fail-closed parse refusal (tokenizer, length, depth, ambiguous syntax): the
-    # journal row carries tokenize-fail so its count can be read from the log. gate-report does not break it out yet.
+    # journal row carries tokenize-fail so gate-report's "By rule" section can count it.
     _jrule = rule if rule in _VIEW_ENFORCED.get(_VIEW[0], ()) else _VIEW[0] or rule
     if _jrule is None and "confirm with user first" in reason:
         _jrule = "tokenize-fail"

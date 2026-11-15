@@ -122,7 +122,7 @@ def main():
     for (gate_id, decision), n in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {n:5d}  {gate_id}  {decision}")
     print()
-    print("By rule (ask/deny rows; \"(none)\" = the gate logged no rule id):")
+    print("By rule (same rows as the headline, allow-suppressed included; \"(none)\" = the gate logged no rule id):")
     for (gate_id, decision, rule), n in sorted(by_rule.items(), key=lambda kv: -kv[1]):
         print(f"  {n:5d}  {gate_id}  {decision}  {rule}")
     print()
