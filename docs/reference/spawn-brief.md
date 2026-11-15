@@ -105,11 +105,11 @@ this role. One fixer owns the writes: the original dispatched builder per Rule 1
 was dispatched, one fixer the dispatcher names. It gets every reviewer's `findings[]` merged verbatim,
 and its diff gets a fresh-context validator. Run a security reviewer last, whether or not a fixer ran:
 a general-purpose `Agent`, role `validator`, with a security brief (mh has no security agent). It reviews
-the cumulative diff (builder plus fixer), so it sees what ships: `git diff <base-sha>..HEAD` in the
-isolated-checkout pilot below; in a shared tree (staged, not committed) `git diff <base-sha>` with the HEAD
-recorded before the builder started, plus any new file from `git status`. If its findings send the fixer
-back, re-run security and the fresh-context validator on the new patch; Rule 13's 3 rounds count across
-both loops.
+the cumulative diff (builder plus fixer), so it sees what ships: `git -C <path> diff <base-sha>..HEAD` in
+the isolated-checkout pilot below (security runs there before step 4's merge, which waits for it); in a
+shared tree (staged, not committed) `git diff <base-sha>` with the HEAD recorded before the builder
+started, plus any new file from `git status`. If its findings send the fixer back, re-run security and the
+fresh-context validator on the new patch; Rule 13's 3 rounds count across both loops.
 (Source for the comment-then-one-fixer point only: Levi Strauss, GitHub Universe 2026,
 youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents now comment, one helper fixes.)
 
