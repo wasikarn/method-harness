@@ -4,5 +4,5 @@
 # temp root; GH #724). python3 is captured now, at source time, because some tests later put a
 # python3 stub first on PATH, which would otherwise skip the cleanup and leak (GH #729).
 _TMP_DELETE_LIB="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_TMP_DELETE_PY="$(command -v python3)"
+_TMP_DELETE_PY="$(command -v python3 || :)"  # fallback: an empty value is reported by tmp_delete's :? message when it is called, not by an abort at source time under set -e
 tmp_delete() { "${_TMP_DELETE_PY:?tmp-delete.sh: python3 was not on PATH when this file was sourced}" "$_TMP_DELETE_LIB/tmp_delete.py" "$@"; }

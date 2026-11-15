@@ -10,8 +10,8 @@
 # Options:
 #   --cases FILE    one case per line, replacing the committed fixtures: a Bash command, or 0x1f, a tool name,
 #                   0x1f and the tool_input JSON (GH #958)
-#   --replay N      add N commands sampled from THIS project's transcripts (Bash commands; for
-#                   secret-scan, Write/Edit text) under ${CLAUDE_CONFIG_DIR:-~/.claude}/projects;
+#   --replay N      add N commands sampled from THIS project's transcripts (what is read is listed below;
+#                   for secret-scan, Write/Edit text) under ${CLAUDE_CONFIG_DIR:-~/.claude}/projects;
 #                   `--replay all` takes the whole pool. A whole-pool run with no --slug writes a
 #                   replay record (GH #891) that scripts/merge-pr.sh and sync-pr-head.sh need for a gate change.
 #                   Read: Bash, Monitor (with a command) and ctx_execute, ctx_execute_file, ctx_batch_execute and
@@ -45,7 +45,7 @@
 set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
-usage() { sed -n '5,32p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR >= 5 { if (/^# Exit:/) exit; print }' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 cases="" replay=0 slug="" seed="" runner=auto fast=0 replay_given=0 cache_flags=()
 pos=()

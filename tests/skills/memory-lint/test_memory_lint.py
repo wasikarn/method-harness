@@ -956,7 +956,8 @@ def _fuzz_store(d, rng):
             lines.append(f"- [{s}]({s}.md){sup}")
     for a in arch:
         if rng.random() < 0.7:
-            lines.append(f"- [{a}]({a}.md) — **SUPERSEDED** by [[{rng.choice(stems)}]]")
+            succ = "ghost-succ" if rng.random() < 0.15 else rng.choice(stems)  # a successor that is no live file
+            lines.append(f"- [{a}]({a}.md) — **SUPERSEDED** by [[{succ}]]")
     with open(os.path.join(d, "MEMORY.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -1055,6 +1056,8 @@ def test_class_c_fuzz_oracle_catches_each_source_mutant():
          "writable = new_target", "never applied"),
         ("apply rewriting a manual entry anyway", 'if not entry.get("new"):\n            continue  # manual resolution needed',
          'if not entry.get("new"):\n            entry["new"] = "[[x_ledger]]"  # manual resolution needed', "manual entry's link was changed"),
+        ("a successor that is no live file still gets the link", 'elif replacement and replacement in state["stems"] and',
+         'elif replacement and', "new dangling"),
     ]
     for label, old, new, signal in mutants:
         bad = _fuzz_run(FUZZ_SEEDS, lint=_fuzz_mutant(old, new))
