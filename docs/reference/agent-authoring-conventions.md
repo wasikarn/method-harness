@@ -34,12 +34,11 @@ reference), and a live probe showed it beating `modelSettings.<model>.effortLeve
 `CLAUDE_CODE_EFFORT_LEVEL` outranks it ("overriding the session level but not the environment
 variable"), and `maxEffortLevel` or an org cap still clamps it.
 Tier rule: `model: opus` for judgment or adversarial work, `sonnet` for bounded review or
-mutation (no shipped agent is either since 2026-11-12; the fleet's one `sonnet` agent,
-`ideate-critic`, is the exception: it judges at `effort: high`, and its non-Opus pin keeps it
-independent by model from an Opus main session, see below); `effort: high` for judgment and adversarial surfaces, `medium`/`low`
+mutation (no shipped agent is either: every agent pins `opus`, see below); `effort: high` for judgment and adversarial surfaces, `medium`/`low`
 for mechanical work, bounded review or design trade-offs (`backend-architect` and `requirement-analyst` are `medium`); no agent pins `xhigh` (A/B 2026-10-21: `plan-reviewer` scored the same at `high`, half the cost). The opus
 pins: `requirement-analyst` (readiness verdict), `plan-reviewer` and `blind-spot-hunter`
-(adversarial), `backend-architect` (design trade-offs). Never pin `fable`
+(adversarial), `backend-architect` (design trade-offs), `ideate-critic` (it grades; moved from
+`sonnet` on 2026-11-15, GH #886, so it stays independent by model under a Sonnet main). Never pin `fable`
 in an agent (Fable can bill usage credits depending on plan and seat tier, and `-p`/eval runs
 bill them without asking; it also loses model independence from a fable main session); never pin
 `max` (valid frontmatter per the sub-agents reference, but unbounded spend on a shipped agent;
@@ -47,7 +46,10 @@ check 54 WARNs). Pinning a fresh-context verifier to a different model than the 
 makes it independent by model as well as by context, a stronger form of item 4. A family alias
 gives no such independence when the main session is in that family: `model: opus` runs the main
 session's exact Opus (sub-agents reference, "Choose a model"), so `plan-reviewer` and
-`blind-spot-hunter` dispatched from an Opus main session run the same model. Evidence:
+`blind-spot-hunter` dispatched from an Opus main session run the same model. The independence
+argument assumes the operator's default main session, Sonnet (decision recorded in GH #886,
+2026-11-04): there every Opus pin is independent by model; from an Opus main session none is. A
+Sonnet-pinned grader is not independent under the default Sonnet main. Evidence:
 `docs/research/claude-code-codex-models-efforts-2026-09-07.md`,
 `docs/research/auto-model-auto-effort-2026-09-26.md`.
 
