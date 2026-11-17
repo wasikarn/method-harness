@@ -6,6 +6,9 @@
 # Restored 2026-09-20 (harness gap-audit H9) after deletion in a1055f64.
 # Run standalone: bash tests/hooks/test-skill-usage-telemetry.sh
 set -uo pipefail
+# Hermetic: the shell that runs this may export CLAUDE_CONFIG_DIR (Orca does); the code under test would then
+# read the operator's real profile instead of this test's fixture. A case that needs it sets it inline.
+unset CLAUDE_CONFIG_DIR
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT/scripts/_lib/tmp-delete.sh"
