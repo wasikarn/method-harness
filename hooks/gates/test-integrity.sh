@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Gate: ask when an edit to an existing test file removes an assertion-
 # shaped line, or adds a skip/disable marker that wasn't there before.
-# METHODOLOGY.md Rule 3 ("write the failing test first, don't weaken it
-# while fixing") had no backing mechanism anywhere — pure prose, the exact
+# METHODOLOGY.md Rule 3 ("write the failing test first") and its corollary, don't weaken
+# a test while fixing, had no backing mechanism anywhere — pure prose, the exact
 # same-role-grades-its-own-work case CLAUDE.md's maker≠checker doctrine
 # argues against trusting.
 #

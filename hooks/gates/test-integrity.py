@@ -238,7 +238,7 @@ def reason(path):
         "test-integrity: this edit to " + path + " appears to remove an "
         "assertion or add a skip/disable marker. If this is a legitimate "
         "test change, approve; if it is weakening a test to make a fix "
-        "pass, write the fix instead (METHODOLOGY.md Rule 3)."
+        "pass, write the fix instead (the spirit of METHODOLOGY.md Rule 3: the failing test stays the definition of done)."
     )
 
 try:
