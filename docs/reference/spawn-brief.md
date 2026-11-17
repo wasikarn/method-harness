@@ -34,6 +34,11 @@ Builder/fixer: before returning, re-read your diff once against Done-when's own 
 what's cheap to fix. This is a private pass, not the pass/fail decision, and you don't report having
 done it — the fresh-context validator still independently re-verifies every claim, and its brief is
 never narrowed on the strength of "already self-checked."
+Done-when with 2+ criteria: tell the builder to keep them as a checkbox list and tick one only with its evidence
+on that same line (the command run and its result, or `path:line`). Left to itself, bare Claude writes concrete
+criteria but ticks them all and puts the evidence in one trailing line (per-item evidence 0.07 against 0.99 with this
+sentence, 20 runs per arm: claude-config `evals/bare-claude-pilots/task-checklist/`). Not measured: whether a validator
+catches more with it.
 
 Bash command shape (GH #994): Claude Code raises a permission prompt for how a command is written, not
 only for what it does. When a brief expects shell work, tell the agent to write the final form: run
