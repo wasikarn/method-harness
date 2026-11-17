@@ -38,7 +38,7 @@ Done-when with 2+ criteria: tell the builder to keep them as a checkbox list in 
 would trip `scope_ok`) and to follow this sentence: "Tick an item only with its evidence on that same line (the
 command you ran and its result, or the path and line)." The list serves the validator and is separate from the
 private pass above. Left to itself, bare Claude writes concrete criteria but ticks them all, with evidence mostly in
-one trailing line (on the item line in 2 of 20 runs). Per-item evidence was 0.07 against 0.99 with that sentence (20 runs per arm, Sonnet at medium,
+one trailing line (3 of 20 runs scored above 0 on per-item evidence). Per-item evidence was 0.07 against 0.99 with that sentence (20 runs per arm, Sonnet at medium,
 claude-config `evals/bare-claude-pilots/task-checklist/`). Limits: the sentence names the property that was graded;
 the pilot had the model write a `CHECKLIST.md` file, so the final-report placement is untested; not measured whether a
 validator catches more with it.
