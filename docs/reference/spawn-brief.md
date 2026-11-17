@@ -37,8 +37,8 @@ never narrowed on the strength of "already self-checked."
 Done-when with 2+ criteria: tell the builder to keep them as a checkbox list in its final report (a new file
 would trip `scope_ok`) and to follow this sentence: "Tick an item only with its evidence on that same line (the
 command you ran and its result, or the path and line)." The list serves the validator and is separate from the
-private pass above. Left to itself, bare Claude writes concrete criteria but ticks them all, with evidence at most in
-one trailing line. Per-item evidence was 0.07 against 0.99 with that sentence (20 runs per arm, Sonnet at medium,
+private pass above. Left to itself, bare Claude writes concrete criteria but ticks them all, with evidence mostly in
+one trailing line (on the item line in 2 of 20 runs). Per-item evidence was 0.07 against 0.99 with that sentence (20 runs per arm, Sonnet at medium,
 claude-config `evals/bare-claude-pilots/task-checklist/`). Limits: the sentence names the property that was graded;
 the pilot had the model write a `CHECKLIST.md` file, so the final-report placement is untested; not measured whether a
 validator catches more with it.
@@ -74,8 +74,10 @@ claim — illegible evidence is unverified, not absent; before returning, stop e
 job or wait loop you started (a finished validator once left an `until ... sleep` loop running);
 in a repo that has `scripts/merge-pr.sh` (method-harness does), merge through `scripts/merge-pr.sh <PR>`,
 not bare `gh pr merge`, and do not bump the version in the PR: the script cuts it at merge time, run
-from the PR's checkout in the background (`branching-model.md`, "Merging"); a subagent cannot run `claude -p`
-(the gate denies a nested session), so a job that needs one builds the harness and returns, and the dispatcher runs it.
+from the PR's checkout in the background (`branching-model.md`, "Merging").
+A subagent cannot start a nested `claude` session (`-p`, a prompt, piped input, `--agent`, `--bg`, `--worktree`;
+`gate:bash:irrecoverable` denies it), so a job that needs one prepares the run (script and inputs), returns the exact
+command, and the dispatcher runs it.
 ```
 
 Dispatching a Claude subagent (`Agent`): default is no `model:` override, running the agent's own
