@@ -31,7 +31,7 @@ rows() { [ -f "$MH_QMD_FIRST_LOG" ] && wc -l < "$MH_QMD_FIRST_LOG" | tr -d ' ' |
 
 # 1. WebSearch with no earlier qmd call nudges once, exit 0, one log row (nudged true).
 out=$(run WebSearch s1); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'mh-qmd-first-nudge' \
+if [ "$rc" -eq 0 ] && grep -q 'mh-qmd-first-nudge' <<<"$out" \
    && printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin)["hookSpecificOutput"]; assert d["hookEventName"]=="PostToolUse" and d["additionalContext"]'; then
   ok "first WebSearch, no qmd before it -- nudge emitted as PostToolUse additionalContext"
 else
@@ -48,7 +48,7 @@ out=$(run WebSearch s1)
 out=$(run mcp__plugin_qmd_qmd__query s2); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "qmd call alone -- silent, exit 0" || bad "qmd call should be silent: rc=$rc out='$out'"
 out=$(run WebSearch s2)
-if [ -z "$out" ] && [ "$(rows)" = 2 ] && tail -1 "$MH_QMD_FIRST_LOG" | grep -q '"qmd_before_web": true'; then
+if [ -z "$out" ] && [ "$(rows)" = 2 ] && grep -q '"qmd_before_web": true' <<<"$(tail -1 "$MH_QMD_FIRST_LOG")"; then
   ok "qmd before WebSearch -- no nudge, row logs qmd_before_web true"
 else
   bad "qmd-first session should not nudge: out='$out' rows=$(rows)"
@@ -57,7 +57,7 @@ fi
 # 4. No qmd binary on PATH: no nudge, but the row is still logged (nudged false).
 mkdir -p "$WORK/empty"
 out=$(payload WebSearch s3 | env PATH="$WORK/empty:/usr/bin:/bin" bash "$SENSOR"); rc=$?
-if [ "$rc" -eq 0 ] && [ -z "$out" ] && tail -1 "$MH_QMD_FIRST_LOG" | grep -q '"nudged": false'; then
+if [ "$rc" -eq 0 ] && [ -z "$out" ] && grep -q '"nudged": false' <<<"$(tail -1 "$MH_QMD_FIRST_LOG")"; then
   ok "no qmd binary -- no nudge, row logged with nudged false"
 else
   bad "no-binary case: rc=$rc out='$out' row=$(tail -1 "$MH_QMD_FIRST_LOG")"
@@ -65,7 +65,7 @@ fi
 
 # 5. Sessions are independent.
 out=$(run WebSearch s4)
-printf '%s' "$out" | grep -q 'mh-qmd-first-nudge' && ok "a new session gets its own nudge" || bad "new session should nudge: '$out'"
+grep -q 'mh-qmd-first-nudge' <<<"$out" && ok "a new session gets its own nudge" || bad "new session should nudge: '$out'"
 
 # 6. Other tools, other events and junk input are ignored; exit 0 always.
 for t in Bash Read mcp__plugin_context7_context7__query-docs; do
@@ -80,7 +80,7 @@ out=$(python3 -c 'import json; print(json.dumps({"tool_name": "WebSearch", "sess
 
 # 7. Unwritable log: still exits 0 and still nudges.
 MH_QMD_FIRST_LOG="/dev/null/x/log.jsonl" out=$(run WebSearch s6 2>/dev/null); rc=$?
-[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'mh-qmd-first-nudge' && ok "unwritable log -- fails open, still nudges" || bad "unwritable log: rc=$rc out='$out'"
+[ "$rc" -eq 0 ] && grep -q 'mh-qmd-first-nudge' <<<"$out" && ok "unwritable log -- fails open, still nudges" || bad "unwritable log: rc=$rc out='$out'"
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
