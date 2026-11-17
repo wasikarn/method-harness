@@ -23,14 +23,14 @@ The 2026-06-12 audit caught a 44→105-agent failure mode where a
 soft cap on a work-list was silently doubled by an audit + verify
 layer (operator memory store, `bounded-agent-spawning` and
 `whole-repo-dig-2026-06-16`; not in this repo). `evals/ideate-run/`
-bounds Agent calls per run (6) but cannot see wave shape; what Rule 13
+bounds Agent calls per run (6) but cannot see wave shape; what Rule 4
 provides is narrower than a fixture would claim: its hard cap is injected prose, no hook, that
 tells the lead to clamp any single wave's work-list to ≤10 before spawning (≤5 until 2026-10-05;
 this skill keeps its own 5-agent design limit). This command's Phase 1 (5)
 and Phase 3 (3) sizes are written to sit inside that per-wave
 clamp. The "exactly 2 waves, not 3+" shape is this skill's own
 design contract (Phase 1 through Phase 3 in `SKILL.md`), not
-something Rule 13 polices — Rule 13 caps how big a wave can get, not
+something Rule 4 polices — Rule 4 caps how big a wave can get, not
 how many waves a skill runs.
 
 ## Phase 1 algorithm-shape source
@@ -72,7 +72,7 @@ Source: upstream `/tmp/adhd-repo/skills/adhd/SKILL.md:84-112` and
 - Routing to the critic adds no third fan-out wave: Phase 2 goes from 0
   agent calls (host-inline) to 1 sequential call on the default path, not
   a parallel spawn, and that call returns the deepened branches, so Phase 3
-  does not run — the "2-wave, peak-5" design limit (inside Rule 13's cap of 10) is unaffected.
+  does not run — the "2-wave, peak-5" design limit (inside Rule 4's cap of 10) is unaffected.
 
 ## Output-shape source
 
@@ -111,7 +111,7 @@ before any of these is cited again.
   records the port decisions, the eval-rigor limitation (n=1
   upstream), and the things explicitly rejected.
 - **5-agent design limit (load-bearing)** — this skill's 2-wave
-  structure is engineered around 5 agents per wave. That was METHODOLOGY Rule 13's
+  structure is engineered around 5 agents per wave. That was METHODOLOGY Rule 4's
   peak-concurrent cap when the skill was designed (raised to 10 on 2026-10-05); the lead
   applies it by clamping the work-list before spawning, and the skill keeps 5 as its own limit.
 - **Fresh-context critic pattern** —

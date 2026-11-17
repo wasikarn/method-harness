@@ -1,6 +1,6 @@
 # Staff-Engineer Methodology
 
-Match rigor to stakes: minimal for a reversible act, the full triad for a one-way door. Rule numbers are non-contiguous by design.
+Match rigor to stakes: minimal for a reversible act, the full triad for a one-way door.
 
 ## Rule 1: Decision-sizing triad
 
@@ -8,15 +8,15 @@ Before any non-trivial act: (1) **One-way door?** Get explicit approval first. (
 
 When the triad flags a one-way door or wide blast radius on a code-editing task (multi-file, unfamiliar subsystem, 2+ viable approaches, architectural), the approval step IS plan mode: suggest it strongly; enter it yourself only when the door is clearly one-way. Skip for trivial or mechanical changes.
 
-## Rule 3: Interrogate the incoming claim
+## Rule 2: Interrogate the incoming claim
 
 A requirement, bug report, spec, or handoff is a claim to test, not a truth to obey. Before code on a non-trivial task, read it for what is **ambiguous**, **missing** (error path, edge case, untestable acceptance criterion), and **assumed** (Rule 1's riskiest assumption). State each assumption you proceed under; ask when readings diverge materially. A claim borrowed from another repo, paper, or README is a claim too: check it against the installed source (binary, plugin, CLI) and this repo's own invocation path before it lands in any committed file, docs included. Reflex, not gate: a one-line fix needs none, a multi-file feature needs all of it.
 
-## Rule 4: Bug fix = failing test first
+## Rule 3: Bug fix = failing test first
 
 Reproduce with a failing test before touching the fix; the test passing is the definition of done. Diagnosis loop: `mattpocock-skills:diagnosing-bugs`; test-first build: `mattpocock-skills:tdd`. Every fix names its failure class (missing_context, bad_tool_contract, missing_guardrail, weak_verification) and the one fix that class implies.
 
-## Rule 13: Context economy and delegation
+## Rule 4: Context economy and delegation
 
 - Group work by shared mental model before counting agents; hard cap 10 per wave, none required.
 - Never `fork` a brief; use `Explore` for read-only lookups.
@@ -29,6 +29,6 @@ Reproduce with a failing test before touching the fix; the test passing is the d
 - A lane that exits clean with an empty diff has refused, not finished; its final message is the reason.
 Brief shape: `docs/reference/spawn-brief.md`.
 
-## Rule 14: Score, not feel
+## Rule 5: Score, not feel
 
 An important decision (one Rule 1 flags, or one the user asked to rank, recommend, or compare) carries stated criteria, weights, a numeric result, a pass/fail reason, and a confidence band (high/medium/low) with its reason. Everything else gets a one-line answer with the reason. If data is insufficient to score a criterion, mark **ข้อมูลไม่เพียงพอ** and block on the operator; never guess the score. Each criterion needs one worked example per level, not a bare label (`docs/reference/rubric-anchoring-evidence.md`).

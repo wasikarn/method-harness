@@ -81,7 +81,7 @@ except its Failure modes section, which `SKILL.md` loads before reporting.
 ## Phase 3: scoring
 
 - Table shape copies `docs/research/plan-mode-nudge-audit-2026-08-05.md`, the only fully
-  Rule-14-compliant scoring instance in this repo.
+  Rule-5-compliant scoring instance in this repo.
 - The doctrine file's 35/20/15/15/15 split carries no stated rationale; this skill does not repeat
   that gap, so every non-primary weight carries a one-clause justification.
 - Primary-source fidelity must be strictly the largest weight: a confident total built on shaky
@@ -111,7 +111,7 @@ except its Failure modes section, which `SKILL.md` loads before reporting.
 Moved from `SKILL.md` § Bundled resources unchanged.
 
 No new agent `.md` files. `general-purpose` ×2 (Phase 1), `general-purpose` ×1
-(Phase 2) — 3 agents per wave, well under Rule 13's cap of 10.
+(Phase 2) — 3 agents per wave, well under Rule 4's cap of 10.
 
 ## Failure modes
 

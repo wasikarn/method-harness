@@ -42,7 +42,7 @@ Score each dimension 0–10 from evidence. Same rubric every run, so runs compar
 Evidence is read in the operating-model order: deterministic result, then this run's
 trajectory, then rollback history, then model confidence last. A dimension with no evidence is
 marked **insufficient evidence** and passed through as such; a guessed score is worse than none
-(Rule 14).
+(Rule 5).
 
 The model scores each dimension and writes reasons; the plugin's `scripts/_lib/weighted-score.py`
 does the arithmetic — the weighted total, the pass/fail call, and the "insufficient evidence"
@@ -164,7 +164,7 @@ Present the ranked findings and confirm with one **AskUserQuestion**:
 Skip the ask only when the same turn already said "audit and fix"; an earlier or implied
 authorization is not that.
 
-Each fix names its failure class (Rule 4: missing_context, bad_tool_contract, missing_guardrail,
+Each fix names its failure class (Rule 3: missing_context, bad_tool_contract, missing_guardrail,
 weak_verification) and lands test-first where a test can express it: the new test is red on the
 pre-fix code and green after, and that red run is part of the evidence. Every change carries a
 quality rationale; a change that only moves the score is left out.
@@ -177,7 +177,7 @@ quality rationale; a change that only moves the score is left out.
   fix for one problem can reopen another, and a test that only documents the new behaviour
   hides that. Close a self-inflicted regression in the same pass when it is cheap.
 - When any fix touched 2+ files or a test, re-run step 3's checker once over the union of all
-  fixes (Rule 13), not one dispatch per fix.
+  fixes (Rule 4), not one dispatch per fix.
 - A fix in a hook, gate, or plugin file is correct in the repo before it protects a session: the
   running copy (plugin cache version, restarted session) is a separate claim; say which one the
   evidence covers.
@@ -201,7 +201,7 @@ step 6.**
 Findings from this pass go through the same **Confirm, then fix** gate as step 4 (a fresh
 `AskUserQuestion`, same three options) — never applied silently. Any fix made here re-enters step
 5 (re-verify) before the final re-score in step 7; this step's own fixes do not get a second
-whole-picture pass on top (Rule 13's 3-round stop applies here too — if the fixes from this step
+whole-picture pass on top (Rule 4's 3-round stop applies here too — if the fixes from this step
 seem to need another combined-fix check, stop and report the loop instead of continuing
 indefinitely).
 

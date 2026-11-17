@@ -576,7 +576,7 @@ def test_class_a_archives_file_whose_only_link_is_to_itself():
 
 
 def test_self_link_exclusion_does_not_swallow_a_different_files_matching_stem():
-    # Rule-13 validator catch on the self-link fix above: a naive `t == own_slug` self-link check
+    # Rule-4 validator catch on the self-link fix above: a naive `t == own_slug` self-link check
     # is blind to precedence -- if file A's `name:` slug collides with a DIFFERENT file B's raw
     # filename stem, A linking to B (by that shared string) must still resolve to B, not be
     # misread as A linking to itself. compute_reachable's own resolver already applies stem-wins-
@@ -621,7 +621,7 @@ def test_class_a_skips_archival_when_the_target_slug_is_duplicated():
 
 
 def test_duplicate_slug_does_not_false_positive_as_orphan():
-    # Rule-13 validator catch: dropping inbound's raw-token OR-check (the resolved-stem fix
+    # Rule-4 validator catch: dropping inbound's raw-token OR-check (the resolved-stem fix
     # above) accidentally removed the only thing that had kept a duplicate-slug file out of a
     # false ORPHAN finding -- a genuine third-file link to the shared slug resolves to only ONE
     # of the two holders, so the OTHER holder must not be reported as "no links in or out" when

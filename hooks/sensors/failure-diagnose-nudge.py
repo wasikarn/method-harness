@@ -12,7 +12,7 @@ earlier 3-per-signature cap in v1.1.55; this docstring drifted stale until the
 2026-09-20 audit caught it) via a small session-scoped counter file -- the
 fleet's first stateful hook, deliberately narrow in scope: a local rate-limit
 on one advisory nudge, not a cross-agent orchestration layer. Still framed by
-METHODOLOGY Rule 13's bounded-retry doctrine ("stop after 3 rounds, the fault
+METHODOLOGY Rule 4's bounded-retry doctrine ("stop after 3 rounds, the fault
 is then in the plan, not the unit") even though the nudge's own cap is
 tighter than that number.
 

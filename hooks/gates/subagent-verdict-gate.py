@@ -9,11 +9,11 @@
 # auto mode the report goes through that tool and `last_assistant_message`
 # then holds only the closing text (code.claude.com/docs/en/hooks.md,
 # SubagentStop section; GH #160). Both catch a vacuous or self-contradictory
-# Rule 13 verdict object -- {"pass":true,"findings":[],
+# Rule 4 verdict object -- {"pass":true,"findings":[],
 # "scope_ok":true,"unexpected_files":[]} is schema-valid but shows no
 # verification work, the exact gap `checked[]` closes in prose (spawn-brief.md,
 # METHODOLOGY.md) and in the 3 sibling skills' own check-verdict.py scripts.
-# This makes the same rule apply automatically to every OTHER Rule 13 dispatch,
+# This makes the same rule apply automatically to every OTHER Rule 4 dispatch,
 # which today has no check-verdict.py-equivalent at all (confirmed 2026-09-20:
 # zero file-based consumers parse the generic contract programmatically).
 #
@@ -189,7 +189,7 @@ def _verdict_reasons(msg):
         _allow(f"verdict-scan crashed, allowing ({e})")
 
     if len(verdicts) == 0:
-        # Not a Rule 13 verdict-shaped response at all (most subagents: Explore,
+        # Not a Rule 4 verdict-shaped response at all (most subagents: Explore,
         # research, a builder reporting its edits) -- nothing to check.
         return [], None
 
@@ -215,7 +215,7 @@ def _verdict_reasons(msg):
                 "pass:true but no findings[] and no checked[] evidence -- cite at least one "
                 "checkable fact (a file:line you read, a command you ran) in checked[] even on "
                 "a clean pass; an empty checked[] is not verified, same as a missing field "
-                "(docs/reference/spawn-brief.md, docs/METHODOLOGY.md Rule 13)"
+                "(docs/reference/spawn-brief.md, docs/METHODOLOGY.md Rule 4)"
             )
         if v.get("scope_ok") is False:
             reasons.append(

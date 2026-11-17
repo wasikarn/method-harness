@@ -323,7 +323,7 @@ def collect_state(d):
 
     # Resolve a link token to its canonical stem the same way compute_reachable does: a stem
     # match wins over a same-string slug match, so a file's own slug never falsely swallows a
-    # different file whose raw filename stem happens to equal that slug (Rule-13 validator catch).
+    # different file whose raw filename stem happens to equal that slug (Rule-4 validator catch).
     # `inbound` stores the RESOLVED stem, never the raw token -- storing the raw token let a
     # file's own outbound link (to a different file sharing that string) credit the file itself
     # as "referenced" (blind-spot-hunter catch, 2026-09-25): checking a slug's bare presence in
@@ -389,7 +389,7 @@ def detector_findings(state):
         findings.append("MISSING: MEMORY.md index not found")
     else:
         # 2. orphans. A file whose own slug is duplicated can't be called ORPHAN off has_in
-        # alone -- inbound now resolves ambiguous slug tokens to only ONE of the holders (Rule-13
+        # alone -- inbound now resolves ambiguous slug tokens to only ONE of the holders (Rule-4
         # validator catch, 2026-09-25), so the other holder could have a real inbound link that
         # resolution just didn't credit to it. DUPLICATE SLUG above already carries that signal.
         for f in files:

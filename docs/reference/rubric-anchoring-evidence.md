@@ -1,6 +1,6 @@
 # Rubric-anchoring evidence
 
-`docs/METHODOLOGY.md` Rule 14, `agents/plan-reviewer.md`, and `skills/workflow/idea-audit/SKILL.md`
+`docs/METHODOLOGY.md` Rule 5, `agents/plan-reviewer.md`, and `skills/workflow/idea-audit/SKILL.md`
 each require one worked example per rubric level, without a citation — `METHODOLOGY.md` has a
 4096-byte pre-commit cap, so the doctrine line stays a short, uncited sentence and this file carries
 the evidence the three call-sites point to.
@@ -12,7 +12,7 @@ scoring far worse than an anchored one on identical inputs." This traced to a re
 `coldteadotai/abide`'s replay benchmark (via `CHANGELOG.md` v1.1.99 → auto-memory
 `jev-typesafe-usecase-survey-2026-09-19.md`) — that does not support the claim as written: it
 measured rule *scope and subjectivity* on **different** hunks per rule (not "identical inputs"),
-its rules are binary yes/no (not the multi-level scored construct Rule 14 describes), and the
+its rules are binary yes/no (not the multi-level scored construct Rule 5 describes), and the
 proposed fix ("a criteria example") was a stated-but-unrun idea, not a measured intervention. Full
 provenance: `docs/research/decision-making-methods-2026-09-19.md` §2.
 
@@ -22,7 +22,7 @@ provenance: `docs/research/decision-making-methods-2026-09-19.md` §2.
 scoring rubrics: Reliability, validity and educational consequences," *Educational Research Review*
 2(2), 130-144 (DOI 10.1016/j.edurev.2007.05.002) — a review of 75 empirical studies — found rubric
 reliability improves "especially if they are analytic, topic-specific, and complemented with
-exemplars and/or rater training." Almost exactly Rule 14's own prescription. Caveat from the same
+exemplars and/or rater training." Almost exactly Rule 5's own prescription. Caveat from the same
 paper: "rubrics do not facilitate valid judgment of performance assessments per se" — this is a
 reliability (agreement) finding, not a validity (correctness) one.
 
@@ -50,8 +50,8 @@ not imply low exploitability."
 Anchoring a rubric with worked examples is well-supported for human-rater *reliability*, thinly
 supported and format-agnostic in its own classical (BARS) lineage, and — for LLM judges
 specifically — raises self-consistency without established gains in correctness, and can even
-increase how exploitable the rubric is. Rule 14's requirement stands on reliability/reproducibility
-grounds, not on a "far worse without it" magnitude claim. Treat a Rule-14-scored verdict's
+increase how exploitable the rubric is. Rule 5's requirement stands on reliability/reproducibility
+grounds, not on a "far worse without it" magnitude claim. Treat a Rule-5-scored verdict's
 confidence accordingly: a band with a stated reason, never a bare self-reported number (see
 `docs/reference/haiku-decision-calls.md` for the primitive, and
 `docs/research/decision-making-methods-2026-09-19.md` §1.5 for the calibration literature it

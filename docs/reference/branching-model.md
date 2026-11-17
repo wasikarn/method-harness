@@ -228,7 +228,7 @@ discipline:
 - **A subagent shares its parent session's worktree**, not a worktree of its own — the same
   stage-by-path discipline still applies to it (`gate:bash:subagent-git-guard` denies a bare
   `stash`/`reset`/`clean`; verify `git diff --cached --name-only` before committing). **Opt-in
-  exception (2026-09-28):** a builder dispatch that already trips Rule 13's validator requirement
+  exception (2026-09-28):** a builder dispatch that already trips Rule 4's validator requirement
   may instead get its own worktree, merged back only on a clean validator pass —
   `docs/reference/spawn-brief.md`'s "Isolated checkout dispatch" section. Not the default; the
   shared-worktree-plus-discipline model above still applies to every other dispatch.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Validator-outcome journal (GH #994): one row per Rule 13 validator verdict, written by
+# Validator-outcome journal (GH #994): one row per Rule 4 validator verdict, written by
 # subagent-verdict-gate.py on the allow path as well as the block path, so the first-pass
 # rate and the rounds needed can be measured. Counts and booleans only: never a finding's
 # text, a command, a path or any prompt text. A file of its own (validator-outcomes.jsonl);

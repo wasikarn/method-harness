@@ -78,7 +78,7 @@ mitigation, not ceremony.
 
 ## 6. One-level-deep dispatch
 
-A dispatched agent never re-dispatches (METHODOLOGY Rule 13; native
+A dispatched agent never re-dispatches (METHODOLOGY Rule 4; native
 `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` enforces it where the operator sets it). Disambiguation
 against neighboring agents lives in the description's "Don't use for" clause or a
 `## When NOT to use this agent` section.

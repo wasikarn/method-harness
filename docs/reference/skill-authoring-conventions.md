@@ -11,7 +11,7 @@ mechanism (metadata always, SKILL.md on trigger, bundled files on read). Same wo
 question; do not conflate them.
 
 **English only in skill and agent files** (operator rule, 2026-09-07): no Thai words, trigger
-phrases, or markers in any `skills/**/*.md` or `agents/*.md`; Rule 14's Thai marker is written `insufficient evidence` inside a
+phrases, or markers in any `skills/**/*.md` or `agents/*.md`; Rule 5's Thai marker is written `insufficient evidence` inside a
 skill.
 
 **Description cap: 25 words, third person.** This is mh's own token-budget rule (skill and agent

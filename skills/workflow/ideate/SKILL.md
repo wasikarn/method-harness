@@ -38,7 +38,7 @@ Done when: the brief names either the three YES answers or the explicit trigger.
   on the opt-in host path, score and cluster on the host, no fan-out.
 - **Phase 3 Deepen (opt-in host path only):** 3 parallel Agent calls, peak 3.
 
-Peak concurrency 5 is this skill's own design limit (Rule 13 caps at 10). Phase 1 completes before Phase 2 starts; never
+Peak concurrency 5 is this skill's own design limit (Rule 4 caps at 10). Phase 1 completes before Phase 2 starts; never
 collapse Diverge and Deepen into one wave of 8. History of the 44-to-105-agent failure this
 guards against: `references/provenance.md`.
 

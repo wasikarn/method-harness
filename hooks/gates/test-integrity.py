@@ -238,7 +238,7 @@ def reason(path):
         "test-integrity: this edit to " + path + " appears to remove an "
         "assertion or add a skip/disable marker. If this is a legitimate "
         "test change, approve; if it is weakening a test to make a fix "
-        "pass, write the fix instead (METHODOLOGY.md Rule 4)."
+        "pass, write the fix instead (METHODOLOGY.md Rule 3)."
     )
 
 try:
@@ -273,7 +273,7 @@ try:
             # at this path, or a TOCTOU race with the os.path.exists() check
             # above all landed here and let a Write that guts a test's
             # assertions through with zero signal -- exactly the case this
-            # gate exists to catch (METHODOLOGY Rule 4). Match the outer
+            # gate exists to catch (METHODOLOGY Rule 3). Match the outer
             # handler's posture instead of the exact-opposite one.
             emit_ask(
                 "test-integrity: could not read the existing " + path +
