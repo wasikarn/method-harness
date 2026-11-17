@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Gate: a subagent (agent_id in the PreToolUse payload) may not call the Agent
 # tool to spawn its own reviewer/validator/subagent (GH #151) -- dispatch is
-# the main session's job (maker != checker, docs/METHODOLOGY.md Rule 4).
+# the main session's job (maker != checker).
 # Keys on agent_id (present ONLY inside a subagent call), not agent_type
 # (also set for a top-level `claude --agent <name>` main session -- see
 # task-complete-separation.py's header for the incident that taught this

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-gauntlet-claude-env-isolation.sh — regression test: run-gauntlet.sh must clear CLAUDE_CONFIG_DIR
-# before the test layer launches. A Claude Code session exports it (a profile dir), and five hook tests
-# (config-write-guard, memory-audit-commit, memory-health-nudge, session-stop, skill-usage-telemetry)
-# then read that profile instead of their fixture HOME and fail; so did merge-pr.sh's gauntlet (2026-11-17).
+# before the test layer launches. A Claude Code session exports it (a profile dir), and hook tests that read
+# it would use that profile instead of their fixture HOME. Five (config-write-guard, memory-audit-commit,
+# memory-health-nudge, session-stop, skill-usage-telemetry) also unset it themselves since mh 1.1.654;
+# this unset covers every other test and a future one.
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
