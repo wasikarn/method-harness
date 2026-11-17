@@ -253,7 +253,9 @@ already set alone.
 The qmd-first rule lives in `CLAUDE.md`, not a skill, because a skill was the surface that two
 namespace migrations silently deleted it from. Before primary-source research: search the local
 `qmd` collections (`qmd status` lists them), then `context7` for library docs, then `WebSearch`.
-Neither is bundled; skip straight to `WebSearch` when not configured.
+Neither is bundled; skip straight to `WebSearch` when not configured. The rule is advice only:
+`hooks/sensors/qmd-first-nudge.py` nudges once per thread when a web search comes first and logs
+each thread's first search (`qmd-first.jsonl`), so the real rate can be read. It never blocks.
 
 **Verify technical claims before shipping them into agent or skill content.** Plausibility is
 not verification. Three confidently wrong claims shipped and were caught only by a source check
