@@ -111,7 +111,7 @@ except its Failure modes section, which `SKILL.md` loads before reporting.
 Moved from `SKILL.md` § Bundled resources unchanged.
 
 No new agent `.md` files. `general-purpose` ×2 (Phase 1), `general-purpose` ×1
-(Phase 2) — 3 agents per wave, well under Rule 13's cap of 10.
+(Phase 2) — 3 agents per wave, well under Rule 4's cap of 10.
 
 ## Failure modes
 

@@ -21,7 +21,7 @@ tool call — see its own row below for what that means in practice:
 | `gate:write:config-guard` | asks before a write to Claude Code settings `hooks`/`enabledPlugins` |
 | `gate:write:secret-scan` | asks when a Write/Edit introduces a new vendor-specific live-credential-shaped token (AWS, Anthropic, OpenAI, GitHub, GitLab, HuggingFace, Slack, Stripe, Google, npm, PyPI, PEM) that isn't a canonical placeholder or same-line-suppressed — the only mechanism catching a pasted secret today; `MultiEdit`, Bash-mediated writes, and Codex-rescue writes bypass it with no other backstop (`git-hooks/pre-commit`/`pre-push` have zero secret-content scanning) |
 | `gate:tool:routine-trigger-guard` | asks before `RemoteTrigger`'s `create`/`update`/`run`/`create_webhook_trigger` actions create, modify, or fire a Routine (a cloud session) — not its `list`/`get`/`list_runs`/`get_run_log` reads. `CronCreate` is out of scope: it only re-enqueues a prompt in the same, already-attended session (session-only, no new credential), found misclassified as a Routine trigger by `mh:deep-audit` 2026-09-28. Interactive-session-only, same posture as `gate:bash:irrecoverable`'s `gh pr merge` ask rule; cannot constrain a Routine already running outside this session (`docs/adr/0004-operator-authorized-routine-self-launch.md` §4) |
-| `gate:agent:subagent-verdict-check` | `SubagentStop`, plus a `PreToolUse` twin (`gate:agent:subagent-verdict-check-handback`, matcher `SubagentHandback`) that runs the same check on `tool_input.message` for the auto-mode delivery path on CC >= 2.1.271 (GH #160; the deny is a re-prompt with no counter, bounded by Claude Code's own turn budget): blocks a subagent's Stop and re-prompts it once when its final message contains a Rule 13 `{pass, findings[], checked[], scope_ok, unexpected_files[]}`-shaped object that is vacuous (`pass:true` with both `findings[]` and `checked[]` empty) or self-contradictory (`pass:true` with `scope_ok:false` or a non-empty `unexpected_files[]`); allows on `stop_hook_active:true`, `NEEDS-DECISION`, ambiguous multi-candidate output, or no verdict-shaped output at all |
+| `gate:agent:subagent-verdict-check` | `SubagentStop`, plus a `PreToolUse` twin (`gate:agent:subagent-verdict-check-handback`, matcher `SubagentHandback`) that runs the same check on `tool_input.message` for the auto-mode delivery path on CC >= 2.1.271 (GH #160; the deny is a re-prompt with no counter, bounded by Claude Code's own turn budget): blocks a subagent's Stop and re-prompts it once when its final message contains a Rule 4 `{pass, findings[], checked[], scope_ok, unexpected_files[]}`-shaped object that is vacuous (`pass:true` with both `findings[]` and `checked[]` empty) or self-contradictory (`pass:true` with `scope_ok:false` or a non-empty `unexpected_files[]`); allows on `stop_hook_active:true`, `NEEDS-DECISION`, ambiguous multi-candidate output, or no verdict-shaped output at all |
 
 Everything not in that table is advice: METHODOLOGY.md text, skill prose, agent guardrails.
 `sensor:bash:output-redact` is advice too, not a gate: a `PostToolUse` hook that replaces
@@ -76,7 +76,7 @@ structural, not a capability gap that shrinks as models improve (2026 benchmarks
 frontier models giving their own model family 75-84% win rates in self-judged comparisons; see
 `docs/research/autonomous-loop-doctrine-drilldown-2026-09-28.md` Finding 2a for sources). So:
 
-- A builder that touched 2+ files or a test gets a fresh-context validator (METHODOLOGY Rule 13).
+- A builder that touched 2+ files or a test gets a fresh-context validator (METHODOLOGY Rule 4).
 - Reviewer agents are read-only (`harness-audit` check 32) and return findings, never a verdict
   that ships the work by fiat.
 - Every `harness-audit` check has a fires/silent pair in `tests/skills/harness-audit/` (fixture
@@ -122,7 +122,7 @@ model's unaided judgment.
 ## 3. Score, not feel
 
 An important decision carries stated criteria, weights, a numeric result, a pass/fail reason, and
-a confidence band (high/medium/low) with its reason (METHODOLOGY Rule 14). "Important" means the
+a confidence band (high/medium/low) with its reason (METHODOLOGY Rule 5). "Important" means the
 Rule 1 triad flagged it (one-way door, wide blast radius) or the user asked for a ranking. Routine
 calls get one line with the reason. Insufficient data is marked `ข้อมูลไม่เพียงพอ` and blocked on
 the operator; a guessed score is worse than none.
@@ -138,7 +138,7 @@ the model controls.
   `/goal` and `/loop` are the operator's to type. `/goal`'s evaluator is a session-scoped
   prompt-based Stop hook on the small fast model; it reads only the transcript and never calls
   tools (`code.claude.com/docs/en/goal`), so it checks that the stated condition appears met,
-  not that the work is right. It does not replace the Rule 13 fresh-context validator, and it
+  not that the work is right. It does not replace the Rule 4 fresh-context validator, and it
   has no native turn cap: the cap is a clause in the condition.
 - No orchestration layer of its own: dispatch shape is one page (`spawn-brief.md`); Claude
   Code's native Agent tool does the rest.

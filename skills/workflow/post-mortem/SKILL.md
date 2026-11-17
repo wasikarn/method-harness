@@ -112,7 +112,7 @@ session would hit again. Tag the record with the incident severity when there wa
 Done when: the record is delivered, its location is stated, and each follow-up has a ticket
 or an explicit "needs creation".
 
-Doctrine ties: Section 8 takes Rule 4's four failure classes; Section 9 is Rule 4's failing-test
+Doctrine ties: Section 8 takes Rule 3's four failure classes; Section 9 is Rule 3's failing-test
 proof.
 
 ## Failure modes

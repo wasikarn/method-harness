@@ -81,7 +81,7 @@
       },
       {
         "id": "gate:agent:subagent-verdict-check-handback",
-        "description": "Deny (re-prompt) a SubagentHandback call whose report (tool_input.message) carries a vacuous or self-contradictory Rule 13 verdict object -- the auto-mode delivery path SubagentStop cannot see (GH #160).",
+        "description": "Deny (re-prompt) a SubagentHandback call whose report (tool_input.message) carries a vacuous or self-contradictory Rule 4 verdict object -- the auto-mode delivery path SubagentStop cannot see (GH #160).",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/subagent-verdict-gate.sh\""
       },
       {
@@ -134,7 +134,7 @@
     "SubagentStop": [
       {
         "id": "gate:agent:subagent-verdict-check",
-        "description": "Block (re-prompt once) a subagent's Stop when its final message carries a vacuous or self-contradictory Rule 13 {pass, findings[], checked[], scope_ok, unexpected_files[]} verdict object.",
+        "description": "Block (re-prompt once) a subagent's Stop when its final message carries a vacuous or self-contradictory Rule 4 {pass, findings[], checked[], scope_ok, unexpected_files[]} verdict object.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gates/subagent-verdict-gate.sh\""
       }
     ]

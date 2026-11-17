@@ -45,7 +45,7 @@ reason.>
   rule, YAGNI, maker≠checker, an ADR>. Labeled: **deferred** / **declined on evidence** /
   **premise dead**.
 
-## Decision score (METHODOLOGY Rule 14)
+## Decision score (METHODOLOGY Rule 5)
 
 | Criterion | Weight | Score | Reason |
 |---|---|---|---|

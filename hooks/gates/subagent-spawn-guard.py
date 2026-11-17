@@ -54,7 +54,7 @@ agent_type = d.get("agent_type") or "unknown"
 # switching subagent_type, so this gate never looks at it.
 print(f"[mh:gate] BLOCKED: subagent ({agent_type}) may not call the Agent tool to spawn its "
       f"own reviewer/validator/subagent -- dispatch is the main session's job (maker≠checker, "
-      f"docs/METHODOLOGY.md Rule 13). Return findings to the main session and let it "
+      f"docs/METHODOLOGY.md Rule 4). Return findings to the main session and let it "
       f"dispatch the next agent.", file=sys.stderr)
 journal(GATE_ID, d.get("tool_name"), "deny", d.get("session_id"))
 sys.exit(2)

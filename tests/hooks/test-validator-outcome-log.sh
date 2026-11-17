@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Validator-outcome log (GH #994, C1 of the mh quality plan): subagent-verdict-gate.sh
-# appends one counts-and-booleans row per Rule 13 verdict it sees, on the allow path as
+# appends one counts-and-booleans row per Rule 4 verdict it sees, on the allow path as
 # well as the block path, so the first-pass rate and the rounds needed become measurable.
 # The row must never change the gate's verdict or exit code, must never hold prompt text,
 # a path or a finding's text, and every failure to write must be swallowed.
