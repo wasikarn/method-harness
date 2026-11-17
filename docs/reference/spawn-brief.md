@@ -74,7 +74,8 @@ claim — illegible evidence is unverified, not absent; before returning, stop e
 job or wait loop you started (a finished validator once left an `until ... sleep` loop running);
 in a repo that has `scripts/merge-pr.sh` (method-harness does), merge through `scripts/merge-pr.sh <PR>`,
 not bare `gh pr merge`, and do not bump the version in the PR: the script cuts it at merge time, run
-from the PR's checkout in the background (`branching-model.md`, "Merging").
+from the PR's checkout in the background (`branching-model.md`, "Merging"); a subagent cannot run `claude -p`
+(the gate denies a nested session), so a job that needs one builds the harness and returns, and the dispatcher runs it.
 ```
 
 Dispatching a Claude subagent (`Agent`): default is no `model:` override, running the agent's own
