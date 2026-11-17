@@ -27,7 +27,7 @@ turns "checked and cleared" and "never looked" into different, citable strings.
 ## Step 3: why the contract has six keys
 
 `docs/reference/spawn-brief.md`'s generic `Validator/re-validator:` shape has four fields and is
-intentionally left unchanged: it backs many unrelated Rule-13 validator dispatches. This skill's
+intentionally left unchanged: it backs many unrelated Rule-4 validator dispatches. This skill's
 `check-verdict.py` validates against the unconditional 6-key contract, so an
 agent following the 4-field shape is rejected:
 `echo '{"pass": true, "findings": [], "scope_ok": true, "unexpected_files": []}' | python3 "${CLAUDE_SKILL_DIR}/scripts/check-verdict.py"`

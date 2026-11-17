@@ -51,7 +51,7 @@ Anchoring a rubric with worked examples is well-supported for human-rater *relia
 supported and format-agnostic in its own classical (BARS) lineage, and — for LLM judges
 specifically — raises self-consistency without established gains in correctness, and can even
 increase how exploitable the rubric is. Rule 5's requirement stands on reliability/reproducibility
-grounds, not on a "far worse without it" magnitude claim. Treat a Rule-14-scored verdict's
+grounds, not on a "far worse without it" magnitude claim. Treat a Rule-5-scored verdict's
 confidence accordingly: a band with a stated reason, never a bare self-reported number (see
 `docs/reference/haiku-decision-calls.md` for the primitive, and
 `docs/research/decision-making-methods-2026-09-19.md` §1.5 for the calibration literature it

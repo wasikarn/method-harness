@@ -106,7 +106,7 @@ frontier models giving their own model family 75-84% win rates in self-judged co
   `tests/evals/test-eval-cases.sh` keeps the cases loadable until it opens and proves every
   regex grader against its fixture or verdict sample.
 - `gate:task:complete-separation` makes the rule mechanical for task state.
-- A finding from a reviewer/checker (`blind-spot-hunter`, any Rule-13
+- A finding from a reviewer/checker (`blind-spot-hunter`, any Rule-4
   validator) is not self-authorizing: applying its fix still needs the human's own
   confirm-then-fix gate, even when the finding is clearly real and the same session already ran
   one such gate earlier in the same audit. This has lapsed under task momentum twice
