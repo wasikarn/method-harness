@@ -13,7 +13,10 @@ failure-diagnose-nudge counter (GH #463): a nudge landing in a subagent's contex
 be thrown away and the main thread never warned. On a thread's first search it appends
 one row to the metrics log and nudges only if no qmd call came before it and the `qmd`
 binary is on PATH (qmd is operator-environment, not bundled: no binary, no nudge). A
-session that calls qmd and never searches the web writes no row.
+session that calls qmd and never searches the web writes no row. Row fields: ts (seconds, ms
+precision), session, subagent, agent_id (null on the main thread), qmd_before_web (was any qmd
+call in the session already recorded when this thread searched, so a subagent row can read true
+because the main thread called qmd first), nudged. Per-session rate: take the earliest row.
 
 Limits: parallel tool calls in one turn have no fixed PostToolUse order, so a session can
 be logged as a violation when qmd ran in the same turn (shortcut: accepted, the rate is
@@ -66,13 +69,13 @@ def create_once(path):
 
 
 def append_log(row):
+    p = log_path()
     try:
-        p = log_path()
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "a") as f:
             f.write(json.dumps(row) + "\n")
     except OSError as e:
-        print(f"[mh:sensor] qmd-first-nudge: cannot write {log_path()} ({e}); continuing", file=sys.stderr)
+        print(f"[mh:sensor] qmd-first-nudge: cannot write {p} ({e}); continuing", file=sys.stderr)
 
 
 def main():
@@ -115,8 +118,8 @@ def main():
         print(f"[mh:sensor] qmd-first-nudge: marker error ({e}); no nudge", file=sys.stderr)
         return 0
     nudge = (not qmd_first) and shutil.which("qmd") is not None
-    append_log({"ts": int(time.time()), "session": session, "subagent": agent is not None,
-                "qmd_before_web": qmd_first, "nudged": nudge})
+    append_log({"ts": round(time.time(), 3), "session": session, "subagent": agent is not None,
+                "agent_id": agent, "qmd_before_web": qmd_first, "nudged": nudge})
     if nudge:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": NUDGE}}))
     return 0

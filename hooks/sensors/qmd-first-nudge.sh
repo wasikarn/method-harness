@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sensor: on the first WebSearch of a session with no earlier qmd call, inject a
-# qmd-first nudge (additionalContext) and log one row. Advisory only -- never denies,
-# never blocks; always exits 0.
+# Sensor: on a thread's first WebSearch or Firecrawl search (main thread or subagent) with
+# no earlier qmd call in the session, inject a qmd-first nudge (additionalContext) and log
+# one row per thread. Advisory only -- never denies, never blocks; always exits 0.
 set -uo pipefail
 if ! command -v python3 >/dev/null 2>&1; then
   echo "[mh:sensor] python3 not found — qmd-first-nudge cannot run; allowing (install python3 to restore the qmd-first nudge)" >&2
