@@ -32,6 +32,7 @@ and `post-mortem` carry `disable-model-invocation: true`.
 | Hook | Trigger | Bytes when it fires |
 |---|---|---:|
 | `sensors/failure-diagnose-nudge` | a Bash call fails, including one a PreToolUse gate denied before it ran; once per distinct command per session (and per subagent) | 325 for the first in a session or subagent, 134 after |
+| `sensors/qmd-first-nudge` | the first WebSearch of a session with no earlier qmd call and `qmd` on PATH; once per session | ~330 B (estimate from source) |
 | `session/memory-health-nudge` | memory-lint reports `findings: [1-9]`, or the store's auto-commit failed | ~200 B fixed + the lint output (estimate from source) |
 | `session/fragments-surface` (startup/resume/clear) | fragment files recorded for this project | roughly 400-650 B fixed + one line per file (estimate from source) |
 

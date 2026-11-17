@@ -97,6 +97,11 @@
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/bash-output-redact.sh\""
       },
       {
+        "id": "sensor:web:qmd-first-nudge",
+        "description": "Advisory only, never blocks: on the first WebSearch of a session with no earlier qmd tool call (a subagent's counts) and the qmd binary on PATH, nudge qmd-first via additionalContext, once per session. Appends one row per session to ~/.local/share/kbg/metrics/qmd-first.jsonl (MH_QMD_FIRST_LOG overrides) so the real compliance rate can be read.",
+        "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/qmd-first-nudge.sh\""
+      },
+      {
         "id": "sensor:write:fragments-capture",
         "description": "If this session is armed (sensor:prompt:fragments-arm) and this write plausibly targets a writing-fragments document, record a durable path pointer to it; never touches or inlines content, never prints anything.",
         "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sensors/fragments-capture.sh\""
