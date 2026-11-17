@@ -68,19 +68,45 @@ out=$(run WebSearch s4)
 grep -q 'mh-qmd-first-nudge' <<<"$out" && ok "a new session gets its own nudge" || bad "new session should nudge: '$out'"
 
 # 6. Other tools, other events and junk input are ignored; exit 0 always.
-for t in Bash Read mcp__plugin_context7_context7__query-docs; do
+ignored_bad=0
+for t in Bash Read WebFetch mcp__plugin_context7_context7__query-docs; do
   out=$(run "$t" s5); rc=$?
-  [ "$rc" -eq 0 ] && [ -z "$out" ] || bad "tool $t should be ignored: rc=$rc out='$out'"
+  if [ "$rc" -ne 0 ] || [ -n "$out" ]; then bad "tool $t should be ignored: rc=$rc out='$out'"; ignored_bad=1; fi
 done
-ok "unrelated tools ignored"
+[ "$ignored_bad" = 0 ] && [ "$(rows)" = 4 ] && ok "unrelated tools ignored, no row written" || bad "ignored tools wrote a row or nudged (rows=$(rows))"
+out=$(python3 -c 'import json; print(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "WebSearch", "session_id": "s5b"}))' | PATH="$WORK/bin:$PATH" bash "$SENSOR"); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && [ "$(rows)" = 4 ] && ok "a non-PostToolUse event is ignored" || bad "PreToolUse event: rc=$rc out='$out' rows=$(rows)"
 out=$(printf 'not json' | bash "$SENSOR"); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "malformed stdin -- silent, exit 0" || bad "malformed stdin: rc=$rc out='$out'"
+before=$(find "$TMPDIR" | wc -l | tr -d ' ')
 out=$(python3 -c 'import json; print(json.dumps({"tool_name": "WebSearch", "session_id": "../evil"}))' | PATH="$WORK/bin:$PATH" bash "$SENSOR" 2>/dev/null); rc=$?
-[ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -e "$WORK/evil" ] && ok "unsafe session_id -- no nudge, nothing written outside the marker dir" || bad "unsafe session id: rc=$rc out='$out'"
+after=$(find "$TMPDIR" | wc -l | tr -d ' ')
+[ "$rc" -eq 0 ] && [ -z "$out" ] && [ "$before" = "$after" ] && [ "$(rows)" = 4 ] && ok "unsafe session_id -- no nudge, no marker, no row" || bad "unsafe session id: rc=$rc out='$out' files $before->$after rows=$(rows)"
+out=$(python3 -c 'import json; print(json.dumps({"tool_name": "WebSearch", "session_id": "s7", "agent_id": "../x"}))' | PATH="$WORK/bin:$PATH" bash "$SENSOR" 2>/dev/null); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && [ "$(rows)" = 4 ] && ok "unsafe agent_id -- no nudge, no row" || bad "unsafe agent id: rc=$rc out='$out' rows=$(rows)"
 
 # 7. Unwritable log: still exits 0 and still nudges.
-MH_QMD_FIRST_LOG="/dev/null/x/log.jsonl" out=$(run WebSearch s6 2>/dev/null); rc=$?
+out=$(MH_QMD_FIRST_LOG="/dev/null/x/log.jsonl" run WebSearch s6 2>/dev/null); rc=$?
 [ "$rc" -eq 0 ] && grep -q 'mh-qmd-first-nudge' <<<"$out" && ok "unwritable log -- fails open, still nudges" || bad "unwritable log: rc=$rc out='$out'"
+
+# 8. The Firecrawl connector's search counts as a web search.
+out=$(run mcp__claude_ai_Firecrawl__firecrawl_search s8)
+grep -q 'mh-qmd-first-nudge' <<<"$out" && ok "Firecrawl search first -- nudged" || bad "Firecrawl search should nudge: '$out'"
+
+# 9. A subagent's search is its own thread: it is nudged and does not use up the main thread's nudge.
+agent_run() { # tool session agent
+  python3 -c 'import json, sys; print(json.dumps({"hook_event_name": "PostToolUse", "tool_name": sys.argv[1], "session_id": sys.argv[2], "agent_id": sys.argv[3]}))' "$1" "$2" "$3" | PATH="$WORK/bin:$PATH" bash "$SENSOR"
+}
+out=$(agent_run WebSearch s9 ag1)
+grep -q 'mh-qmd-first-nudge' <<<"$out" && ok "subagent first search -- nudged" || bad "subagent should be nudged: '$out'"
+out=$(run WebSearch s9)
+grep -q 'mh-qmd-first-nudge' <<<"$out" && ok "main thread still nudged after its subagent was" || bad "main thread should keep its own nudge: '$out'"
+grep -q '"subagent": true' "$MH_QMD_FIRST_LOG" && ok "log row marks the subagent thread" || bad "no subagent row in log"
+
+# 10. A subagent's qmd call counts for the whole session.
+agent_run mcp__plugin_qmd_qmd__query s10 ag2 >/dev/null
+out=$(run WebSearch s10)
+[ -z "$out" ] && ok "subagent qmd call before the main thread's search -- no nudge" || bad "subagent qmd should count: '$out'"
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

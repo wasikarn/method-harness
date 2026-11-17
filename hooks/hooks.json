@@ -177,7 +177,7 @@
         ]
       },
       {
-        "matcher": "WebSearch|mcp__plugin_qmd_qmd__.*",
+        "matcher": "WebSearch|mcp__claude_ai_Firecrawl__firecrawl_search|mcp__plugin_qmd_qmd__.*",
         "hooks": [
           {
             "type": "command",

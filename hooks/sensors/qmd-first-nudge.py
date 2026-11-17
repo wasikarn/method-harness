@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
-"""PostToolUse(WebSearch | qmd) sensor: advisory only, never blocks (always exit 0).
+"""PostToolUse(WebSearch | Firecrawl search | qmd) sensor: advisory only, never blocks (always exit 0).
 
-CLAUDE.md says to search qmd before WebSearch. A local scan of transcripts since
-that rule landed found qmd called before the first web call in 8 of 28 sessions
-(docs/research/skill-chain-workflows-design-2026-11-17.md); this sensor nudges once.
+CLAUDE.md says to search qmd before WebSearch. A local scan of transcripts since that
+rule landed found qmd called before the first web call in 8 of 28 sessions (29%); this
+sensor nudges once per thread and logs the real rate.
 
-Two markers per session under $TMPDIR/mh-sensors, both created with O_EXCL so no lock
-is needed: "<session>.qmd" (a qmd tool ran) and "<session>.web" (the first WebSearch
-was handled). On the first WebSearch it appends one row to the metrics log, so the
-real rate can be read later, and nudges only if no qmd call came before it and the
-`qmd` binary is on PATH (qmd is operator-environment, not bundled: no binary, no nudge).
-A subagent shares its parent's session_id, so its qmd call counts for the session.
+Markers under $TMPDIR/mh-sensors, each created with O_EXCL so no lock is needed:
+"qmd-first-<session>.qmd" (a qmd tool ran anywhere in the session; a subagent shares its
+parent's session_id, so its qmd call counts) and "qmd-first-<session>[-<agent>].web" (the
+first search of that thread was handled). The web marker is per thread, like the sibling
+failure-diagnose-nudge counter (GH #463): a nudge landing in a subagent's context would
+be thrown away and the main thread never warned. On a thread's first search it appends
+one row to the metrics log and nudges only if no qmd call came before it and the `qmd`
+binary is on PATH (qmd is operator-environment, not bundled: no binary, no nudge). A
+session that calls qmd and never searches the web writes no row.
+
+Limits: parallel tool calls in one turn have no fixed PostToolUse order, so a session can
+be logged as a violation when qmd ran in the same turn (shortcut: accepted, the rate is
+a rough one). Only the plugin qmd server (QMD_PREFIX, same literal as the hooks.json
+matcher) and the Firecrawl connector search are recognised. When the shared hook_payload
+lib cannot load there is no safe marker name, so this sensor stays silent where the sibling
+nudges uncapped: one nudge per search would be noise, not advice.
 """
 import json
 import os
@@ -26,10 +36,11 @@ except Exception as _e:  # noqa: BLE001 -- any load failure must fail open
     validate_session_id = None
     _LIB_ERROR = repr(_e)[:200]
 
-QMD_PREFIX = "mcp__plugin_qmd_qmd__"
+QMD_PREFIX = "mcp__plugin_qmd_qmd__"  # keep in step with the hooks.json matcher
+SEARCH_TOOLS = ("WebSearch", "mcp__claude_ai_Firecrawl__firecrawl_search")  # likewise
 NUDGE = (
     "<mh-qmd-first-nudge>\n"
-    "WebSearch ran before any qmd search this session. If the question may be covered by the "
+    "A web search ran before any qmd search this session. If the question may be covered by the "
     "operator's notes, search qmd first (llm-wiki collection); for library docs use context7. "
     "News, prices and fresh releases are fine on the web: carry on.\n"
     "</mh-qmd-first-nudge>"
@@ -64,7 +75,7 @@ def append_log(row):
         print(f"[mh:sensor] qmd-first-nudge: cannot write {log_path()} ({e}); continuing", file=sys.stderr)
 
 
-def main(argv):
+def main():
     try:
         data = json.load(sys.stdin)
     except (ValueError, TypeError):
@@ -75,7 +86,7 @@ def main(argv):
     if not isinstance(tool, str):
         return 0
     is_qmd = tool.startswith(QMD_PREFIX)
-    if not is_qmd and tool != "WebSearch":
+    if not is_qmd and tool not in SEARCH_TOOLS:
         return 0
     if validate_session_id is None:
         print(f"[mh:sensor] qmd-first-nudge: cannot load scripts/_lib/hook_payload.py ({_LIB_ERROR}); "
@@ -85,23 +96,31 @@ def main(argv):
     if not session:
         print("[mh:sensor] qmd-first-nudge: session_id is not a safe file name; no nudge", file=sys.stderr)
         return 0
+    # agent_id is present ONLY inside a subagent: test presence, not truthiness (as the sibling does).
+    agent = None
+    if "agent_id" in data:
+        agent = validate_session_id(data["agent_id"])
+        if not agent:
+            print("[mh:sensor] qmd-first-nudge: agent_id is not a safe file name; no nudge", file=sys.stderr)
+            return 0
     base = f"{marker_dir()}/qmd-first-{session}"
     try:
         if is_qmd:
             create_once(base + ".qmd")
             return 0
-        if not create_once(base + ".web"):
-            return 0  # not the first WebSearch of this session
+        if not create_once(base + (f"-{agent}" if agent else "") + ".web"):
+            return 0  # not this thread's first search
         qmd_first = os.path.exists(base + ".qmd")
     except OSError as e:
         print(f"[mh:sensor] qmd-first-nudge: marker error ({e}); no nudge", file=sys.stderr)
         return 0
     nudge = (not qmd_first) and shutil.which("qmd") is not None
-    append_log({"ts": int(time.time()), "session": session, "qmd_before_web": qmd_first, "nudged": nudge})
+    append_log({"ts": int(time.time()), "session": session, "subagent": agent is not None,
+                "qmd_before_web": qmd_first, "nudged": nudge})
     if nudge:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": NUDGE}}))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(main())
