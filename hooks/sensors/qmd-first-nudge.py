@@ -20,8 +20,10 @@ because the main thread called qmd first), nudged. Per-session rate: take the ea
 
 Limits: parallel tool calls in one turn have no fixed PostToolUse order, so a session can
 be logged as a violation when qmd ran in the same turn (shortcut: accepted, the rate is
-a rough one). Only the plugin qmd server (QMD_PREFIX, same literal as the hooks.json
-matcher) and the Firecrawl connector search are recognised. When the shared hook_payload
+a rough one). Only the plugin qmd MCP server (QMD_PREFIX, same literal as the hooks.json
+matcher) and the Firecrawl connector search are recognised: a `qmd` run through Bash, or a qmd
+MCP server under another name, is not seen, so such a session is nudged and logged as a violation
+and the logged rate reads low. When the shared hook_payload
 lib cannot load there is no safe marker name, so this sensor stays silent where the sibling
 nudges uncapped: one nudge per search would be noise, not advice.
 """
@@ -44,7 +46,7 @@ SEARCH_TOOLS = ("WebSearch", "mcp__claude_ai_Firecrawl__firecrawl_search")  # li
 NUDGE = (
     "<mh-qmd-first-nudge>\n"
     "A web search ran before any qmd search this session. If the question may be covered by the "
-    "operator's notes, search qmd first (llm-wiki collection); for library docs use context7. "
+    "operator's notes, search qmd first (`qmd status` lists the collections); for library docs use context7. "
     "News, prices and fresh releases are fine on the web: carry on.\n"
     "</mh-qmd-first-nudge>"
 )

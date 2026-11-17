@@ -15,7 +15,7 @@ bad() { fail=$((fail + 1)); echo "FAIL: $1" >&2; }
 
 WORK=$(mktemp -d)
 trap '[ -n "$WORK" ] && tmp_delete "$WORK"' EXIT
-mkdir -p "$WORK/bin" "$WORK/empty"
+mkdir -p "$WORK/bin"
 printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/qmd"
 chmod +x "$WORK/bin/qmd"
 export TMPDIR="$WORK/tmp"
@@ -71,7 +71,10 @@ else
 fi
 
 # 4. No qmd binary on PATH: no nudge, but the row is still logged (nudged false).
-out=$(payload WebSearch s3 | env PATH="$WORK/empty:/usr/bin:/bin" bash "$SENSOR" 2>"$ERR"); rc=$?
+mkdir -p "$WORK/tools"
+ln -sf "$(command -v bash)" "$WORK/tools/bash"
+ln -sf "$(command -v python3)" "$WORK/tools/python3"
+out=$(payload WebSearch s3 | env PATH="$WORK/tools" bash "$SENSOR" 2>"$ERR"); rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ] && grep -q '"nudged": false' <<<"$(last_row)"; then
   ok "no qmd binary -- no nudge, row logged with nudged false"
 else
@@ -132,6 +135,15 @@ if nudged "$out"; then ok "main thread still nudged after its subagents were"; e
 run mcp__plugin_qmd_qmd__query s10 ag3 >/dev/null
 out=$(run WebSearch s10)
 if [ -z "$out" ]; then ok "subagent qmd call before the main thread's search -- no nudge"; else bad "subagent qmd should count: '$out'"; fi
+# ...and the other direction: the main thread called qmd, so a later subagent search reads qmd_before_web true.
+run mcp__plugin_qmd_qmd__query s13 >/dev/null
+out=$(run WebSearch s13 ag4)
+row=$(last_row)
+if [ -z "$out" ] && grep -q '"subagent": true' <<<"$row" && grep -q '"qmd_before_web": true' <<<"$row"; then
+  ok "main thread's qmd call, then a subagent search -- silent, subagent row reads qmd_before_web true"
+else
+  bad "subagent row after main-thread qmd: out='$out' row=$row"
+fi
 
 # 12. python3 missing: the shell wrapper allows and says so.
 mkdir -p "$WORK/nopy"
