@@ -2,7 +2,7 @@
 # Gate: a subagent may not mark its own task completed (maker≠checker).
 # Reads the PreToolUse JSON payload from stdin; exits 2 to block.
 #
-# Why: the builder → validator chain (METHODOLOGY.md Rule 13) was
+# Why: the builder → validator chain (METHODOLOGY.md Rule 4) was
 # enforced by prompt doctrine + TaskCreate/addBlockedBy ordering only —
 # addBlockedBy gates *ordering*, but nothing computationally stopped the maker
 # from marking its own task `completed` without the validator's pass. That is

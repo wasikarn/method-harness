@@ -1,6 +1,6 @@
 # Spawn brief
 
-The shape every dispatched subagent prompt takes. Short on purpose; the constraints line is METHODOLOGY Rule 13.
+The shape every dispatched subagent prompt takes. Short on purpose; the constraints line is METHODOLOGY Rule 4.
 
 ```
 # Task: <one line>
@@ -44,7 +44,7 @@ still applies.
 
 Validator/re-validator: return `{pass, findings[], checked[], scope_ok, unexpected_files[]}` and
 nothing else (bar the `not_checked:` line below); `checked[]` holds ≥1 `{claim, evidence}` even on a clean pass — this is where
-Rule 13's "one checkable fact" lands, and an empty `checked[]` is not verified, same as a missing
+Rule 4's "one checkable fact" lands, and an empty `checked[]` is not verified, same as a missing
 field. `scope_ok` fails on either an unexpected file or an owned file the diff never touches.
 Scope the validator had no access to goes on one `not_checked:` prose line outside the JSON (the
 `mh:plan-reviewer` `not_reviewed` pattern, which that agent keeps in its own output block), never inside the JSON object; where a brief demands JSON only (a schema-bound checker such as `mh:deep-audit`'s), name it in a `checked[]` claim instead. A Done-when assertion it could not
@@ -88,7 +88,7 @@ A fixer brief carries the validator's `findings[]` verbatim and narrows FILES YO
 the findings name; a returned unit that may touch anything grows into a diff nobody reviewed.
 
 Launch a wave's Agent calls together, before reading any of their results: dispatching one, waiting
-on it, then dispatching the next serializes what Rule 13's per-wave cap assumes runs concurrently.
+on it, then dispatching the next serializes what Rule 4's per-wave cap assumes runs concurrently.
 
 If a wave's launch fails partway — an Agent call itself errors rather than a subagent returning a
 finding — do not read results from the launched subset as if the wave completed; note which leaves
@@ -101,7 +101,7 @@ trusting a glance across the wave.
 Several reviewers on one change (parallel): each is read-only, role `validator`, and returns the
 validator shape above (a clean result still cites one checkable fact in `checked[]`). An agent with its
 own output format keeps it, mapped to those fields as for `mh:plan-reviewer` above, or is not used in
-this role. One fixer owns the writes: the original dispatched builder per Rule 13, or, when no builder
+this role. One fixer owns the writes: the original dispatched builder per Rule 4, or, when no builder
 was dispatched, one fixer the dispatcher names. It gets every reviewer's `findings[]` merged verbatim,
 and its diff gets a fresh-context validator. Run a security reviewer last, whether or not a fixer ran:
 a general-purpose `Agent`, role `validator`, with a security brief (mh has no security agent). It reviews
@@ -109,7 +109,7 @@ the cumulative diff (builder plus fixer), so it sees what ships: `git -C <path> 
 the isolated-checkout pilot below (security runs there before step 4's merge, which waits for it); in a
 shared tree (staged, not committed) `git diff <base-sha>` with the HEAD recorded before the builder
 started, plus any new file from `git status`. If its findings send the fixer back, re-run security and the
-fresh-context validator on the new patch; Rule 13's 3 rounds count across both loops.
+fresh-context validator on the new patch; Rule 4's 3 rounds count across both loops.
 (Source for the comment-then-one-fixer point only: Levi Strauss, GitHub Universe 2026,
 youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents now comment, one helper fixes.)
 
@@ -117,7 +117,7 @@ youtube.com/watch?v=-GpxKKgoWWg: parallel writers hit merge conflicts; agents no
 
 A subagent normally shares its parent session's live worktree (`docs/reference/branching-model.md`,
 "Concurrent sessions") — file-collision risk is handled by FILES YOU OWN discipline and sequential
-dispatch, not filesystem isolation. For a **builder** dispatch that already trips Rule 13's
+dispatch, not filesystem isolation. For a **builder** dispatch that already trips Rule 4's
 validator requirement (2+ files, or adds a test), the dispatcher may instead give it its own
 worktree, reusing `skills/review/compliance-audit`'s existing disposable-worktree pattern
 (`skills/review/compliance-audit/SKILL.md`) rather than inventing a new
@@ -161,7 +161,7 @@ worktree is always discarded.
    merge that actually succeeds: `git worktree remove <path>` and `git branch -d subagent/<slug>`
    — if either refuses (e.g. an untracked file step 3 should have caught), treat it as a step 5
    case rather than forcing it.
-5. **Validator reject**: follow Rule 13's normal loop first — dispatch a fixer *into the same
+5. **Validator reject**: follow Rule 4's normal loop first — dispatch a fixer *into the same
    worktree*, FILES YOU OWN narrowed to the findings per this doc's fixer-brief convention above;
    re-validate against the cumulative `git -C <path> diff <base-sha>..HEAD` (the original builder's
    files plus the fixer's), not just the fixer's own diff, or the builder's untouched files

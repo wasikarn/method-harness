@@ -132,7 +132,7 @@ must discover independently, then get an answer from a verifier that did not do 
      exercise this requirement — never a substitute for actually trying). Plus: the exact
      gauntlet command run, the SHA tested, its exit code, and its **verbatim output or tail** —
      never a summary; losing this loses the property the agent was kept around for.
-   - Escape hatch only, for genuinely large/multi-repo plans: fan out up to Rule 13's 10-per-wave
+   - Escape hatch only, for genuinely large/multi-repo plans: fan out up to Rule 4's 10-per-wave
      cap, one verifier per natural boundary. Not the default — the common case (single-repo,
      single-phase) stays at exactly one verifier.
 

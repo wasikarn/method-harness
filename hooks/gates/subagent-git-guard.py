@@ -1453,7 +1453,7 @@ except _Unparsed:
 if hit:
     _err(f"[mh:gate] BLOCKED: subagent ({agent_type}) may not run `git {hit}` "
          f"(command: {clip(cmd)!r}) -- no repo-wide git in a concurrent wave "
-         f"(docs/METHODOLOGY.md Rule 13); scope every git command to files you own.")
+         f"(docs/METHODOLOGY.md Rule 4); scope every git command to files you own.")
     journal(GATE_ID, _tn, "deny", d.get("session_id"))
     os._exit(2)
 sys.exit(0)

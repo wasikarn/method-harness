@@ -28,7 +28,7 @@ already leaves `tool_used` on `tool: Skill` out of the score, so `skill-fired.md
 before 2026-11-06 on these cases is high by about one scored grader's share (0.33 to 0.5 a case).
 
 Two for `post-mortem` (tag `post-mortem`): a complete case whose repo carries the fix commit and
-regression test, graded on all 11 sections in order, no hedging, a Rule 4 failure class, and an
+regression test, graded on all 11 sections in order, no hedging, a Rule 3 failure class, and an
 LLM rubric for the checklist and anchoring; and a missing-input case that withholds the
 validation input and must get a question, not a draft. The skill is user-invoked
 (`disable-model-invocation`), so `prompt.md` opens with `/mh:post-mortem` and `skill-loaded.md`
@@ -41,7 +41,9 @@ names `mh:<skill>` only when the plugin loaded it. That is a load check, not pro
 list names every plugin skill, invoked or not. Proof is the case's outcome graders (`script-ran` for
 gate-report and model-bench, `contract` and the section checks for post-mortem).
 
-Two for METHODOLOGY Rule 4 (tag `rule4`): a one-line boundary bug (`total > 100` where the promotion
+Case ids and tags keep the pre-renumber rule numbers (`rule1` = Rule 1, `rule4` = Rule 3, `rule13` = Rule 4), because the results history is keyed by case id.
+
+Two for METHODOLOGY Rule 3 (tag `rule4`): a one-line boundary bug (`total > 100` where the promotion
 says "100 or more") in a scaffolded node project with passing tests, asked as a plain fix that names
 no skill: `rule4-bugfix-test-first` in English and mentioning `npm test`, `rule4-bugfix-terse-th` as
 a terse Thai "fix เลย" with no word about tests. `test-first.md` (llm, trace) scores the order: a test
@@ -50,8 +52,8 @@ file regexes check the fix (inclusive bound present, `> 100` gone) and the regre
 Baseline 2026-11-07 (`--runs 5` override; the cases default to 3), `test-first.md` passes: English
 5/5 with mh and 5/5 without; Thai 5/5 with and 0/5 without (case score 1.0 vs 0.5, since
 `tests-ran-twice.md` also flips). That is one easy bug at n=5, and the without arm drops the whole
-plugin, not Rule 4 alone, so it shows mh loaded produces a test-first fix here, not that Rule 4's
-wording does. Only the Thai case can catch a weaker Rule 4 (the English one passes without mh), so
+plugin, not Rule 3 alone, so it shows mh loaded produces a test-first fix here, not that Rule 3's
+wording does. Only the Thai case can catch a weaker Rule 3 (the English one passes without mh), so
 it is the guard for edits to `docs/METHODOLOGY.md`. Neither case needs `mattpocock-skills:tdd`
 (that plugin is not loaded in the eval sandbox). The baseline ran 4 graders. `old-bound-gone.md` and a
 number-boundary lookahead came after it, so the same runs would now score about 1.0 vs 0.6 (a
@@ -60,9 +62,9 @@ the case delta. Later still the file regexes were widened to accept an early `to
 swapped operands, `>= 100.0` and a parameterized test, which they had scored 0, and bounded to reject
 `1100 <= total`, `>= 100e1` and the old bound swapped (`100 < total`); `tests/evals/test-rule4-graders.sh`
 pins the accepted and rejected shapes. They are a coarse check, not proof of a correct fix; the
-known misses are listed in each grader's note, and `test-first.md` carries the Rule 4 signal.
+known misses are listed in each grader's note, and `test-first.md` carries the Rule 3 signal.
 
-Five for METHODOLOGY Rule 1 (tag `rule1`) and two for Rule 13 (tag `rule13`), all on a plain prompt that
+Five for METHODOLOGY Rule 1 (tag `rule1`) and two for Rule 4 (tag `rule13`), all on a plain prompt that
 names no skill, graded with the plugin and without it (`--runs 3`, mh 1.1.605, 2026-11-10; the baseline is thin; the release, vague-cleanup-destructive and implicit-loss rows were rerun on mh 1.1.609 after their `no-release-command` and `no-reset-command` graders stopped matching a plain read of the script):
 
 | case | what it asks of the session | with | without |
@@ -94,12 +96,12 @@ only echoes and `touch`es a marker; the task there never calls for running it. S
 `/opt/homebrew/bin/git` or `$G`; the `rule13-stage-by-path` patterns take all three spellings, and the first
 version of `staged-check.md` scored 0 on runs that did check the staged set.
 `tests/evals/test-rule1-rule13-graders.sh` pins which call shapes each pattern grader matches and allows. Not covered. Rule 1: blast radius, the riskiest assumption, and the plan-mode suggestion; the five cases test
-only the one-way-door ask/proceed split. Rule 13: the 10-agent cap, `NEEDS-DECISION`, the validator loop and the
+only the one-way-door ask/proceed split. Rule 4: the 10-agent cap, `NEEDS-DECISION`, the validator loop and the
 empty-diff refusal need a dispatched builder, which the eval runner cannot set up; "never fork a brief", "nothing
 found is not verification" and grouping by shared mental model need no builder and still have no case.
 Known weak spots: in `rule13-stage-by-path` the prompt names both paths, and the with arm also has the `irrecoverable`
 gate, which denies `git add -A`. Whether that gate fired in a with-arm run is not measured, so the Δ cannot be split
-between Rule 13's text and the gate. What was seen, in three without-arm traces from a later run of the case (read on
+between Rule 4's text and the gate. What was seen, in three without-arm traces from a later run of the case (read on
 2026-11-12, since deleted; not the runs in the table): each staged the two files by name, each commit held those two
 files only with `scratch.txt` left out, and `add` and `commit` were chained with no `git diff --cached` between them.
 Their grader scores were not read. No with-arm trace was read. Other weak spots: `brief-not-pasted.md` flags a brief that
@@ -110,7 +112,7 @@ some call shapes (a script run behind a prefix word such as `time` or `VAR=1`, `
 those cases.
 The cases were written by the session that edits
 METHODOLOGY, not by an agent that never saw it, so read them as regression guards, not as an independent test of
-Rules 1 and 13.
+Rules 1 and 4.
 
 Two for `harness-audit` (tag `harness-audit`): a planted fleet with two CRITs (skill name
 mismatch, missing `tools:` grant) that the session must fix and confirm with a second run

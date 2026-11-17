@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 41. Agent tool-grant must not include Agent (Rule 13 one-level-deep dispatch). No agent in
-# this fleet spawns further subagents — Rule 13 (docs/METHODOLOGY.md's "Orchestration shape" rule) is
+# 41. Agent tool-grant must not include Agent (Rule 4 one-level-deep dispatch). No agent in
+# this fleet spawns further subagents — Rule 4 (docs/METHODOLOGY.md's "Orchestration shape" rule) is
 # "a dispatched sub-agent must not re-dispatch." Check 09 already CRITs an agent missing
 # tools: entirely (door 1: silent full-tool inheritance, including Agent). This check closes
 # door 2: an explicit tools: grant that names Agent. WARN, not CRIT — a bad explicit grant is
@@ -15,7 +15,7 @@ for f in "$CLAUDE_DIR/agents"/*.md; do
   for tok in $(echo "$tv" | tr ',' ' '); do
     base="$(strip_tool_token "$tok")"
     if [ "$base" = "Agent" ]; then
-      warn "agent '$name' tools: grants 'Agent' — breaks Rule 13's one-level-deep dispatch invariant (a subagent must not re-dispatch); no agent in this fleet should hold the Agent tool"
+      warn "agent '$name' tools: grants 'Agent' — breaks Rule 4's one-level-deep dispatch invariant (a subagent must not re-dispatch); no agent in this fleet should hold the Agent tool"
       break
     fi
   done

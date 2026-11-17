@@ -62,7 +62,7 @@ One clause per gate; full scope and exceptions: `docs/reference/operating-model.
 | `gate:write:config-guard` | asks before a write to Claude Code settings `hooks`/`enabledPlugins` |
 | `gate:write:secret-scan` | asks when a Write/Edit adds a live-credential-shaped token |
 | `gate:tool:routine-trigger-guard` | asks before `RemoteTrigger` creates, modifies, or fires a Routine (ADR 0004) |
-| `gate:agent:subagent-verdict-check` | `SubagentStop` (plus a `SubagentHandback` twin): re-prompts once on a vacuous or self-contradictory Rule 13 verdict |
+| `gate:agent:subagent-verdict-check` | `SubagentStop` (plus a `SubagentHandback` twin): re-prompts once on a vacuous or self-contradictory Rule 4 verdict |
 
 Each PreToolUse gate is its own entry with an 8 s timeout (the SubagentStop entry has the same
 timeout). Claude Code runs matching hooks in parallel and merges deny > ask > allow (verified
