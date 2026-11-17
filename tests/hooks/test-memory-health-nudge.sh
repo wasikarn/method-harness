@@ -5,6 +5,9 @@
 # fixtures must be planted at that exact computed path.
 # Run standalone: bash tests/hooks/test-memory-health-nudge.sh
 set -uo pipefail
+# Hermetic: the shell that runs this may export CLAUDE_CONFIG_DIR (Orca does); the code under test would then
+# read the operator's real profile instead of this test's fixture. A case that needs it sets it inline.
+unset CLAUDE_CONFIG_DIR
 # The linked-worktree row below runs git init/worktree; a pre-push hook env has GIT_DIR set and would hijack them.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 
