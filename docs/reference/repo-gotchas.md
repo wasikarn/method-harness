@@ -138,6 +138,13 @@ already set alone.
   the whole tree. The frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`,
   `CHANGELOG.md`) are exempt from wording passes, never from hygiene: on 2026-08-26 a purge
   reported clean while 29 hits sat in exactly those dirs.
+- **Doc cross-links are a trailing `Related:` line.** A file in `docs/reference/` or `docs/adr/`
+  ends with `Related: [[stem]], ...` for the docs it cites or that cite it, and `Sources: [[stem]]`
+  for the `docs/research/` files it cites. Write the bare filename stem; write the repo path
+  (`[[docs/reference/agent-authoring-conventions]]`) when `git ls-files` shows the stem more than
+  once. Keep every backticked path: agents `Read` it and audit checks match it. No check resolves
+  these links, so fix both ends when a file is renamed. memory-lint's "`[[ ]]` is
+  memory-to-memory only" rule covers memory files, not these docs.
 - **Never `rm -rf`; delete by tier.** `gate:bash:irrecoverable` denies `rm -rf` in every tier.
   1. *Temp paths a test or script made itself* (a `mktemp` dir, or a file inside one): delete
      for good with `tmp_delete`, from `scripts/_lib/tmp-delete.sh` (`tests/_lib/harness.sh`
@@ -394,3 +401,5 @@ Per-issue measurements (GH #245, #246, #248, #273, #274, #276, #307, #317, #318,
 #336, #339, #340, #344, #349, #375, #382, #469, #681): [`gate-heuristic-history.md`](gate-heuristic-history.md).
 
 - **zsh command-word shapes (GH #912):** the irrecoverable gate reads `noglob`, `nocorrect`, `-`, `repeat N`, a leading `=` (zsh's full path of the word), a command word with `?`, `*` or a `[..]` class (read as each program name it can spell, asking past 12 matches) and a qualifier `(e:cmd:)` or `e[..]`/`e{..}` body, also after other qualifier letters (`.e:`, `N.e:`, `om[1]e:`), and `[^x]` negation. Known residuals, each a tokenizer limit with no exact fix yet: zsh alternation `(a|b)` in a command word, numeric ranges `<->`, extendedglob `x#` repetition in a command word, a qualifier `e<..>`, `+func` or `(#q e:..:)` (`#q` reads as a comment), a POSIX class in a command word now asks (not denied), a globbed or `=`-prefixed shell or interpreter in a pipe stage or fed by a here-string (no arguments, so no window),  a command word followed by a glob qualifier (`/bin/r?(.) -rf ~`: the tokenizer splits the `(`), a path whose basename is only a wildcard (`/dir/* -rf ~`, no ask), a globbed `claude` skipping the nested-spawn rule, the glob name set being a hand-kept list (a new exact-name rule needs its name added to `_GLOB_EXTRA_NAMES`), a globbed `g?t` or a qualifier-hidden git in `subagent-git-guard.py` (no glob model there), and a quoted `='git'` in it (adding `=` to its quoted-word class over-blocks `"A=1" git stash`). The `.sh` fast path defers to Python on `?`, `*`, `[` only.
+
+Related: [[0004-operator-authorized-routine-self-launch]], [[0005-gate-scope-agent-mistakes-not-disguised-commands]], [[branching-model]], [[cost-ledger-module]], [[gate-heuristic-history]], [[operating-model]]

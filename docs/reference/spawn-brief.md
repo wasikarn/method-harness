@@ -186,3 +186,7 @@ worktree is always discarded.
 Revisit whether this earns a dedicated helper (script or skill) only if it sees repeated real use —
 `docs/research/oh-my-openagent-adoption-audit-2026-09-28.md`'s own adoption audit scored this the
 one mechanism worth a pilot, not a default.
+
+Related: [[docs/reference/agent-authoring-conventions]], [[branching-model]], [[doctrine-delivery]], [[haiku-decision-calls]], [[docs/reference/measurement-coverage-status]], [[operating-model]]
+
+Sources: [[oh-my-openagent-adoption-audit-2026-09-28]]

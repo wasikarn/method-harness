@@ -178,3 +178,5 @@ digest, TOCTOU-guard, and dedup machinery the detection design had accumulated.
   Fixed with a post-claim recheck: after the `mkdir` succeeds, the symlink and ownership checks run
   once more, and a mismatch rolls the claim back (`rmdir`) and exits silently rather than trusting the
   precondition alone — the same "verify the postcondition" posture already used for `mv -n` above.
+
+Related: [[0003-writing-fragments-pointer-capture]], [[mattpocock-integration-map]]

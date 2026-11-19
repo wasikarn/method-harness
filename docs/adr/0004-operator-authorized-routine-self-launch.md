@@ -474,3 +474,7 @@ own stated reasoning, not just against a summary of them?
 **Explicitly out of scope even after acceptance:** building the actual Routine, its trigger
 wiring, or the credential itself is a separate, later, independently-gated piece of work — this
 ADR's acceptance authorizes starting that work, it does not constitute having done it.
+
+Related: [[branching-model]], [[composer-not-creator]], [[operating-model]], [[repo-gotchas]]
+
+Sources: [[adr-0011-scheduled-recursive-improve-invocation]], [[autonomous-loop-doctrine-drilldown-2026-09-28]]

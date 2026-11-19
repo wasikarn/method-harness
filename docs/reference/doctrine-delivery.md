@@ -40,3 +40,5 @@ session without doctrine says so.
 ## Reopen only on new evidence
 
 A reason to revisit: Claude Code lets a plugin ship rules, or the eval runner copies user rules into its sandbox.
+
+Related: [[METHODOLOGY]], [[attack-proposal]], [[cost-baseline]], [[operating-model]], [[spawn-brief]]

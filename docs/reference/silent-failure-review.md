@@ -176,3 +176,5 @@ what the downstream fix looks like once it does) instead of presenting independe
 conflict.
 
 End with a one-line verdict: `CLEAN` (no findings) or a count by severity.
+
+Related: [[operating-model]]

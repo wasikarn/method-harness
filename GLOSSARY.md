@@ -26,3 +26,5 @@ The size+mtime pair a fragments pointer record stores for what `session:fragment
 recently showed the user. A record surfaces again only once the target's current snapshot differs
 from this stored value — the mechanism is self-quiescing, with no timer, counter, or mute command.
 _Avoid_: "last seen," which implies a timestamp; it's a content-change signal, not a clock.
+
+Related: [[0003-writing-fragments-pointer-capture]], [[mattpocock-integration-map]]

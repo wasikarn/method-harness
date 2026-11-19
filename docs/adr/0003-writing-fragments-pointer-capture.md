@@ -175,3 +175,5 @@ relationship to the abandoned one.
   isolation via `HOME`/`TMPDIR` injection alone (the same pattern `tests/hooks/test-handoff-
   nudge.sh` already uses), so neither variable is actually read by any script — added per
   `docs/reference/env-vars.md`'s own rule against documenting a knob nothing reads.
+
+Related: [[0002-mh-controlled-handoff-path]], [[GLOSSARY]], [[env-vars]], [[mattpocock-integration-map]]

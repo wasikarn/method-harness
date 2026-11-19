@@ -49,3 +49,5 @@ A skill gives Claude new capabilities through instructions and code, so treat in
 like installing software. Before relying on a new plugin, MCP server, or skill: read its
 SKILL.md and scripts once for the network calls, file writes, and Bash commands it can trigger,
 and confirm they match its stated purpose.
+
+Related: [[0004-operator-authorized-routine-self-launch]], [[branching-model]], [[mattpocock-integration-map]]

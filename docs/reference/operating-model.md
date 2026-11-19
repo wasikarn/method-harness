@@ -144,3 +144,7 @@ the model controls.
   Code's native Agent tool does the rest.
 - No response style of its own: the `ponytail` plugin is the only style layer.
 - No rules-file delivery of the doctrine: it stays a SessionStart hook (`doctrine-delivery.md`).
+
+Related: [[0004-operator-authorized-routine-self-launch]], [[METHODOLOGY]], [[docs/reference/agent-authoring-conventions]], [[doctrine-delivery]], [[repo-gotchas]], [[silent-failure-review]], [[spawn-brief]]
+
+Sources: [[autonomous-loop-doctrine-drilldown-2026-09-28]]

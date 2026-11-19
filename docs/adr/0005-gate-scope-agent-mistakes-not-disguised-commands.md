@@ -139,3 +139,5 @@ gates. This ADR accepts that risk for the shapes the gates do not already deny:
 - **Revisit when:** a real command or an incident uses a disguised shape. Reopen the `parked` issues of
   that class and fix them as in-scope. Lift the freeze when the replay plan (#895) makes a gate PR
   cheap enough that review rounds, not replays, are the cost again.
+
+Related: [[repo-gotchas]]

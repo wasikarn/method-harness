@@ -87,3 +87,5 @@ jq spawns per Stop on a 3-subagent fixture: 20 before, 13 after.
    with a no-op script through the same path as the overhead row.
 4. Conditional rows: the worktree probe had no fragment files, memory-lint found nothing in the
    shared store (a linked worktree resolves to the main checkout's store). The rest are estimates from each script's fixed text.
+
+Related: [[METHODOLOGY]], [[doctrine-delivery]]

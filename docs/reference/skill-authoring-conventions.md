@@ -73,3 +73,5 @@ its first 30 lines, because a nested reference may be read with `head -100` (che
 
 **Size:** keep a `SKILL.md` under 500 lines (Anthropic's cap); an agent file may carry its own trailing
 `# Reference` section instead of a preload skill.
+
+Related: [[docs/reference/agent-authoring-conventions]], [[mattpocock-integration-map]]
