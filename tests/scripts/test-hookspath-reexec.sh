@@ -99,5 +99,31 @@ check '/usr/bin/grep -q "not an mh checkout" "$T/err" && /usr/bin/grep -q "unset
 rc=$?
 check '[ "$rc" -eq 0 ] && [ ! -s "$T/foreign" ] && [ ! -s "$T/ran" ] && /usr/bin/grep -q "not an mh checkout" "$T/err"' "foreign repo: pre-push runs nothing and says so"
 
+# Row 6: a repository that is not an mh checkout and has NO git-hooks/ of its own (found in the
+# review of #1028: the block required the work tree's own hook file to exist, so here it was
+# skipped and this hook's body ran on a foreign repository with no warning).
+D="$T/d"
+mkdir -p "$D"
+g "$D" init -q .
+g "$D" config core.hooksPath "$A/git-hooks"
+: > "$T/ran"
+g "$D" commit -q --allow-empty -m nohooks 2> "$T/err" < /dev/null; rc=$?
+check '[ "$rc" -eq 0 ] && [ ! -s "$T/ran" ]' "repo with no git-hooks/: this hook's body does not run, commit goes through"
+check '/usr/bin/grep -q "not an mh checkout" "$T/err" && /usr/bin/grep -q "unset core.hooksPath" "$T/err"' "repo with no git-hooks/: the warning says no hook ran"
+: > "$T/ran"
+(cd "$D" && printf '%s\n' "$refs" | "$A/git-hooks/pre-push" origin url 2> "$T/err")
+# shellcheck disable=SC2034 # read inside check's eval strings
+rc=$?
+check '[ "$rc" -eq 0 ] && [ ! -s "$T/ran" ] && /usr/bin/grep -q "not an mh checkout" "$T/err"' "repo with no git-hooks/: pre-push runs nothing and says so"
+
+# Row 7: an mh checkout whose own hook lost its executable bit is still an mh checkout: its own
+# hook runs (through bash), not the other checkout's body and not the "not an mh checkout" exit.
+g "$A" config core.hooksPath "$A/git-hooks"
+chmod -x "$own_b/pre-commit"
+: > "$T/ran"
+g "$B" commit -q --allow-empty -m nox 2> "$T/err" < /dev/null
+check '[ "$(cut -d" " -f1 "$T/ran")" = "$own_b" ] && [ "$(wc -l < "$T/ran")" -eq 1 ] && ! /usr/bin/grep -q "not an mh checkout" "$T/err"' "own hook without the x bit: still runs, once"
+chmod +x "$own_b/pre-commit"
+
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

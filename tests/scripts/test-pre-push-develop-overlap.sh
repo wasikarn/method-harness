@@ -9,6 +9,8 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OB
 HERE="$(cd -P "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
 HOOK="$ROOT/git-hooks/pre-push"
+# The fixture repository has no git-hooks/ of its own; the marker makes the hook run its body there.
+export MH_HOOK_REEXEC=1
 pass=0; fail=0
 check() { if [ "$2" -eq 0 ]; then pass=$((pass + 1)); echo "  PASS: $1"; else fail=$((fail + 1)); echo "  FAIL: $1" >&2; fi; }
 

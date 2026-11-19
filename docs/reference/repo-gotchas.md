@@ -122,10 +122,10 @@ never runs at all and nothing server-side notices. Run the verify command above 
 An absolute path to another checkout's `git-hooks` (seen twice 2026-10-27, cause unknown) made every
 worktree run that checkout's stale hooks; pre-commit and pre-push now warn and `exec` the work tree's
 own copy (GH #743). This heals only once the checkout the path points at has that code.
-A repository of another project that has an executable `git-hooks/` file of the same name, and whose
-`core.hooksPath` points at these hooks, gets a warning and no hook at all: its own file lacks the
-re-exec marker, so it is not run under mh's name. One with no such file skips the block, and mh's
-hook body then runs on that repository with no warning.
+A repository of another project whose `core.hooksPath` points at these hooks gets a warning and no
+hook at all, whether it has a `git-hooks/` file of the same name (that file lacks the re-exec
+marker, so it is not run under mh's name) or none. An mh checkout's own hook is run through `bash`,
+so it still runs after losing its executable bit.
 A cloud session's fresh clone starts with no `core.hooksPath`; the project SessionStart hook
 (`.claude/hooks/session-start.sh`) sets it to `git-hooks` when it is unset, and leaves a value
 already set alone.

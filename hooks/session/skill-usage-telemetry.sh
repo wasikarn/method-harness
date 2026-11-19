@@ -48,22 +48,25 @@ mkdir -p "$log_dir"
 # also registered on UserPromptExpansion (source "typed"). Its command_name
 # was namespaced when probed, but the hooks doc shows a short one, so a
 # colon-free typed name goes through the resolver too, and a typed name no
-# skill carries (/init, a custom command) writes no row. Only slash_command
+# skill carries (/init, a custom command) writes no row unless command_source
+# is "bundled" or "plugin". Only slash_command
 # expansions can be skills; mcp_prompt ones are skipped. A model call (source "tool") can pass a short
 # name ("grilling") that the tool result keeps short too, so a colon-free
 # name is mapped by scripts/_lib/skill-namespace.py when exactly one
 # installed and enabled plugin ships it; an ambiguous or unknown name stays as-is.
 # One jq pass for event, expansion type and short name (was three spawns),
 # NUL-separated so a name with a newline or tab can't shift the fields.
-event="" exptype="" short=""
+event="" exptype="" short="" cmdsrc=""
 {
   IFS= read -r -d '' event
   IFS= read -r -d '' exptype
   IFS= read -r -d '' short
+  IFS= read -r -d '' cmdsrc
 } < <(jq -j '
   (.hook_event_name // "" | tostring) + "\u0000" +
   (.expansion_type // "" | tostring) + "\u0000" +
-  ((if .hook_event_name == "UserPromptExpansion" then (.command_name? // "") else (.tool_input.skill? // "") end | if type == "string" then . else "" end) // "") + "\u0000"
+  ((if .hook_event_name == "UserPromptExpansion" then (.command_name? // "") else (.tool_input.skill? // "") end | if type == "string" then . else "" end) // "") + "\u0000" +
+  ((.command_source? // "") | if type == "string" then . else "" end) + "\u0000"
 ' <<<"$payload" 2>/dev/null)
 case "$event" in
   UserPromptExpansion)
@@ -78,7 +81,12 @@ if [ -n "$short" ] && [[ "$short" != *:* ]] && command -v python3 >/dev/null 2>&
     # A typed slash command is a skill row only when a skill carries that name: /init or a custom
     # command is not one (the resolver exits 3 and prints nothing). Any other failure keeps the row.
     mapped=$(python3 "$resolver" --known "$short" 2>/dev/null); rc=$?
-    [ "$rc" -ne 3 ] || exit 0
+    # command_source says where Claude Code got the command: "bundled" is a built-in skill (probed
+    # 2026-11-13) and "plugin" a plugin's (hooks doc), which the resolver cannot see when the plugin
+    # is enabled only by managed settings or --plugin-dir. Those keep their row, logged short.
+    if [ "$rc" -eq 3 ]; then
+      case "$cmdsrc" in bundled|plugin) ;; *) exit 0 ;; esac
+    fi
     [ "$rc" -eq 0 ] || mapped=""
   else
     mapped=$(python3 "$resolver" "$short" 2>/dev/null) || mapped=""
