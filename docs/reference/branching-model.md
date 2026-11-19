@@ -246,4 +246,4 @@ discipline:
   all, since each session now has its own — this constraint from the old shared-tree model is
   gone, not merely mitigated.
 
-Related: [[0004-operator-authorized-routine-self-launch]], [[auto-merge-lane]], [[composer-not-creator]], [[mattpocock-integration-map]], [[repo-gotchas]], [[spawn-brief]]
+Related: [[0004-operator-authorized-routine-self-launch]], [[composer-not-creator]], [[mattpocock-integration-map]], [[repo-gotchas]], [[spawn-brief]]

@@ -21,5 +21,3 @@ Denied: `hooks/*`, `scripts/*`, `agents/*`, `.github/*`, `.claude-plugin/*`, `*S
 ## Try it without merging
 
 `merge-lane.sh --dry-run` runs every check and writes nothing to GitHub.
-
-Related: [[branching-model]]

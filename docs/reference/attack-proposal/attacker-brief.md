@@ -51,3 +51,5 @@ Return ONLY one JSON object, nothing before the `{` or after the `}`:
 If you cannot go on without an answer only the operator has, return the single line
 `NEEDS-DECISION <question>` instead.
 ```
+
+Related: [[attack-proposal]]
