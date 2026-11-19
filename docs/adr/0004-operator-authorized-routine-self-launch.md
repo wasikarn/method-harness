@@ -476,3 +476,5 @@ wiring, or the credential itself is a separate, later, independently-gated piece
 ADR's acceptance authorizes starting that work, it does not constitute having done it.
 
 Related: [[branching-model]], [[composer-not-creator]], [[operating-model]], [[repo-gotchas]]
+
+Sources: [[adr-0011-scheduled-recursive-improve-invocation]], [[autonomous-loop-doctrine-drilldown-2026-09-28]]

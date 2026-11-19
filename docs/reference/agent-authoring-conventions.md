@@ -140,3 +140,5 @@ the plugin ships no preload-only skills.
     thoroughness" and "Tune anti-laziness prompting" (checked 2026-09-29).
 
 Related: [[operating-model]], [[skill-authoring-conventions]], [[spawn-brief]]
+
+Sources: [[auto-model-auto-effort-2026-09-26]], [[claude-code-codex-models-efforts-2026-09-07]]

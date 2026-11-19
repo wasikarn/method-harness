@@ -84,3 +84,5 @@ a single cheap in-flow decision, not a review pass.
 - `docs/research/haiku-jev-decision-primitive-2026-09-18.md` — full feasibility analysis and design options
 
 Related: [[rubric-anchoring-evidence]], [[spawn-brief]]
+
+Sources: [[haiku-jev-decision-primitive-2026-09-18]]

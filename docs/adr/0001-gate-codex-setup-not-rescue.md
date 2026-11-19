@@ -38,5 +38,3 @@ presence), never on `subagent_type`, so it is not the "gate an Agent-tool dispat
 decision is unchanged. Main-session dispatch of `/codex:rescue` — the normal path — is
 unaffected; only a subagent attempting the same dispatch is newly denied, as a side effect of
 the general rule, not a codex-specific gate riding on this trial.
-
-Related: [[0005-gate-scope-agent-mistakes-not-disguised-commands]], [[operating-model]]

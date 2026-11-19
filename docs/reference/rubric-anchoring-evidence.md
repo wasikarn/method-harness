@@ -75,3 +75,5 @@ cites — Xiong et al. 2023, Tian et al. 2023).
    full trace in `docs/research/decision-making-methods-2026-09-19.md` §2.
 
 Related: [[METHODOLOGY]], [[haiku-decision-calls]]
+
+Sources: [[decision-making-methods-2026-09-19]]
