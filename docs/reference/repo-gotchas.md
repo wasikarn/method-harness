@@ -138,6 +138,13 @@ already set alone.
   the whole tree. The frozen dirs (`docs/research/`, `docs/post-mortems/`, `docs/plans/`,
   `CHANGELOG.md`) are exempt from wording passes, never from hygiene: on 2026-08-26 a purge
   reported clean while 29 hits sat in exactly those dirs.
+- **Doc cross-links are a trailing `Related:` line.** A file in `docs/reference/` or `docs/adr/`
+  ends with `Related: [[stem]], ...` for the docs it cites or that cite it, and `Sources: [[stem]]`
+  for the `docs/research/` files it cites. Write the bare filename stem; write the repo path
+  (`[[docs/reference/agent-authoring-conventions]]`) when `git ls-files` shows the stem more than
+  once. Keep every backticked path: agents `Read` it and audit checks match it. No check resolves
+  these links, so fix both ends when a file is renamed. memory-lint's "`[[ ]]` is
+  memory-to-memory only" rule covers memory files, not these docs.
 - **Never `rm -rf`; delete by tier.** `gate:bash:irrecoverable` denies `rm -rf` in every tier.
   1. *Temp paths a test or script made itself* (a `mktemp` dir, or a file inside one): delete
      for good with `tmp_delete`, from `scripts/_lib/tmp-delete.sh` (`tests/_lib/harness.sh`
