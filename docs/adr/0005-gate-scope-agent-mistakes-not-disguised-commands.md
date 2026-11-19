@@ -140,4 +140,4 @@ gates. This ADR accepts that risk for the shapes the gates do not already deny:
   that class and fix them as in-scope. Lift the freeze when the replay plan (#895) makes a gate PR
   cheap enough that review rounds, not replays, are the cost again.
 
-Related: [[gate-heuristic-history]], [[repo-gotchas]]
+Related: [[repo-gotchas]]
