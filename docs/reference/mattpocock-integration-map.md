@@ -53,3 +53,5 @@ installed plugin cache and the clone but never loaded); can vanish or reshape wi
 - `setup-ts-deep-modules`: prove the rules bite, do not just document them.
 - `git-guardrails-claude-code`: study only; `docs/reference/branching-model.md` forbids running
   its setup here.
+
+Related: [[0002-mh-controlled-handoff-path]], [[0003-writing-fragments-pointer-capture]], [[GLOSSARY]], [[attack-proposal]], [[branching-model]], [[composer-not-creator]], [[skill-authoring-conventions]]

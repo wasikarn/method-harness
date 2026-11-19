@@ -169,3 +169,5 @@ The validator judged a design, so the built code gets its own check before merge
 
 Done when every closed break stays closed on the built code, the differential (for a gate) shows
 no unexplained change, and deep-audit passes. A break that reopens sends the work back to step 4.
+
+Related: [[doctrine-delivery]], [[env-vars]], [[mattpocock-integration-map]]

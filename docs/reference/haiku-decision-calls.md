@@ -82,3 +82,5 @@ a single cheap in-flow decision, not a review pass.
 - [Messages API reference](https://platform.claude.com/docs/en/api/messages) — no logprobs/token-probability field exists
 - [Pricing](https://platform.claude.com/docs/en/about-claude/pricing) — Haiku 5.5 $0.10/$0.50 per MTok in/out for prompts up to 100k tokens ($0.50/$2.50 above); Haiku 4.5 is $1/$5
 - `docs/research/haiku-jev-decision-primitive-2026-09-18.md` — full feasibility analysis and design options
+
+Related: [[rubric-anchoring-evidence]], [[spawn-brief]]

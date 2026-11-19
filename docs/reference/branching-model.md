@@ -245,3 +245,5 @@ discipline:
 - **`/rewind` only reverts this session's own worktree.** It can no longer touch a peer's tree at
   all, since each session now has its own — this constraint from the old shared-tree model is
   gone, not merely mitigated.
+
+Related: [[0004-operator-authorized-routine-self-launch]], [[auto-merge-lane]], [[composer-not-creator]], [[mattpocock-integration-map]], [[repo-gotchas]], [[spawn-brief]]

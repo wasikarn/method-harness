@@ -232,3 +232,5 @@ allowed again and pinned as such (the general alias table is #781). Accepted ove
 `"gp" -f`), which no shell expands, denies too. Not covered: a user's own alias or function, the plugin's
 `git-svn-dcommit-push` (a plain push to `svntrunk`), `g`, and its non-push git aliases (`grhh` is `git reset
 --hard`, `gbD` is `git branch -D`, `gpristine`, `gwip`), which their literal forms deny.
+
+Related: [[0005-gate-scope-agent-mistakes-not-disguised-commands]], [[repo-gotchas]]

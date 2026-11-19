@@ -138,3 +138,5 @@ the plugin ships no preload-only skills.
     all-caps tool language written for older models; "if in doubt, use <tool>" is the named
     failure. Source: Anthropic prompting best practices, "Overthinking and excessive
     thoroughness" and "Tune anti-laziness prompting" (checked 2026-09-29).
+
+Related: [[operating-model]], [[skill-authoring-conventions]], [[spawn-brief]]

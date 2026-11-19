@@ -172,3 +172,5 @@ cannot show, so a static scan of the source (comments stripped) covers them. A m
 fails, so a CLI output change shows up instead of passing silently. Without the `claude` CLI only
 the static scan runs. Test: `tests/scripts/test-observer-contract.sh`, with a known-bad module
 under `tests/scripts/fixtures/observer-contract/bad/`.
+
+Related: [[repo-gotchas]]

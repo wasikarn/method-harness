@@ -66,3 +66,5 @@ and the project's settings under `CLAUDE_PROJECT_DIR` when a hook sets that, els
 `CLAUDE_PLUGIN_DATA` — observed as `~/.claude/plugins/data/<plugin>-<marketplace>/`, consistent
 across every installed plugin on this machine; not documented by Claude Code, and mh doesn't
 read it directly.
+
+Related: [[0003-writing-fragments-pointer-capture]], [[attack-proposal]]
