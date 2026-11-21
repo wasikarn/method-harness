@@ -11,7 +11,8 @@
   deleted but not yet committed is listed; `--no-renames`, so the old name of a renamed file is listed too. A path listed there counts as
   present only when no file is on disk, so a file the session deleted still resolves; the line check still
   runs for a file that exists.
-- `--root`: the repo root, and one more per repo the scope named in step 1. A cite into a repo with no
+- `--root`: the repo root, one more per repo the scope named in step 1, and one for the directory of an
+  authoritative source the step-3 brief named (a third-party tool's installed files). A cite into a repo with no
   `--root` can come back `missing`.
 
 ## Labels
