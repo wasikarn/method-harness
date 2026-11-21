@@ -25,8 +25,9 @@ and two wrong lines were pushed. Round 5, the first whose brief named the instal
 found 2 MEDIUM and 2 LOW that the earlier rounds had passed. The installed copy is what runs, so it decides
 a behaviour claim. A claim the installed files are silent on (a known bug, a FAQ answer) can still be true:
 it stays in `checked[]` as web-only, neither a finding nor verified. The installed directory is outside the
-repo, so the citation check needs it as a `--root` (`citation-check.md`), or every such cite comes back
-`ambiguous-or-outside`.
+repo, so the citation check needs it as a `--root` (`citation-check.md`), or such a cite can come back
+`ambiguous-or-outside`. A web-only claim cites a backticked fetch of the page (a command needs no root), since
+the checker is read-only and saves no copy.
 
 ## Step 3: primed items need CONFIRMED/DISPUTED entries
 

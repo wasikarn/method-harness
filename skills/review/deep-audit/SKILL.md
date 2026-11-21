@@ -87,8 +87,8 @@ is investigation-only — reading files and running read-only commands (`git log
 `cat`, `rg`) is expected and required. When the artifact describes a third-party tool, the brief also
 names the authoritative source for that tool's behaviour (the installed files of the version the artifact
 names, over the tool's web pages) and asks the checker to cite it, by `path:line` or a backticked command,
-for each such claim; a claim that source is silent on goes in `checked[]`, marked web-only, with a saved
-copy of the page as its evidence.
+for each such claim; a claim that source is silent on goes in `checked[]`, marked web-only, with a backticked
+fetch of the page as its evidence.
 
 **Priming:** when you already have direct evidence pointing at something specific (a concrete
 claim you can name, not "check everything harder"), you may name it in the brief and ask the
