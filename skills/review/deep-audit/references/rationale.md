@@ -16,6 +16,19 @@ mode: a same-session check that shares the generator's trace tends to inherit it
 factored-vs-joint ablation: "the verification questions might hallucinate similarly to the
 original baseline response, which defeats the purpose").
 
+## Step 3: naming the authoritative source for a third-party tool
+
+A checker told only to verify against primary sources treats a tool's web pages and its installed files as
+equal proof. On 2026-11-21 a hand-run audit of a doc about a plugin took seven checker rounds: rounds 1 to 4
+accepted the plugin's web pages as proof of its behaviour, the pages were older than the installed version,
+and two wrong lines were pushed. Round 5, the first whose brief named the installed files as authoritative,
+found 2 MEDIUM and 2 LOW that the earlier rounds had passed. The installed copy is what runs, so it decides
+a behaviour claim. A claim the installed files are silent on (a known bug, a FAQ answer) can still be true:
+it stays in `checked[]` as web-only, neither a finding nor verified. The installed directory is outside the
+repo, so the citation check needs it as a `--root` (`citation-check.md`), or such a cite can come back
+`ambiguous-or-outside`. A web-only claim cites a backticked fetch of the page (a command needs no root), since
+the checker is read-only and saves no copy.
+
 ## Step 3: primed items need CONFIRMED/DISPUTED entries
 
 "Find what it missed" framing alone makes confirming a named item indistinguishable from never
