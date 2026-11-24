@@ -7,27 +7,6 @@
   "description": "Personal Claude Code harness, packaged as an installable plugin.",
   "plugins": [
     {
-      "name": "atlassian-kit",
-      "source": {
-        "source": "github",
-        "repo": "wasikarn/atlassian-kit"
-      },
-      "description": "Atlassian toolkit for Jira and Confluence: ops (acli and REST plan/apply), jira-content and confluence-content skills plus two preview-then-stop agents. Atlassian MCP is the fallback.",
-      "author": {
-        "name": "KoBig"
-      },
-      "category": "productivity",
-      "homepage": "https://github.com/wasikarn/atlassian-kit",
-      "keywords": [
-        "jira",
-        "confluence",
-        "atlassian",
-        "acli",
-        "rest",
-        "adf"
-      ]
-    },
-    {
       "name": "siang",
       "source": {
         "source": "github",
